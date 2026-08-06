@@ -570,6 +570,42 @@ describe('ArtifactProvenancePanel', () => {
     expect(reconstructionStatus?.parentElement?.className).not.toContain('flex-wrap')
   })
 
+  it('shows a content loading state while reconstruction is generating', async () => {
+    const generated = {
+      state: 'cached' as const,
+      value: {
+        code: 'import numpy as np\nnp.sin(0)',
+        language: 'python' as const,
+        generatedAt: '2026-07-27T20:05:00.000Z',
+        frameworkId: 'codex' as const,
+        model: 'model-a',
+        sourceTruncated: false
+      }
+    }
+    let resolveGeneration!: (value: typeof generated) => void
+    generateCodeReconstruction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve
+        })
+    )
+
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+
+    const loading = container.querySelector('[aria-label="Generating reconstructed script"]')
+    expect(loading).not.toBeNull()
+    expect(loading?.textContent).toContain('Generating script…')
+    expect(loading?.querySelector('svg')?.className.baseVal).toContain('animate-spin')
+    expect(container.textContent).not.toContain('Captured producer block')
+
+    await act(async () => resolveGeneration(generated))
+    await flush()
+    expect(container.textContent).toContain('LLM-generated reconstruction')
+  })
+
   it('generates only after the user clicks and links the result to Execution Log', async () => {
     const generate = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Generate script'

@@ -1097,7 +1097,7 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300" aria-live="polite">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
                   Using the provider and model selected when generation started.
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
@@ -1126,7 +1126,20 @@ const ArtifactProvenancePanel = ({
                 provenance-gap comment.
               </p>
             ) : null}
-            {generatedCode ? (
+            {codeReconstructionResult?.status === 'generating' ? (
+              <div
+                className="flex min-h-48 items-center justify-center gap-2 px-4 py-8 text-sm text-text-300"
+                role="status"
+                aria-live="polite"
+                aria-label="Generating reconstructed script"
+              >
+                <LoaderCircle
+                  className="size-5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                <span>Generating script…</span>
+              </div>
+            ) : generatedCode ? (
               <NotebookCodeBlock code={generatedCode.code} language={generatedCode.language} />
             ) : (
               <div className="space-y-3 p-4">
