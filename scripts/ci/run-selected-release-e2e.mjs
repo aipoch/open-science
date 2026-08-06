@@ -17,6 +17,7 @@ const platformNames = {
   linux: 'linux',
   win32: 'windows'
 }
+const playwrightCli = fileURLToPath(import.meta.resolve('@playwright/test/cli'))
 
 export function selectReleaseSpecs(lanes, platform = process.platform) {
   const platformName = platformNames[platform]
@@ -28,6 +29,13 @@ export function selectReleaseSpecs(lanes, platform = process.platform) {
     .map(([, spec]) => spec)
 }
 
+export function releaseE2ECommand(specs) {
+  return {
+    executable: process.execPath,
+    args: [playwrightCli, 'test', ...specs]
+  }
+}
+
 export function runSelectedReleaseE2E(environment = process.env) {
   const lanes = JSON.parse(environment.PR_GATE_LANES ?? '[]')
   if (!Array.isArray(lanes) || lanes.some((lane) => typeof lane !== 'string')) {
@@ -37,8 +45,8 @@ export function runSelectedReleaseE2E(environment = process.env) {
   const specs = selectReleaseSpecs(lanes)
   if (specs.length === 0) throw new Error('No release E2E specs were selected for this platform.')
 
-  const executable = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const result = spawnSync(executable, ['playwright', 'test', ...specs], {
+  const { executable, args } = releaseE2ECommand(specs)
+  const result = spawnSync(executable, args, {
     env: environment,
     stdio: 'inherit'
   })
