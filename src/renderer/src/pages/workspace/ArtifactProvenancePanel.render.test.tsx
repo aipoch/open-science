@@ -562,6 +562,12 @@ describe('ArtifactProvenancePanel', () => {
     expect(generateCodeReconstruction).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Generate script')
     expect(container.textContent).toContain('Captured producer block')
+
+    const reconstructionStatus = [...container.querySelectorAll('p')].find((paragraph) =>
+      paragraph.textContent?.includes('Generate a standalone script')
+    )
+    expect(reconstructionStatus?.className).toContain('truncate')
+    expect(reconstructionStatus?.parentElement?.className).not.toContain('flex-wrap')
   })
 
   it('generates only after the user clicks and links the result to Execution Log', async () => {

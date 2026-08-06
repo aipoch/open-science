@@ -1089,24 +1089,24 @@ const ArtifactProvenancePanel = ({
                   <span> for the raw record</span>
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
-                <p className="min-w-0 flex-1 text-sm text-danger-000" role="alert">
+                <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
-                <p className="min-w-0 flex-1 text-sm text-text-300" aria-live="polite">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300" aria-live="polite">
                   Using the provider and model selected when generation started.
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
-                <p className="min-w-0 flex-1 text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
                   Generate a standalone script from the immutable Execution Log with your current
                   provider and model.
                 </p>
               ) : (
-                <p className="min-w-0 flex-1 text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
                   Checking for a previously generated script…
                 </p>
               )}
