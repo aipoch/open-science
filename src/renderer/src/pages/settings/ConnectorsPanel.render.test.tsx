@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConnectorsPanel } from './ConnectorsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 // Radix Select/DropdownMenu call pointer-capture and scroll APIs jsdom does not implement.
 if (!Element.prototype.hasPointerCapture) {
@@ -80,6 +81,67 @@ beforeEach(() => {
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
+  })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'selected-slug',
+        name: 'SELECTED_SLUG',
+        displayName: 'Selected by ID',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: ['my-mcp'], connectorTools: [] },
+        revision: 1
+      },
+      {
+        kind: 'custom',
+        id: 'selected-legacy-name',
+        name: 'SELECTED_LEGACY_NAME',
+        displayName: 'Selected by legacy name',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: ['My MCP'], connectorTools: [] },
+        revision: 1
+      },
+      {
+        kind: 'custom',
+        id: 'full-access',
+        name: 'FULL_ACCESS',
+        displayName: 'Full access',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'full',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+        revision: 1
+      },
+      {
+        kind: 'custom',
+        id: 'excluded',
+        name: 'EXCLUDED',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'full',
+        fullAccess: {
+          excludedSkillIds: [],
+          excludedConnectorIds: ['my-mcp'],
+          connectorTools: []
+        },
+        selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
   })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -182,7 +244,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'pubmed' })
   })
 
-  it('renders a custom server that can be toggled and removed', () => {
+  it('warns about affected Specialists before removing a custom server', async () => {
     const onNavigate = vi.fn()
     act(() => {
       root.render(<ConnectorsPanel onNavigate={onNavigate} />)
@@ -207,7 +269,23 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => exportButton?.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'my-mcp' })
 
-    act(() => remove?.click())
+    await act(async () => {
+      remove?.click()
+      await Promise.resolve()
+    })
+    expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('This Connector is used by 3 Specialists')
+    expect(document.body.textContent).toContain('Selected by ID')
+    expect(document.body.textContent).toContain('Selected by legacy name')
+    expect(document.body.textContent).toContain('Full access')
+
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Remove Connector'
+    )
+    await act(async () => {
+      confirm?.click()
+      await Promise.resolve()
+    })
     expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith('my-mcp')
   })
 
