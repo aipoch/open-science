@@ -120,6 +120,11 @@ describe('selectEnabledCustomServers', () => {
     id: 'srv-oauth-ready',
     oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } }
   }
+  const bundledRouteCollision: StoredCustomMcpServer = {
+    ...stdioServer,
+    id: 'srv-reserved-route',
+    name: 'Chemistry'
+  }
 
   it('returns enabled servers across all supported transports', () => {
     const connectors: StoredConnectors = {
@@ -131,7 +136,8 @@ describe('selectEnabledCustomServers', () => {
         remoteServer,
         sseServer,
         unauthenticatedOAuthServer,
-        authenticatedOAuthServer
+        authenticatedOAuthServer,
+        bundledRouteCollision
       ]
     }
 

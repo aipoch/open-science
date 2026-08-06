@@ -168,6 +168,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
+      await loadConnectors().catch(() => undefined)
       if (attempt === authenticationAttempt.current) {
         setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
       }

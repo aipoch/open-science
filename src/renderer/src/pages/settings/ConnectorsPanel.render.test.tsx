@@ -394,6 +394,7 @@ describe('ConnectorsPanel (groups)', () => {
 
     await act(async () => rejectAuthentications[0](new Error('Authorization denied')))
     expect(document.body.textContent).not.toContain('Authorization denied')
+    expect(useSettingsStore.getState().loadConnectors).toHaveBeenCalledTimes(2)
   })
 
   it('shows an empty-state line when there are no custom servers', () => {

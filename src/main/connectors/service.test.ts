@@ -448,6 +448,32 @@ describe('ConnectorService', () => {
       )
     })
 
+    it('fails closed when a legacy custom route collides with a bundled connector', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-reserved',
+              name: 'Chemistry!',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('Chemistry!', 'do_thing', {}, internal)).rejects.toThrow(/unavailable/)
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('does not discover or dispatch a custom server blocked while approval is pending', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)

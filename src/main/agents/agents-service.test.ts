@@ -111,6 +111,13 @@ describe('AgentsService read surface', () => {
       customMcpServers: [
         { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' },
         {
+          id: 'cust-reserved',
+          name: 'Chemistry!',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        },
+        {
           id: 'oauth-1',
           name: 'OAuth Server',
           transport: 'streamable_http',
@@ -130,6 +137,8 @@ describe('AgentsService read surface', () => {
     expect(chemistry?.availability).toBe('available')
     expect(chemistry?.tools.length).toBeGreaterThan(0)
     expect(chemistry).not.toHaveProperty('args')
+    expect(connectors.filter((connector) => connector.id === 'chemistry')).toHaveLength(1)
+    expect(connectors.some((connector) => connector.displayName === 'Chemistry!')).toBe(false)
     const custom = connectors.find((c) => c.id === 'my-server')
     expect(custom?.source).toBe('custom')
     expect(custom?.mainEnabled).toBe(true)

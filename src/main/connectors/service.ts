@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
-import { toCustomMcpConfig } from './custom-mcp-bootstrap'
+import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './custom-mcp-bootstrap'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
@@ -397,6 +397,7 @@ export class ConnectorService {
   private isCustomConfigRunnable(
     custom: NonNullable<StoredConnectors['customMcpServers']>[number]
   ): boolean {
+    if (!isCustomMcpServerRouteSafe(custom)) return false
     if (custom.transport === 'stdio') return Boolean(custom.command)
     return Boolean(custom.url)
   }

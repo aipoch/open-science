@@ -212,6 +212,7 @@ describe('McpClientManager', () => {
       markBrowserOpened = resolve
     })
     const openExternal = vi.fn(async () => markBrowserOpened())
+    const saveOAuthState = vi.fn(async () => undefined)
     vi.spyOn(Client.prototype, 'connect').mockImplementationOnce(async (transport) => {
       const provider = (transport as unknown as { _authProvider: PersistentOAuthClientProvider })
         ._authProvider
@@ -222,13 +223,13 @@ describe('McpClientManager', () => {
       await provider.redirectToAuthorization(authorizationUrl)
       throw new UnauthorizedError()
     })
-    const manager = new McpClientManager({ openExternal })
+    const manager = new McpClientManager({ openExternal, saveOAuthState })
     const oauthConfig: CustomMcpServerConfig = {
       id: 'oauth-cancel',
       name: 'OAuth server',
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
-      oauth: {}
+      oauth: { state: { tokens: { access_token: 'stale', token_type: 'Bearer' } } }
     }
 
     try {
@@ -238,6 +239,7 @@ describe('McpClientManager', () => {
       await manager.cancelAuthentication(oauthConfig.id)
 
       await expect(pending).rejects.toThrow('OAuth authorization failed: authorization_cancelled')
+      expect(saveOAuthState).toHaveBeenCalledWith('oauth-cancel', {})
     } finally {
       await manager.closeAll()
     }

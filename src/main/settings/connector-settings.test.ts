@@ -210,6 +210,23 @@ describe('ConnectorSettingsModule', () => {
     ).rejects.toThrow('already exists')
   })
 
+  it('fails closed when a legacy Connector derives a bundled route', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-reserved-route',
+      name: 'Chemistry!',
+      transport: 'stdio',
+      enabled: true,
+      command: 'legacy-command'
+    })
+
+    const snapshot = await service.listConnectors()
+    expect(snapshot.customServers[0]).toMatchObject({
+      slug: 'chemistry',
+      enabled: false,
+      availability: 'unavailable'
+    })
+  })
+
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await service.addCustomServer({
       name: 'example-export',
@@ -310,6 +327,34 @@ describe('ConnectorSettingsModule', () => {
       oauth: { hasTokens: false }
     })
     const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthRef).toBeUndefined()
+  })
+
+  it('clears OAuth when switching a remote Connector to local transport', async () => {
+    const added = await service.addCustomServer({
+      name: 'oauth-to-local',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { scopes: ['openid'] }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'remote-token', token_type: 'Bearer' }
+    })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'stdio',
+      command: 'local-command'
+    })
+
+    expect(updated.customServers[0]).toMatchObject({
+      transport: 'stdio',
+      command: 'local-command'
+    })
+    expect(updated.customServers[0].oauth).toBeUndefined()
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauth).toBeUndefined()
     expect(stored?.oauthRef).toBeUndefined()
   })
 

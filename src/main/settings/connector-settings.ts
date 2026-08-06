@@ -25,6 +25,7 @@ import {
   toCustomConnectorSlug
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
@@ -115,7 +116,9 @@ class ConnectorSettingsModule {
     const custom = (connectors?.customMcpServers ?? [])
       .filter(
         (server) =>
-          server.enabled && (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
+          server.enabled &&
+          isCustomMcpServerRouteSafe(server) &&
+          (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
       )
       .map(customConnectorSlug)
 
@@ -323,11 +326,13 @@ class ConnectorSettingsModule {
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
     const legacyEnv = request.env === undefined ? existing.env : undefined
     const nextOAuth =
-      request.oauth === null
+      request.transport === 'stdio' && request.oauth === undefined
         ? undefined
-        : request.oauth === undefined
-          ? existing.oauth
-          : normalizeOAuthConfig(request.oauth)
+        : request.oauth === null
+          ? undefined
+          : request.oauth === undefined
+            ? existing.oauth
+            : normalizeOAuthConfig(request.oauth)
     if (request.transport === 'stdio' && nextOAuth) {
       throw new Error('OAuth is only supported for remote custom connectors')
     }
@@ -465,7 +470,9 @@ class ConnectorSettingsModule {
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
     return (connectors?.customMcpServers ?? [])
       .map((server) => {
+        const routeUnavailable = !isCustomMcpServerRouteSafe(server)
         const unavailable =
+          routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
@@ -475,7 +482,7 @@ class ConnectorSettingsModule {
           name: server.name,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled && !unauthenticated,
+          enabled: server.enabled && !unavailable && !unauthenticated,
           command: server.command,
           args: server.args,
           url: server.url,

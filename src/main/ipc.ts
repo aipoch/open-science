@@ -47,7 +47,7 @@ import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
 import { McpClientManager } from './connectors/mcp-client-manager'
-import { toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
+import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
@@ -631,10 +631,9 @@ const createApplicationModules = async (
         connectorIds: Array.from(
           new Set([
             ...ALL_CONNECTOR_IDS,
-            ...(connectorSettings?.customMcpServers ?? []).flatMap((server) => [
-              customConnectorSlug(server),
-              server.name
-            ])
+            ...(connectorSettings?.customMcpServers ?? [])
+              .filter(isCustomMcpServerRouteSafe)
+              .flatMap((server) => [customConnectorSlug(server), server.name])
           ])
         ),
         protectedSpecialistIds: ['reviewer'],

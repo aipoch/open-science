@@ -1,5 +1,7 @@
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
+import { customConnectorSlug } from '../../shared/custom-connector'
+import { ALL_CONNECTOR_IDS } from './registry'
 
 // Pure mapping/filtering helpers used to wire custom MCP servers into app bootstrap (ipc.ts).
 // Split out from ipc.ts so they can be unit-tested without pulling in ipc.ts's Electron-touching
@@ -37,6 +39,11 @@ const SUPPORTED_CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport
   'sse'
 ])
 
+// Legacy records derive their public route from the display name. A derived route that is already
+// owned by a bundled Connector must remain visible in Settings but cannot be exposed or dispatched.
+export const isCustomMcpServerRouteSafe = (server: StoredCustomMcpServer): boolean =>
+  !ALL_CONNECTOR_IDS.includes(customConnectorSlug(server))
+
 // Selects runnable custom servers for discovery and skill-doc sync. OAuth Connectors remain absent
 // until sign-in has produced an access token, even if an older settings record says enabled.
 export function selectEnabledCustomServers(
@@ -46,6 +53,7 @@ export function selectEnabledCustomServers(
     connectors?.customMcpServers?.filter(
       (s) =>
         s.enabled &&
+        isCustomMcpServerRouteSafe(s) &&
         SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(s.transport) &&
         (!s.oauth || Boolean(s.oauthState?.tokens?.access_token))
     ) ?? []
