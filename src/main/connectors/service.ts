@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
@@ -86,10 +86,13 @@ type CustomServerSecurityChangeGuard = {
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
 
-// Excludes display-only fields and hashes both encrypted references and legacy resolved values. The
-// barrier can therefore identify a configuration generation without retaining another plaintext copy.
+const customServerSecurityFingerprintKey = randomBytes(32)
+
+// Excludes display-only fields and authenticates both encrypted references and legacy resolved
+// values. The process-local key lets the barrier identify a configuration generation without
+// retaining another plaintext copy or exposing a digest that can be enumerated offline.
 const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
-  createHash('sha256')
+  createHmac('sha256', customServerSecurityFingerprintKey)
     .update(
       JSON.stringify([
         server.transport,
