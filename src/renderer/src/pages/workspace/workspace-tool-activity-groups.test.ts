@@ -298,7 +298,7 @@ describe('activity group elapsed time', () => {
     expect(formatActivityGroupElapsed(3_723_000)).toBe('1h 2m 3s')
   })
 
-  it('keeps counting while any tool is active', () => {
+  it('adds completed work and keeps counting the active tool', () => {
     const activities = [
       createActivity({ id: 's1', createdAt: 1_000, updatedAt: 1_400 }),
       createActivity({
@@ -309,15 +309,15 @@ describe('activity group elapsed time', () => {
       })
     ]
 
-    expect(getActivityGroupElapsedMs(activities, 2_750)).toBe(1_750)
+    expect(getActivityGroupElapsedMs(activities, 2_750)).toBe(1_650)
   })
 
-  it('freezes at the latest update after every tool settles', () => {
+  it('excludes idle gaps between completed tools', () => {
     const activities = [
       createActivity({ id: 's1', createdAt: 1_000, updatedAt: 1_400 }),
       createActivity({ id: 's2', createdAt: 1_500, updatedAt: 2_600 })
     ]
 
-    expect(getActivityGroupElapsedMs(activities, 9_000)).toBe(1_600)
+    expect(getActivityGroupElapsedMs(activities, 9_000)).toBe(1_500)
   })
 })
