@@ -113,11 +113,12 @@ class ConnectorSettingsModule {
   async provisionedConnectorSkillNames(): Promise<string[]> {
     const connectors = await this.getConnectors()
     const bundled = this.enabledConnectorIds(connectors)
-    const custom = (connectors?.customMcpServers ?? [])
+    const customServers = connectors?.customMcpServers ?? []
+    const custom = customServers
       .filter(
         (server) =>
           server.enabled &&
-          isCustomMcpServerRouteSafe(server) &&
+          isCustomMcpServerRouteSafe(server, customServers) &&
           (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
       )
       .map(customConnectorSlug)
@@ -468,9 +469,10 @@ class ConnectorSettingsModule {
   }
 
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
-    return (connectors?.customMcpServers ?? [])
+    const customServers = connectors?.customMcpServers ?? []
+    return customServers
       .map((server) => {
-        const routeUnavailable = !isCustomMcpServerRouteSafe(server)
+        const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
         const unavailable =
           routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||

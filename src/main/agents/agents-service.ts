@@ -413,8 +413,9 @@ export const projectConnectorsFromStored = (
     }))
   }))
 
-  const custom: ConnectorReadModel[] = (stored?.customMcpServers ?? [])
-    .filter(isCustomMcpServerRouteSafe)
+  const customServers = stored?.customMcpServers ?? []
+  const custom: ConnectorReadModel[] = customServers
+    .filter((server) => isCustomMcpServerRouteSafe(server, customServers))
     .map((server) => {
       const unreachable =
         (server.transport === 'stdio' && !server.command) ||

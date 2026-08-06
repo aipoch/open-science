@@ -55,7 +55,7 @@ const seedConnectors = [
 
 const seedCustomServers = [
   {
-    id: 'my-mcp',
+    id: 'custom-server-uuid',
     slug: 'my-mcp',
     name: 'My MCP',
     description: 'A local tool server',
@@ -84,6 +84,23 @@ beforeEach(() => {
   })
   useSpecialistStore.setState({
     items: [
+      {
+        kind: 'custom',
+        id: 'selected-legacy-uuid',
+        name: 'SELECTED_LEGACY_UUID',
+        displayName: 'Selected by legacy UUID',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: ['custom-server-uuid'],
+          connectorTools: []
+        },
+        revision: 1
+      },
       {
         kind: 'custom',
         id: 'selected-slug',
@@ -251,7 +268,10 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     act(() => document.body.querySelector<HTMLButtonElement>('[aria-label="My MCP"]')?.click())
-    expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith('my-mcp', false)
+    expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith(
+      'custom-server-uuid',
+      false
+    )
 
     const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit My MCP"]')
     const exportButton = document.body.querySelector<HTMLButtonElement>(
@@ -267,14 +287,15 @@ describe('ConnectorsPanel (groups)', () => {
     expect(remove?.getAttribute('data-state')).toBe('closed')
 
     act(() => exportButton?.click())
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'my-mcp' })
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'export', id: 'custom-server-uuid' })
 
     await act(async () => {
       remove?.click()
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('This Connector is used by 3 Specialists')
+    expect(document.body.textContent).toContain('This Connector is used by 4 Specialists')
+    expect(document.body.textContent).toContain('Selected by legacy UUID')
     expect(document.body.textContent).toContain('Selected by ID')
     expect(document.body.textContent).toContain('Selected by legacy name')
     expect(document.body.textContent).toContain('Full access')
@@ -286,7 +307,9 @@ describe('ConnectorsPanel (groups)', () => {
       confirm?.click()
       await Promise.resolve()
     })
-    expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith('my-mcp')
+    expect(useSettingsStore.getState().removeCustomServer).toHaveBeenCalledWith(
+      'custom-server-uuid'
+    )
   })
 
   it('offers validated configuration import from the Add connector menu', () => {

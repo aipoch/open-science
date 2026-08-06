@@ -103,7 +103,7 @@ export class McpClientManager {
   ) => Promise<Client>
   private readonly clients = new Map<string, Client>()
   private readonly connecting = new Map<string, Promise<Client>>()
-  private readonly authenticationCancels = new Map<string, () => void>()
+  private readonly authenticationCancels = new Map<string, () => Promise<void>>()
   private readonly generations = new Map<string, number>()
   private readonly callbackServer = new OAuthCallbackServer()
   private readonly openExternal: (url: string) => Promise<void> | void
@@ -142,7 +142,7 @@ export class McpClientManager {
     this.generations.set(id, this.generation(id) + 1)
     const cancelAuthentication = this.authenticationCancels.get(id)
     this.authenticationCancels.delete(id)
-    cancelAuthentication?.()
+    await cancelAuthentication?.()
     const client = this.clients.get(id)
     this.clients.delete(id)
     this.connecting.delete(id)
@@ -178,12 +178,23 @@ export class McpClientManager {
       throw new Error(`custom MCP server "${config.name}" connection was superseded`)
     }
     const redirectUrl = await this.callbackServer.ensureStarted()
+    if (generation !== this.generation(config.id)) {
+      throw new Error(`custom MCP server "${config.name}" connection was superseded`)
+    }
     const provider = this.oauthProvider(config, redirectUrl, generation, true)
     const callback = this.callbackServer.waitFor(provider.state())
-    this.authenticationCancels.set(config.id, callback.cancel)
-    const transport = buildTransport(config, provider)
-    const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
+    let activeClient: Client | undefined
+    const cancelAuthentication = async (): Promise<void> => {
+      callback.cancel()
+      const client = activeClient
+      activeClient = undefined
+      if (client) await client.close().catch(() => undefined)
+    }
+    this.authenticationCancels.set(config.id, cancelAuthentication)
     try {
+      const transport = buildTransport(config, provider)
+      const firstClient = new Client({ name: 'open-science', version: '0.0.0' })
+      activeClient = firstClient
       try {
         await firstClient.connect(transport)
         if (generation !== this.generation(config.id)) {
@@ -191,14 +202,12 @@ export class McpClientManager {
           throw new Error(`custom MCP server "${config.name}" connection was superseded`)
         }
         this.clients.set(config.id, firstClient)
-        callback.cancel()
+        activeClient = undefined
         return
       } catch (error) {
-        if (!(error instanceof UnauthorizedError)) {
-          callback.cancel()
-          throw error
-        }
+        if (!(error instanceof UnauthorizedError)) throw error
         await firstClient.close().catch(() => undefined)
+        if (activeClient === firstClient) activeClient = undefined
       }
 
       try {
@@ -214,14 +223,17 @@ export class McpClientManager {
       }
       // Recreate the transport/client after the SDK has completed the authorization-code exchange.
       const client = new Client({ name: 'open-science', version: '0.0.0' })
+      activeClient = client
       await client.connect(buildTransport(config, provider))
       if (generation !== this.generation(config.id)) {
         await client.close().catch(() => undefined)
         throw new Error(`custom MCP server "${config.name}" connection was superseded`)
       }
       this.clients.set(config.id, client)
+      activeClient = undefined
     } finally {
-      if (this.authenticationCancels.get(config.id) === callback.cancel) {
+      await cancelAuthentication()
+      if (this.authenticationCancels.get(config.id) === cancelAuthentication) {
         this.authenticationCancels.delete(config.id)
       }
     }

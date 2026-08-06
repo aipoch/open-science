@@ -615,6 +615,7 @@ const createApplicationModules = async (
         specialistPackageSkillAdapter.snapshot(),
         settingsService.getConnectors()
       ])
+      const customMcpServers = connectorSettings?.customMcpServers ?? []
       const baseCatalog = {
         appVersion,
         builtinSkills: composeBuiltinSkillCatalog(appVersion, skills),
@@ -631,8 +632,8 @@ const createApplicationModules = async (
         connectorIds: Array.from(
           new Set([
             ...ALL_CONNECTOR_IDS,
-            ...(connectorSettings?.customMcpServers ?? [])
-              .filter(isCustomMcpServerRouteSafe)
+            ...customMcpServers
+              .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
               .flatMap((server) => [customConnectorSlug(server), server.name])
           ])
         ),

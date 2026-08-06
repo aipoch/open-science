@@ -40,22 +40,30 @@ const SUPPORTED_CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport
 ])
 
 // Legacy records derive their public route from the display name. A derived route that is already
-// owned by a bundled Connector must remain visible in Settings but cannot be exposed or dispatched.
-export const isCustomMcpServerRouteSafe = (server: StoredCustomMcpServer): boolean =>
-  !ALL_CONNECTOR_IDS.includes(customConnectorSlug(server))
+// owned by a bundled Connector or another custom record must remain visible in Settings but cannot
+// be exposed or dispatched.
+export const isCustomMcpServerRouteSafe = (
+  server: StoredCustomMcpServer,
+  allServers: readonly StoredCustomMcpServer[]
+): boolean => {
+  const slug = customConnectorSlug(server)
+  return (
+    !ALL_CONNECTOR_IDS.includes(slug) &&
+    allServers.filter((candidate) => customConnectorSlug(candidate) === slug).length === 1
+  )
+}
 
 // Selects runnable custom servers for discovery and skill-doc sync. OAuth Connectors remain absent
 // until sign-in has produced an access token, even if an older settings record says enabled.
 export function selectEnabledCustomServers(
   connectors: StoredConnectors | undefined
 ): StoredCustomMcpServer[] {
-  return (
-    connectors?.customMcpServers?.filter(
-      (s) =>
-        s.enabled &&
-        isCustomMcpServerRouteSafe(s) &&
-        SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(s.transport) &&
-        (!s.oauth || Boolean(s.oauthState?.tokens?.access_token))
-    ) ?? []
+  const servers = connectors?.customMcpServers ?? []
+  return servers.filter(
+    (server) =>
+      server.enabled &&
+      isCustomMcpServerRouteSafe(server, servers) &&
+      SUPPORTED_CUSTOM_MCP_TRANSPORTS.has(server.transport) &&
+      (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
   )
 }

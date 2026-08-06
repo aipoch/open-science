@@ -31,11 +31,22 @@ const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60_000
 export class OAuthCallbackServer {
   private server: Server | undefined
   private redirectUrl: string | undefined
+  private starting: Promise<string> | undefined
   private readonly pending = new Map<string, PendingCallback>()
 
   async ensureStarted(): Promise<string> {
     if (this.redirectUrl) return this.redirectUrl
 
+    const starting = this.starting ?? this.start()
+    this.starting = starting
+    try {
+      return await starting
+    } finally {
+      if (this.starting === starting) this.starting = undefined
+    }
+  }
+
+  private async start(): Promise<string> {
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
       if (url.pathname !== '/oauth/callback') {

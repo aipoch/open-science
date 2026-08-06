@@ -474,6 +474,41 @@ describe('ConnectorService', () => {
       expect(call).not.toHaveBeenCalled()
     })
 
+    it('fails closed when legacy custom Connectors derive the same route', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-duplicate-a',
+              name: 'Duplicate MCP',
+              transport: 'stdio',
+              command: 'first-command',
+              enabled: true
+            },
+            {
+              id: 'srv-duplicate-b',
+              name: 'Duplicate-MCP!',
+              transport: 'stdio',
+              command: 'second-command',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('duplicate-mcp', 'do_thing', {}, internal)).rejects.toThrow(
+        /unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
     it('does not discover or dispatch a custom server blocked while approval is pending', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
@@ -1200,6 +1235,58 @@ describe('ConnectorService specialist capability gate', () => {
       )
     ).rejects.toThrow('specialist_capability_denied')
     expect(localHandler).toHaveBeenCalledTimes(3)
+  })
+
+  it('accepts a legacy custom Connector UUID as a Specialist capability alias', async () => {
+    const call = vi.fn().mockResolvedValue({ ok: true })
+    const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
+    let current = specialist({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['custom-server-uuid'],
+        connectorTools: []
+      }
+    })
+    const svc = new ConnectorService({
+      mcpClientManager: { call, listTools },
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [
+          {
+            id: 'custom-server-uuid',
+            slug: 'public-route',
+            name: 'Public Route',
+            transport: 'stdio',
+            command: 'npx',
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined,
+      resolveSpecialistProfile: async () => current
+    })
+    const context = {
+      origin: 'agent' as const,
+      sessionId: 'legacy-specialist-session',
+      specialistId: current.id
+    }
+
+    await expect(svc.call('public-route', 'do_thing', {}, context)).resolves.toEqual({ ok: true })
+
+    current = specialist({
+      capabilityMode: 'full',
+      fullAccess: {
+        excludedSkillIds: [],
+        excludedConnectorIds: ['custom-server-uuid'],
+        connectorTools: []
+      }
+    })
+    await expect(svc.call('public-route', 'do_thing', {}, context)).rejects.toThrow(
+      'specialist_capability_denied'
+    )
+    expect(call).toHaveBeenCalledOnce()
   })
 
   it('fails closed for missing agent session/profile/connector without exposing call data', async () => {

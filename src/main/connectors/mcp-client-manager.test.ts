@@ -9,7 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
 import { McpClientManager, buildTransport } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
-import type { PersistentOAuthClientProvider } from './oauth-client'
+import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -261,6 +261,94 @@ describe('McpClientManager', () => {
 
     await expect(pending).rejects.toThrow('connection was superseded')
     expect(openExternal).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
+  it('honors cancellation while the OAuth callback server is starting', async () => {
+    let finishStartup!: (redirectUrl: string) => void
+    const startup = new Promise<string>((resolve) => {
+      finishStartup = resolve
+    })
+    const ensureStarted = vi
+      .spyOn(OAuthCallbackServer.prototype, 'ensureStarted')
+      .mockReturnValue(startup)
+    const waitFor = vi.spyOn(OAuthCallbackServer.prototype, 'waitFor')
+    const connect = vi.spyOn(Client.prototype, 'connect')
+    const manager = new McpClientManager()
+    const oauthConfig: CustomMcpServerConfig = {
+      id: 'oauth-startup-cancel',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    }
+
+    const pending = manager.authenticate(oauthConfig)
+    await vi.waitFor(() => expect(ensureStarted).toHaveBeenCalledOnce())
+    await manager.cancelAuthentication(oauthConfig.id)
+    finishStartup('http://127.0.0.1:4567/oauth/callback')
+
+    await expect(pending).rejects.toThrow('connection was superseded')
+    expect(waitFor).not.toHaveBeenCalled()
+    expect(connect).not.toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
+  it('closes the active OAuth client when authentication is cancelled', async () => {
+    let markConnectStarted!: () => void
+    let rejectConnect!: (error: Error) => void
+    const connectStarted = new Promise<void>((resolve) => {
+      markConnectStarted = resolve
+    })
+    vi.spyOn(Client.prototype, 'connect').mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectConnect = reject
+          markConnectStarted()
+        })
+    )
+    const close = vi.spyOn(Client.prototype, 'close').mockImplementationOnce(async () => {
+      rejectConnect(new Error('connection cancelled'))
+    })
+    const manager = new McpClientManager()
+    const oauthConfig: CustomMcpServerConfig = {
+      id: 'oauth-active-cancel',
+      name: 'OAuth server',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    }
+
+    const pending = manager.authenticate(oauthConfig)
+    await connectStarted
+    await manager.cancelAuthentication(oauthConfig.id)
+
+    await expect(pending).rejects.toThrow('connection cancelled')
+    expect(close).toHaveBeenCalled()
+    await manager.closeAll()
+  })
+
+  it('cancels the OAuth callback when transport setup fails', async () => {
+    const cancel = vi.fn()
+    vi.spyOn(OAuthCallbackServer.prototype, 'ensureStarted').mockResolvedValue(
+      'http://127.0.0.1:4567/oauth/callback'
+    )
+    vi.spyOn(OAuthCallbackServer.prototype, 'waitFor').mockReturnValue({
+      promise: new Promise(() => undefined),
+      cancel
+    })
+    const manager = new McpClientManager()
+
+    await expect(
+      manager.authenticate({
+        id: 'oauth-invalid-url',
+        name: 'OAuth server',
+        transport: 'streamable_http',
+        url: 'not a url',
+        oauth: {}
+      })
+    ).rejects.toThrow()
+    expect(cancel).toHaveBeenCalledOnce()
     await manager.closeAll()
   })
 

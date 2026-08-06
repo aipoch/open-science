@@ -159,7 +159,7 @@ describe('SpecialistEditor', () => {
       ],
       customServers: [
         {
-          id: 'broken-server',
+          id: 'broken-server-uuid',
           slug: 'broken-server',
           name: 'Broken Server',
           transport: 'stdio',
@@ -186,7 +186,7 @@ describe('SpecialistEditor', () => {
             },
             selectedCapabilities: {
               skillIds: [],
-              connectorIds: ['Broken Server'],
+              connectorIds: ['broken-server-uuid'],
               connectorTools: []
             },
             revision: 1
@@ -214,6 +214,7 @@ describe('SpecialistEditor', () => {
     // broadening the profile. Main-disabled connectors (PubMed) are not in the list yet.
     expect(document.body.textContent).toContain('Broken Server')
     expect(document.body.textContent).toContain('Unavailable — unavailable')
+    expect(document.body.textContent).not.toContain('broken-server-uuid')
 
     // Remove the broken server, then add Chemistry from the add menu.
     await act(async () => {

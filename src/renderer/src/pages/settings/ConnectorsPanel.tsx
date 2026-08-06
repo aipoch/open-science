@@ -63,9 +63,9 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'name' | 'slug'>
+  server: Pick<CustomServerView, 'id' | 'name' | 'slug'>
 ): string[] => {
-  const aliases = new Set([server.slug, server.name])
+  const aliases = new Set([server.slug, server.name, server.id])
   return items
     .flatMap((item) => {
       if (item.kind === 'reviewer') return []

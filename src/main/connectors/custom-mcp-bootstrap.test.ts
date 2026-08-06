@@ -95,7 +95,12 @@ describe('selectEnabledCustomServers', () => {
     command: 'npx',
     enabled: true
   }
-  const disabledServer: StoredCustomMcpServer = { ...stdioServer, id: 'srv-off', enabled: false }
+  const disabledServer: StoredCustomMcpServer = {
+    ...stdioServer,
+    id: 'srv-off',
+    name: 'Disabled Server',
+    enabled: false
+  }
   const remoteServer: StoredCustomMcpServer = {
     id: 'srv-remote',
     name: 'Remote Server',
@@ -113,17 +118,29 @@ describe('selectEnabledCustomServers', () => {
   const unauthenticatedOAuthServer: StoredCustomMcpServer = {
     ...remoteServer,
     id: 'srv-oauth-waiting',
+    name: 'OAuth Waiting',
     oauth: {}
   }
   const authenticatedOAuthServer: StoredCustomMcpServer = {
     ...unauthenticatedOAuthServer,
     id: 'srv-oauth-ready',
+    name: 'OAuth Ready',
     oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } }
   }
   const bundledRouteCollision: StoredCustomMcpServer = {
     ...stdioServer,
     id: 'srv-reserved-route',
     name: 'Chemistry'
+  }
+  const duplicateRouteA: StoredCustomMcpServer = {
+    ...stdioServer,
+    id: 'srv-duplicate-a',
+    name: 'Duplicate MCP'
+  }
+  const duplicateRouteB: StoredCustomMcpServer = {
+    ...stdioServer,
+    id: 'srv-duplicate-b',
+    name: 'Duplicate-MCP!'
   }
 
   it('returns enabled servers across all supported transports', () => {
@@ -137,7 +154,9 @@ describe('selectEnabledCustomServers', () => {
         sseServer,
         unauthenticatedOAuthServer,
         authenticatedOAuthServer,
-        bundledRouteCollision
+        bundledRouteCollision,
+        duplicateRouteA,
+        duplicateRouteB
       ]
     }
 

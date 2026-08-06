@@ -208,7 +208,7 @@ export class ConnectorService {
     const access = await this.resolveAccess(
       connector,
       context,
-      custom ? [customConnectorSlug(custom), custom.name] : [connector]
+      custom ? [customConnectorSlug(custom), custom.name, custom.id] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -216,7 +216,7 @@ export class ConnectorService {
         access.specialistScoped ? undefined : `connector not enabled: ${connector}`
       )
     }
-    return this.callCustom(custom, method, args, context, access)
+    return this.callCustom(custom, customServers, method, args, context, access)
   }
 
   private async resolveAccess(
@@ -274,6 +274,7 @@ export class ConnectorService {
 
   private async callCustom(
     custom: NonNullable<StoredConnectors['customMcpServers']>[number],
+    customServers: readonly StoredCustomMcpServer[],
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
@@ -286,7 +287,9 @@ export class ConnectorService {
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError('connector_disabled', `connector not enabled: ${custom.name}`)
     }
-    if (!this.isCustomConfigRunnable(custom)) throw new ConnectorGateError('connector_unavailable')
+    if (!this.isCustomConfigRunnable(custom, customServers)) {
+      throw new ConnectorGateError('connector_unavailable')
+    }
     if (custom.oauth && !custom.oauthState?.tokens?.access_token) {
       throw new ConnectorGateError('connector_unauthenticated')
     }
@@ -400,9 +403,10 @@ export class ConnectorService {
   }
 
   private isCustomConfigRunnable(
-    custom: NonNullable<StoredConnectors['customMcpServers']>[number]
+    custom: NonNullable<StoredConnectors['customMcpServers']>[number],
+    customServers: readonly StoredCustomMcpServer[]
   ): boolean {
-    if (!isCustomMcpServerRouteSafe(custom)) return false
+    if (!isCustomMcpServerRouteSafe(custom, customServers)) return false
     if (custom.transport === 'stdio') return Boolean(custom.command)
     return Boolean(custom.url)
   }
@@ -465,13 +469,14 @@ export class ConnectorService {
 
     for (;;) {
       const connectors = await this.currentConnectors()
-      const current = (connectors?.customMcpServers ?? []).find((server) => server.id === custom.id)
+      const customServers = connectors?.customMcpServers ?? []
+      const current = customServers.find((server) => server.id === custom.id)
       if (!current) throw new ConnectorGateError('connector_unavailable')
       this.assertCustomServerCurrent(current, generation)
       if (!access.bypassMainEnablement && !current.enabled) {
         throw new ConnectorGateError('connector_disabled', `connector not enabled: ${current.name}`)
       }
-      if (!this.isCustomConfigRunnable(current)) {
+      if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
       }
 

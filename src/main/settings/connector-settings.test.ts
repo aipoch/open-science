@@ -227,6 +227,32 @@ describe('ConnectorSettingsModule', () => {
     })
   })
 
+  it('fails closed when legacy Connectors derive the same route', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-duplicate-a',
+      name: 'Duplicate MCP',
+      transport: 'stdio',
+      enabled: true,
+      command: 'first-command'
+    })
+    await repository.addCustomServer({
+      id: 'legacy-duplicate-b',
+      name: 'Duplicate-MCP!',
+      transport: 'stdio',
+      enabled: true,
+      command: 'second-command'
+    })
+
+    const snapshot = await service.listConnectors()
+    expect(snapshot.customServers).toHaveLength(2)
+    expect(snapshot.customServers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ enabled: false, availability: 'unavailable' }),
+        expect.objectContaining({ enabled: false, availability: 'unavailable' })
+      ])
+    )
+  })
+
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await service.addCustomServer({
       name: 'example-export',

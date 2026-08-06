@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from 'vitest'
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 
 describe('OAuthCallbackServer', () => {
+  it('reuses one listener for concurrent startup', async () => {
+    const server = new OAuthCallbackServer()
+
+    const redirectUrls = await Promise.all([server.ensureStarted(), server.ensureStarted()])
+
+    expect(new Set(redirectUrls).size).toBe(1)
+    await server.close()
+  })
+
   it('accepts only the pending state and returns the authorization code', async () => {
     const server = new OAuthCallbackServer()
     const redirectUrl = await server.ensureStarted()

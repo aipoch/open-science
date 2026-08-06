@@ -205,9 +205,10 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id: [...form.excludedConnectorIds, ...form.connectorIds].includes(server.name)
-          ? server.name
-          : server.slug,
+        id:
+          [server.id, server.name].find((alias) =>
+            [...form.excludedConnectorIds, ...form.connectorIds].includes(alias)
+          ) ?? server.slug,
         name: server.name,
         description: server.description,
         mainEnabled: server.enabled,
@@ -284,7 +285,9 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id: form.connectorIds.includes(server.name) ? server.name : server.slug,
+        id:
+          [server.id, server.name].find((alias) => form.connectorIds.includes(alias)) ??
+          server.slug,
         name: server.name,
         description: server.description,
         mainEnabled: server.enabled,
