@@ -87,6 +87,7 @@ export type AgentBackendSelection = Readonly<{
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
+  forceCodexNativeResponsesCompatibility?: boolean
 }
 
 export type ExplicitAgentBackendTarget = Readonly<{
@@ -125,7 +126,13 @@ export type AgentBackendConnectorPort = Pick<ConnectorSettingsModule, 'enabledCo
 
 type BridgeBasePort = Pick<
   ResponsesBridge,
-  'start' | 'close' | 'selectSkills' | 'registerReviewerSession' | 'unregisterReviewerSession'
+  | 'start'
+  | 'close'
+  | 'selectSkills'
+  | 'registerReviewerSession'
+  | 'unregisterReviewerSession'
+  | 'registerToolLessSession'
+  | 'unregisterToolLessSession'
 >
 
 type ResponsesBridgePort = BridgeBasePort &
@@ -443,6 +450,19 @@ export class AgentBackendResolver {
     return { frameworkId: this.resolveConfiguredFrameworkId(settings) }
   }
 
+  async captureExplicitTarget(): Promise<ExplicitAgentBackendTarget> {
+    const settings = await this.readSettings()
+    if (!settings.activeProviderId) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
+    return Object.freeze({
+      frameworkId: this.resolveConfiguredFrameworkId(settings),
+      providerId: settings.activeProviderId,
+      model: settings.activeModel
+        ? Object.freeze({ kind: 'required' as const, id: settings.activeModel })
+        : Object.freeze({ kind: 'provider-default' as const }),
+      reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT
+    })
+  }
+
   async resolveSelection(
     selection: AgentBackendSelection,
     context: AgentBackendResolutionContext = {}
@@ -536,7 +556,19 @@ export class AgentBackendResolver {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
-    const modelRoute = modelRouteFor(frameworkId, target)
+    const configuredModelRoute = modelRouteFor(frameworkId, target)
+    const forceNativeResponsesCompatibility =
+      context.forceCodexNativeResponsesCompatibility === true &&
+      framework.id === 'codex' &&
+      configuredModelRoute === 'codex-responses'
+    if (forceNativeResponsesCompatibility && isCodexSubscriptionProvider(target.provider.type)) {
+      throw new Error(
+        'Artifact code reconstruction is unavailable with Codex subscription authentication.'
+      )
+    }
+    const modelRoute = forceNativeResponsesCompatibility
+      ? 'codex-responses-compatibility'
+      : configuredModelRoute
     const resolvedEffort = resolvedModelEffort(effortIntent, target)
     const sessionEffort: ModelReasoningEffort | undefined =
       resolvedEffort === 'default' ? undefined : resolvedEffort
@@ -547,6 +579,10 @@ export class AgentBackendResolver {
     const connectorInstructions = renderConnectorInstructions(
       this.connectors.enabledConnectorIds(settings.connectors)
     )
+    const claudeSystemPromptAppends = [
+      ...(context.systemPromptAppends ?? []),
+      ...(connectorInstructions ? [connectorInstructions] : [])
+    ]
 
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
@@ -588,7 +624,9 @@ export class AgentBackendResolver {
           contextWindow,
           ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
           contextUsageModel: target.effectiveModel,
-          ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
+          ...(claudeSystemPromptAppends.length > 0
+            ? { systemPromptAppends: claudeSystemPromptAppends }
+            : {}),
           ...(bridgeLease ? { anthropicBridgeLease: bridgeLease } : {})
         }
       } catch (error) {
@@ -670,7 +708,7 @@ export class AgentBackendResolver {
           hasCodexProviderTransport ? codexProviderTargets : undefined,
           effortIntent
         )
-      : target.needsNativeResponsesCompatibility
+      : target.needsNativeResponsesCompatibility || forceNativeResponsesCompatibility
         ? await this.ensureNativeResponsesCompatibility(
             target,
             hasCodexProviderTransport ? codexProviderTargets : undefined
@@ -1254,6 +1292,10 @@ export class AgentBackendResolver {
           leasedEntry.bridge.registerReviewerSession(promptCacheKey),
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
+        registerToolLessSession: (promptCacheKey) =>
+          leasedEntry.bridge.registerToolLessSession(promptCacheKey),
+        unregisterToolLessSession: (promptCacheKey) =>
+          leasedEntry.bridge.unregisterToolLessSession(promptCacheKey),
         setReasoningEffort: (effort) => leasedEntry.bridge.setReasoningEffort(effort),
         setModelTarget: (target) => leasedEntry.bridge.setModelTarget(target),
         release
@@ -1339,6 +1381,10 @@ export class AgentBackendResolver {
           leasedEntry.proxy.registerReviewerSession(promptCacheKey),
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
+        registerToolLessSession: (promptCacheKey) =>
+          leasedEntry.proxy.registerToolLessSession(promptCacheKey),
+        unregisterToolLessSession: (promptCacheKey) =>
+          leasedEntry.proxy.unregisterToolLessSession(promptCacheKey),
         setModelTarget: (target) => leasedEntry.proxy.setModelTarget(target),
         release
       },

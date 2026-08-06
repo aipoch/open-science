@@ -88,6 +88,8 @@ const makeResponsesBridgeDouble = (
   selectSkills: vi.fn(async () => []),
   registerReviewerSession: vi.fn(),
   unregisterReviewerSession: vi.fn(() => false),
+  registerToolLessSession: vi.fn(),
+  unregisterToolLessSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setReasoningEffort: vi.fn(),
   setModelTarget: vi.fn()
@@ -113,6 +115,8 @@ const makeNativeResponsesProxyDouble = (
   selectSkills: vi.fn(async () => []),
   registerReviewerSession: vi.fn(),
   unregisterReviewerSession: vi.fn(() => false),
+  registerToolLessSession: vi.fn(),
+  unregisterToolLessSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setModelTarget: vi.fn()
 })
@@ -367,6 +371,85 @@ describe('AgentBackendResolver construction and selection', () => {
 })
 
 describe('AgentBackendResolver configured and explicit targets', () => {
+  it('captures the click-time provider, model, framework, and effort as one explicit target', async () => {
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'codex', reasoningEffort: 'max' })
+    })
+
+    await expect(harness.resolver.captureExplicitTarget()).resolves.toEqual({
+      frameworkId: 'codex',
+      providerId: 'provider-a',
+      model: { kind: 'required', id: 'model-a' },
+      reasoningEffort: 'max'
+    })
+    expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
+    expectRuntimeNotStarted(harness.runtime)
+  })
+
+  it('forces direct API-key Codex Responses through the existing compatibility proxy', async () => {
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'codex' }),
+      targetOverride: () => ({
+        apiEndpoints: ['responses'],
+        needsChatResponsesBridge: false,
+        needsNativeResponsesCompatibility: false,
+        provider: { apiEndpoints: ['responses'] }
+      })
+    })
+
+    const backend = await harness.resolver.resolveExplicitTarget(
+      {
+        frameworkId: 'codex',
+        providerId: 'provider-a',
+        model: { kind: 'required', id: 'model-a' },
+        reasoningEffort: 'high'
+      },
+      { forceCodexNativeResponsesCompatibility: true }
+    )
+
+    expect(backend.modelRoute).toBe('codex-responses-compatibility')
+    expect(harness.createNativeResponsesProxy).toHaveBeenCalledOnce()
+    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+    expect(backend.responsesBridgeLease).toBeDefined()
+    await backend.responsesBridgeLease?.release()
+  })
+
+  it('fails closed for Codex subscription reconstruction before starting a runtime', async () => {
+    const provider: StoredProvider = {
+      id: 'builtin-codex-subscription',
+      type: 'codex-isolated',
+      codexAuthMode: 'isolated',
+      name: 'Codex subscription',
+      model: 'gpt-5.4'
+    }
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: provider.model,
+        agentFrameworkId: 'codex'
+      }),
+      targetOverride: () => ({
+        apiEndpoints: ['responses'],
+        provider: { apiEndpoints: ['responses'] }
+      })
+    })
+
+    await expect(
+      harness.resolver.resolveExplicitTarget(
+        {
+          frameworkId: 'codex',
+          providerId: provider.id,
+          model: { kind: 'required', id: 'gpt-5.4' },
+          reasoningEffort: 'high'
+        },
+        { forceCodexNativeResponsesCompatibility: true }
+      )
+    ).rejects.toThrow('unavailable with Codex subscription authentication')
+    expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
+    expectRuntimeNotStarted(harness.runtime)
+  })
+
   it('registers third-party Claude model ids through canonical override lanes', async () => {
     const provider: StoredProvider = {
       ...makeStoredProvider('provider-a', 'third-party/model-a'),

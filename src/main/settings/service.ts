@@ -86,7 +86,8 @@ import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-ma
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
-  type AgentBackendSelection
+  type AgentBackendSelection,
+  type ExplicitAgentBackendTarget
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
@@ -922,6 +923,17 @@ class SettingsService {
   // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
   async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
     return this.backendResolver.captureConfiguredSelection()
+  }
+
+  async captureActiveExplicitAgentBackendTarget(): Promise<ExplicitAgentBackendTarget> {
+    return this.backendResolver.captureExplicitTarget()
+  }
+
+  async resolveExplicitAgentBackend(
+    target: ExplicitAgentBackendTarget,
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
+    return this.backendResolver.resolveExplicitTarget(target, context)
   }
 
   async resolveAgentBackend(

@@ -33,7 +33,9 @@ import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { ArchiveCoordinator } from './archive/coordinator'
+import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
@@ -1163,6 +1165,36 @@ const createApplicationModules = async (
   runtime.setPromptAdmissionGuard((sessionId) =>
     archiveCoordinator.assertSessionAvailableById(sessionId)
   )
+  const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
+  const codeReconstructionRunner = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      configRoot,
+      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context)
+    },
+    (options) => {
+      const runner = new ArtifactCodeReconstructionRunner(options)
+      return {
+        name: 'artifact-code-reconstruction-runner',
+        capability: runner,
+        dispose: () => runner.shutdown()
+      }
+    }
+  )
+  void codeReconstructionRunner
+    .sweepStaleProfiles()
+    .catch((error) =>
+      codeReconstructionLog.error(
+        'stale reconstruction profile cleanup failed',
+        diagnosticErrorFields(error)
+      )
+    )
+  const codeReconstruction = new ArtifactCodeReconstructionService({
+    provenance: artifactProvenanceRepository,
+    runner: codeReconstructionRunner
+  })
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
     assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
   })
@@ -1634,6 +1666,7 @@ const createApplicationModules = async (
     getActiveArtifactRunIds: () =>
       runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
+    codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })

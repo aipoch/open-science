@@ -41,6 +41,33 @@ describe('claudeCodeFramework', () => {
     })
   })
 
+  it('allows an isolated session to disable tools and user setting sources', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: ['Reconstruct from inert evidence only.'],
+      sessionOptions: {
+        tools: [],
+        skills: [],
+        plugins: [],
+        settings: {},
+        settingSources: [],
+        persistSession: false
+      }
+    })
+
+    expect(setup.meta).toMatchObject({
+      claudeCode: {
+        options: {
+          tools: [],
+          skills: [],
+          plugins: [],
+          settings: {},
+          settingSources: [],
+          persistSession: false
+        }
+      }
+    })
+  })
+
   it('preserves an explicit empty Specialist whitelist while Main omits it', () => {
     expect(
       claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [], skillWhitelist: [] }).meta

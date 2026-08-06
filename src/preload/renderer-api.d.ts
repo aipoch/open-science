@@ -37,6 +37,11 @@ import type {
   GetArtifactVersionProvenanceRequest
 } from '../shared/artifact-provenance'
 import type {
+  ArtifactCodeReconstructionState,
+  GenerateArtifactCodeReconstructionRequest,
+  GetArtifactCodeReconstructionRequest
+} from '../shared/artifact-code-reconstruction'
+import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -645,6 +650,12 @@ export interface OpenScienceAPI {
     getVersionReview(
       request: GetArtifactVersionProvenanceRequest
     ): Promise<ArtifactVersionReviewProvenance>
+    getCodeReconstruction(
+      request: GetArtifactCodeReconstructionRequest
+    ): Promise<ArtifactCodeReconstructionState>
+    generateCodeReconstruction(
+      request: GenerateArtifactCodeReconstructionRequest
+    ): Promise<ArtifactCodeReconstructionState>
     resolveVersionDescriptors(
       request: ResolveArtifactVersionDescriptorsRequest
     ): Promise<ArtifactVersionDescriptor[]>

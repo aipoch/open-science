@@ -71,8 +71,8 @@ export const claudeCodeFramework: AgentFramework = {
         emitRawSDKMessages: [{ type: 'result' }],
         options: {
           tools: CLAUDE_CODE_BUILTIN_TOOLS,
-          ...ctx.sessionOptions,
           settingSources: ['user'],
+          ...ctx.sessionOptions,
           ...(ctx.skillWhitelist !== undefined ? { skills: ctx.skillWhitelist } : {})
         }
       }

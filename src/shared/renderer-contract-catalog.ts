@@ -171,7 +171,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['respondPlan', 'acp:respond-plan'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
   ]),
   group('artifacts', 'artifacts', [
-    ['finalizeRunArtifacts', 'artifacts:finalize-run'], ['getLineage', 'artifacts:get-lineage'], ['getVersionExecution', 'artifacts:get-version-execution'],
+    ['finalizeRunArtifacts', 'artifacts:finalize-run'], ['generateCodeReconstruction', 'artifacts:generate-code-reconstruction'], ['getCodeReconstruction', 'artifacts:get-code-reconstruction'],
+    ['getLineage', 'artifacts:get-lineage'], ['getVersionExecution', 'artifacts:get-version-execution'],
     ['getVersionMessages', 'artifacts:get-version-messages'], ['getVersionProvenance', 'artifacts:get-version-provenance'],
     ['getVersionReview', 'artifacts:get-version-review'], ['listProjectFiles', 'artifacts:list-project-files'], ['openFile', 'artifacts:open-file', LOCAL],
     ['readPreview', 'artifacts:read-preview'], ['reconcilePendingArtifacts', 'artifacts:reconcile-pending'],

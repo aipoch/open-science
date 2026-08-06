@@ -143,6 +143,14 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: Artifacts.FinalizeRunArtifactsRequest],
     Artifacts.FinalizeRunArtifactsResult
   >('artifacts:finalize-run'),
+  artifactGenerateCodeReconstruction: artifactCommand(
+    'artifacts:generate-code-reconstruction',
+    'generateCodeReconstruction'
+  ),
+  artifactGetCodeReconstruction: artifactCommand(
+    'artifacts:get-code-reconstruction',
+    'getCodeReconstruction'
+  ),
   artifactGetLineage: artifactCommand('artifacts:get-lineage', 'getLineage'),
   artifactGetVersionExecution: artifactCommand(
     'artifacts:get-version-execution',
@@ -242,6 +250,8 @@ const dataContentApplicationCommands = Object.freeze({
 const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('artifacts', [
     dataContentApplicationCommands.artifactFinalizeRun,
+    dataContentApplicationCommands.artifactGenerateCodeReconstruction,
+    dataContentApplicationCommands.artifactGetCodeReconstruction,
     dataContentApplicationCommands.artifactGetLineage,
     dataContentApplicationCommands.artifactGetVersionExecution,
     dataContentApplicationCommands.artifactGetVersionMessages,
@@ -361,6 +371,10 @@ const registerDataContentApplicationCommands = (
           }
         }
       },
+      'artifacts:generate-code-reconstruction': ({ args }) =>
+        dependencies.artifacts.generateCodeReconstruction(args[0]),
+      'artifacts:get-code-reconstruction': ({ args }) =>
+        dependencies.artifacts.getCodeReconstruction(args[0]),
       'artifacts:get-lineage': ({ args }) => dependencies.artifacts.getLineage(args[0]),
       'artifacts:get-version-execution': ({ args }) =>
         dependencies.artifacts.getVersionExecution(args[0]),

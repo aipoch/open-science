@@ -511,6 +511,10 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('artifacts.getVersionMessages', request),
     getVersionReview: (request) =>
       electronRendererContracts.invoke('artifacts.getVersionReview', request),
+    getCodeReconstruction: (request) =>
+      electronRendererContracts.invoke('artifacts.getCodeReconstruction', request),
+    generateCodeReconstruction: (request) =>
+      electronRendererContracts.invoke('artifacts.generateCodeReconstruction', request),
     resolveVersionDescriptors: (request) =>
       electronRendererContracts.invoke('artifacts.resolveVersionDescriptors', request)
   },

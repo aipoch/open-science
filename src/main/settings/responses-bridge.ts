@@ -1050,6 +1050,8 @@ export class ResponsesBridge {
   private readonly reasoningByCallId = new Map<string, string>()
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
+  private readonly toolLessSessionKeys = new Set<string>()
+  private readonly scopedToolLessSessionKeys = new Set<string>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -1203,6 +1205,16 @@ export class ResponsesBridge {
     return this.scopedReviewerSessionKeys.delete(promptCacheKey)
   }
 
+  registerToolLessSession(promptCacheKey: string): void {
+    this.toolLessSessionKeys.add(promptCacheKey)
+    this.scopedToolLessSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterToolLessSession(promptCacheKey: string): boolean {
+    this.toolLessSessionKeys.delete(promptCacheKey)
+    return this.scopedToolLessSessionKeys.delete(promptCacheKey)
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     if (this.connection) return this.connection
     const token = randomBytes(24).toString('hex')
@@ -1248,6 +1260,8 @@ export class ResponsesBridge {
     this.reasoningByCallId.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
+    this.toolLessSessionKeys.clear()
+    this.scopedToolLessSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -1290,14 +1304,20 @@ export class ResponsesBridge {
         typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
       const reviewerScoped =
         promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+      const toolLessScoped =
+        promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
       if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
+      if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
       const namespacedTools = reviewerScoped
         ? (this.target.reviewerScope?.namespacedTools ?? [])
-        : (this.target.namespacedTools ?? [])
+        : toolLessScoped
+          ? []
+          : (this.target.namespacedTools ?? [])
       // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
       // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
       // can call only the scope-bounded reviewer HTTP MCP functions.
-      const scopedBody = reviewerScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
+      const scopedBody =
+        reviewerScoped || toolLessScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
       const chatRequest = responsesToChatRequest(
         scopedBody,
         this.target.model,

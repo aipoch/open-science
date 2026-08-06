@@ -235,6 +235,8 @@ describe('preload bridge — public surface inventory', () => {
       'acp.sendPrompt',
       'acp.setPermissionProfile',
       'artifacts.finalizeRunArtifacts',
+      'artifacts.generateCodeReconstruction',
+      'artifacts.getCodeReconstruction',
       'artifacts.getLineage',
       'artifacts.getVersionExecution',
       'artifacts.getVersionMessages',

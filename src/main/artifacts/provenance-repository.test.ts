@@ -41,6 +41,73 @@ afterEach(async () => {
 })
 
 describe('artifact provenance repository', () => {
+  it('stores reconstruction cache beside the exact owned immutable Version', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client)
+    })
+    const contentStorageKey = 'artifacts/project-1/session-1/.provenance/versions/version-1/content'
+    const contentPath = join(storageRoot, ...contentStorageKey.split('/'))
+    await mkdir(dirname(contentPath), { recursive: true })
+    await writeFile(contentPath, 'artifact bytes')
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        normalizedFilename: 'plot.png',
+        filename: 'plot.png'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'version-1',
+        artifactId: 'artifact-1',
+        versionNumber: 1,
+        filename: 'plot.png',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-1',
+        agentFrameId: 'agent-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1',
+        state: 'finalized',
+        contentStorageKey,
+        evidenceStorageKey:
+          'artifacts/project-1/session-1/.provenance/versions/version-1/evidence.json',
+        sizeBytes: BigInt(14),
+        checksum: 'a'.repeat(64),
+        evidenceJson: '{}',
+        evidenceChecksum: 'b'.repeat(64)
+      }
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+
+    await expect(repository.readCodeReconstructionCache(request)).resolves.toBeUndefined()
+    await repository.writeCodeReconstructionCache(request, '{"schemaVersion":1}\n')
+    await expect(repository.readCodeReconstructionCache(request)).resolves.toBe(
+      '{"schemaVersion":1}\n'
+    )
+    await expect(
+      readFile(join(dirname(contentPath), 'code-reconstruction.json'), 'utf8')
+    ).resolves.toBe('{"schemaVersion":1}\n')
+    await expect(
+      repository.readCodeReconstructionCache({ ...request, appSessionId: 'other-session' })
+    ).rejects.toThrow('Artifact Version not found')
+  })
+
   it('removes a stale orphaned staging directory that has no SQLite lifecycle row', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-orphan-staging-'))
     const client = createProjectDbClient(storageRoot)

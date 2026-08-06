@@ -468,6 +468,54 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it('removes native and namespace tools for a registered one-shot session key', async () => {
+    const upstreamRequests: Record<string, unknown>[] = []
+    const fetchImpl = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Response.json({ id: 'tool-less-response', output: [] })
+      }
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+
+    try {
+      proxy.registerToolLessSession('reconstruction-session')
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: 'reconstruction-session',
+          stream: false,
+          tools: [
+            { type: 'function', name: 'shell_command', parameters: { type: 'object' } },
+            {
+              type: 'namespace',
+              name: 'mcp__open_science_notebook',
+              tools: [{ type: 'function', name: 'repl_execute', parameters: { type: 'object' } }]
+            }
+          ],
+          tool_choice: { type: 'function', name: 'shell_command' }
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequests[0]).toMatchObject({ tools: [], tool_choice: 'auto' })
+      expect(JSON.stringify(upstreamRequests[0])).not.toContain('shell_command')
+      expect(JSON.stringify(upstreamRequests[0])).not.toContain('repl_execute')
+      expect(proxy.unregisterToolLessSession('reconstruction-session')).toBe(true)
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('forwards loopback requests without browser-controlled Fetch Metadata headers', async () => {
     const fetchImpl = vi.fn(
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
