@@ -1,12 +1,19 @@
-# Mirror a published GitHub Release to the website's S3-compatible storage + CDN. Decoupled downstream
-# consumer of release.yml: GitHub Release stays the single source of truth, this job re-publishes its
+# Mirror a published GitHub Release to the website's S3-compatible storage + CDN. GitHub Release stays
+# the single source of truth; release.yml calls this workflow directly after publish, while release
+# events and manual dispatch remain available for externally published releases and backfills. It sends
 # installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
 # Cache correctness is handled purely via Cache-Control headers at upload time (immutable installers,
 # no-cache manifest) — no CDN purge API is needed.
 name: Mirror to website
 
 on:
-  # Auto-run once a Release is published; also runnable by hand to backfill or re-mirror a past tag.
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to mirror (e.g. v0.1.2)'
+        required: true
+        type: string
+  # Also handle externally published releases and manual backfills.
   release:
     types: [published]
   workflow_dispatch:
@@ -43,6 +50,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "${{ steps.ref.outputs.tag }}" --repo "${{ github.repository }}" --dir dist-assets
+
+      # NsisUpdater replaces the version in the new installer URL to resolve the old blockmap. Stage all
+      # published stable Windows blockmaps for their own immutable version directories so a backfill also
+      # repairs releases mirrored before differential compatibility was enforced.
+      - name: Collect historical Windows blockmaps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_TAG: ${{ steps.ref.outputs.tag }}
+        run: |
+          while IFS=$'\t' read -r tag asset_id name; do
+            [ "$tag" = "$CURRENT_TAG" ] && continue
+            version="${tag#v}"
+            if [[ ! "$version" =~ ^[0-9A-Za-z.+-]+$ || "$name" != "$(basename "$name")" ]]; then
+              echo "Unsafe historical release tag: $tag" >&2
+              exit 1
+            fi
+            target="historical-blockmaps/$version/$name"
+            mkdir -p "$(dirname "$target")"
+            [ ! -e "$target" ] || { echo "Duplicate historical blockmap: $target" >&2; exit 1; }
+            gh api \
+              -H "Accept: application/octet-stream" \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$target"
+            gzip -t "$target"
+          done < <(
+            gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | . as $release | select($release.tag_name | startswith("v")) | .assets[] | select(.name | test("-win-x64-setup\\.exe\\.blockmap$"; "i")) | [$release.tag_name, (.id | tostring), .name] | @tsv'
+          )
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -127,6 +163,19 @@ jobs:
           aws configure set aws_access_key_id "$S3_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$S3_SECRET_ACCESS_KEY"
           aws configure set default.region "$S3_REGION"
+
+      - name: Backfill historical Windows blockmaps
+        env:
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: |
+          [ -d historical-blockmaps ] || exit 0
+          while IFS= read -r -d '' blockmap; do
+            version="$(basename "$(dirname "$blockmap")")"
+            aws s3 cp "$blockmap" \
+              "s3://$S3_BUCKET/$S3_PREFIX/releases/$version/$(basename "$blockmap")" \
+              --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          done < <(find historical-blockmaps -type f -name '*-win-x64-setup.exe.blockmap' -print0)
 
       # Installers go to an immutable, per-version path: re-running the same tag overwrites identical
       # bytes (idempotent backfill). The immutable Cache-Control lets the CDN/browsers cache these

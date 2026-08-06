@@ -65,12 +65,65 @@ describe('release certification evidence', () => {
   it('records every real Windows update-drill phase without claiming code signing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'release-evidence-update-'))
     const output = join(root, 'certification-windows-update.json')
+    const updaterObservation = join(root, 'windows-updater-observation.json')
     const environment = {
       GITHUB_SHA: 'abc123',
       GITHUB_RUN_ID: '42',
       GITHUB_RUN_ATTEMPT: '1'
     }
+    await writeFile(
+      updaterObservation,
+      JSON.stringify({
+        schemaVersion: 1,
+        mode: 'electron-updater-differential',
+        feedRequests: 1,
+        blockmapRequests: 2,
+        rangeRequests: 3,
+        fullInstallerRequests: 0,
+        downloadedInstallerBytes: 40,
+        installerBytes: 100,
+        versionedFeed: true,
+        previousInstallerCacheVerified: true,
+        previousVersion: '0.10.0',
+        currentVersion: '0.11.0'
+      })
+    )
 
+    await expect(
+      writeWindowsUpdateEvidence({
+        argv: [
+          '--output',
+          output,
+          '--current-tag',
+          'v0.11.0',
+          '--previous-tag',
+          'v0.10.0',
+          '--status',
+          'passed',
+          '--updater-observation',
+          updaterObservation
+        ],
+        environment
+      })
+    ).resolves.toMatchObject({
+      kind: 'windows-update-drill',
+      checks: {
+        authenticode: 'not-required',
+        electronUpdater: 'passed',
+        incrementalDownload: 'passed',
+        feedCompatibility: 'passed',
+        silentInstall: 'passed',
+        processLock: 'passed',
+        rollback: 'passed',
+        restart: 'passed'
+      }
+    })
+    await expect(
+      writeWindowsUpdateEvidence({
+        argv: ['--output', output, '--current-tag', 'v0.11.0', '--status', 'passed'],
+        environment
+      })
+    ).rejects.toThrow(/previous stable tag/)
     await expect(
       writeWindowsUpdateEvidence({
         argv: [
@@ -85,22 +138,24 @@ describe('release certification evidence', () => {
         ],
         environment
       })
-    ).resolves.toMatchObject({
-      kind: 'windows-update-drill',
-      checks: {
-        authenticode: 'not-required',
-        silentInstall: 'passed',
-        processLock: 'passed',
-        rollback: 'passed',
-        restart: 'passed'
-      }
-    })
+    ).rejects.toThrow(/differential updater observation/)
     await expect(
       writeWindowsUpdateEvidence({
-        argv: ['--output', output, '--current-tag', 'v0.11.0', '--status', 'passed'],
+        argv: [
+          '--output',
+          output,
+          '--current-tag',
+          'v0.12.0',
+          '--previous-tag',
+          'v0.10.0',
+          '--status',
+          'passed',
+          '--updater-observation',
+          updaterObservation
+        ],
         environment
       })
-    ).rejects.toThrow(/previous stable tag/)
+    ).rejects.toThrow(/do not match the release tags/)
     await expect(
       writeWindowsUpdateEvidence({
         argv: ['--output', output, '--current-tag', 'v0.11.0', '--status', 'not-applicable'],
@@ -154,13 +209,32 @@ describe('release certification evidence', () => {
         schemaVersion: 1,
         kind: 'windows-update-drill',
         source: { sha: 'abc123' },
+        currentTag: 'v0.11.0',
+        previousTag: 'v0.10.0',
         status: 'passed',
         checks: {
           authenticode: 'not-required',
+          electronUpdater: 'passed',
+          incrementalDownload: 'passed',
+          feedCompatibility: 'passed',
           silentInstall: 'passed',
           processLock: 'passed',
           rollback: 'passed',
           restart: 'passed'
+        },
+        updater: {
+          schemaVersion: 1,
+          mode: 'electron-updater-differential',
+          feedRequests: 1,
+          blockmapRequests: 2,
+          rangeRequests: 3,
+          fullInstallerRequests: 0,
+          downloadedInstallerBytes: 40,
+          installerBytes: 100,
+          versionedFeed: true,
+          previousInstallerCacheVerified: true,
+          previousVersion: '0.10.0',
+          currentVersion: '0.11.0'
         }
       })
     )

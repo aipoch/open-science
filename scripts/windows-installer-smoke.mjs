@@ -935,6 +935,7 @@ if (invokedAsScript) {
 }
 
 export {
+  assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
   cleanupSmokeRoot,
@@ -943,6 +944,8 @@ export {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  installAndProbe,
+  launchAndProbe,
   packagedMainEntryPath,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
@@ -950,6 +953,8 @@ export {
   requestPackagedAppShutdown,
   runProcess,
   terminateProcessTree,
+  uninstallAndVerify,
+  waitFor,
   waitForShutdownExit,
   windowsProfileEnvironment,
   writeUpgradeSentinel

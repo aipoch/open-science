@@ -125,19 +125,19 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
-  it('runs the installer update drill and full Windows suite before publishing', () => {
+  it('runs differential updater and installer compatibility drills before publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']
 
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBe('build')
-    expect(upgrade['timeout-minutes']).toBe(30)
+    expect(upgrade['timeout-minutes']).toBe(40)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
       with: { 'node-version': 22 }
     })
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
-      'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
+      'npm ci --ignore-scripts --no-audit --no-fund'
     )
     expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
       'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
@@ -145,9 +145,16 @@ describe('post-merge Windows validation', () => {
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
     expect(previous.run).toContain('gh release download')
+    expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
     expect(previous.run).toContain("$_.tagName -like 'v*'")
     expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
+    expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
+      {
+        if: "steps.previous.outputs.available == 'true'",
+        run: expect.stringContaining('scripts/windows-updater-certification.mjs')
+      }
+    )
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
     ).toContain('--previous-installer-dir previous')
@@ -167,6 +174,14 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       'write-windows-update'
     )
+    expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
+      '--updater-observation'
+    )
+    expect(release.jobs.mirror).toMatchObject({
+      needs: 'publish',
+      uses: './.github/workflows/mirror-to-website.yml',
+      with: { tag: '${{ github.ref_name }}' }
+    })
   })
 
   it('validates stable desktop tags on main before starting platform builds', () => {
@@ -201,24 +216,39 @@ describe('post-merge Windows validation', () => {
   })
 
   it('locks mirror dependencies and completes local transforms before configuring credentials', () => {
-    const mirror = readWorkflow('mirror-to-website.yml').jobs.mirror
+    const workflow = readWorkflow('mirror-to-website.yml')
+    const mirror = workflow.jobs.mirror
     const stepNames = mirror.steps?.map(({ name }) => name) ?? []
     const install = findStep(mirror, 'Install manifest dependencies')
     const configureIndex = stepNames.indexOf('Configure AWS credentials')
 
+    expect(workflow.on).toHaveProperty('workflow_call')
     expect(install.run).toBe(
       'npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund'
     )
     expect(mirror.steps?.filter(({ run }) => run?.includes('npm install'))).toEqual([])
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Install manifest dependencies'))
+    expect(configureIndex).toBeGreaterThan(
+      stepNames.indexOf('Collect historical Windows blockmaps')
+    )
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Generate version.json'))
     expect(configureIndex).toBeGreaterThan(stepNames.indexOf('Rewrite update feed paths'))
     expect(configureIndex).toBeGreaterThan(
       stepNames.indexOf('Inject release notes into update feeds')
     )
     expect(stepNames.indexOf('Sync installers to versioned path')).toBeGreaterThan(configureIndex)
+    expect(stepNames.indexOf('Backfill historical Windows blockmaps')).toBeGreaterThan(
+      configureIndex
+    )
     expect(stepNames.indexOf('Upload version.json')).toBeGreaterThan(configureIndex)
     expect(stepNames.indexOf('Upload update feed to channel root')).toBeGreaterThan(configureIndex)
+    const historical = findStep(mirror, 'Collect historical Windows blockmaps')
+    expect(historical.run).toContain('gh api --paginate')
+    expect(historical.run).toContain('application/octet-stream')
+    expect(historical.run).toContain('historical-blockmaps/$version/$name')
+    expect(historical.run).toContain('gzip -t "$target"')
+    const backfill = findStep(mirror, 'Backfill historical Windows blockmaps')
+    expect(backfill.run).toContain('releases/$version/$(basename "$blockmap")')
   })
 
   it('pins external actions in every changed release workflow', () => {

@@ -79,14 +79,18 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   const previousTag = argumentValue(argv, '--previous-tag')
   const status = argumentValue(argv, '--status')
   const reason = argumentValue(argv, '--reason')
+  const updaterObservationPath = argumentValue(argv, '--updater-observation')
   if (!outputArgument || !currentTag || !['passed', 'not-applicable'].includes(status)) {
     throw new Error(
       'Usage: --output <path> --current-tag <tag> [--previous-tag <tag>] ' +
-        '--status <passed|not-applicable>'
+        '--status <passed|not-applicable> [--updater-observation <path>]'
     )
   }
   if (status === 'passed' && !previousTag) {
     throw new Error('A passed Windows update drill requires the previous stable tag.')
+  }
+  if (status === 'passed' && !updaterObservationPath) {
+    throw new Error('A passed Windows update drill requires differential updater observation.')
   }
   if (status === 'not-applicable' && reason !== 'no-previous-stable-release') {
     throw new Error('A non-applicable Windows update drill requires an approved reason.')
@@ -96,6 +100,33 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   }
 
   const check = status === 'passed' ? 'passed' : 'not-applicable'
+  let updater
+  if (updaterObservationPath) {
+    updater = JSON.parse(await readFile(resolve(updaterObservationPath), 'utf8'))
+    if (
+      updater.schemaVersion !== 1 ||
+      updater.mode !== 'electron-updater-differential' ||
+      updater.feedRequests < 1 ||
+      updater.blockmapRequests < 2 ||
+      updater.rangeRequests < 1 ||
+      updater.fullInstallerRequests !== 0 ||
+      updater.downloadedInstallerBytes < 1 ||
+      updater.downloadedInstallerBytes >= updater.installerBytes ||
+      updater.versionedFeed !== true ||
+      updater.previousInstallerCacheVerified !== true ||
+      typeof updater.previousVersion !== 'string' ||
+      typeof updater.currentVersion !== 'string' ||
+      updater.previousVersion === updater.currentVersion
+    ) {
+      throw new Error('Windows updater observation does not prove a differential download.')
+    }
+    if (
+      `v${updater.currentVersion}` !== currentTag ||
+      `v${updater.previousVersion}` !== previousTag
+    ) {
+      throw new Error('Windows updater observation versions do not match the release tags.')
+    }
+  }
   const evidence = {
     schemaVersion: 1,
     kind: 'windows-update-drill',
@@ -109,11 +140,15 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
     status,
     checks: {
       authenticode: 'not-required',
+      electronUpdater: check,
+      incrementalDownload: check,
+      feedCompatibility: check,
       silentInstall: check,
       processLock: check,
       rollback: check,
       restart: check
     },
+    ...(updater ? { updater } : {}),
     ...(status === 'not-applicable' ? { reason } : {})
   }
   await writeFile(resolve(outputArgument), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8')
@@ -185,9 +220,30 @@ const aggregateEvidence = async ({ argv }) => {
     windowsUpdate = JSON.parse(await readFile(updatePath, 'utf8').catch(() => 'null'))
     const passedChecks =
       windowsUpdate?.status === 'passed' &&
-      ['silentInstall', 'processLock', 'rollback', 'restart'].every(
-        (check) => windowsUpdate.checks?.[check] === 'passed'
-      )
+      windowsUpdate.updater?.schemaVersion === 1 &&
+      windowsUpdate.updater?.mode === 'electron-updater-differential' &&
+      windowsUpdate.updater?.feedRequests >= 1 &&
+      windowsUpdate.updater?.blockmapRequests >= 2 &&
+      windowsUpdate.updater?.rangeRequests >= 1 &&
+      windowsUpdate.updater?.fullInstallerRequests === 0 &&
+      windowsUpdate.updater?.downloadedInstallerBytes >= 1 &&
+      windowsUpdate.updater?.downloadedInstallerBytes < windowsUpdate.updater?.installerBytes &&
+      windowsUpdate.updater?.versionedFeed === true &&
+      windowsUpdate.updater?.previousInstallerCacheVerified === true &&
+      typeof windowsUpdate.updater?.previousVersion === 'string' &&
+      typeof windowsUpdate.updater?.currentVersion === 'string' &&
+      windowsUpdate.updater?.previousVersion !== windowsUpdate.updater?.currentVersion &&
+      `v${windowsUpdate.updater?.currentVersion}` === windowsUpdate.currentTag &&
+      `v${windowsUpdate.updater?.previousVersion}` === windowsUpdate.previousTag &&
+      [
+        'electronUpdater',
+        'incrementalDownload',
+        'feedCompatibility',
+        'silentInstall',
+        'processLock',
+        'rollback',
+        'restart'
+      ].every((check) => windowsUpdate.checks?.[check] === 'passed')
     const firstRelease =
       windowsUpdate?.status === 'not-applicable' &&
       windowsUpdate.reason === 'no-previous-stable-release'

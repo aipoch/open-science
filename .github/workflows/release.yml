@@ -61,13 +61,13 @@ jobs:
     secrets: inherit
 
   # The reusable build already hard-gates a fresh NSIS install/start/uninstall. On stable tags, also
-  # install the latest published stable version, upgrade over a live process, roll back over a live
-  # current process, and reinstall/restart the current version. This runs beside macOS notarization.
+  # install the latest published stable version, prove electron-updater uses a differential Range
+  # download, upgrade over a live process, roll back, and restart current. Runs beside notarization.
   windows-upgrade-smoke:
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -80,7 +80,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Download current Windows installer
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -105,10 +105,18 @@ jobs:
             Write-Host "No previous stable release is available; fresh-install smoke already passed."
             exit 0
           }
-          gh release download $tag --pattern '*-win-x64-setup.exe' --dir previous
+          gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "available=true" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Certify Windows electron-updater differential update
+        if: steps.previous.outputs.available == 'true'
+        run: >-
+          node scripts/windows-updater-certification.mjs
+          --current-dir current
+          --previous-dir previous
+          --output windows-updater-observation.json
 
       - name: Drill Windows silent upgrade, process lock, rollback, and restart
         if: steps.previous.outputs.available == 'true'
@@ -128,7 +136,10 @@ jobs:
             '--status', $status
           )
           if ('${{ steps.previous.outputs.available }}' -eq 'true') {
-            $arguments += @('--previous-tag', '${{ steps.previous.outputs.tag }}')
+            $arguments += @(
+              '--previous-tag', '${{ steps.previous.outputs.tag }}',
+              '--updater-observation', 'windows-updater-observation.json'
+            )
           } else {
             $arguments += @('--reason', '${{ steps.previous.outputs.reason }}')
           }
@@ -241,3 +252,13 @@ jobs:
             artifacts/latest-linux.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
+
+  # Releases created with GITHUB_TOKEN do not reliably emit a second workflow run. Invoke the reusable
+  # mirror directly so publication is complete only after the updater feed and installers reach CDN.
+  mirror:
+    needs: publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/mirror-to-website.yml
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}
