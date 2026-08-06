@@ -136,6 +136,7 @@ type AcpApplicationCommandDependencies = Readonly<{
   workflows: AcpHandlerWorkflows
   archiveAvailability?: Readonly<{
     assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
+    assertSessionAvailableById(sessionId: string): Promise<void>
   }>
 }>
 
@@ -154,7 +155,11 @@ const registerAcpCommands = (
       'acp:resume-session': (invocation) =>
         dependencies.workflows.resumeSession(invocation.args[0]),
       'acp:reset-session-context': (invocation) =>
-        dependencies.runtime.resetSessionContext(invocation.args[0]),
+        dependencies.archiveAvailability
+          ? dependencies.archiveAvailability
+              .assertSessionAvailableById(invocation.args[0].sessionId)
+              .then(() => dependencies.runtime.resetSessionContext(invocation.args[0]))
+          : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>
         dependencies.runtime.compactSession(invocation.args[0]),
       'acp:send-prompt': (invocation) => {

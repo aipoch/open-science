@@ -69,7 +69,7 @@ const PermissionUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.token)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-xl border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-xl"
+      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
     >
       <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="max-w-[min(28rem,55vw)] truncate">{undo.message}</span>
@@ -151,7 +151,7 @@ const ArchiveUndoItem = ({
       onKeyDown={(event) => {
         if (event.key === 'Escape') dismiss(undo.key)
       }}
-      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-xl border border-border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-xl"
+      className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
     >
       <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="max-w-[min(28rem,55vw)] truncate">{undo.message}</span>

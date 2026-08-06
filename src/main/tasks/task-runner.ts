@@ -86,6 +86,7 @@ type TaskAgentPromptRequest = {
 }
 
 type TaskAgentPort = {
+  assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
   listAttachedSessionIds(): Promise<string[]>
   createSession(request: TaskAgentCreateSessionRequest): Promise<TaskAgentSession>
   resumeSession(request: TaskAgentResumeSessionRequest): Promise<TaskAgentSession>
@@ -315,6 +316,7 @@ class TaskRunner {
         `Session ${existing.id} does not belong to project ${project.id}.`
       )
     }
+    if (existing) await this.dependencies.agent.assertSessionAvailable(project.id, existing.id)
 
     const userMessageId = this.dependencies.createId()
     const runId = this.dependencies.createId()

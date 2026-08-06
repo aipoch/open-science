@@ -160,6 +160,49 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
 
+  it('applies archive state from an older durable Session update without losing newer local state', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Newer local state',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [
+          {
+            id: 'message-1',
+            role: 'user',
+            content: 'Keep this local message.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 20
+      }
+    ])
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Older durable state',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      archivedAt: 10,
+      createdAt: 1,
+      updatedAt: 10
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Newer local state',
+      archivedAt: 10,
+      messages: [{ id: 'message-1' }]
+    })
+  })
+
   it('restores branch-bound Plan history after saving and hydrating a Session', () => {
     useSessionStore.getState().hydrateSessions(
       [

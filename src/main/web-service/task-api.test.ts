@@ -30,6 +30,7 @@ type TaskAgentMock = {
 }
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
+  assertSessionAvailable: vi.fn<TaskAgentPort['assertSessionAvailable']>(async () => undefined),
   listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
   createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
     sessionId: 'session-created'

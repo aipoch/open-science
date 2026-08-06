@@ -1434,7 +1434,21 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt > session.updatedAt) return state
+      if (existing && existing.updatedAt > session.updatedAt) {
+        if (existing.archivedAt === session.archivedAt) return state
+        const withoutPreviousArchive = { ...existing }
+        delete withoutPreviousArchive.archivedAt
+        const projected: ChatSession = {
+          ...withoutPreviousArchive,
+          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt })
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        }
+      }
       if (existing && existing.updatedAt === session.updatedAt) {
         const flat = mergeDurableUploadProjection(
           existing.messages,

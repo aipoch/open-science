@@ -17,6 +17,10 @@ type AcpTaskAgentRuntime = {
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
 
+type SessionArchiveAvailability = {
+  assertSessionAvailable(projectId: string, sessionId: string): Promise<void>
+}
+
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
   text: request.text,
@@ -32,8 +36,12 @@ const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest =
 const createAcpTaskAgentPort = (
   runtime: AcpTaskAgentRuntime,
   createSessionWorkflow: AcpCreateSessionWorkflow,
-  notifications?: TaskPromptNotifications
+  notifications?: TaskPromptNotifications,
+  archiveAvailability?: SessionArchiveAvailability
 ): TaskAgentPort => ({
+  assertSessionAvailable: async (projectId, sessionId) => {
+    await archiveAvailability?.assertSessionAvailable(projectId, sessionId)
+  },
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
   createSession: (request) =>
     createSessionWorkflow.create({

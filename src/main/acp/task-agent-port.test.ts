@@ -6,6 +6,7 @@ import { createAcpTaskAgentPort } from './task-agent-port'
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
     expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'assertSessionAvailable'
       | 'listAttachedSessionIds'
       | 'createSession'
       | 'resumeSession'
@@ -33,8 +34,12 @@ describe('ACP Task Agent port', () => {
       setPermissionProfile: vi.fn(async () => undefined),
       sendPrompt: vi.fn(async () => undefined)
     }
-    const port = createAcpTaskAgentPort(runtime, { create })
+    const assertSessionAvailable = vi.fn(async () => undefined)
+    const port = createAcpTaskAgentPort(runtime, { create }, undefined, {
+      assertSessionAvailable
+    })
 
+    await port.assertSessionAvailable('project-1', 'session-stable')
     await expect(port.listAttachedSessionIds()).resolves.toEqual(['session-attached'])
     await expect(
       port.createSession({ projectId: 'project-1', permissionProfile: 'auto' })
@@ -71,6 +76,7 @@ describe('ACP Task Agent port', () => {
       projectName: 'project-1',
       permissionProfile: 'auto'
     })
+    expect(assertSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable')
     expect(runtime.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-stable',
       cwd: '/workspace/stable',

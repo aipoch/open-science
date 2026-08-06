@@ -250,6 +250,18 @@ describe('deep-link navigation', () => {
     expect(window.location.search).toBe('')
   })
 
+  it('returns Home when the linked session is archived', async () => {
+    window.history.replaceState({}, '', '/?project=project-1&session=session-1')
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({ sessions: [{ ...session, archivedAt: 2 }] })
+
+    await renderHook({ isHydrated: true, isReady: true })
+
+    expect(useNavigationStore.getState().view).toBe('home')
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(window.location.search).toBe('')
+  })
+
   it('does not rewrite the URL when session content changes without navigation', async () => {
     window.history.replaceState({}, '', '/?project=project-1&session=session-1')
     useProjectStore.setState({ projects: [project], isLoaded: true })

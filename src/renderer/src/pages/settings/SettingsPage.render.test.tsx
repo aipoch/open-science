@@ -213,6 +213,24 @@ const settingsSection = (title: string): HTMLElement | undefined =>
   )
 
 describe('SettingsPage layout', () => {
+  it('anchors Archived at the bottom of Settings navigation', async () => {
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+
+    const archived = navButton('Archived')
+    const remoteControl = navButton('Remote control')
+
+    expect(archived?.parentElement?.parentElement?.parentElement?.className).toContain('mt-auto')
+    expect(
+      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
+        archived as HTMLButtonElement
+      )
+    ).toBeGreaterThan(
+      Array.from(document.body.querySelectorAll('nav[aria-label="Settings"] button')).indexOf(
+        remoteControl as HTMLButtonElement
+      )
+    )
+  })
+
   it('shows and dismisses a settings write failure above the scrolling content', async () => {
     useSettingsStore.setState({
       settingsWriteError: 'Could not save notification preference. Try again.'
@@ -275,8 +293,8 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Permissions, Archived, Runtimes, Storage, General).
-    // Remote access stays isolated from both groups.
+    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, General).
+    // Remote access stays isolated and Archived is anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
     expect(nav?.className).toContain('bg-background')
@@ -296,11 +314,11 @@ describe('SettingsPage layout', () => {
     expect(navItems[5]?.textContent).toContain('Model')
     expect(navItems[6]?.textContent).toContain('Agent')
     expect(navItems[7]?.textContent).toContain('Permissions')
-    expect(navItems[8]?.textContent).toContain('Archived')
-    expect(navItems[9]?.textContent).toContain('Runtimes')
-    expect(navItems[10]?.textContent).toContain('Storage')
-    expect(navItems[11]?.textContent).toContain('General')
-    expect(navItems[12]?.textContent).toContain('Remote control')
+    expect(navItems[8]?.textContent).toContain('Runtimes')
+    expect(navItems[9]?.textContent).toContain('Storage')
+    expect(navItems[10]?.textContent).toContain('General')
+    expect(navItems[11]?.textContent).toContain('Remote control')
+    expect(navItems[12]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()

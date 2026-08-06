@@ -12,6 +12,7 @@ import type { Project } from '../../../shared/projects'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
@@ -208,6 +209,7 @@ describe('useLifecycleSync', () => {
   })
 
   it('clears a selected session when another window archives it', async () => {
+    const removeSessionItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
     await act(async () => {
       listeners.projectCreated?.(project)
       listeners.sessionCreated?.({ session, originClientId: 'web:external' })
@@ -222,6 +224,7 @@ describe('useLifecycleSync', () => {
 
     expect(useNavigationStore.getState().view).toBe('workspace')
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
 
   it('replays deletions after stale initial snapshots hydrate', async () => {

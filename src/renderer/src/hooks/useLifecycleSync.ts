@@ -3,6 +3,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { SessionUpsertEvent } from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 
@@ -113,6 +114,9 @@ const useLifecycleSync = ({
           useSessionStore.getState().selectedSessionId === session.id
         ) {
           useSessionStore.getState().clearSelection()
+        }
+        if (session.archivedAt !== undefined) {
+          usePreviewWorkbenchStore.getState().removeSessionItems(session.id)
         }
       })
     })

@@ -98,3 +98,21 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   await page.getByRole('button', { name: 'Deny', exact: true }).click()
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
 })
+
+test('archives a completed session from its sidebar actions', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
+  const archive = page.getByRole('menuitem', { name: 'Archive' })
+  await expect(archive).toBeEnabled()
+  await archive.click()
+
+  await expect(page.getByTestId('archive-undo-snackbar')).toContainText('Archived session')
+  await expect(page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` })).toBeHidden()
+})

@@ -1156,7 +1156,12 @@ const createApplicationModules = async (
     taskNotifications,
     archiveCoordinator
   )
-  const taskAgent = createAcpTaskAgentPort(runtime, createSessionWorkflow, taskNotifications)
+  const taskAgent = createAcpTaskAgentPort(
+    runtime,
+    createSessionWorkflow,
+    taskNotifications,
+    archiveCoordinator
+  )
   {
     // Framework-specific adapters declare their own session selector. The registry resolves those
     // selectors before its generic fallback, so registration order cannot route a Codex/OpenCode

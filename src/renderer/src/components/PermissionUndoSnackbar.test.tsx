@@ -128,6 +128,9 @@ describe('PermissionUndoSnackbar', () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
 
     const snackbar = container.querySelector<HTMLElement>('[data-testid="archive-undo-snackbar"]')
+    expect(snackbar?.className).toContain('rounded-2xl')
+    expect(snackbar?.className).toContain('shadow-lg')
+    expect(snackbar?.className).not.toContain('shadow-xl')
     const undo = snackbar?.querySelector<HTMLButtonElement>('button:not([aria-label])')
     await act(async () => undo?.click())
 

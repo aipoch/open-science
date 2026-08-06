@@ -131,7 +131,13 @@ type SettingsPanel = {
   Icon: React.ComponentType<{ className?: string }>
 }
 
-const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<SettingsPanel> }> = [
+type SettingsGroup = {
+  label?: string
+  panels: ReadonlyArray<SettingsPanel>
+  bottom?: boolean
+}
+
+const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
     label: 'Capabilities',
     panels: [
@@ -148,7 +154,6 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
       { id: 'model', label: 'Model', Icon: Brain },
       { id: 'agent', label: 'Agent', Icon: Bot },
       { id: 'permissions', label: 'Permissions', Icon: LockKeyhole },
-      { id: 'archived', label: 'Archived', Icon: Archive },
       { id: 'runtimes', label: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', label: 'Storage', Icon: Cloud },
       { id: 'general', label: 'General', Icon: Settings2 }
@@ -157,6 +162,10 @@ const SETTINGS_GROUPS: ReadonlyArray<{ label: string; panels: ReadonlyArray<Sett
   {
     label: 'Remote access',
     panels: [{ id: 'remote-control', label: 'Remote control', Icon: MonitorSmartphone }]
+  },
+  {
+    panels: [{ id: 'archived', label: 'Archived', Icon: Archive }],
+    bottom: true
   }
 ]
 
@@ -718,10 +727,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             )}
           >
             {SETTINGS_GROUPS.map((group) => (
-              <div key={group.label} className="flex flex-col gap-0.5">
-                <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
-                  {group.label}
-                </div>
+              <div
+                key={group.label ?? group.panels[0]?.id}
+                className={cn('flex flex-col gap-0.5', group.bottom && 'mt-auto')}
+              >
+                {group.label ? (
+                  <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
+                    {group.label}
+                  </div>
+                ) : null}
                 <ul className="flex flex-col gap-0.5">
                   {group.panels.map(({ id, label, Icon }) => {
                     const isActive = activePanel === id
