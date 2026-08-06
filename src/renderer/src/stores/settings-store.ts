@@ -13,11 +13,16 @@ import {
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
-import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import {
   createSettingsWriteCoordinator,
   type SettingsWriteCoordinator
 } from './settings-write-coordinator'
+import {
+  createInitialSettingsNavigationState,
+  createSettingsNavigationSlice,
+  type SettingsNavigationActions,
+  type SettingsNavigationState
+} from './settings-navigation-slice'
 import {
   createSettingsPreferencesSlice,
   type SettingsPreferencesActions
@@ -72,87 +77,66 @@ import type {
   ApprovalDecision
 } from '../../../shared/settings'
 
-type SettingsStoreData = RuntimeSetupState & {
-  isLoaded: boolean
-  isLoading: boolean
-  loadError: string | undefined
-  // Latest failed Settings write, shown by the dialog until dismissed or another write starts.
-  settingsWriteError: string | undefined
-  settingsLoadGeneration: number
-  claude: ClaudeInfo
-  activeProviderId: string | undefined
-  claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
-  // Active model within the active provider; undefined means the provider's own default.
-  activeModel: string | undefined
-  providers: ProviderView[]
-  // Selected agent backend and the frameworks available to choose from.
-  agentFrameworkId: AgentFrameworkId
-  agentFrameworks: AgentFrameworkView[]
-  // Detected opencode executable, for the framework-aware detection card.
-  opencode: OpencodeInfo
-  codex: CodexInfo
-  // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
-  // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
-  claudeManaged: boolean
-  opencodeManaged: boolean
-  codexManaged: boolean
-  onboardingCompletedAt: number | undefined
-  // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
-  skills: SkillView[]
-  // Bundled connectors with their enabled/auto-allow state, loaded lazily when the Connectors panel opens.
-  connectors: ConnectorView[]
-  // User-added custom MCP servers, reconciled alongside the connectors list.
-  customServers: CustomServerView[]
-  // Pending per-call connector approval requests (external data-egress gate), oldest first.
-  pendingApprovals: ConnectorApprovalRequest[]
-  // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
-  ncbi: NcbiCredentialsView
-  encryptionAvailable: boolean
-  // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
-  isSettingsOpen: boolean
-  // Panel requested by an external entry point; Settings consumes it after seeding navigation.
-  pendingSettingsPanel?: SettingsPanelId
-  // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
-  pendingSkillId?: string
-  // Specialist to land on when the dialog opens from the switch approval card; consumed once its
-  // editor is seeded. Uses the stable profile id, never the renameable public name.
-  pendingSpecialistId?: string
-  // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
-  packageMirror?: PackageMirror
-  // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
-  reasoningEffort: ReasoningEffort
-  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
-  notificationsEnabled: boolean
-  // Whether conversations receive the app-owned Skill package import tool and instructions.
-  conversationSkillImportEnabled: boolean
-  // Saved Windows titlebar-close behavior. Undefined means ask every time.
-  closePreference: CloseActionPreference | undefined
-  // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
-  appIconVariant: AppIconVariant
-}
+type SettingsStoreData = RuntimeSetupState &
+  SettingsNavigationState & {
+    isLoaded: boolean
+    isLoading: boolean
+    loadError: string | undefined
+    // Latest failed Settings write, shown by the dialog until dismissed or another write starts.
+    settingsWriteError: string | undefined
+    settingsLoadGeneration: number
+    claude: ClaudeInfo
+    activeProviderId: string | undefined
+    claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
+    // Active model within the active provider; undefined means the provider's own default.
+    activeModel: string | undefined
+    providers: ProviderView[]
+    // Selected agent backend and the frameworks available to choose from.
+    agentFrameworkId: AgentFrameworkId
+    agentFrameworks: AgentFrameworkView[]
+    // Detected opencode executable, for the framework-aware detection card.
+    opencode: OpencodeInfo
+    codex: CodexInfo
+    // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
+    // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
+    claudeManaged: boolean
+    opencodeManaged: boolean
+    codexManaged: boolean
+    onboardingCompletedAt: number | undefined
+    // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
+    skills: SkillView[]
+    // Bundled connectors with their enabled/auto-allow state, loaded lazily when the Connectors panel opens.
+    connectors: ConnectorView[]
+    // User-added custom MCP servers, reconciled alongside the connectors list.
+    customServers: CustomServerView[]
+    // Pending per-call connector approval requests (external data-egress gate), oldest first.
+    pendingApprovals: ConnectorApprovalRequest[]
+    // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
+    ncbi: NcbiCredentialsView
+    encryptionAvailable: boolean
+    // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
+    packageMirror?: PackageMirror
+    // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
+    reasoningEffort: ReasoningEffort
+    // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+    notificationsEnabled: boolean
+    // Whether conversations receive the app-owned Skill package import tool and instructions.
+    conversationSkillImportEnabled: boolean
+    // Saved Windows titlebar-close behavior. Undefined means ask every time.
+    closePreference: CloseActionPreference | undefined
+    // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
+    appIconVariant: AppIconVariant
+  }
 
 type SettingsStoreCore = SettingsStoreData &
   ProviderAuthActions &
   SettingsPreferencesActions &
+  SettingsNavigationActions &
   SettingsStoreActions
 
 type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   clearSettingsWriteError: () => void
-  openSettings: () => void
-  openSettingsToPanel: (panel: SettingsPanelId) => void
-  closeSettings: () => void
-  // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
-  openSettingsToSkill: (skillId: string) => void
-  // Opens the dialog straight onto one specialist's editor (used by the switch approval card).
-  openSettingsToSpecialist: (specialistId: string) => void
-  // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
-  openSettingsToCompute: () => void
-  // Clears the requested panel after Settings has seeded its local navigation history.
-  consumePendingSettingsPanel: () => void
-  // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
-  consumePendingSkill: () => void
-  consumePendingSpecialist: () => void
   // Loads the bundled-skill list (enabled state included) from the main process.
   loadSkills: () => Promise<void>
   // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
@@ -220,6 +204,7 @@ type SettingsStore = SettingsStoreCore & RuntimeSetupActions
 
 export const createInitialSettingsState = (): SettingsStoreData => ({
   ...createInitialRuntimeSetupState(),
+  ...createInitialSettingsNavigationState(),
   isLoaded: false,
   isLoading: false,
   loadError: undefined,
@@ -244,10 +229,6 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   pendingApprovals: [],
   ncbi: { hasApiKey: false },
   encryptionAvailable: true,
-  isSettingsOpen: false,
-  pendingSettingsPanel: undefined,
-  pendingSkillId: undefined,
-  pendingSpecialistId: undefined,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
@@ -390,6 +371,7 @@ const createSettingsStoreState = (
     reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
     writeCoordinator
   }),
+  ...createSettingsNavigationSlice({ setState: (patch) => set(patch) }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
   load: (options) => {
@@ -441,57 +423,6 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  openSettings: () => set({ isSettingsOpen: true }),
-
-  openSettingsToPanel: (panel) =>
-    set({
-      isSettingsOpen: true,
-      pendingSettingsPanel: panel,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
-    }),
-
-  // Clearing the pending targets on close stops a later normal open from jumping back to stale state.
-  closeSettings: () =>
-    set({
-      isSettingsOpen: false,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  openSettingsToSkill: (skillId) =>
-    set({
-      isSettingsOpen: true,
-      pendingSkillId: skillId,
-      pendingSpecialistId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  // Deep-link straight to one specialist's editor (used by the specialist switch approval card).
-  openSettingsToSpecialist: (specialistId) =>
-    set({
-      isSettingsOpen: true,
-      pendingSpecialistId: specialistId,
-      pendingSkillId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  // Keep the domain-specific caller API while routing it through the shared panel target.
-  openSettingsToCompute: () =>
-    set({
-      isSettingsOpen: true,
-      pendingSettingsPanel: 'compute',
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
-    }),
-
-  consumePendingSettingsPanel: () => set({ pendingSettingsPanel: undefined }),
-
-  consumePendingSkill: () => set({ pendingSkillId: undefined }),
-
-  consumePendingSpecialist: () => set({ pendingSpecialistId: undefined }),
 
   loadSkills: async () => {
     const skills = await window.api.settings.listSkills()
