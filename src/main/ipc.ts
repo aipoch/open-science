@@ -501,7 +501,12 @@ const createApplicationModules = async (
           ?.getActivePromptSessions()
           .some(
             (session) => session.projectName === projectId && session.sessionId === sessionId
-          ) ?? false
+          ) ?? false,
+      isProjectBusy: (projectId) =>
+        runtimeRef.current
+          ?.getActivePromptSessions()
+          .some((session) => session.projectName === projectId) ?? false,
+      liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
     }
   )
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {

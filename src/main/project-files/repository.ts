@@ -859,13 +859,16 @@ class ManagedFileIndexRepository {
     const limit = normalizeLimit(request.limit)
     const search = normalizeSearch(request.search)
     const cursor = request.cursor ? decodeGroupCursor(request.cursor, request) : undefined
-    const where: Prisma.ManagedFileSessionSyncWhereInput = {
+    const groupWhere: Prisma.ManagedFileSessionSyncWhereInput = {
       projectId: request.projectId,
       deletedAt: null,
       artifactCount: { gt: 0 },
       ...(search?.excludedSessionIds.length
         ? { sessionId: { notIn: search.excludedSessionIds } }
-        : {}),
+        : {})
+    }
+    const where: Prisma.ManagedFileSessionSyncWhereInput = {
+      ...groupWhere,
       ...(cursor
         ? {
             OR: [
@@ -887,7 +890,7 @@ class ManagedFileIndexRepository {
             take: limit + 1
           }),
           client.managedFileSessionSync.count({
-            where: { projectId: request.projectId, deletedAt: null, artifactCount: { gt: 0 } }
+            where: groupWhere
           })
         ])
     const pageRows = rows.slice(0, limit)

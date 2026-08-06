@@ -161,7 +161,11 @@ const registerAcpCommands = (
               .then(() => dependencies.runtime.resetSessionContext(invocation.args[0]))
           : dependencies.runtime.resetSessionContext(invocation.args[0]),
       'acp:compact-session': (invocation) =>
-        dependencies.runtime.compactSession(invocation.args[0]),
+        dependencies.archiveAvailability
+          ? dependencies.archiveAvailability
+              .assertSessionAvailableById(invocation.args[0].sessionId)
+              .then(() => dependencies.runtime.compactSession(invocation.args[0]))
+          : dependencies.runtime.compactSession(invocation.args[0]),
       'acp:send-prompt': (invocation) => {
         if (
           invocation.args[0].planContinuation &&

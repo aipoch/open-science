@@ -24,6 +24,8 @@ type SessionArchivePersistence = {
 
 type SessionRuntimeActivity = {
   isSessionBusy(projectId: string, sessionId: string): boolean
+  isProjectBusy(projectId: string): boolean
+  liveSessionProjectId(sessionId: string): string | undefined
 }
 
 // This is intentionally a narrow in-process gate, not a generic locking service. It makes an
@@ -67,6 +69,9 @@ class ArchiveCoordinator {
       }
       if (request.archived === (currentArchivedAt !== null)) return project
 
+      if (request.archived && this.runtime.isProjectBusy(request.id)) {
+        throw new Error('Finish or stop active sessions before archiving this project.')
+      }
       const sessionIds = request.archived
         ? await this.sessions.assertProjectArchivable(request.id, (sessionId) =>
             this.runtime.isSessionBusy(request.id, sessionId)
@@ -106,22 +111,28 @@ class ArchiveCoordinator {
 
   assertSessionAvailable(projectId: string, sessionId: string): Promise<void> {
     return this.enqueue(async () => {
-      const ownerProjectId = await this.sessions.sessionProjectId(sessionId)
-      if (ownerProjectId && ownerProjectId !== projectId) {
+      const ownerProjectId =
+        (await this.sessions.sessionProjectId(sessionId)) ??
+        this.runtime.liveSessionProjectId(sessionId)
+      if (!ownerProjectId) {
+        throw new Error('Cannot use a Session whose Project owner is unavailable.')
+      }
+      if (ownerProjectId !== projectId) {
         throw new Error('Session does not belong to the requested Project.')
       }
-      // A missing owner is allowed only for an explicitly addressed transient runtime Session. Once
-      // metadata exists, its durable owner is authoritative over caller-supplied project IDs.
-      const resolvedProjectId = ownerProjectId ?? projectId
-      await this.activeProject(resolvedProjectId)
-      await this.sessions.assertSessionAvailable(resolvedProjectId, sessionId)
+      await this.activeProject(ownerProjectId)
+      await this.sessions.assertSessionAvailable(ownerProjectId, sessionId)
     })
   }
 
   assertSessionAvailableById(sessionId: string): Promise<void> {
     return this.enqueue(async () => {
-      const projectId = await this.sessions.sessionProjectId(sessionId)
-      if (!projectId) return
+      const projectId =
+        (await this.sessions.sessionProjectId(sessionId)) ??
+        this.runtime.liveSessionProjectId(sessionId)
+      if (!projectId) {
+        throw new Error('Cannot use a Session whose Project owner is unavailable.')
+      }
       await this.activeProject(projectId)
       await this.sessions.assertSessionAvailable(projectId, sessionId)
     })

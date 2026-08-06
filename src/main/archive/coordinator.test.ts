@@ -34,7 +34,11 @@ describe('ArchiveCoordinator', () => {
       updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
-    const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
     const markRead = vi.fn().mockResolvedValue(undefined)
     coordinator.setMarkReadSessions(markRead)
 
@@ -61,7 +65,11 @@ describe('ArchiveCoordinator', () => {
       updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
-    const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
 
     await expect(
       coordinator.updateProjectArchive({ id: project.id, archived: false, expectedArchivedAt: 39 })
@@ -81,7 +89,11 @@ describe('ArchiveCoordinator', () => {
       updateArchive: vi.fn(),
       sessionProjectId: vi.fn()
     }
-    const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
 
     await expect(
       coordinator.updateSessionArchive({
@@ -106,12 +118,87 @@ describe('ArchiveCoordinator', () => {
       updateArchive: vi.fn(),
       sessionProjectId: vi.fn().mockResolvedValue(project.id)
     }
-    const coordinator = new ArchiveCoordinator(projects, sessions, { isSessionBusy: vi.fn() })
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
 
     await expect(coordinator.assertSessionAvailable('other-project', session.id)).rejects.toThrow(
       'Session does not belong to the requested Project.'
     )
 
+    expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
+  })
+
+  it('rejects a project archive while a fresh live session is running', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn().mockReturnValue(true),
+      liveSessionProjectId: vi.fn()
+    })
+
+    await expect(
+      coordinator.updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
+    ).rejects.toThrow('Finish or stop active sessions before archiving this project.')
+
+    expect(sessions.assertProjectArchivable).not.toHaveBeenCalled()
+    expect(projects.updateArchive).not.toHaveBeenCalled()
+  })
+
+  it('resolves a fresh live session owner before archive admission', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue({ ...project, archivedAt: 40 }),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn().mockReturnValue(project.id)
+    })
+
+    await expect(coordinator.assertSessionAvailableById(session.id)).rejects.toThrow(
+      'Restore this archived Project before continuing.'
+    )
+    expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a session owner cannot be resolved', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(undefined)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn().mockReturnValue(undefined)
+    })
+
+    await expect(coordinator.assertSessionAvailableById(session.id)).rejects.toThrow(
+      'Cannot use a Session whose Project owner is unavailable.'
+    )
     expect(sessions.assertSessionAvailable).not.toHaveBeenCalled()
   })
 })

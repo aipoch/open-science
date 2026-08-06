@@ -342,7 +342,7 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Only a current human caller can respond to a Session Plan.')
   })
 
-  it('checks archive availability before resetting Session context', async () => {
+  it('checks archive availability before resetting Session context or compacting', async () => {
     const dependencies: AcpApplicationCommandDependencies = {
       ...createDependencies(),
       archiveAvailability: {
@@ -359,11 +359,18 @@ describe('ACP application commands', () => {
     await expect(
       router.dispatcher.invoke(acpCommands.resetSessionContext, invocation([request]))
     ).rejects.toThrow('Restore this archived Session before continuing.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.compactSession,
+        invocation([{ sessionId: 'session-1', reason: 'manual' }])
+      )
+    ).rejects.toThrow('Restore this archived Session before continuing.')
 
     expect(dependencies.archiveAvailability?.assertSessionAvailableById).toHaveBeenCalledWith(
       request.sessionId
     )
     expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
 
   it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {

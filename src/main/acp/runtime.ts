@@ -463,6 +463,10 @@ class AcpRuntime {
     )
   }
 
+  liveSessionProjectId(sessionId: string): string | undefined {
+    return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName
+  }
+
   // Handoff adapters select their framework without reaching into session ownership maps. The
   // framework recorded here is the one that provisioned this logical session, including after a
   // coordinator generation rotation.
