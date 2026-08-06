@@ -37,12 +37,9 @@ import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permissi
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
-import { NOTEBOOK_SYSTEM_PROMPT_APPEND, type NotebookRpcConnection } from '../notebook/mcp-server'
+import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import {
-  SKILL_IMPORT_SYSTEM_PROMPT_APPEND,
-  type SkillImportRpcConnection
-} from '../skills/mcp-server'
+import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -61,10 +58,7 @@ import {
   type ReviewerSessionRequest,
   type ReviewerSessionResult
 } from './reviewer-session-owner'
-import {
-  AcpSessionCapabilityOwner,
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
-} from './session-capability-owner'
+import { AcpSessionCapabilityOwner } from './session-capability-owner'
 import { ArtifactTurnOwner, type ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpPromptContentOwner } from './prompt-content-owner'
 import {
@@ -119,6 +113,7 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
@@ -275,40 +270,6 @@ type AcpRuntimePlanOptions = {
     | 'containsMessageOnActiveBranch'
   >
 }
-// An end_turn is final from the runtime's perspective, so promised work must be a tool call in the
-// current turn or an explicit request for user input rather than text that implies later execution.
-const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
-  '<open_science_turn_continuity_instructions>',
-  'Do not describe a tool-backed action as future work and then end the turn. If you say you will download, install, run, edit, analyze, or otherwise perform an action that needs a tool, issue the corresponding tool call in this same turn.',
-  'If a required tool cannot be used or its operation fails, do not promise another attempt. Clearly state that the turn has stopped, what prevented progress, and what the user can do next.',
-  '</open_science_turn_continuity_instructions>'
-].join('\n')
-// Appends artifact tool guidance as system prompt metadata so user prompts stay untouched.
-const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
-  '<open_science_artifact_instructions>',
-  'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
-  'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
-  'Pass the filename, MIME type, and either inline content or a local source path to `write_artifact_file`; the app assigns the project, session, Artifact run, and final message location.',
-  'If a Notebook, REPL, or shell execution produced the file, also pass `producerRunId` with the exact `runId` returned by the execution that created or last modified it. Omit `producerRunId` only when no Notebook execution produced the file; never use the Artifact run ID as the producer.',
-  'Only claim a generated file is available after `write_artifact_file` succeeds. If it fails or is denied, state that the local file may exist but was not saved as an Artifact, and do not present it as downloadable.',
-  'After using the tool, mention the generated filename rather than an absolute filesystem path. The app will display the generated file list below your message.',
-  'Never write files inside a skill directory — loaded skills are read-only; route any file a skill generates through `write_artifact_file`.',
-  '</open_science_artifact_instructions>'
-].join('\n')
-
-// Steers the agent away from reading large attached data files in their entirety, since a single big
-// read (esp. under frameworks whose read/bash tools do not hard-cap output) can exceed the provider's
-// request-size limit and break the conversation. Framework-neutral: Claude carries it in the system
-// prompt preset, opencode as a prompt prefix.
-const LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND = [
-  '<open_science_large_file_instructions>',
-  'Large attached data files (CSV, TSV, TXT, JSON, FASTA/FASTQ, VCF, and similar tabular or text data) are provided as a file reference plus a short preview, not as full inline content.',
-  'Never read, cat, or print such a file in its entirety — a single large read can exceed the request-size limit and break the conversation.',
-  'Inspect structure first (columns, row count, a few sample rows), then read only the specific line ranges, rows, or columns you need.',
-  'To analyze, filter, or aggregate over a large file, load it in the notebook (e.g. pandas) and compute there instead of reading its contents into the conversation.',
-  '</open_science_large_file_instructions>'
-].join('\n')
-
 // Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
 // hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,
 // and a non-string message (object/bigint/Symbol/undefined) must be coerced — this text flows into the
@@ -373,6 +334,7 @@ class AcpRuntime {
   private readonly turnSkills: AcpTurnSkillOwner
   private readonly handoffContinuity: AcpHandoffContinuityOwner
   private readonly permissionContext: AcpPermissionContext
+  private readonly sessionEnvironment: AcpSessionEnvironmentPolicy
   private readonly callbacks: AcpRuntimeCallbacks
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
@@ -465,12 +427,20 @@ class AcpRuntime {
       },
       removeStartupBlocker: (token) => this.generationActivity.releaseStartup(token)
     })
+    this.sessionEnvironment = new AcpSessionEnvironmentPolicy({
+      backendGeneration: this.backendGeneration,
+      capabilities: this.sessionCapabilities,
+      presentation: base.sessionPresentationPolicy,
+      registry: this.sessionRegistry,
+      defaultProjectName: options.artifacts?.projectName,
+      ...(this.planService ? { planSystemPromptAppend: SESSION_PLAN_SYSTEM_PROMPT_APPEND } : {})
+    })
     this.contextUsagePolicy = new AcpContextUsagePolicy({
       backend: () => this.backend,
       appliedModel: (sessionId) =>
         this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().appliedModel,
-      systemPromptAppends: () => this.getSystemPromptAppends(),
-      tooling: () => this.currentCapabilityAvailability()
+      systemPromptAppends: () => this.sessionEnvironment.systemPromptAppends(),
+      tooling: () => this.sessionEnvironment.toolingAvailability()
     })
     this.sessionUpdateProjector = new AcpSessionUpdateProjector({
       registry: this.sessionRegistry,
@@ -601,7 +571,7 @@ class AcpRuntime {
       permission: this.permissionContext,
       environment: {
         backend: () => this.backend,
-        tooling: () => this.currentCapabilityAvailability(),
+        tooling: () => this.sessionEnvironment.toolingAvailability(),
         bridgeSkillsAvailable: () => this.connectionResources.bridgeSkillsAvailable,
         skillImportEnabled: () => this.sessionCapabilities.isSkillImportEnabled(),
         contextEstimateInput: (sessionId) =>
@@ -1552,7 +1522,9 @@ class AcpRuntime {
             ? { framework: this.framework, executablePath: '', env: {} }
             : await this.options.resolveBackend?.({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
-                systemPromptAppends: await this.getBackendSystemPromptAppends()
+                systemPromptAppends: [
+                  ...(await this.sessionEnvironment.backendSystemPromptAppends())
+                ]
               })
           if (!backend) throw new Error('ACP agent spawn configuration is not available.')
           return backend
@@ -1901,65 +1873,9 @@ class AcpRuntime {
     ]
   }
 
-  // Collects the system-prompt guidance appended to every session, plus app tooling
-  // instructions when those services are wired. Skill privacy is enforced at the presentation layer;
-  // agent prompts must not block native progressive loading of a selected SKILL.md.
-  private notebookToolingAvailable(): boolean {
-    return this.currentCapabilityAvailability().notebook
-  }
-
-  private skillImportToolingAvailable(): boolean {
-    return this.currentCapabilityAvailability().skillImport
-  }
-
-  private artifactToolingAvailable(): boolean {
-    return this.currentCapabilityAvailability().artifacts
-  }
-
-  private currentCapabilityAvailability(): ReturnType<
-    AcpSessionCapabilityOwner['toolingAvailability']
-  > {
-    return this.sessionCapabilities.toolingAvailability({
-      framework: this.framework,
-      nativeMcpEnabled: this.backend.adapter.nativeMcpEnabled,
-      bridgeMcpAliasesEnabled: this.backend.adapter.bridgeMcpAliasesEnabled,
-      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
-    })
-  }
-
-  private getAppSystemPromptAppends(): string[] {
-    return [
-      TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
-      LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
-      ...(this.artifactToolingAvailable() ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.notebookToolingAvailable() ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.skillImportToolingAvailable() ? [SKILL_IMPORT_SYSTEM_PROMPT_APPEND] : []),
-      ...(this.planService ? [SESSION_PLAN_SYSTEM_PROMPT_APPEND] : [])
-    ]
-  }
-
-  private async getBackendSystemPromptAppends(): Promise<string[]> {
-    await this.sessionCapabilities.refreshDynamicAvailability()
-    return this.getAppSystemPromptAppends()
-  }
-
-  private getSystemPromptAppends(skillGuidance?: string): string[] {
-    // Each append names MCP tools that only exist when that tooling is actually wired for this session;
-    // omit it otherwise so the agent isn't told to use tools it wasn't given.
-    return [
-      ...this.getAppSystemPromptAppends(),
-      ...this.backend.prompt.systemPromptAppends,
-      ...(skillGuidance ? [skillGuidance] : [])
-    ]
-  }
-
   // Resolves the artifact/notebook storage project for a session, defaulting to the runtime constant.
   private resolveSessionProjectName(sessionId: string): string {
-    return (
-      this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().projectName ??
-      this.artifactOptions?.projectName ??
-      DEFAULT_UPLOAD_PROJECT_NAME
-    )
+    return this.sessionEnvironment.projectName(sessionId)
   }
 
   // Marks a new assistant turn as the active artifact run before the model can call the MCP tool.
