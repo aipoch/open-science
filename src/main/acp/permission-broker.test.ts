@@ -234,6 +234,51 @@ describe('ACP permission broker', () => {
     await expect(appApproval).resolves.toBe(false)
   })
 
+  it('stops releasing pending requests when a live profile change is superseded', async () => {
+    const broker = new AcpPermissionBroker(() => undefined)
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+    const first = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python first.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python first.py' }
+      }),
+      policy
+    )
+    const second = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python second.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python second.py' }
+      }),
+      policy
+    )
+    let current = true
+    void first.then(() => {
+      current = false
+    })
+
+    await broker.applyPermissionProfile(
+      'session-1',
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        availableModeIds: [],
+        fullAccessAvailable: true
+      },
+      () => current
+    )
+
+    await expect(first).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['python second.py'])
+    broker.cancelAllPending()
+    await expect(second).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
   it('keeps session grants app-owned while the Agent receives one-shot approvals', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

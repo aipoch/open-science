@@ -695,10 +695,12 @@ class AcpPermissionBroker {
   // approvals do not carry an automatic request and therefore always remain human decisions.
   async applyPermissionProfile(
     sessionId: string,
-    profile: Readonly<SessionPermissionProfileState>
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
   ): Promise<string[]> {
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
+      if (!isCurrent()) break
       if (pending.request.sessionId !== sessionId || !pending.automaticRequest) continue
 
       const optionId = resolveAutomaticPermission(pending.automaticRequest, {
@@ -707,6 +709,7 @@ class AcpPermissionBroker {
         autoReviewStrategy: profile.autoReviewStrategy
       })
       if (!optionId) continue
+      if (!isCurrent()) break
 
       if (await this.respond({ requestId, optionId })) resolvedRequestIds.push(requestId)
     }

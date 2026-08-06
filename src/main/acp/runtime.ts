@@ -653,10 +653,19 @@ class AcpRuntime {
       throw new Error('ACP session startup was superseded.')
     }
     this.assertCurrentConnectedConnection(connection)
+    await this.permissionContext.applyPermissionProfile(
+      request.sessionId,
+      permissionProfile,
+      () => state.revision === revision
+    )
+    if (state.revision !== revision) return this.getSnapshot()
+    if (this.activeSessionFor(request.sessionId) !== session) {
+      throw new Error('ACP session startup was superseded.')
+    }
+    this.assertCurrentConnectedConnection(connection)
     this.sessionRegistry
       .lookup(request.sessionId)
       ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
-    await this.permissionContext.applyPermissionProfile(request.sessionId, permissionProfile)
     this.emitState()
 
     return this.getSnapshot()

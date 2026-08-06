@@ -392,9 +392,14 @@ class AcpPermissionContext {
 
   async applyPermissionProfile(
     sessionId: string,
-    profile: Readonly<SessionPermissionProfileState>
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
   ): Promise<void> {
-    const resolvedRequestIds = await this.broker.applyPermissionProfile(sessionId, profile)
+    const resolvedRequestIds = await this.broker.applyPermissionProfile(
+      sessionId,
+      profile,
+      isCurrent
+    )
     for (const requestId of resolvedRequestIds) this.humanOnlyRequestIds.delete(requestId)
   }
 
