@@ -422,6 +422,7 @@ const ArtifactProvenancePanel = ({
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
+  const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
   const [lineageResult, setLineageResult] = useState<{
     key: string
     value?: ArtifactLineageProvenance
@@ -455,8 +456,9 @@ const ArtifactProvenancePanel = ({
     key: string
     message: string
   }>()
-  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
-  const lineageUnavailable = lineageResult?.key === lineageKey && lineageResult.unavailable === true
+  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const lineageUnavailable =
+    lineageResult?.key === lineageRequestKey && lineageResult.unavailable === true
   const requestedVersionId =
     selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
@@ -477,7 +479,7 @@ const ArtifactProvenancePanel = ({
   const codeReconstructionResult = codeReconstructionResults[provenanceKey]
   const error =
     (selectedVersionUnavailable ? 'The selected Artifact version is unavailable.' : undefined) ??
-    (lineageResult?.key === lineageKey ? lineageResult.error : undefined) ??
+    (lineageResult?.key === lineageRequestKey ? lineageResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
   useEffect(() => {
@@ -495,12 +497,12 @@ const ArtifactProvenancePanel = ({
       .getLineage({ projectId, appSessionId: item.sessionId, artifactId: item.artifactId })
       .then((value) => {
         if (!active) return
-        setLineageResult({ key: lineageKey, value, unavailable: value === undefined })
+        setLineageResult({ key: lineageRequestKey, value, unavailable: value === undefined })
       })
       .catch((failure: unknown) => {
         if (active) {
           setLineageResult({
-            key: lineageKey,
+            key: lineageRequestKey,
             error: failure instanceof Error ? failure.message : String(failure)
           })
         }
@@ -508,7 +510,7 @@ const ArtifactProvenancePanel = ({
     return () => {
       active = false
     }
-  }, [item.artifactId, item.sessionId, lineageKey, projectId])
+  }, [item.artifactId, item.sessionId, lineageRequestKey, projectId])
 
   useEffect(() => {
     let active = true

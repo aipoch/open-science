@@ -502,6 +502,43 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
+  it('refreshes lineage when an open preview targets a newly finalized Version', async () => {
+    const thirdDescriptor = {
+      ...secondDescriptor,
+      id: 'version-3',
+      versionId: 'version-3',
+      versionNumber: 3,
+      checksum: 'checksum-3',
+      path: '/data/sin-v3.png',
+      fileUrl: 'file:///data/sin-v3.png',
+      mtimeMs: 3
+    }
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [descriptor, secondDescriptor, thirdDescriptor]
+    })
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-3', versionNumber: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(window.api.artifacts.getLineage).toHaveBeenCalledTimes(2)
+    expect(getVersionProvenance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-3' })
+    )
+    expect(container.textContent).toContain('v3')
+    expect(container.textContent).not.toContain('The selected Artifact version is unavailable.')
+  })
+
   it('loads tab-specific evidence only when that tab is opened', async () => {
     expect(getVersionExecution).not.toHaveBeenCalled()
     expect(getVersionMessages).not.toHaveBeenCalled()
