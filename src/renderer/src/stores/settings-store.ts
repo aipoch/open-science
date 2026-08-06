@@ -18,6 +18,11 @@ import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type { SettingsPanelId } from '../pages/settings/settings-navigation'
+import {
+  createSettingsWriteCoordinator,
+  type SettingsWriteCoordinator,
+  type SettingsWriteKey
+} from './settings-write-coordinator'
 import type {
   ClaudeDetectResult,
   ClaudeInfo,
@@ -603,7 +608,7 @@ const reportSettingsLoadError = (error: unknown): void => {
 }
 
 // Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
-const SETTINGS_WRITE_ERRORS = {
+const SETTINGS_WRITE_ERRORS: Record<SettingsWriteKey, string> = {
   activeProvider: 'Could not switch active provider or model. Try again.',
   agentFramework: 'Could not switch agent framework. Try again.',
   reasoningEffort: 'Could not save reasoning effort. Try again.',
@@ -611,141 +616,15 @@ const SETTINGS_WRITE_ERRORS = {
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
   appIcon: 'Could not save app icon preference. Try again.'
-} as const
-
-type SettingsWriteKey = keyof typeof SETTINGS_WRITE_ERRORS
-
-type SettingsWriteToken = {
-  key: SettingsWriteKey
-  generation: number
-  failuresAtStart: ReadonlyMap<SettingsWriteKey, number>
-}
-
-type SettingsWriteFailure = {
-  id: number
-  message: string
-}
-
-type OptimisticSettingsWriteKey =
-  'reasoningEffort' | 'notifications' | 'conversationSkillImport' | 'closePreference' | 'appIcon'
-
-type OptimisticSettingsWriteState<T> = {
-  confirmedValue: T
-  pendingCount: number
-}
-
-const settingsWriteGenerations = new Map<SettingsWriteKey, number>()
-const settingsWriteFailures = new Map<SettingsWriteKey, SettingsWriteFailure>()
-const settingsWriteQueues = new Map<OptimisticSettingsWriteKey, Promise<unknown>>()
-const optimisticSettingsWriteStates = new Map<
-  OptimisticSettingsWriteKey,
-  OptimisticSettingsWriteState<unknown>
->()
-let settingsWriteFailureId = 0
-
-const currentSettingsWriteError = (): string | undefined => {
-  const messages = [...settingsWriteFailures.values()]
-    .sort((left, right) => left.id - right.id)
-    .map((failure) => failure.message)
-
-  return messages.length > 0 ? messages.join(' ') : undefined
-}
-
-// Generations are isolated per preference: a newer write supersedes stale work for that same
-// preference without hiding a failure from a different concurrent write. The token also remembers
-// errors visible when the user started this write so a success clears only those stale errors, not a
-// different failure that arrived while the write was pending.
-const beginSettingsWrite = (key: SettingsWriteKey): SettingsWriteToken => {
-  const generation = (settingsWriteGenerations.get(key) ?? 0) + 1
-  settingsWriteGenerations.set(key, generation)
-  return {
-    key,
-    generation,
-    failuresAtStart: new Map(
-      [...settingsWriteFailures].map(([failureKey, failure]) => [failureKey, failure.id])
-    )
-  }
-}
-
-const isCurrentSettingsWrite = (token: SettingsWriteToken): boolean =>
-  settingsWriteGenerations.get(token.key) === token.generation
-
-// Preserve click order for one optimistic preference while unrelated preferences still write in
-// parallel. This makes the last confirmed value deterministic even when users change one control
-// repeatedly before its previous IPC round trip finishes.
-const runOptimisticSettingsWrite = async <T>(
-  key: OptimisticSettingsWriteKey,
-  write: () => Promise<T>
-): Promise<T> => {
-  const previous = settingsWriteQueues.get(key)
-  const current = previous ? previous.catch(() => undefined).then(write) : write()
-  settingsWriteQueues.set(key, current)
-
-  try {
-    return await current
-  } finally {
-    if (settingsWriteQueues.get(key) === current) settingsWriteQueues.delete(key)
-  }
-}
-
-const beginOptimisticSettingsWrite = <T>(
-  key: OptimisticSettingsWriteKey,
-  confirmedValue: T
-): { writeToken: SettingsWriteToken; optimisticState: OptimisticSettingsWriteState<T> } => {
-  let optimisticState = optimisticSettingsWriteStates.get(key) as
-    OptimisticSettingsWriteState<T> | undefined
-
-  if (!optimisticState) {
-    optimisticState = { confirmedValue, pendingCount: 0 }
-    optimisticSettingsWriteStates.set(key, optimisticState as OptimisticSettingsWriteState<unknown>)
-  }
-  optimisticState.pendingCount += 1
-
-  return { writeToken: beginSettingsWrite(key), optimisticState }
-}
-
-const completeOptimisticSettingsWrite = <T>(
-  key: OptimisticSettingsWriteKey,
-  optimisticState: OptimisticSettingsWriteState<T>,
-  confirmedValue?: { value: T }
-): T => {
-  if (confirmedValue) optimisticState.confirmedValue = confirmedValue.value
-  optimisticState.pendingCount -= 1
-
-  if (
-    optimisticState.pendingCount === 0 &&
-    optimisticSettingsWriteStates.get(key) === optimisticState
-  ) {
-    optimisticSettingsWriteStates.delete(key)
-  }
-
-  return optimisticState.confirmedValue
-}
-
-const finishSettingsWrite = (
-  set: StoreApi<SettingsStore>['setState'],
-  token: SettingsWriteToken,
-  error?: string
-): void => {
-  if (!isCurrentSettingsWrite(token)) return
-
-  if (error) {
-    settingsWriteFailureId += 1
-    settingsWriteFailures.set(token.key, { id: settingsWriteFailureId, message: error })
-  } else {
-    for (const [failureKey, failureId] of token.failuresAtStart) {
-      if (settingsWriteFailures.get(failureKey)?.id === failureId) {
-        settingsWriteFailures.delete(failureKey)
-      }
-    }
-  }
-
-  set({ settingsWriteError: currentSettingsWriteError() })
 }
 
 // Renderer cache of the main-process settings service. The main process stays the source of truth
 // for secrets; this store only ever holds masked provider views.
-export const useSettingsStore = create<SettingsStore>((set, get) => ({
+const createSettingsStoreState = (
+  set: StoreApi<SettingsStore>['setState'],
+  get: StoreApi<SettingsStore>['getState'],
+  writeCoordinator: SettingsWriteCoordinator
+): SettingsStore => ({
   ...createInitialSettingsState(),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
@@ -1119,7 +998,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Switches the active provider/model (main drops the agent connection so the next prompt reconnects).
   // An empty model string is treated as "no specific model" so main uses the provider default.
   setActiveProvider: async (providerId, model) => {
-    const writeToken = beginSettingsWrite('activeProvider')
+    const write = writeCoordinator.begin('activeProvider')
     let snapshot: SettingsSnapshot
     try {
       snapshot = await window.api.settings.setActiveProvider({
@@ -1127,34 +1006,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         model: model || undefined
       })
     } catch (error) {
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.activeProvider)
+      write.fail(SETTINGS_WRITE_ERRORS.activeProvider)
       console.error('Failed to set active provider', error)
       throw error
     }
 
-    if (!isCurrentSettingsWrite(writeToken)) return
+    if (!write.isCurrent()) return
     set(applySnapshot(snapshot))
-    finishSettingsWrite(set, writeToken)
+    write.succeed()
     await get().refreshPreflight()
   },
 
   // Switches the agent backend; main reconnects so the choice applies on the next prompt. A failed
   // write leaves the previous framework selected and feeds the shared Settings error banner.
   setAgentFramework: async (id) => {
-    const writeToken = beginSettingsWrite('agentFramework')
+    const write = writeCoordinator.begin('agentFramework')
 
     let snapshot: SettingsSnapshot
     try {
       snapshot = await window.api.settings.setAgentFramework({ id })
     } catch (error) {
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.agentFramework)
+      write.fail(SETTINGS_WRITE_ERRORS.agentFramework)
       console.error('Failed to switch agent framework', error)
       throw error
     }
 
-    if (!isCurrentSettingsWrite(writeToken)) return
+    if (!write.isCurrent()) return
     set(applySnapshot(snapshot))
-    finishSettingsWrite(set, writeToken)
+    write.succeed()
 
     try {
       // Live-detect the newly-selected framework so a binary installed (or deleted) since the last
@@ -1179,26 +1058,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // optimistically, reconcile from the returned snapshot, and revert if the write fails.
   setReasoningEffort: async (effort) => {
     const previous = get().reasoningEffort
-    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
-      'reasoningEffort',
-      previous
-    )
+    const write = writeCoordinator.beginOptimistic('reasoningEffort', previous)
     set({ reasoningEffort: effort })
 
     try {
-      const snapshot = await runOptimisticSettingsWrite('reasoningEffort', () =>
-        window.api.settings.setReasoningEffort({ effort })
-      )
-      completeOptimisticSettingsWrite('reasoningEffort', optimisticState, {
-        value: snapshot.reasoningEffort
-      })
-      if (!isCurrentSettingsWrite(writeToken)) return
+      const snapshot = await write.run(() => window.api.settings.setReasoningEffort({ effort }))
+      write.complete({ value: snapshot.reasoningEffort })
+      if (!write.isCurrent()) return
       set(applySnapshot(snapshot))
-      finishSettingsWrite(set, writeToken)
+      write.succeed()
     } catch (error) {
-      const confirmedValue = completeOptimisticSettingsWrite('reasoningEffort', optimisticState)
-      if (isCurrentSettingsWrite(writeToken)) set({ reasoningEffort: confirmedValue })
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.reasoningEffort)
+      const confirmedValue = write.complete()
+      if (write.isCurrent()) set({ reasoningEffort: confirmedValue })
+      write.fail(SETTINGS_WRITE_ERRORS.reasoningEffort)
       console.error('Failed to set reasoning effort', error)
     }
   },
@@ -1207,80 +1079,63 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // reconcile from the returned snapshot, and revert if the write fails.
   setNotificationsEnabled: async (enabled) => {
     const previous = get().notificationsEnabled
-    const { writeToken, optimisticState } = beginOptimisticSettingsWrite('notifications', previous)
+    const write = writeCoordinator.beginOptimistic('notifications', previous)
     set({ notificationsEnabled: enabled })
 
     try {
-      const snapshot = await runOptimisticSettingsWrite('notifications', () =>
+      const snapshot = await write.run(() =>
         window.api.settings.setNotificationsEnabled({ enabled })
       )
-      completeOptimisticSettingsWrite('notifications', optimisticState, {
-        value: snapshot.notificationsEnabled
-      })
-      if (!isCurrentSettingsWrite(writeToken)) return
+      write.complete({ value: snapshot.notificationsEnabled })
+      if (!write.isCurrent()) return
       set(applySnapshot(snapshot))
-      finishSettingsWrite(set, writeToken)
+      write.succeed()
     } catch (error) {
-      const confirmedValue = completeOptimisticSettingsWrite('notifications', optimisticState)
-      if (isCurrentSettingsWrite(writeToken)) set({ notificationsEnabled: confirmedValue })
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.notifications)
+      const confirmedValue = write.complete()
+      if (write.isCurrent()) set({ notificationsEnabled: confirmedValue })
+      write.fail(SETTINGS_WRITE_ERRORS.notifications)
       console.error('Failed to set notifications enabled', error)
     }
   },
 
   setConversationSkillImportEnabled: async (enabled) => {
     const previous = get().conversationSkillImportEnabled
-    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
-      'conversationSkillImport',
-      previous
-    )
+    const write = writeCoordinator.beginOptimistic('conversationSkillImport', previous)
     set({ conversationSkillImportEnabled: enabled })
 
     try {
-      const snapshot = await runOptimisticSettingsWrite('conversationSkillImport', () =>
+      const snapshot = await write.run(() =>
         window.api.settings.setConversationSkillImportEnabled({ enabled })
       )
-      completeOptimisticSettingsWrite('conversationSkillImport', optimisticState, {
-        value: snapshot.conversationSkillImportEnabled
-      })
-      if (!isCurrentSettingsWrite(writeToken)) return
+      write.complete({ value: snapshot.conversationSkillImportEnabled })
+      if (!write.isCurrent()) return
       set(applySnapshot(snapshot))
-      finishSettingsWrite(set, writeToken)
+      write.succeed()
     } catch (error) {
-      const confirmedValue = completeOptimisticSettingsWrite(
-        'conversationSkillImport',
-        optimisticState
-      )
-      if (isCurrentSettingsWrite(writeToken)) {
+      const confirmedValue = write.complete()
+      if (write.isCurrent()) {
         set({ conversationSkillImportEnabled: confirmedValue })
       }
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.conversationSkillImport)
+      write.fail(SETTINGS_WRITE_ERRORS.conversationSkillImport)
       console.error('Failed to set conversation Skill import enabled', error)
     }
   },
 
   setClosePreference: async (preference) => {
     const previous = get().closePreference
-    const { writeToken, optimisticState } = beginOptimisticSettingsWrite(
-      'closePreference',
-      previous
-    )
+    const write = writeCoordinator.beginOptimistic('closePreference', previous)
     set({ closePreference: preference })
 
     try {
-      const snapshot = await runOptimisticSettingsWrite('closePreference', () =>
-        window.api.settings.setClosePreference({ preference })
-      )
-      completeOptimisticSettingsWrite('closePreference', optimisticState, {
-        value: snapshot.closePreference
-      })
-      if (!isCurrentSettingsWrite(writeToken)) return
+      const snapshot = await write.run(() => window.api.settings.setClosePreference({ preference }))
+      write.complete({ value: snapshot.closePreference })
+      if (!write.isCurrent()) return
       set(applySnapshot(snapshot))
-      finishSettingsWrite(set, writeToken)
+      write.succeed()
     } catch (error) {
-      const confirmedValue = completeOptimisticSettingsWrite('closePreference', optimisticState)
-      if (isCurrentSettingsWrite(writeToken)) set({ closePreference: confirmedValue })
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.closePreference)
+      const confirmedValue = write.complete()
+      if (write.isCurrent()) set({ closePreference: confirmedValue })
+      write.fail(SETTINGS_WRITE_ERRORS.closePreference)
       console.error('Failed to set close preference', error)
     }
   },
@@ -1289,31 +1144,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // from the returned snapshot, and revert if the write fails.
   setAppIconVariant: async (variant) => {
     const previous = get().appIconVariant
-    const { writeToken, optimisticState } = beginOptimisticSettingsWrite('appIcon', previous)
+    const write = writeCoordinator.beginOptimistic('appIcon', previous)
     set({ appIconVariant: variant })
 
     try {
-      const snapshot = await runOptimisticSettingsWrite('appIcon', () =>
-        window.api.settings.setAppIconVariant({ variant })
-      )
-      completeOptimisticSettingsWrite('appIcon', optimisticState, {
-        value: snapshot.appIconVariant
-      })
-      if (!isCurrentSettingsWrite(writeToken)) return
+      const snapshot = await write.run(() => window.api.settings.setAppIconVariant({ variant }))
+      write.complete({ value: snapshot.appIconVariant })
+      if (!write.isCurrent()) return
       set(applySnapshot(snapshot))
-      finishSettingsWrite(set, writeToken)
+      write.succeed()
     } catch (error) {
-      const confirmedValue = completeOptimisticSettingsWrite('appIcon', optimisticState)
-      if (isCurrentSettingsWrite(writeToken)) set({ appIconVariant: confirmedValue })
-      finishSettingsWrite(set, writeToken, SETTINGS_WRITE_ERRORS.appIcon)
+      const confirmedValue = write.complete()
+      if (write.isCurrent()) set({ appIconVariant: confirmedValue })
+      write.fail(SETTINGS_WRITE_ERRORS.appIcon)
       console.error('Failed to set app icon variant', error)
     }
   },
 
-  clearSettingsWriteError: () => {
-    settingsWriteFailures.clear()
-    set({ settingsWriteError: undefined })
-  },
+  clearSettingsWriteError: () => writeCoordinator.clearFailures(),
 
   // Detects the opencode executable and refreshes its status card.
   detectOpencode: async () => {
@@ -1575,6 +1423,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const saved = await window.api.settings.setPackageMirror(mirror)
     set({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
   }
-}))
+})
+
+export const useSettingsStore = create<SettingsStore>((set, get) =>
+  createSettingsStoreState(
+    set,
+    get,
+    createSettingsWriteCoordinator((settingsWriteError) => set({ settingsWriteError }))
+  )
+)
 
 export type { SaveProviderResult }
