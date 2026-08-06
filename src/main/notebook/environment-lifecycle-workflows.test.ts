@@ -99,6 +99,25 @@ describe('createNotebookEnvironmentLifecycle', () => {
     expect(provisioner.provisionR).toHaveBeenCalledOnce()
   })
 
+  it('tags a failure that occurs before provision progress is emitted', async () => {
+    const failure = new Error('provision rejected before startup')
+    const provisioner = fakeProvisioner({ provisionPython: vi.fn().mockRejectedValue(failure) })
+    const emitted: ProvisionProgress[] = []
+    const lifecycle = createLifecycle(provisioner, { projectProgress: (p) => emitted.push(p) })
+
+    await expect(lifecycle.provision('python', 'explicit-operation')).rejects.toBe(failure)
+    expect(emitted).toEqual([
+      {
+        phase: 'error',
+        message: failure.message,
+        progress: 0,
+        language: 'python',
+        scope: 'python',
+        operationId: 'explicit-operation'
+      }
+    ])
+  })
+
   it('repair delegates by language as an explicit force-recovery', async () => {
     const provisioner = fakeProvisioner()
     const lifecycle = createLifecycle(provisioner)

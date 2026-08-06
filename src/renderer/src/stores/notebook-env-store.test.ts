@@ -325,6 +325,37 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().byLang.r?.preparing).toBe(false)
   })
 
+  it('settles a queued explicit failure after an older automatic run', async () => {
+    let rejectProvision: ((reason: Error) => void) | undefined
+    const provision = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProvision = reject
+        })
+    )
+    const { api, emit } = installApi({ provision })
+    await useNotebookEnvStore.getState().init()
+
+    emit({ phase: 'create-r', message: 'Automatic R setup started', progress: 0.1, language: 'r' })
+    const explicit = useNotebookEnvStore.getState().provision('r')
+    const operationId = api.provision.mock.calls[0]?.[1] as string
+    emit({ phase: 'done', message: 'Automatic R setup ready', progress: 1, language: 'r' })
+    emit({
+      phase: 'error',
+      message: 'Explicit R setup failed',
+      progress: 0,
+      language: 'r',
+      operationId
+    })
+    rejectProvision?.(new Error('Explicit R setup failed'))
+
+    await explicit
+    expect(useNotebookEnvStore.getState().byLang.r).toMatchObject({
+      preparing: false,
+      error: 'Explicit R setup failed'
+    })
+  })
+
   it('keeps python preparing when R is requested concurrently (no phantom cancel — issue 3.1)', async () => {
     // The reported bug: requesting python then R made python look cancelled. Model the serialized
     // provisioner: python's request is still in flight (pending) when R is requested; both languages

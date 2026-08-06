@@ -123,9 +123,16 @@ describe('runLoggedRuntimeOperation', () => {
       )
     ).rejects.toBe(failure)
 
-    expect(projected).toHaveLength(4)
+    expect(projected).toHaveLength(5)
+    expect(projected.at(-1)).toMatchObject({
+      phase: 'error',
+      progress: 0,
+      language: 'python'
+    })
+    expect(projected.at(-1)?.message).not.toContain('basic-secret')
     expect(loggerSpies.info.mock.calls.map(([message]) => message)).toEqual([
       'runtime operation started',
+      'runtime operation progress',
       'runtime operation progress',
       'runtime operation progress',
       'runtime operation progress'
