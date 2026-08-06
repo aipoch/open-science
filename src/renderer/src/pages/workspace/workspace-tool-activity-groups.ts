@@ -282,9 +282,38 @@ const formatStepCount = (activities: ToolActivity[]): string => {
   return failedCount > 0 ? `${stepLabel} · ${failedCount} failed` : stepLabel
 }
 
+// Measures a group from its first tool start until now, or its final update once every tool settles.
+const getActivityGroupElapsedMs = (activities: ToolActivity[], now: number): number => {
+  if (activities.length === 0) return 0
+
+  const startedAt = Math.min(...activities.map((activity) => activity.createdAt))
+  const endedAt = activities.some(isActivityActive)
+    ? now
+    : Math.max(...activities.map((activity) => activity.updatedAt))
+
+  return Math.max(0, endedAt - startedAt)
+}
+
+// Keeps short work precise, then switches to compact clock units as the elapsed span grows.
+const formatActivityGroupElapsed = (elapsedMs: number): string => {
+  const milliseconds = Math.max(0, Math.floor(elapsedMs))
+  if (milliseconds < 1000) return `${milliseconds}ms`
+
+  const totalSeconds = Math.floor(milliseconds / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 export {
+  formatActivityGroupElapsed,
   formatActivityGroupTitle,
   formatStepCount,
+  getActivityGroupElapsedMs,
   getRenderableActivityEntries,
   groupConversationItems,
   isSearchActivity

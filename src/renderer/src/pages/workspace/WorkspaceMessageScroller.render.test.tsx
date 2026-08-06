@@ -178,6 +178,34 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
 }
 
 describe('WorkspaceMessageScroller loading render', () => {
+  it('renders elapsed time beside the activity step count', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [
+          createActivity({
+            id: 'tool-read-1',
+            title: 'Read file',
+            toolKind: 'read',
+            createdAt: 1_000,
+            updatedAt: 1_250
+          }),
+          createActivity({
+            id: 'tool-read-2',
+            title: 'Read file',
+            toolKind: 'read',
+            sortIndex: 3,
+            createdAt: 1_300,
+            updatedAt: 2_650
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('2 steps · 1s')
+  })
+
   it('renders a coordinator-owned handoff status in the original turn timeline', async () => {
     const source: HandoffLifecycleEventSource = {
       getEvents: (): readonly HandoffLifecycleEvent[] => [
