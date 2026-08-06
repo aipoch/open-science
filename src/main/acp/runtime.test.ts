@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from './runtime.test-utils'
 import type { AcpAgentConnectionAdapter } from './agent-connection-adapter'
+import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -855,6 +856,22 @@ const openCodeUsageApiForTest = (runtime: AcpRuntime): unknown =>
     }
   ).backendGeneration.openCodeUsageApi()
 
+const connectionCloseForTest = (
+  runtime: AcpRuntime
+): Pick<AcpConnectionCloseWorkflow, 'disconnectCurrent'> =>
+  (runtime as unknown as { connectionClose: AcpConnectionCloseWorkflow }).connectionClose
+
+const invalidatePendingSessionStartupsForTest = (runtime: AcpRuntime): void => {
+  const owners = runtime as unknown as {
+    generationActivity: { invalidateStartups: () => void }
+    reviewerSessions: { invalidatePending: () => void }
+    sessionRegistry: { invalidatePending: () => void }
+  }
+  owners.generationActivity.invalidateStartups()
+  owners.sessionRegistry.invalidatePending()
+  owners.reviewerSessions.invalidatePending()
+}
+
 const codexMcpToolIdentitiesMap = (runtime: AcpRuntime): Map<string, Map<string, unknown>> =>
   (
     permissionContext(runtime) as unknown as {
@@ -1103,11 +1120,8 @@ describe('ACP runtime migration write-gate', () => {
       spawnAgent
     })
     await runtime.createSession({ cwd: '/workspace' })
-    const internal = runtime as unknown as {
-      disconnectCurrent: (emitClosedStatus?: boolean) => Promise<AcpStateSnapshot>
-    }
     const disconnectCurrentSpy = vi
-      .spyOn(internal, 'disconnectCurrent')
+      .spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
       .mockRejectedValueOnce(new Error('disconnect failed before detach'))
 
     try {
@@ -1953,12 +1967,9 @@ describe('ACP runtime session management', () => {
       })
     })
     await runtime.connect({ cwd: '/workspace' })
-    vi.spyOn(
-      runtime as unknown as {
-        disconnectCurrent: () => Promise<AcpStateSnapshot>
-      },
-      'disconnectCurrent'
-    ).mockRejectedValueOnce(new Error('disconnect teardown failed'))
+    vi.spyOn(connectionCloseForTest(runtime), 'disconnectCurrent').mockRejectedValueOnce(
+      new Error('disconnect teardown failed')
+    )
 
     await expect(runtime.disconnect()).rejects.toThrow('disconnect teardown failed')
 
@@ -8916,12 +8927,7 @@ describe('ACP runtime session management', () => {
     })
     await runtime.connect({ cwd: '/workspace' })
     const disconnectCurrentSpy = vi
-      .spyOn(
-        runtime as unknown as {
-          disconnectCurrent: (emitClosedStatus?: boolean) => Promise<AcpStateSnapshot>
-        },
-        'disconnectCurrent'
-      )
+      .spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
       .mockRejectedValueOnce(new Error('disconnect teardown failed'))
     const stale = runtime.createSession({
       cwd: '/workspace',
@@ -9040,12 +9046,7 @@ describe('ACP runtime session management', () => {
     await runtime.connect({ cwd: '/workspace' })
     const disposeSpy = vi.spyOn(acp.ActiveSession.prototype, 'dispose')
     const disconnectCurrentSpy = vi
-      .spyOn(
-        runtime as unknown as {
-          disconnectCurrent: (emitClosedStatus?: boolean) => Promise<AcpStateSnapshot>
-        },
-        'disconnectCurrent'
-      )
+      .spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
       .mockRejectedValueOnce(new Error('disconnect teardown failed'))
     const pending = runtime.createSession({ cwd: '/workspace' })
     await pendingModeStarted.promise
@@ -9599,12 +9600,7 @@ describe('ACP runtime session management', () => {
       })
       await runtime.connect({ cwd: '/workspace' })
       const disconnectCurrentSpy = vi
-        .spyOn(
-          runtime as unknown as {
-            disconnectCurrent: (emitClosedStatus?: boolean) => Promise<AcpStateSnapshot>
-          },
-          'disconnectCurrent'
-        )
+        .spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
         .mockRejectedValueOnce(new Error('disconnect teardown failed'))
       const sessionId = '123e4567-e89b-42d3-a456-426614174000'
       const stale = runtime.resumeSession({
@@ -9694,9 +9690,7 @@ describe('ACP runtime session management', () => {
       (error: unknown) => ({ value: undefined, error })
     )
     await staleResumeStarted.promise
-    ;(
-      runtime as unknown as { invalidatePendingSessionStartups: () => void }
-    ).invalidatePendingSessionStartups()
+    invalidatePendingSessionStartupsForTest(runtime)
     const successor = await runtime.resumeSession({ sessionId, cwd: '/workspace' })
 
     try {
@@ -18940,10 +18934,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       }
     })
     // First disconnectCurrent (pre-connect teardown) succeeds; the catch-path cleanup then throws.
-    const disconnectSpy = vi.spyOn(
-      runtime as unknown as { disconnectCurrent: () => Promise<unknown> },
-      'disconnectCurrent'
-    )
+    const disconnectSpy = vi.spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
     disconnectSpy.mockResolvedValueOnce(runtime.getSnapshot())
     disconnectSpy.mockRejectedValueOnce(new Error('cleanup boom'))
 
@@ -19295,10 +19286,7 @@ describe('ACP runtime — failure-path robustness (errorMessage coercion + sync-
         env: {}
       })
     })
-    const disconnectSpy = vi.spyOn(
-      runtime as unknown as { disconnectCurrent: () => Promise<unknown> },
-      'disconnectCurrent'
-    )
+    const disconnectSpy = vi.spyOn(connectionCloseForTest(runtime), 'disconnectCurrent')
     errorLogSpy.mockImplementation(() => {
       throw new Error('logger boom')
     })
