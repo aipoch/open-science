@@ -2,8 +2,32 @@ import { execFile } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
 
 import type { NetworkConnectionType, NetworkInfo } from '../../shared/network'
+import type { ManagedClaudeRegistry } from '../../shared/settings'
+import { REGISTRY_URLS, probeRegistryReachability } from '../settings/environment-check'
 
 type NetworkInterfaceMap = ReturnType<typeof networkInterfaces>
+
+type RegistryProbe = typeof probeRegistryReachability
+
+// Real end-to-end internet reachability, reusing the onboarding environment check's HTTPS HEAD
+// probe against both package registries (registry root this time — the question here is "is the
+// internet usable", not "can we download a specific runtime package"). Reachable when either
+// registry answers 2xx; each probe carries the probe's own 5s timeout and they run in parallel.
+const createInternetReachabilityChecker =
+  (probe: RegistryProbe = probeRegistryReachability): (() => Promise<boolean>) =>
+  () => {
+    const registries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
+    return Promise.all(
+      registries.map((registry) =>
+        probe(registry, '').then(
+          () => true,
+          () => false
+        )
+      )
+    ).then((results) => results.some(Boolean))
+  }
+
+const checkInternetReachability = createInternetReachabilityChecker()
 
 // First non-internal IPv4 address across the active interfaces. Internal (loopback) and
 // IPv6-only interfaces are skipped; a machine with no such interface is treated as unknown.
@@ -89,4 +113,11 @@ const getNetworkInfo = async (): Promise<NetworkInfo> => {
   return { connectionType: await resolveConnectionType(interfaces), ipAddress }
 }
 
-export { getNetworkInfo, selectActiveIpv4, parseHardwarePorts, createConnectionTypeResolver }
+export {
+  getNetworkInfo,
+  selectActiveIpv4,
+  parseHardwarePorts,
+  createConnectionTypeResolver,
+  createInternetReachabilityChecker,
+  checkInternetReachability
+}

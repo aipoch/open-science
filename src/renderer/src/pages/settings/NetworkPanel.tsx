@@ -1,8 +1,11 @@
-import { CircleAlert, RefreshCw } from 'lucide-react'
+import { EthernetPort, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PackageMirror } from '../../../../shared/mirror'
 import type { NetworkInfo } from '../../../../shared/network'
+import type { EnvironmentCheckItem } from '../../../../shared/settings'
+import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useNetworkStore } from '@/stores/network-store'
@@ -19,11 +22,12 @@ const actionButtonClassName =
 type NetworkView = { kind: 'list' | 'configure' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
-// Settings -> Network. The Network status section shows connectivity (navigator.onLine) plus the
-// local interface details reported by the main process; the Package mirror section lets a user
-// behind a firewall or on a slow route to the public conda-forge / pip hosts point package fetches
-// at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is phase-3
-// (spec §14, §9) and is intentionally not built here.
+// Settings -> Network. The Network status section combines the navigator.onLine link signal
+// with a real end-to-end reachability probe (the same HTTPS HEAD check the onboarding
+// environment step uses) plus local interface details reported by the main process; the Package
+// mirror section lets a user behind a firewall or on a slow route to the public conda-forge /
+// pip hosts point package fetches at a mirror instead. The "Claude Science domains" egress
+// allowlist from the mockup is phase-3 (spec §14, §9) and is intentionally not built here.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
@@ -34,6 +38,11 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
+  // Real end-to-end reachability, probed by the main process with the same HTTPS HEAD check the
+  // onboarding environment step uses. null means "no fresh answer yet" — while online that
+  // renders as Checking…; while offline the rows gate on isOnline and never read this.
+  const [connectivity, setConnectivity] = useState<'reachable' | 'unreachable' | null>(null)
+  const probeGenerationRef = useRef(0)
 
   // Local interface details come from the main process; window.api.network is Electron-only,
   // so stay with placeholders when the preload bridge is unavailable.
@@ -44,17 +53,43 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     void getInfo().then((info) => setNetworkInfo(info))
   }, [])
 
+  // setState happens only in async callbacks, so callers (effects, the Retry button) never
+  // trigger a cascading synchronous render.
+  const probeConnectivity = useCallback((): void => {
+    const checkConnectivity = window.api?.network?.checkConnectivity
+    const generation = ++probeGenerationRef.current
+
+    if (!checkConnectivity) {
+      // Web surface has no probe bridge; fall back to the navigator.onLine signal, which is
+      // the best information available there.
+      void Promise.resolve().then(() => {
+        if (probeGenerationRef.current === generation) setConnectivity('reachable')
+      })
+      return
+    }
+
+    void checkConnectivity().then((reachable) => {
+      if (probeGenerationRef.current === generation) {
+        setConnectivity(reachable ? 'reachable' : 'unreachable')
+      }
+    })
+  }, [])
+
   // Load once when the list view mounts while online, and re-pull whenever connectivity comes
   // back; offline rows show placeholders, so a connectivity drop has nothing to refresh.
   useEffect(() => {
-    if (view.kind === 'list' && isOnline) refreshNetworkInfo()
-  }, [view.kind, isOnline, refreshNetworkInfo])
+    if (view.kind === 'list' && isOnline) {
+      refreshNetworkInfo()
+      probeConnectivity()
+    }
+  }, [view.kind, isOnline, refreshNetworkInfo, probeConnectivity])
 
   const recheckOnline = useNetworkStore((state) => state.recheckOnline)
 
   const handleRetry = (): void => {
     recheckOnline()
     refreshNetworkInfo()
+    if (useNetworkStore.getState().isOnline) probeConnectivity()
   }
 
   // Seed the draft from the saved mirror once each time the configure view is entered (including via
@@ -93,12 +128,52 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     }
   }
 
-  const connectionLabel =
-    networkInfo?.connectionType === 'wifi'
-      ? 'Wi-Fi'
-      : networkInfo?.connectionType === 'ethernet'
-        ? 'Ethernet'
-        : '—'
+  // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
+  const interfaceDetail =
+    [
+      networkInfo?.connectionType === 'wifi'
+        ? 'Wi-Fi'
+        : networkInfo?.connectionType === 'ethernet'
+          ? 'Ethernet'
+          : null,
+      networkInfo?.ipAddress ?? null
+    ]
+      .filter((part) => part !== null)
+      .join(' · ') || undefined
+
+  // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
+  // component as the onboarding environment step's network check.
+  const networkCheck: EnvironmentCheckItem = !isOnline
+    ? {
+        id: 'install-network',
+        label: 'Internet connection',
+        status: 'failed',
+        summary: 'This machine is offline.'
+      }
+    : connectivity === 'unreachable'
+      ? {
+          id: 'install-network',
+          label: 'Internet connection',
+          status: 'failed',
+          summary: 'The network link is up, but the internet is unreachable.',
+          detail: interfaceDetail
+        }
+      : {
+          id: 'install-network',
+          label: 'Internet connection',
+          status: 'passed',
+          summary: 'The internet is reachable.',
+          detail: interfaceDetail
+        }
+
+  const isChecking = isOnline && connectivity === null
+
+  // Tile icon follows the actual link: WifiOff while offline, then by connection type.
+  const networkIcon = !isOnline
+    ? WifiOff
+    : networkInfo?.connectionType === 'ethernet'
+      ? EthernetPort
+      : Wifi
 
   return (
     <div className="space-y-6 p-5">
@@ -106,55 +181,40 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
         <section aria-label="Network status">
           <h3 className="mb-1 text-sm font-semibold text-foreground">Network status</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            Whether this machine is currently connected to the internet.
+            Whether this machine can currently reach the internet.
           </p>
 
-          <div className="rounded-xl border border-border p-4">
-            <dl className="space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <dt className={fieldLabelClassName}>Status</dt>
-                <dd className="flex items-center gap-1.5 text-foreground">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'size-2 rounded-full',
-                      isOnline ? 'bg-success-000' : 'bg-destructive'
-                    )}
-                  />
-                  {isOnline ? 'Connected' : 'Offline'}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className={fieldLabelClassName}>Connection</dt>
-                <dd className="text-foreground">{isOnline ? connectionLabel : '—'}</dd>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <dt className={fieldLabelClassName}>IP address</dt>
-                <dd className="text-foreground">
-                  {isOnline ? (networkInfo?.ipAddress ?? '—') : '—'}
-                </dd>
-              </div>
-            </dl>
+          <div className="rounded-xl border border-border px-4">
+            <ul aria-live="polite">
+              {isChecking ? (
+                <PendingCheckRow
+                  id="install-network"
+                  label="Internet connection"
+                  pendingText="Checking…"
+                />
+              ) : (
+                <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
+              )}
+            </ul>
 
-            {!isOnline ? (
-              <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
-                <p className="flex items-center gap-1.5 text-sm font-medium text-destructive">
-                  <CircleAlert className="size-4" strokeWidth={2} aria-hidden="true" />
-                  No internet connection
-                </p>
-                <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
-                  <li>Check your cable or Wi-Fi connection.</li>
-                  <li>Check proxy or VPN settings.</li>
+            {!isOnline || connectivity === 'unreachable' ? (
+              <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
+                <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+                  {!isOnline ? <li>Check your cable or Wi-Fi connection.</li> : null}
+                  <li>Check proxy, VPN, or firewall settings.</li>
                   <li>Check the package mirror configuration below.</li>
                 </ol>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
                   onClick={handleRetry}
-                  className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                  disabled={isChecking}
                 >
-                  <RefreshCw className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  Retry
-                </button>
+                  <RefreshCw className={cn(isChecking && 'animate-spin')} aria-hidden="true" />
+                  {isChecking ? 'Checking…' : 'Check again'}
+                </Button>
               </div>
             ) : null}
           </div>

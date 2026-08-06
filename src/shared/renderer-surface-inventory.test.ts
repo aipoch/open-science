@@ -58,6 +58,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'handoff.list',
   'handoff.onChanged',
   'handoff.retry',
+  'network.checkConnectivity',
   'network.getInfo',
   'notifications.syncViewState',
   'officePreview.attachFrame',
@@ -213,7 +214,7 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(313)
+    expect(electronPaths).toHaveLength(314)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)

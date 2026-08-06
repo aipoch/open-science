@@ -538,6 +538,7 @@ export interface OpenScienceAPI {
   }
   network: {
     getInfo(): Promise<NetworkInfo>
+    checkConnectivity(): Promise<boolean>
   }
   cli: {
     getStatus(): Promise<CliLauncherStatus>
