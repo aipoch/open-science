@@ -71,6 +71,9 @@ const useLifecycleSync = ({
       applyOrQueue(() => {
         useProjectStore.getState().upsertProject(project)
         useArchiveUndoStore.getState().reconcileProject(project)
+        if (project.archivedAt !== undefined) {
+          setNotice((current) => (current?.projectId === project.id ? undefined : current))
+        }
         if (
           project.archivedAt !== undefined &&
           useNavigationStore.getState().activeProjectId === project.id
@@ -117,6 +120,7 @@ const useLifecycleSync = ({
         }
         if (session.archivedAt !== undefined) {
           usePreviewWorkbenchStore.getState().removeSessionItems(session.id)
+          setNotice((current) => (current?.sessionId === session.id ? undefined : current))
         }
       })
     })

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
 
+import { useProjectStore } from './project-store'
 import { useSessionStore } from './session-store'
 import type { ProjectFileItem } from '../../../shared/project-files'
 
@@ -82,6 +83,22 @@ const findMostRecentSessionId = (projectId: string): string | undefined =>
     )
     .sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id
 
+const isActiveProject = (projectId: string): boolean =>
+  useProjectStore
+    .getState()
+    .projects.some((project) => project.id === projectId && project.archivedAt === undefined)
+
+const isActiveSession = (projectId: string, sessionId: string): boolean =>
+  isActiveProject(projectId) &&
+  useSessionStore
+    .getState()
+    .sessions.some(
+      (session) =>
+        session.id === sessionId &&
+        session.projectId === projectId &&
+        session.archivedAt === undefined
+    )
+
 // Owns which top-level screen is visible and which project the workspace is scoped to. Session
 // selection stays in the session store; this store coordinates it when navigating.
 export const useNavigationStore = create<NavigationStore>((set) => ({
@@ -125,6 +142,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
 
   // Opens a specific session inside its project's workspace.
   openSession: (projectId, sessionId, origin) => {
+    if (!isActiveSession(projectId, sessionId)) return
     useSessionStore.getState().selectSession(sessionId)
 
     if (origin === 'user') recordLastOpenedProject(projectId)
@@ -142,16 +160,8 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
       .getState()
       .sessions.find((candidate) => candidate.id === sessionId)
 
-    if (!session || session.archivedAt !== undefined) return
-
-    useSessionStore.getState().selectSession(sessionId)
-
-    set((state) =>
-      navigationState(state, origin, {
-        view: 'workspace',
-        activeProjectId: session.projectId
-      })
-    )
+    if (!session) return
+    useNavigationStore.getState().openSession(session.projectId, session.id, origin)
   },
 
   // Opens a project's New Conversation draft carrying a `/customize` prefill. Clears session selection
@@ -159,6 +169,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   // stamps a pending prefill intent that WorkspacePage consumes once. The intent never sends or creates
   // a session; it is a navigation/prefill intent only.
   startCustomizeConversation: (projectId) => {
+    if (!isActiveProject(projectId)) return
     useSessionStore.getState().clearSelection()
     recordLastOpenedProject(projectId)
 

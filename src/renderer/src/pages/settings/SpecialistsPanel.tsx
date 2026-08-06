@@ -251,7 +251,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
   // Resolves the valid last-opened project (or the newest-existing fallback) against the live catalog.
   // Undefined means zero projects and the entry is disabled with explanatory help text.
-  const chatProjectId = useMemo(() => resolveCustomizeProjectId(projects), [projects])
+  const chatProjectId = useMemo(
+    () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
+    [projects]
+  )
 
   // Navigation/prefill intent only: closes Settings and opens the resolved project's New Conversation
   // draft carrying a `/customize` prefill. Does not send, create a session, bind a Specialist, or imply

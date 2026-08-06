@@ -174,6 +174,36 @@ describe('useLifecycleSync', () => {
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
   })
 
+  it('clears a stale notice when its session is archived', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+    })
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe(
+      session.id
+    )
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, archivedAt: 2 },
+        originClientId: 'web:external'
+      })
+    })
+
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+    expect(useNavigationStore.getState().view).toBe('home')
+  })
+
+  it('clears a stale notice when its project is archived', async () => {
+    await act(async () => {
+      listeners.projectCreated?.(project)
+      listeners.sessionCreated?.({ session, originClientId: 'web:external' })
+      listeners.projectUpdated?.({ ...project, archivedAt: 2 })
+    })
+
+    expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
   it('removes a deleted session and clears its notice', async () => {
     await act(async () => {
       listeners.sessionCreated?.({ session, originClientId: 'web:external' })
