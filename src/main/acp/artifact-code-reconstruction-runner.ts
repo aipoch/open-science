@@ -17,6 +17,7 @@ const RECONSTRUCTION_SYSTEM_PROMPT = [
 
 const RECONSTRUCTION_AGENT_NAME = 'open-science-reconstruction'
 const STALE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000
+const PROVIDER_DEFAULT_MODEL = 'provider-default'
 
 export type ArtifactCodeReconstructionRunResult = {
   text: string
@@ -149,6 +150,14 @@ export const prepareBackend = (
   return prepareClaudeBackend(backend, profileRoot)
 }
 
+export const resolveReconstructionModel = (
+  backend: Pick<ResolvedAgentBackend, 'contextUsageModel' | 'sessionModel'>,
+  target: ExplicitAgentBackendTarget
+): string =>
+  backend.contextUsageModel?.trim() ||
+  backend.sessionModel?.trim() ||
+  (target.model.kind === 'required' ? target.model.id : PROVIDER_DEFAULT_MODEL)
+
 export class ArtifactCodeReconstructionRunner {
   private readonly root: string
   private readonly now: () => number
@@ -279,12 +288,10 @@ export class ArtifactCodeReconstructionRunner {
         }
       }
 
-      const model = resolvedBackend.contextUsageModel ?? resolvedBackend.sessionModel
-      if (!model) throw new Error('The selected model could not be resolved for reconstruction.')
       return {
         text: assistantChunks.join(''),
         frameworkId: resolvedBackend.framework.id,
-        model
+        model: resolveReconstructionModel(resolvedBackend, target)
       }
     } finally {
       if (sessionId && toolLessBridgeScopeRegistered) {

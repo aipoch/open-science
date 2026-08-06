@@ -570,6 +570,22 @@ describe('ArtifactProvenancePanel', () => {
     expect(reconstructionStatus?.parentElement?.className).not.toContain('flex-wrap')
   })
 
+  it('keeps the Code and Execution Log action bars aligned', async () => {
+    const codeAction = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    const codeActionBarClassName = codeAction?.parentElement?.className
+
+    await clickTab('Execution Log')
+    await flush()
+
+    const executionAction = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download notebook'
+    )
+    expect(codeActionBarClassName).toContain('py-2')
+    expect(executionAction?.parentElement?.className).toBe(codeActionBarClassName)
+  })
+
   it('shows a content loading state while reconstruction is generating', async () => {
     const generated = {
       state: 'cached' as const,

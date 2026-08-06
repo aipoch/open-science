@@ -10,7 +10,8 @@ import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import {
   ArtifactCodeReconstructionRunner,
-  prepareBackend
+  prepareBackend,
+  resolveReconstructionModel
 } from './artifact-code-reconstruction-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 
@@ -40,6 +41,20 @@ const target: ExplicitAgentBackendTarget = {
 }
 
 describe('Artifact code reconstruction backend profiles', () => {
+  it('records a stable model marker for provider-default backends', () => {
+    const resolved = backend(claudeCodeFramework)
+    resolved.sessionModel = undefined
+    resolved.contextUsageModel = undefined
+
+    expect(
+      resolveReconstructionModel(resolved, {
+        ...target,
+        frameworkId: 'claude-code',
+        model: { kind: 'provider-default' }
+      })
+    ).toBe('provider-default')
+  })
+
   it('gives OpenCode an isolated deny-all one-step agent profile', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-opencode-'))
     const prepared = await prepareBackend(
