@@ -44,6 +44,11 @@ export type ResponsesBridgeTarget = {
   }
 }
 
+export type ResponsesBridgeModelTarget = Pick<
+  ResponsesBridgeTarget,
+  'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort'
+>
+
 export type ResponsesBridgeNamespacedTool = {
   namespace: string
   name: string
@@ -1176,6 +1181,10 @@ export class ResponsesBridge {
       this.target.key !== target.key
     this.target = target
     if (changed) this.reasoningByCallId.clear()
+  }
+
+  setModelTarget(target: ResponsesBridgeModelTarget): void {
+    this.setTarget({ ...this.target, ...target })
   }
 
   // Updates only the resolved upstream effort on the live target. Deliberately not a setTarget: the

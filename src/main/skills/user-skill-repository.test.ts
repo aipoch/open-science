@@ -1323,7 +1323,9 @@ describe('UserSkillRepository', () => {
               { path: 'bar/SKILL.md', type: 'blob' }
             ]
           }
-        : { default_branch: 'main' }
+        : url.includes('/commits/')
+          ? { sha: '0123456789abcdef0123456789abcdef01234567' }
+          : { default_branch: 'main' }
       return {
         ok: true,
         status: 200,

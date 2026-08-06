@@ -49,6 +49,7 @@ const webController = (port = 4180): WebServiceController => ({
     url: `http://127.0.0.1:${port}/?token=local-only`
   }),
   close: vi.fn().mockResolvedValue(undefined),
+  dispose: vi.fn().mockResolvedValue(undefined),
   closeExternalConnections: vi.fn(),
   onStopped: vi.fn(() => vi.fn()),
   isRunning: vi.fn(() => true),

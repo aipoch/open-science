@@ -1,0 +1,288 @@
+import type { SessionNotification } from '@agentclientprotocol/sdk'
+
+import type { AcpContextUsage, AcpRuntimeEvent } from '../../shared/acp'
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
+import { CodexSkillActivityProjector } from './codex-skill-activity'
+import type { AcpContextUsagePolicy } from './context-usage-policy'
+import type { ContextUsageTracker, SessionUpdateObservation } from './context-usage-tracker'
+import { isMcpToolName } from './permission-policy'
+import { applyCurrentModeUpdate } from './permission-profile-controller'
+import {
+  extractProviderToolName,
+  extractToolFailureText,
+  toAcpRuntimeEvent
+} from './runtime-events'
+import type { AcpSessionRegistry } from './session-registry'
+
+type AcpSessionUpdateRouting = Readonly<{
+  framework?: AgentFrameworkId
+  appSessionId?: string
+  eventId: string
+  timestamp?: number
+  visible: boolean
+  reconnectPending: boolean
+  mcpServerNames: readonly string[]
+}>
+
+type AcpSessionUpdateRouteInput = Readonly<{
+  appSessionId?: string
+  visible?: boolean
+  emitState?: () => void
+}>
+
+type AcpSessionUpdateProjectorOptions = Readonly<{
+  registry: Pick<AcpSessionRegistry, 'lookup'>
+  contextUsage: Pick<
+    ContextUsageTracker,
+    'beginSession' | 'observeSessionUpdate' | 'reconcileProviderUsage' | 'refreshUsage' | 'usage'
+  >
+  contextPolicy: Pick<AcpContextUsagePolicy, 'resolve'>
+  hasActiveSession: (sessionId: string) => boolean
+  currentFramework: () => AgentFrameworkId
+  reconnectPending: () => boolean
+  mcpServerNamesFor: (sessionId: string) => readonly string[]
+  nextEventId: () => string
+  emitState: () => void
+  pushEvent: (event: Readonly<AcpRuntimeEvent>) => void
+  reportToolFailure: (
+    effect: Extract<AcpSessionUpdateEffect, { kind: 'tool-failure-diagnostic' }>
+  ) => void
+}>
+
+type AcpSessionUpdateEffect =
+  | Readonly<{
+      kind: 'context-observation'
+      sessionId: string
+      notification: Readonly<SessionNotification>
+      observation: Readonly<SessionUpdateObservation>
+    }>
+  | Readonly<{
+      kind: 'context-refresh'
+      sessionId: string
+    }>
+  | Readonly<{
+      kind: 'provider-usage'
+      sessionId: string
+      usage: Readonly<AcpContextUsage>
+    }>
+  | Readonly<{
+      kind: 'current-mode'
+      sessionId: string
+      currentModeId: string
+    }>
+  | Readonly<{
+      kind: 'tool-failure-diagnostic'
+      tool?: string
+      toolCallId?: string
+      sessionId: string
+      reason?: string
+    }>
+  | Readonly<{
+      kind: 'visible-event'
+      event: Readonly<AcpRuntimeEvent>
+    }>
+
+const deepFreeze = <Value>(value: Value): Value => {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const nested of Object.values(value)) deepFreeze(nested)
+  return Object.freeze(value)
+}
+
+const toolObservation = (
+  notification: Readonly<SessionNotification>,
+  mcpServerNames: readonly string[]
+): SessionUpdateObservation => {
+  const update = notification.update
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return {}
+
+  const providerToolName = extractProviderToolName(update)
+  if (
+    isMcpToolName(update.title, mcpServerNames) ||
+    isMcpToolName(providerToolName, mcpServerNames)
+  ) {
+    return { toolCategory: 'mcp' }
+  }
+  return update.sessionUpdate === 'tool_call' || update.title || providerToolName
+    ? { toolCategory: 'tools' }
+    : {}
+}
+
+// Translates provider Session notifications into immutable effects and applies them once in order;
+// event retention, aggregates, and ContextUsageTracker remain the actual state writers.
+class AcpSessionUpdateProjector {
+  private readonly codexSkillActivity = new CodexSkillActivityProjector()
+
+  constructor(private readonly options: AcpSessionUpdateProjectorOptions) {}
+
+  beginGeneration(codexSkillsRoot?: string): void {
+    this.codexSkillActivity.setSkillsRoot(codexSkillsRoot)
+  }
+
+  clearGeneration(): void {
+    this.codexSkillActivity.setSkillsRoot(undefined)
+  }
+
+  clearSession(sessionId: string): void {
+    this.codexSkillActivity.clearSession(sessionId)
+  }
+
+  dispose(): void {
+    this.clearGeneration()
+  }
+
+  route(notification: SessionNotification, input: AcpSessionUpdateRouteInput = {}): void {
+    const sessionId = input.appSessionId ?? notification.sessionId
+    const emitState = input.emitState ?? this.options.emitState
+    const effects = this.project(notification, {
+      framework:
+        this.options.registry.lookup(sessionId)?.aggregate.snapshot().frameworkId ??
+        this.options.currentFramework(),
+      appSessionId: input.appSessionId,
+      eventId: this.options.nextEventId(),
+      visible: input.visible ?? true,
+      reconnectPending: this.options.reconnectPending(),
+      mcpServerNames: this.options.mcpServerNamesFor(sessionId)
+    })
+
+    for (const effect of effects) this.apply(effect, emitState)
+  }
+
+  private project(
+    notification: SessionNotification,
+    routing: AcpSessionUpdateRouting
+  ): readonly AcpSessionUpdateEffect[] {
+    const routed = structuredClone(notification)
+    if (routing.appSessionId) routed.sessionId = routing.appSessionId
+    deepFreeze(routed)
+
+    const projection = this.codexSkillActivity.projectWithContext(
+      toAcpRuntimeEvent(
+        routed,
+        routing.eventId,
+        routing.timestamp,
+        routing.framework === 'claude-code'
+      )
+    )
+    const event = deepFreeze(projection.event)
+    if (event.contextUsage && routing.reconnectPending) return Object.freeze([])
+
+    const effects: AcpSessionUpdateEffect[] = []
+    if (!routing.reconnectPending) {
+      effects.push(
+        deepFreeze({
+          kind: 'context-observation' as const,
+          sessionId: routed.sessionId,
+          notification: routed,
+          observation: projection.skillFile
+            ? { toolCategory: 'skills', skillFilePath: projection.skillFile.path }
+            : toolObservation(routed, routing.mcpServerNames)
+        })
+      )
+    }
+
+    if (routed.update.sessionUpdate === 'current_mode_update') {
+      effects.push(
+        deepFreeze({
+          kind: 'current-mode' as const,
+          sessionId: routed.sessionId,
+          currentModeId: routed.update.currentModeId
+        })
+      )
+    }
+
+    if (event.contextUsage) {
+      effects.push(
+        deepFreeze({
+          kind: 'provider-usage' as const,
+          sessionId: routed.sessionId,
+          usage: event.contextUsage
+        })
+      )
+      return Object.freeze(effects)
+    }
+
+    if (routing.visible) {
+      if (!routing.reconnectPending) {
+        effects.push(deepFreeze({ kind: 'context-refresh' as const, sessionId: routed.sessionId }))
+      }
+      if (event.kind === 'tool' && event.status === 'failed') {
+        const canonicalTool = event.providerToolName
+          ? resolveCanonicalMcpToolIdentity(event.providerToolName, routing.mcpServerNames)
+          : undefined
+        effects.push(
+          deepFreeze({
+            kind: 'tool-failure-diagnostic' as const,
+            tool: canonicalTool ?? event.providerToolName ?? event.toolKind,
+            toolCallId: event.toolCallId,
+            sessionId: routed.sessionId,
+            reason: extractToolFailureText(event.toolContent)
+          })
+        )
+      }
+      if ((event.kind === 'message' || event.kind === 'thought') && !event.text) {
+        return Object.freeze(effects)
+      }
+      effects.push(deepFreeze({ kind: 'visible-event' as const, event }))
+    }
+
+    return Object.freeze(effects)
+  }
+
+  private apply(effect: AcpSessionUpdateEffect, emitState: () => void): void {
+    switch (effect.kind) {
+      case 'context-observation':
+        if (this.options.hasActiveSession(effect.sessionId)) {
+          this.options.contextUsage.beginSession(
+            effect.sessionId,
+            this.options.contextPolicy.resolve(effect.sessionId).estimateInput
+          )
+        }
+        this.options.contextUsage.observeSessionUpdate(
+          effect.sessionId,
+          effect.notification,
+          effect.observation
+        )
+        break
+      case 'current-mode': {
+        const aggregate = this.options.registry.lookup(effect.sessionId)?.aggregate
+        const profileState = aggregate?.snapshot().permissionProfile
+        if (profileState) {
+          aggregate.setPermissionProfile(
+            applyCurrentModeUpdate(
+              profileState as SessionPermissionProfileState,
+              effect.currentModeId
+            )
+          )
+          emitState()
+        }
+        break
+      }
+      case 'provider-usage':
+        this.options.contextUsage.reconcileProviderUsage(
+          effect.sessionId,
+          effect.usage,
+          this.options.contextPolicy.resolve(effect.sessionId).selectedWindow
+        )
+        emitState()
+        break
+      case 'context-refresh':
+        if (this.options.contextUsage.usage(effect.sessionId)?.breakdown?.status !== 'reconciled') {
+          const resolved = this.options.contextPolicy.resolve(effect.sessionId)
+          const size =
+            resolved.selectedWindow ?? this.options.contextUsage.usage(effect.sessionId)?.size
+          this.options.contextUsage.refreshUsage(effect.sessionId, 'preflight', size)
+        }
+        break
+      case 'tool-failure-diagnostic':
+        this.options.reportToolFailure(effect)
+        break
+      case 'visible-event':
+        this.options.pushEvent(effect.event)
+        break
+    }
+  }
+}
+
+export { AcpSessionUpdateProjector }

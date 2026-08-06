@@ -20,6 +20,11 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type { AgentFrameworkId } from '../agent-framework'
+import type {
+  OAuthClientInformationMixed,
+  OAuthTokens
+} from '@modelcontextprotocol/sdk/shared/auth.js'
+import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js'
 
 // Main-process-only stored shapes for settings.json. These carry the encrypted key reference and a
 // non-secret masked hint; the plaintext key never lives here (only transiently in service memory).
@@ -71,12 +76,27 @@ export type StoredProvider = {
   disconnectedAt?: number
 }
 
-// A user-added custom MCP server. Phase 1 = stdio (local command). Phase 2 adds the remote
-// transports (streamable_http / sse) with static auth `headers` (e.g. Authorization). OAuth and a
-// dynamic headers-helper command are a later task. Secret values are stored as safeStorage refs and
-// decrypted only in the main process when constructing the MCP transport.
+export type StoredCustomMcpOAuthConfig = {
+  clientMetadataUrl?: string
+  authorizationServerUrl?: string
+  scopes?: string[]
+}
+
+// The OAuth state is serialized into one encrypted safeStorage value. `oauthState` is a transient
+// main-process projection populated by ConnectorSettingsModule; it is never written to settings.json
+// and never sent to the renderer.
+export type StoredCustomMcpOAuthState = {
+  tokens?: OAuthTokens
+  clientInformation?: OAuthClientInformationMixed
+  discoveryState?: OAuthDiscoveryState
+}
+
+// A user-added custom MCP server. Secret values are stored as safeStorage refs and decrypted only in
+// the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
   id: string
+  // Added after custom Connectors shipped. Older records derive it from immutable `name` on read.
+  slug?: string
   name: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   command?: string
@@ -88,6 +108,9 @@ export type StoredCustomMcpServer = {
   // Static auth headers (e.g. Authorization) sent with every request on remote transports.
   headers?: Record<string, string>
   headerRefs?: Record<string, string>
+  oauth?: StoredCustomMcpOAuthConfig
+  oauthRef?: string
+  oauthState?: StoredCustomMcpOAuthState
   enabled: boolean
   // Timestamp of the user's explicit add-time trust confirmation (see plan §3.5).
   trustedAt?: number

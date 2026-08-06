@@ -327,6 +327,7 @@ export type AcpRuntimeEvent = {
   // separate recovery path from automatic context-overflow compaction. Completion contents and
   // prompt text deliberately remain in the main-process recovery store, not this event.
   handoffFailure?: AcpHandoffFailure
+  planProjection?: import('./session-plan/contract').ActivePlanProjection
   // Set on an error event whose failure originates upstream of the app — the agent relayed a
   // model/provider error (bad key, rate limit, quota, provider 5xx/overloaded, wrong model id). The
   // renderer uses this to withhold the "Report error" affordance: a provider-side problem is the user's
@@ -382,6 +383,16 @@ export const getAcpRuntimeEventText = (event: AcpRuntimeEvent): string | undefin
     ? undefined
     : event.text
 
+const CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX =
+  'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup).'
+const PROVIDER_NEUTRAL_REFUSAL_PREFIX =
+  'The selected model declined to complete this response under its safety policy.'
+
+export const normalizeClaudeCodeRefusalText = (text: string): string =>
+  text.startsWith(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX)
+    ? `${PROVIDER_NEUTRAL_REFUSAL_PREFIX}${text.slice(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX.length)}`
+    : text
+
 export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
 export type AcpPermissionGrantScope = Exclude<AcpPermissionScope, 'once'>
 
@@ -407,6 +418,9 @@ export type AcpPermissionRequest = {
   mcpIdentity?: string
   toolKind?: ToolKind
   toolLocations?: ToolCallLocation[]
+  // Structured argv prefix whose remembered scopes authorize a command group. This is transient
+  // approval context only; permission grants persist an opaque digest instead of these tokens.
+  commandPrefix?: string[]
   rawInput?: unknown
   options: AcpPermissionOption[]
 }
@@ -497,6 +511,20 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Closed, application-owned behavior requested for this Conversation Turn only.
+  turnIntent?: 'plan-first'
+  // Explicit, immutable identity for a Plan-bound interaction. Main validates it before admitting
+  // the prompt. An already-approved continuation grants execution authority; pending recovery
+  // actions are handled below and never infer authority from ordinary message text.
+  planContinuation?: {
+    projectId: string
+    artifactVersionId: string
+    expectedRevision: number
+    // A restored pending Plan starts a fresh interaction. Main either commits the explicit card
+    // decision after activation or exposes pending context for feedback without granting authority.
+    // Missing means an already-approved Plan continuation.
+    pendingAction?: 'review' | 'approve' | 'reject'
+  }
   // An application-owned continuation retains the originating user request but must not create a
   // second visible user-message event. It is never accepted from renderer IPC.
   continuation?: {
@@ -530,6 +558,9 @@ export type AcpPromptRequest = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
   historyImages?: AcpMessageImage[]
+  // Transient prompt-boundary signal: the provider context was replaced, so live application state
+  // must be handed off even when there are no replayable transcript turns. Never persisted.
+  contextReset?: boolean
   // Prepared by the renderer for an internal skill-triggered reconnect. Used only if that reconnect
   // cannot resume the agent session and must adopt a fresh one.
   resumeFallback?: {

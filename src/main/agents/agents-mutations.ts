@@ -354,7 +354,7 @@ const handleUpdate = async (
     throw new Error('revision must be a positive integer.')
   }
 
-  const current = await deps.profileService.getByName(name)
+  const current = await deps.profileService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
     throw new Error('revision does not match the current specialist revision.')
   }
@@ -441,7 +441,7 @@ const handleAttachDetach = async (
     ? (params[refKey] as string)
     : throwShape(`${refKey} is required`)
 
-  const current = await deps.profileService.getByName(name)
+  const current = await deps.profileService.resolveCustomMutationByName(name)
   if (current.revision !== revision) {
     throw new Error('revision does not match the current specialist revision.')
   }

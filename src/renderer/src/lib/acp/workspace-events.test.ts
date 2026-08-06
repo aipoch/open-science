@@ -20,6 +20,7 @@ import {
   assembleReviewRunRequest,
   syncWorkspaceAgentFirstOutputState,
   syncWorkspacePermissionState,
+  suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
   resetDeferredArtifactEventsForTests
@@ -99,6 +100,39 @@ describe('workspace runtime events', () => {
       streamId: 'assistant-message-1',
       eventIds: ['event-1', 'event-2'],
       status: 'streaming'
+    })
+  })
+
+  it('projects Plan feedback runtime events as settled user Messages', async () => {
+    const sessionBefore = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...sessionBefore,
+          status: 'waiting-plan-approval',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+        }
+      ]
+    })
+
+    await expect(
+      applyWorkspaceRuntimeEvent(
+        createEvent({
+          id: 'session-user-message-message-1',
+          role: 'user',
+          messageId: 'message-1',
+          text: 'Split the analysis by cohort.'
+        })
+      )
+    ).resolves.toBe(true)
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('running')
+    expect(session.messages.at(-1)).toMatchObject({
+      id: 'message-1',
+      role: 'user',
+      content: 'Split the analysis by cohort.',
+      status: 'complete'
     })
   })
 
@@ -1972,6 +2006,29 @@ describe('workspace runtime events', () => {
   })
 
   describe('auto-review gate on stop event', () => {
+    it('cancels pending and future auto-reviews once quit begins', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-1',
+        eventId: 'event-agent-1',
+        content: 'Analysis complete'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-1', kind: 'stop' }))
+      suppressAutoReviewsForQuit()
+      await vi.runAllTimersAsync()
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-2', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+      vi.unstubAllGlobals()
+    })
+
     it('triggers a review via window.api.reviewer.run when autoReviewEnabled is true', async () => {
       const reviewerRun = vi.fn().mockResolvedValue(undefined)
 

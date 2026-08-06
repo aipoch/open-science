@@ -36,13 +36,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Aggregate release certification evidence
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs aggregate
+          --directory artifacts
+          --output artifacts/RELEASE-CERTIFICATION.json
+          --expected-sha "$GITHUB_SHA"
 
       - name: Generate checksums
         working-directory: artifacts
@@ -62,7 +69,7 @@ jobs:
         run: gh release delete nightly --cleanup-tag --yes || true
 
       - name: Publish nightly pre-release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: nightly
           target_commitish: ${{ github.sha }}
@@ -80,3 +87,4 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json

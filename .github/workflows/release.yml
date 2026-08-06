@@ -18,10 +18,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate desktop release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          expected_tag="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match $expected_tag." >&2
+            exit 1
+          fi
+
+      - name: Verify release commit is on main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
+    needs: release-preflight
     uses: ./.github/workflows/build.yml
     secrets: inherit
 
@@ -31,31 +56,34 @@ jobs:
   # time-capped and re-runnable (see notarize-mac.yml). No-ops when signing secrets aren't configured.
   notarize-mac:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
   # The reusable build already hard-gates a fresh NSIS install/start/uninstall. On stable tags, also
-  # install the latest published stable version and run the new installer over it. This runs beside
-  # macOS notarization, so its few minutes normally do not extend the release critical path.
+  # install the latest published stable version, prove electron-updater uses a differential Range
+  # download, upgrade over a live process, roll back, and restart current. Runs beside notarization.
   windows-upgrade-smoke:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: Download current Windows installer
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows-x64
           path: current
@@ -73,26 +101,71 @@ jobs:
           $tag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $env:CURRENT_TAG } | Select-Object -First 1).tagName
           if ([string]::IsNullOrWhiteSpace($tag)) {
             "available=false" >> $env:GITHUB_OUTPUT
+            "reason=no-previous-stable-release" >> $env:GITHUB_OUTPUT
             Write-Host "No previous stable release is available; fresh-install smoke already passed."
             exit 0
           }
-          gh release download $tag --pattern '*-win-x64-setup.exe' --dir previous
+          gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "available=true" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
-      - name: Smoke test Windows upgrade
+      - name: Certify Windows electron-updater differential update
+        if: steps.previous.outputs.available == 'true'
+        run: >-
+          node scripts/windows-updater-certification.mjs
+          --current-dir current
+          --previous-dir previous
+          --output windows-updater-observation.json
+
+      - name: Drill Windows silent upgrade, process lock, rollback, and restart
         if: steps.previous.outputs.available == 'true'
         run: >-
           node scripts/windows-installer-smoke.mjs
           --installer-dir current
           --previous-installer-dir previous
 
+      - name: Record Windows update-drill evidence
+        shell: pwsh
+        run: |
+          $status = if ('${{ steps.previous.outputs.available }}' -eq 'true') { 'passed' } else { 'not-applicable' }
+          $arguments = @(
+            'scripts/ci/release-certification-evidence.mjs', 'write-windows-update',
+            '--output', 'certification-windows-update.json',
+            '--current-tag', '${{ github.ref_name }}',
+            '--status', $status
+          )
+          if ('${{ steps.previous.outputs.available }}' -eq 'true') {
+            $arguments += @(
+              '--previous-tag', '${{ steps.previous.outputs.tag }}',
+              '--updater-observation', 'windows-updater-observation.json'
+            )
+          } else {
+            $arguments += @('--reason', '${{ steps.previous.outputs.reason }}')
+          }
+          & node @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows update-drill evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-update-certification
+          retention-days: 1
+          path: certification-windows-update.json
+          if-no-files-found: error
+
+  # Full Windows test coverage stays outside ordinary PR latency, but every stable tag must pass both
+  # real-Windows shards before any installer can be published.
+  windows-full-test:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/windows-full-test.yml
+
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, notarize-mac, windows-upgrade-smoke]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, notarize-mac, windows-upgrade-smoke, windows-full-test]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # Job-level permissions fully override the workflow-level block, so contents:write is restated
     # alongside the two scopes the SLSA attestation needs: id-token to sign via Sigstore OIDC, and
@@ -105,13 +178,24 @@ jobs:
       # Checkout first (before downloading artifacts): the mac-feed merge step runs a repo script, and
       # actions/checkout cleans the working dir, which would wipe a pre-downloaded artifacts/.
       - name: Checkout (for the mac-feed merge script)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
+
+      # Fail closed unless every native target reports P0 Electron, visual, and package evidence for
+      # this exact tag commit, plus the stable-only Windows suite and update drill.
+      - name: Aggregate release certification evidence
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs aggregate
+          --directory artifacts
+          --output artifacts/RELEASE-CERTIFICATION.json
+          --expected-sha "$GITHUB_SHA"
+          --require-stable-release-checks
+          --windows-full-suite passed
 
       # Merge the two per-arch mac feeds (from notarize-mac) into the single latest-mac.yml the
       # installed app polls (default `latest` channel). No-ops if the mac feeds are absent.
@@ -135,7 +219,7 @@ jobs:
       # digest list, not a build product. The attestation lives in the repo's Attestations, not as a
       # Release asset, so it doesn't clutter the download list.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: |
             artifacts/*.dmg
@@ -151,7 +235,7 @@ jobs:
       # arm64/x64-mac.yml intermediates it was built from. Blockmaps are win/linux only (mac does
       # full-zip updates in v1).
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           draft: false
           prerelease: false
@@ -163,7 +247,18 @@ jobs:
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json
             artifacts/latest.yml
             artifacts/latest-linux.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
+
+  # Releases created with GITHUB_TOKEN do not reliably emit a second workflow run. Invoke the reusable
+  # mirror directly so publication is complete only after the updater feed and installers reach CDN.
+  mirror:
+    needs: publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/mirror-to-website.yml
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}

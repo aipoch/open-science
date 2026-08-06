@@ -1,0 +1,219 @@
+import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
+import { resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import { claudeCodeFramework } from '../agent-framework'
+import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
+import { AcpProviderSessionCreator } from './provider-session-creator'
+import type { SessionCapabilityName } from './session-capability-owner'
+import { AcpSessionRegistry } from './session-registry'
+
+const permissionProfile: SessionPermissionProfileState = {
+  selectedProfile: 'ask',
+  effectiveProfile: 'ask',
+  currentModeId: 'default',
+  availableModeIds: ['default'],
+  fullAccessAvailable: false
+}
+
+type CreatorHarness = {
+  commit: ReturnType<typeof vi.fn>
+  creator: AcpProviderSessionCreator
+  order: string[]
+  registry: AcpSessionRegistry
+  release: ReturnType<typeof vi.fn>
+  session: ActiveSession
+  sessionSetupAppends: string[][]
+}
+
+const createHarness = (options: {
+  configure?: () => Promise<{
+    permissionProfile: SessionPermissionProfileState
+    appliedModel: undefined
+    configOptions: undefined
+  }>
+  registerSessionSpecialist?: () => void
+  pushEvent?: () => void
+  emitState?: () => void
+  order?: string[]
+  descriptorCapabilities?: SessionCapabilityName[]
+}): CreatorHarness => {
+  const order = options.order ?? []
+  const sessionSetupAppends: string[][] = []
+  const session = {
+    sessionId: 'provider-session',
+    dispose: vi.fn()
+  } as unknown as ActiveSession
+  const connection = {
+    agent: {
+      buildSession: vi.fn(() => ({
+        start: vi.fn(async () => {
+          order.push('session/new')
+          return session
+        })
+      }))
+    }
+  } as unknown as ClientConnection
+  const registry = new AcpSessionRegistry()
+  vi.spyOn(registry, 'publish').mockImplementation((...args) => {
+    order.push('registry publish')
+    return AcpSessionRegistry.prototype.publish.call(registry, ...args)
+  })
+  const backend: AcpBackendGenerationView = {
+    framework: {
+      ...claudeCodeFramework,
+      buildSessionSetup: (input) => {
+        order.push('presentation preflight')
+        sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
+        return claudeCodeFramework.buildSessionSetup(input)
+      }
+    },
+    backendId: 'claude-code',
+    session: { modelRequired: false },
+    prompt: { systemPromptAppends: [] },
+    context: { supportsImageInput: false },
+    adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+  }
+  const commit = vi.fn(() => order.push('capability commit'))
+  const release = vi.fn()
+  const creator = new AcpProviderSessionCreator({
+    defaultCwd: '/default',
+    defaultProjectName: 'default-project',
+    currentCwd: () => '/current',
+    ensureConnected: vi.fn(async () => {
+      order.push('ensure connection')
+      return connection
+    }),
+    assertCurrentConnection: vi.fn(),
+    currentBackend: () => backend,
+    registry,
+    reserveIdentity: (sessionId, startupGeneration) => {
+      order.push('identity reservation')
+      return registry.reserve({
+        sessionIds: [sessionId],
+        startupGeneration,
+        mayRenewAfterConnectionSetup: true,
+        blockStartup: false
+      })
+    },
+    capabilities: {
+      provision: vi.fn(async () => {
+        order.push('capability provision')
+        return {
+          mcpServers: [],
+          descriptor: {
+            role: 'primary' as const,
+            delegation: 'denied' as const,
+            transport: 'none' as const,
+            capabilities: options.descriptorCapabilities ?? [],
+            canonicalMcpServerNames: [],
+            modelFacingMcpServerNames: [],
+            controlRpcMethods: []
+          },
+          commit,
+          release
+        }
+      })
+    },
+    configurator: {
+      configure:
+        options.configure ??
+        vi.fn(async () => {
+          order.push('configure')
+          return { permissionProfile, appliedModel: undefined, configOptions: undefined }
+        })
+    },
+    registerSessionSpecialist: () => {
+      order.push('notebook callback')
+      options.registerSessionSpecialist?.()
+    },
+    updateCwd: () => order.push('cwd callback'),
+    pushEvent: () => {
+      order.push('event callback')
+      options.pushEvent?.()
+    },
+    emitState: () => {
+      order.push('state callback')
+      options.emitState?.()
+    },
+    diagnosticContext: () => ({})
+  })
+  return { commit, creator, order, registry, release, session, sessionSetupAppends }
+}
+
+describe('AcpProviderSessionCreator', () => {
+  it('publishes the provider-returned id as the fresh application Session id', async () => {
+    const harness = createHarness({ order: [] })
+
+    const result = await harness.creator.create({ cwd: '/workspace', projectName: 'project-a' })
+
+    expect(result).toEqual({
+      sessionId: 'provider-session',
+      cwd: resolve('/workspace'),
+      frameworkId: 'claude-code',
+      backendId: 'claude-code'
+    })
+    expect(harness.registry.lookup('provider-session')?.attachment?.session).toBe(harness.session)
+    expect(harness.commit).toHaveBeenCalledWith('provider-session')
+    expect(harness.order).toEqual([
+      'ensure connection',
+      'capability provision',
+      'presentation preflight',
+      'session/new',
+      'identity reservation',
+      'configure',
+      'registry publish',
+      'capability commit',
+      'notebook callback',
+      'cwd callback',
+      'event callback',
+      'state callback'
+    ])
+  })
+
+  it('disposes the provisional Session and releases capabilities when configuration fails', async () => {
+    const failure = new Error('configuration failed')
+    const harness = createHarness({ configure: vi.fn().mockRejectedValue(failure) })
+
+    await expect(harness.creator.create({ cwd: '/workspace' })).rejects.toBe(failure)
+
+    expect(harness.session.dispose).toHaveBeenCalledOnce()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.registry.lookup('provider-session')).toBeUndefined()
+    expect(harness.commit).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back a published Session when observer callbacks fail', async () => {
+    const harness = createHarness({
+      registerSessionSpecialist: () => {
+        throw new Error('notebook observer failed')
+      },
+      pushEvent: () => {
+        throw new Error('event observer failed')
+      },
+      emitState: () => {
+        throw new Error('state observer failed')
+      }
+    })
+
+    await expect(harness.creator.create({ cwd: '/workspace' })).resolves.toMatchObject({
+      sessionId: 'provider-session'
+    })
+    expect(harness.registry.lookup('provider-session')?.attachment?.session).toBe(harness.session)
+    expect(harness.session.dispose).not.toHaveBeenCalled()
+    expect(harness.release).not.toHaveBeenCalled()
+  })
+
+  it('builds prompt guidance from the effective provisioned capability descriptor', async () => {
+    const harness = createHarness({ descriptorCapabilities: [] })
+    const enabledHarness = createHarness({ descriptorCapabilities: ['skill-import'] })
+
+    await harness.creator.create({ cwd: '/workspace' })
+    await enabledHarness.creator.create({ cwd: '/workspace' })
+
+    expect(harness.sessionSetupAppends.flat()).not.toContain(SKILL_IMPORT_SYSTEM_PROMPT_APPEND)
+    expect(enabledHarness.sessionSetupAppends.flat()).toContain(SKILL_IMPORT_SYSTEM_PROMPT_APPEND)
+  })
+})

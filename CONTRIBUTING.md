@@ -38,17 +38,20 @@ npm run dev
 
 Run installation, development, and validation commands from the repository root:
 
-| Intent      | Root command                                               |
-| ----------- | ---------------------------------------------------------- |
-| Install     | `npm install`                                              |
-| Run         | `npm run dev`                                              |
-| Validate    | `npm run typecheck`, `npm run lint`, and `npm test`        |
-| Target test | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
-| UI E2E      | `npm run build:e2e`, then `npm run test:e2e`               |
-| UI journeys | `npm run build:e2e`, then `npm run test:e2e:journey`       |
-| Workspace   | `npm run build:e2e`, then `npm run test:e2e:workspace`     |
-| A11y        | `npm run build:e2e`, then `npm run test:e2e:accessibility` |
-| Visual      | `npm run build:e2e`, then `npm run test:e2e:visual`        |
+| Intent         | Root command                                               |
+| -------------- | ---------------------------------------------------------- |
+| Install        | `npm install`                                              |
+| Run            | `npm run dev`                                              |
+| Target test    | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
+| Node typecheck | `npm run typecheck:node`                                   |
+| Web typecheck  | `npm run typecheck:web`                                    |
+| Lint           | `npm run lint`                                             |
+| Full fallback  | `npm run typecheck`, `npm run lint`, then `npm test`       |
+| UI E2E         | `npm run build:e2e`, then `npm run test:e2e`               |
+| UI journeys    | `npm run build:e2e`, then `npm run test:e2e:journey`       |
+| Workspace      | `npm run build:e2e`, then `npm run test:e2e:workspace`     |
+| A11y           | `npm run build:e2e`, then `npm run test:e2e:accessibility` |
+| Visual         | `npm run build:e2e`, then `npm run test:e2e:visual`        |
 
 Create Git worktrees only under the repository's `.worktree/<name>` directory, with each change
 branch based on the default branch. Do not remove or move another worktree.
@@ -83,7 +86,8 @@ Three runtime process layers and a shared module live under `src/`:
 1. Create a branch off the default branch for your change.
 2. Make your change, keeping it focused and self-contained.
 3. Add or update tests that cover the behavior you changed.
-4. Run the full check suite locally (see below) and make sure it passes.
+4. Build the final Test Impact Set and run it after the last material edit. Use the full fallback when
+   ownership, consumers, or risks cannot be established.
 5. Open a pull request with a clear description of the change and its motivation.
 
 ### Branch names
@@ -119,28 +123,61 @@ Use one of these standard type prefixes:
 - Linting is enforced by ESLint; run `npm run lint`.
 - Keep user-facing strings, comments, and documentation in English.
 
-## Required Checks
+## Verification Policy
 
-Before opening a pull request, run all of these and make sure they pass:
+### Stable test-command semantics
 
-```bash
-npm run typecheck   # TypeScript type checking (node + web)
-npm run lint        # ESLint
-npm run test        # Vitest unit tests
-```
+- `npm test` always runs the complete portable Vitest suite. Its meaning does not depend on the current
+  branch or changed files.
+- `npm test -- <paths> [-t '<pattern>']` runs only the explicit target supplied by the caller. It does
+  not discover affected tests and must not be described as full verification.
+- Impact selection is a separate decision based on the final diff. Do not overload `npm test` with
+  implicit Git-diff behavior.
 
-Pull requests are expected to keep type checking, linting, and the test suite
-green. New behavior should come with tests.
+### Inner loop
 
-These repository gates are not automatically evidence for every changed behavior. Pair each behavior
-with the smallest project-owned check that exercises it, and run that check after the last material
-edit. If the implementation changes afterward, rerun every affected check instead of reusing an older
-result.
+During implementation, run the smallest project-owned test that exercises the behavior being changed.
+Rerun it whenever that behavior changes. Inner-loop results from an earlier implementation state are
+not final evidence.
+
+### Final local Test Impact Set
+
+Before handoff, derive the minimum set from the final material diff:
+
+1. tests for the behavior owned by the changed Module;
+2. contract tests for changed Interfaces and Adapters;
+3. consumer or feature-slice tests when an Interface may have changed;
+4. typechecks for every affected runtime process;
+5. `npm run lint` when source or linted configuration changed;
+6. platform, persistence, migration, build, or E2E checks for risks that can be exercised locally.
+
+Directory proximity alone is not impact evidence. If a file mixes responsibilities, treat it as
+Interface-affecting or use the full fallback.
+
+### Full fallback
+
+Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:
+
+- the Owner Module, changed Interface, or consumers cannot be established;
+- global validation inputs change, including package metadata, TypeScript/Vitest/build configuration,
+  the PR Gate workflow, or its classifier and manifest;
+- the change crosses several runtime areas without a demonstrated impact map;
+- a release-candidate workflow or maintainer explicitly requests the complete local suite.
+
+Full fallback is a safety mechanism, not an unconditional prerequisite for every pull request.
+Contributors are not expected to reproduce every operating-system CI lane locally.
+
+### CI authority and evidence
+
+PR Gate classifies the final base-to-head diff from trusted inputs, adds consumer and platform-risk
+lanes, and fails closed to the full plan for unknown or ambiguous ownership. Selected checks are
+blocking; unselected checks are reported as skipped rather than treated as proof.
 
 The final handoff must list the material changes, map each affected behavior to its project-owned check
-and final result (`behavior -> command -> result`), and identify any risk those checks did not cover.
-Only mark the change verified after an independent review confirms that this mapping covers the final
-state.
+and final result (`behavior -> command -> result`), explain why consumers or platform lanes were
+included or excluded, and identify uncovered risks. State that the checks ran after the last material
+edit. Only mark the change verified after an independent review confirms that this mapping covers the
+final state.
 
 ## Commit Messages
 
@@ -197,10 +234,10 @@ ci(review): unify automated AI reviews
   the design easier to understand and review.
 - Small documentation, maintenance, and narrowly scoped fixes may use a concise
   summary, but should still state the expected behavior and validation.
-- Include the final evidence mapping from [Required Checks](#required-checks), state that the listed
+- Include the final evidence mapping from [Verification Policy](#verification-policy), state that the listed
   checks ran after the last material edit, and call out uncovered risks.
 - Keep PRs reasonably small and scoped so they are easy to review.
-- Ensure the required checks above pass.
+- Ensure the final Test Impact Set, or the full fallback when required, passes.
 - Merge pull requests using **squash merge only**. The squash commit subject must
   keep the pull request title's Conventional Commit format.
 

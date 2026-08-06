@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
       enqueueApproval: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
+      openSettings: vi.fn(),
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
@@ -33,6 +34,12 @@ const mocks = vi.hoisted(() => {
       ui: { state: 'idle' },
       init: vi.fn().mockResolvedValue(undefined),
       retry: vi.fn().mockResolvedValue(undefined)
+    },
+    preview: {
+      fileDialogItem: undefined as unknown | undefined,
+      expandedToolItemId: null as string | null,
+      activeItemId: undefined as string | undefined,
+      panelState: 'collapsed' as 'open' | 'collapsed'
     },
     loadProjects: vi.fn().mockResolvedValue(undefined),
     deepLinkNavigation: vi.fn(),
@@ -66,10 +73,17 @@ const mocks = vi.hoisted(() => {
       retryLoad: vi.fn(),
       retryWrites: vi.fn()
     },
+    update: {
+      isDialogOpen: false,
+      status: { state: 'idle' },
+      closeDialog: vi.fn()
+    },
     startupView: 'app' as 'app' | 'onboarding',
     getInfo: vi.fn(),
     syncWindowFindAppearance: vi.fn(),
-    syncUnreadTaskView: vi.fn()
+    syncUnreadTaskView: vi.fn(),
+    globalSearch: { props: undefined as { open: boolean } | undefined },
+    closeActiveModal: { handler: undefined as (() => boolean) | undefined }
   }
 })
 
@@ -80,7 +94,9 @@ vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
 }))
 vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
-  useCloseActivePaneShortcut: vi.fn()
+  useCloseActivePaneShortcut: (handler?: () => boolean) => {
+    mocks.closeActiveModal.handler = handler
+  }
 }))
 vi.mock('@/hooks/useLifecycleSync', () => ({
   useLifecycleSync: mocks.lifecycleSync
@@ -90,6 +106,12 @@ vi.mock('@/hooks/useWindowFindAppearanceSync', () => ({
 }))
 vi.mock('@/hooks/useUnreadTaskViewSync', () => ({
   useUnreadTaskViewSync: mocks.syncUnreadTaskView
+}))
+vi.mock('@/components/global-search/GlobalSearchDialog', () => ({
+  GlobalSearchDialog: (props: { open: boolean }) => {
+    mocks.globalSearch.props = props
+    return null
+  }
 }))
 vi.mock('@/stores/navigation-store', () => ({
   useNavigationStore: Object.assign(
@@ -113,6 +135,10 @@ vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
     selector(mocks.environment)
 }))
+vi.mock('@/stores/preview-workbench-store', () => ({
+  usePreviewWorkbenchStore: <T,>(selector: (state: typeof mocks.preview) => T): T =>
+    selector(mocks.preview)
+}))
 vi.mock('@/stores/compute-store', () => ({
   useComputeStore: <T,>(selector: (state: typeof mocks.compute) => T): T => selector(mocks.compute)
 }))
@@ -128,11 +154,18 @@ vi.mock('@/stores/skill-import-store', () => ({
   useSkillImportStore: <T,>(selector: (state: typeof mocks.skillImport) => T): T =>
     selector(mocks.skillImport)
 }))
-vi.mock('@/stores/update-store', () => ({
-  useUpdateStore: <T,>(
-    selector: (state: { init: typeof mocks.initUpdates; isDialogOpen: boolean }) => T
-  ): T => selector({ init: mocks.initUpdates, isDialogOpen: false })
-}))
+vi.mock('@/stores/update-store', () => {
+  const getState = (): typeof mocks.update & { init: typeof mocks.initUpdates } => ({
+    init: mocks.initUpdates,
+    ...mocks.update
+  })
+  return {
+    useUpdateStore: Object.assign(
+      <T,>(selector: (state: ReturnType<typeof getState>) => T): T => selector(getState()),
+      { getState }
+    )
+  }
+})
 vi.mock('@/pages/onboarding/startup-gate', () => ({
   resolveStartupView: vi.fn(() => mocks.startupView)
 }))
@@ -243,6 +276,7 @@ describe('App startup routing', () => {
     mocks.settings.isSettingsOpen = false
     mocks.settings.load.mockReset().mockResolvedValue(true)
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
+    mocks.settings.openSettings.mockClear()
     mocks.settings.closeSettings.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
@@ -256,12 +290,19 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadError = undefined
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
+    mocks.update.isDialogOpen = false
+    mocks.update.status.state = 'idle'
+    mocks.update.closeDialog.mockClear()
     mocks.sessionPersistence.dismissLoadWarning.mockClear()
     mocks.sessionPersistence.retryLoad.mockClear()
     mocks.sessionPersistence.retryWrites.mockClear()
     mocks.settings.pendingApprovals = []
     mocks.compute.pendingApprovals = []
     mocks.skillImport.pending = []
+    mocks.preview.fileDialogItem = undefined
+    mocks.preview.expandedToolItemId = null
+    mocks.preview.activeItemId = undefined
+    mocks.preview.panelState = 'collapsed'
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
@@ -297,6 +338,8 @@ describe('App startup routing', () => {
     mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
+    mocks.globalSearch.props = undefined
+    mocks.closeActiveModal.handler = undefined
   })
 
   afterEach(async () => {
@@ -309,6 +352,208 @@ describe('App startup routing', () => {
     root = createRoot(container)
     await act(async () => root.render(<App />))
   }
+
+  it('opens Settings with Cmd/Ctrl+, after startup is interactive', async () => {
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isHydrated = false
+    mocks.sessionPersistence.isLoading = true
+    mocks.sessionPersistence.isReady = false
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isLoading = false
+    mocks.sessionPersistence.loadError = 'saved conversations unavailable'
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', ctrlKey: true, cancelable: true })
+    )
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    mocks.sessionPersistence.isHydrated = true
+    await act(async () => root.render(<App />))
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', ctrlKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('toggles global search with Cmd/Ctrl+K after startup is interactive', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    expect(mocks.globalSearch.props?.open).toBe(false)
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(true)
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open Settings over global search', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+    expect(mocks.globalSearch.props?.open).toBe(true)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+    })
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open Settings over an active dialog', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+    dialog.remove()
+  })
+
+  it('ignores a closed dialog portal when opening Settings', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    dialog.dataset.state = 'closed'
+    document.body.appendChild(dialog)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    dialog.remove()
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
+
+  it('closes the update dialog before underlying surfaces', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.update.isDialogOpen = true
+    await render()
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+    })
+
+    expect(mocks.update.closeDialog).toHaveBeenCalledOnce()
+    expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
+  })
+
+  it('does not open global search while a file preview modal is open', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    await render()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+
+    expect(mocks.globalSearch.props?.open).toBe(false)
+  })
+
+  it('does not open Settings under the active expanded preview modal', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.expandedToolItemId = 'project-files'
+    mocks.preview.activeItemId = 'project-files'
+    mocks.preview.panelState = 'open'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+  })
+
+  it('does not open Settings under a Streamdown fullscreen viewer', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const fullscreen = document.createElement('div')
+    fullscreen.dataset.streamdown = 'table-fullscreen'
+    document.body.appendChild(fullscreen)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    fullscreen.remove()
+    expect(mocks.settings.openSettings).not.toHaveBeenCalled()
+  })
+
+  it('ignores a stale expansion after another preview becomes active', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.preview.expandedToolItemId = 'project-files'
+    mocks.preview.activeItemId = 'paper'
+    mocks.preview.panelState = 'open'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
+
+  it('ignores stale workspace preview modals when opening Settings from Home', async () => {
+    mocks.settings.isLoaded = true
+    mocks.preview.fileDialogItem = { id: 'previewed-file' }
+    mocks.preview.expandedToolItemId = 'project-files'
+    await render()
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ',', metaKey: true, cancelable: true })
+    )
+
+    expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
+  })
 
   it('shows startup progress until settings have loaded', async () => {
     await render()
@@ -623,7 +868,7 @@ describe('App startup routing', () => {
     const pending = {
       id: 'approval-recovered',
       sessionId: 'session-1',
-      attachmentName: 'recovered.skill',
+      source: { kind: 'attachment', label: 'recovered.skill' },
       previews: [],
       skipped: []
     }

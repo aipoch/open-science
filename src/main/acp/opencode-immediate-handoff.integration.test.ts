@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import * as acp from '@agentclientprotocol/sdk'
 
-import { AcpRuntime } from './runtime'
+import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { opencodeFramework } from '../agent-framework'
 import { createOpenCodeImmediateHandoffRuntime } from './opencode-immediate-handoff'
@@ -236,6 +236,8 @@ describe('OpenCode immediate handoff production path', () => {
       profileService: {
         getByName: vi.fn(async () => specialist),
         getById: vi.fn(async () => specialist),
+        resolveRunnableByName: vi.fn(async () => specialist),
+        resolveRunnableById: vi.fn(async () => specialist),
         list: vi.fn(async () => [specialist])
       } as unknown as ProfileService,
       catalog,

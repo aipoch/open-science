@@ -3,24 +3,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreviewStateRepository } from './preview-repository'
 import type { ProjectRepository } from './repository'
 
-const { broadcastLifecycleEvent, ipcHandlers } = vi.hoisted(() => ({
+const { broadcastLifecycleEvent, ipcHandlers, registrationFailure } = vi.hoisted(() => ({
   broadcastLifecycleEvent: vi.fn(),
-  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>()
+  ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+  registrationFailure: {
+    channel: undefined as string | undefined,
+    error: undefined as Error | undefined
+  }
 }))
 
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      if (registrationFailure.channel === channel) throw registrationFailure.error
       ipcHandlers.set(channel, handler)
+    }
   }
 }))
 vi.mock('../lifecycle-broadcast', () => ({ broadcastLifecycleEvent }))
 
-import { createProjectHandlers, registerProjectIpcHandlers } from './ipc'
+import { createProjectHandlers, registerProjectIpcHandlers, type ProjectHandlers } from './ipc'
 
 beforeEach(() => {
   ipcHandlers.clear()
   broadcastLifecycleEvent.mockClear()
+  registrationFailure.channel = undefined
+  registrationFailure.error = undefined
 })
 
 describe('createProjectHandlers', () => {
@@ -152,6 +160,67 @@ describe('createProjectHandlers', () => {
     expect(previewRepository.get).toHaveBeenCalledWith('project-1')
     expect(previewRepository.save).toHaveBeenCalledWith('project-1', previewState)
     expect(previewRepository.delete).toHaveBeenCalledWith('project-1')
+  })
+
+  it('dispatches project commands through the injected application handler identity', async () => {
+    const repository = {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn()
+    } as unknown as ProjectRepository
+    const previewRepository = {
+      get: vi.fn(),
+      save: vi.fn(),
+      delete: vi.fn()
+    } as unknown as PreviewStateRepository
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      recoverPendingDeletions: vi.fn()
+    }
+    const injected: ProjectHandlers = {
+      list: vi.fn().mockResolvedValue([project]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn()
+    }
+
+    registerProjectIpcHandlers(repository, previewRepository, deletionCoordinator, injected)
+
+    await expect(ipcHandlers.get('projects:list')?.()).resolves.toEqual([project])
+    expect(injected.list).toHaveBeenCalledOnce()
+    expect(repository.list).not.toHaveBeenCalled()
+    expect(deletionCoordinator.recoverPendingDeletions).not.toHaveBeenCalled()
+  })
+
+  it('preserves an injected project handler identity when registration fails', async () => {
+    const failure = new Error('registration failed')
+    const repository = {} as ProjectRepository
+    const previewRepository = {} as PreviewStateRepository
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      recoverPendingDeletions: vi.fn()
+    }
+    const injected: ProjectHandlers = {
+      list: vi.fn().mockResolvedValue([]),
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn()
+    }
+    registrationFailure.channel = 'projects:list'
+    registrationFailure.error = failure
+
+    expect(() =>
+      registerProjectIpcHandlers(repository, previewRepository, deletionCoordinator, injected)
+    ).toThrow(failure)
+
+    registrationFailure.channel = undefined
+    registrationFailure.error = undefined
+    registerProjectIpcHandlers(repository, previewRepository, deletionCoordinator, injected)
+    await ipcHandlers.get('projects:list')?.()
+    expect(injected.list).toHaveBeenCalledOnce()
   })
 })
 

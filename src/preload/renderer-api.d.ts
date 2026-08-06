@@ -14,6 +14,7 @@ import type {
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
 } from '../shared/acp'
+import type { ActivePlanProjection, PlanResponseCommand } from '../shared/session-plan/contract'
 import type {
   ArtifactFile,
   ArtifactPreviewResult,
@@ -22,10 +23,12 @@ import type {
   ListProjectArtifactsRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
-  ReconcilePendingArtifactsRequest
+  ReconcilePendingArtifactsRequest,
+  ResolveArtifactVersionDescriptorsRequest
 } from '../shared/artifacts'
 import type {
   ArtifactLineageProvenance,
+  ArtifactVersionDescriptor,
   ArtifactVersionExecutionProvenance,
   ArtifactVersionMessagesProvenance,
   ArtifactVersionProvenance,
@@ -42,6 +45,13 @@ import type {
   SaveSessionArtifactsResult
 } from '../shared/file-save'
 import type {
+  ContributionTemplateExportResult,
+  SpecialistPackageReportSaveResult,
+  SpecialistExportPreview,
+  SpecialistExportRequest,
+  SpecialistExportSaveResult
+} from '../shared/specialist-package'
+import type {
   ComputeApprovalDecision,
   ComputeApprovalRequest,
   ComputeHost,
@@ -52,6 +62,8 @@ import type {
   ProbeResult
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
+import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import type { RendererFailureReport } from '../shared/diagnostics'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
   OpenSessionFromNotificationRequest,
@@ -98,6 +110,7 @@ import type {
 import type { ProvisionProgress, ProvisionStatus } from '../shared/notebook-env'
 import type {
   DiscoveredInterpreter,
+  EnvPackage,
   RuntimeEnablement,
   RuntimeUsage,
   RuntimeSelection,
@@ -135,7 +148,9 @@ import type {
   ListProjectFilesRequest,
   ProjectFilesChangedEvent,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
@@ -144,6 +159,10 @@ import type {
   SaveSessionOptions,
   SaveSessionManifestRequest
 } from '../shared/session-persistence'
+import type {
+  SessionPersistenceFlushRequest,
+  SessionPersistenceFlushResponse
+} from '../shared/session-persistence-flush'
 import type {
   ExportConversationRequest,
   ExportConversationResult
@@ -193,11 +212,17 @@ import type {
   ScanRepoResult,
   ConnectorsSnapshot,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplateSelectionResult,
+  SelectCustomServerTemplateRequest,
+  ExportCustomServerTemplateRequest,
+  ExportCustomServerTemplateResult,
   SetConnectorEnabledRequest,
   SetConnectorAutoAllowRequest,
   SetToolPermissionRequest,
   SetNcbiCredentialsRequest,
   AddCustomServerRequest,
+  AuthenticateCustomServerRequest,
   SetCustomServerEnabledRequest,
   RemoveCustomServerRequest,
   UpdateCustomServerRequest,
@@ -226,6 +251,7 @@ import type {
   BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
+  StageLocalPathUploadRequest,
   UploadTransferProgress,
   UploadTransferRequest,
   UploadTransferStatus,
@@ -250,7 +276,6 @@ import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
-  DeleteSpecialistRequest,
   DuplicateSpecialistRequest,
   SpecialistListItem,
   SpecialistProfileView,
@@ -263,6 +288,14 @@ import type {
   CompletionHandoffCommand
 } from '../shared/specialist'
 import type {
+  SpecialistPackageCandidatePreview,
+  SpecialistPackageInstallRequest,
+  SpecialistPackageInstallResult,
+  SpecialistDeletePreview,
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult
+} from '../shared/specialist-package'
+import type {
   CloseConfirmRequest,
   CloseConfirmResponse,
   WindowFindAppearance,
@@ -273,7 +306,7 @@ import type {
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
 
-interface OpenScienceAPI {
+export interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
   saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
   saveSessionArtifacts(request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult>
@@ -287,8 +320,13 @@ interface OpenScienceAPI {
   lifecycle: {
     getClientId(): Promise<string>
   }
+  diagnostics?: {
+    reportRendererFailure(report: RendererFailureReport): void
+  }
   acp: {
     getState(): Promise<AcpStateSnapshot>
+    getPlanProjection(projectId: string, sessionId: string): Promise<ActivePlanProjection | null>
+    respondPlan(request: PlanResponseCommand): Promise<unknown>
     connect(request?: AcpConnectRequest): Promise<AcpStateSnapshot>
     disconnect(): Promise<AcpStateSnapshot>
     createSession(request?: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
@@ -323,6 +361,8 @@ interface OpenScienceAPI {
     deleteSession(request: DeleteSessionRequest): Promise<void>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
+    onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener
+    sendFlushResponse?(response: SessionPersistenceFlushResponse): void
     onCreated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onUpdated(listener: AcpListener<SessionUpsertEvent>): RemoveListener
     onDeleted(listener: AcpListener<SessionDeletedEvent>): RemoveListener
@@ -389,6 +429,13 @@ interface OpenScienceAPI {
       request: ImportAgentHomeSkillsRequest
     ): Promise<ImportAgentHomeSkillsResult>
     listConnectors(): Promise<ConnectorsSnapshot>
+    previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview>
+    selectCustomServerTemplate(
+      request?: SelectCustomServerTemplateRequest
+    ): Promise<ConnectorTemplateSelectionResult>
+    exportCustomServerTemplate(
+      request: ExportCustomServerTemplateRequest
+    ): Promise<ExportCustomServerTemplateResult>
     getConnectorDetail(id: string): Promise<ConnectorDetailView>
     setConnectorEnabled(request: SetConnectorEnabledRequest): Promise<ConnectorsSnapshot>
     setConnectorAutoAllow(request: SetConnectorAutoAllowRequest): Promise<ConnectorsSnapshot>
@@ -398,6 +445,8 @@ interface OpenScienceAPI {
     setCustomServerEnabled(request: SetCustomServerEnabledRequest): Promise<ConnectorsSnapshot>
     removeCustomServer(request: RemoveCustomServerRequest): Promise<ConnectorsSnapshot>
     updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
+    authenticateCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
+    cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>
@@ -423,8 +472,20 @@ interface OpenScienceAPI {
     create(request: CreateSpecialistRequest): Promise<SpecialistProfileView>
     update(request: UpdateSpecialistRequest): Promise<SpecialistProfileView>
     setEnabled(request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView>
-    delete(request: DeleteSpecialistRequest): Promise<void>
+    previewDelete(request: { id: string }): Promise<SpecialistDeletePreview>
+    delete(request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult>
     duplicate(request: DuplicateSpecialistRequest): Promise<CreateSpecialistRequest>
+    exportContributionTemplate(): Promise<ContributionTemplateExportResult>
+    previewExport(request: { specialistId: string }): Promise<SpecialistExportPreview>
+    exportSpecialist(request: SpecialistExportRequest): Promise<SpecialistExportSaveResult>
+    selectPackage(): Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
+    installPackage(
+      request: SpecialistPackageInstallRequest
+    ): Promise<SpecialistPackageInstallResult>
+    cancelPackage(request: SpecialistPackageInstallRequest): Promise<void>
+    savePackageReport(
+      request: SpecialistPackageInstallRequest
+    ): Promise<SpecialistPackageReportSaveResult>
     onCatalogChanged(listener: () => void): RemoveListener
     // Compatibility-only pending-selection broadcast; approved SDK handoffs use lifecycle events.
     onPendingSwitch(listener: AcpListener<PendingSwitchBroadcast>): RemoveListener
@@ -492,6 +553,7 @@ interface OpenScienceAPI {
     getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
     listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
     listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+    searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
     repairIndex(request: { projectId: string }): Promise<void>
     onChanged(listener: AcpListener<ProjectFilesChangedEvent>): RemoveListener
   }
@@ -579,6 +641,9 @@ interface OpenScienceAPI {
     getVersionReview(
       request: GetArtifactVersionProvenanceRequest
     ): Promise<ArtifactVersionReviewProvenance>
+    resolveVersionDescriptors(
+      request: ResolveArtifactVersionDescriptorsRequest
+    ): Promise<ArtifactVersionDescriptor[]>
   }
   uploads: {
     // Desktop-only path fast path; omitted by the Web capability map.
@@ -588,6 +653,8 @@ interface OpenScienceAPI {
     ): Promise<UploadedAttachment | null>
     // Acknowledges that the renderer committed a native-path upload into its draft state.
     claimLocalFile?(request: UploadTransferRequest): Promise<void>
+    // Desktop-only save-as-artifact path for the local-file preview; staged like a composer upload.
+    stageLocalPath?(request: StageLocalPathUploadRequest): Promise<UploadedAttachment>
     beginTransfer(request: BeginUploadTransferRequest): Promise<UploadTransferStatus>
     appendTransfer(request: AppendUploadTransferRequest): Promise<UploadTransferStatus>
     getTransferStatus(request: UploadTransferRequest): Promise<UploadTransferStatus | null>
@@ -600,6 +667,18 @@ interface OpenScienceAPI {
     finalizeSession(request: FinalizeUploadSessionRequest): Promise<UploadedAttachment[]>
     // Reads a bounded preview from upload storage using the same preview result shape as artifacts.
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
+  }
+  localFs: {
+    // Lists a directory on the machine Kiro runs on (the "This computer" browser).
+    listDir(path: string): Promise<LocalDirListing>
+    // Reads a bounded preview of a local file (same result shape as artifacts/uploads).
+    readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
+    // Home directory + friendly machine name for the browser's initial location and label.
+    getRoots(): Promise<LocalRoots>
+    // Reveals a local file in the OS file manager.
+    reveal(path: string): Promise<void>
+    // Opens a local file with the OS default application; resolves to '' on success.
+    openPath(path: string): Promise<string>
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>
@@ -651,6 +730,11 @@ interface OpenScienceAPI {
     pickInterpreter(): Promise<string | null>
     // v4: every detected interpreter per language (Settings cards).
     listEnvironments(): Promise<{ python: DiscoveredInterpreter[]; r: DiscoveredInterpreter[] }>
+    // Read-only installed-package inventory for one env (Settings "Packages" dialog).
+    listPackages(language: NotebookLanguage, envId: string): Promise<EnvPackage[]>
+    // Bulk per-env package counts for the card badges (one discovery sweep per language; null = the
+    // listing failed, so the card omits its badge).
+    listPackageCounts(language: NotebookLanguage): Promise<Record<string, number | null>>
     // v4: the persisted per-language enablement, so cards reflect the saved state on load.
     getEnablement(language: NotebookLanguage): Promise<RuntimeEnablement>
     // WS11: live-session usage of a runtime (running/idle/dormant), for the disable-impact warning.

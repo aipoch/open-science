@@ -54,7 +54,15 @@ const configDenyRules = (configDir: string): string[] => {
 // Claude Code's own bundled skills/workflows (dataviz, deep-research, …) never leak in — the app
 // injects its OWN curated skill set into `<configDir>/skills`, which disableBundledSkills leaves
 // untouched.
-const writeAppSettings = async (configDir: string): Promise<void> => {
+export type ClaudeRuntimeModelConfig = Readonly<{
+  availableModels: readonly string[]
+  modelOverrides: Readonly<Record<string, string>>
+}>
+
+const writeAppSettings = async (
+  configDir: string,
+  modelConfig?: ClaudeRuntimeModelConfig | null
+): Promise<void> => {
   const settingsPath = join(configDir, 'settings.json')
 
   let settings: Record<string, unknown> = {}
@@ -80,6 +88,15 @@ const writeAppSettings = async (configDir: string): Promise<void> => {
 
   settings.permissions = { ...permissions, deny }
   settings.disableBundledSkills = true
+  if (modelConfig !== undefined) {
+    if (modelConfig) {
+      settings.availableModels = [...modelConfig.availableModels]
+      settings.modelOverrides = { ...modelConfig.modelOverrides }
+    } else {
+      delete settings.availableModels
+      delete settings.modelOverrides
+    }
+  }
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
 }
 
@@ -88,6 +105,9 @@ type ProvisionOptions = {
   skills?: BundledSkill[]
   materializer?: SkillMaterializer
   disabledSkillIds?: string[]
+  // `undefined` preserves the existing projection (validation probes must not perturb a live
+  // backend); `null` explicitly clears a catalog owned by a previously active provider.
+  modelConfig?: ClaudeRuntimeModelConfig | null
 }
 
 // Ensures the app config dir + asset subdirs exist, writes the file-tool deny rules, then materializes
@@ -109,7 +129,7 @@ const provisionAppClaudeConfigDir = async (
     'utf8'
   )
 
-  await writeAppSettings(configDir)
+  await writeAppSettings(configDir, options.modelConfig)
 
   const materializer = options.materializer ?? new ClaudeCodeSkillMaterializer()
   const skills = options.skills ?? (await new SkillRegistry().list())

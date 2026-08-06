@@ -6,6 +6,7 @@ import {
   shutdownApplicationSurfaces,
   withApplicationRuntimeShutdown
 } from './application-runtime'
+import { BackendShutdownOutcomeError } from './lifecycle-shutdown'
 import { createApplicationEventModule } from './application-events'
 
 describe('application runtime composition', () => {
@@ -289,46 +290,103 @@ describe('application surface shutdown', () => {
           }
         },
         webController: {
-          close: () => {
+          dispose: () => {
             order.push('web-controller')
           }
         },
-        webRpc: {
-          dispose: () => {
-            order.push('web-rpc')
-          }
+        disposeIpcHandlers: () => {
+          order.push('ipc-handlers')
         }
       }
     )
-    await lifecycle.shutdownBackends()
+    await expect(lifecycle.shutdownBackends()).resolves.toBe('completed')
 
     expect(lifecycle.marker).toBe('electron-lifecycle')
-    expect(order).toEqual(['application-runtime', 'remote-access', 'web-controller', 'web-rpc'])
+    expect(order).toEqual([
+      'web-controller',
+      'application-runtime',
+      'remote-access',
+      'ipc-handlers'
+    ])
   })
 
   it('diagnoses runtime failure and continues closing surfaces without rejecting lifecycle', async () => {
     const failure = new Error('backend shutdown failed')
     const shutdownRemoteAccess = vi.fn()
-    const closeWebController = vi.fn()
-    const disposeWebRpc = vi.fn()
+    const disposeWebController = vi.fn()
+    const disposeIpcHandlers = vi.fn()
     const log = { error: vi.fn() }
 
     await expect(
       shutdownApplicationSurfaces({
         disposeApplicationRuntime: () => Promise.reject(failure),
         shutdownRemoteAccess,
-        closeWebController,
-        disposeWebRpc,
+        disposeWebController,
+        disposeIpcHandlers,
         log
       })
-    ).resolves.toBeUndefined()
+    ).resolves.toBe('failed')
 
-    expect(log.error).toHaveBeenCalledWith(
-      'application runtime disposal failed during application shutdown: Error: backend shutdown failed',
-      failure
-    )
+    expect(log.error).toHaveBeenCalledWith('application surface shutdown failed', {
+      surface: 'application-runtime',
+      result: 'failed',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain('backend shutdown failed')
     expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
-    expect(closeWebController).toHaveBeenCalledOnce()
-    expect(disposeWebRpc).toHaveBeenCalledOnce()
+    expect(disposeWebController).toHaveBeenCalledOnce()
+    expect(disposeIpcHandlers).toHaveBeenCalledOnce()
   })
+
+  it('continues closing surfaces when the shutdown diagnostic sink throws', async () => {
+    const shutdownRemoteAccess = vi.fn()
+    const disposeWebController = vi.fn()
+    const disposeIpcHandlers = vi.fn()
+
+    await expect(
+      shutdownApplicationSurfaces({
+        disposeApplicationRuntime: () => Promise.reject(new Error('runtime failure')),
+        shutdownRemoteAccess,
+        disposeWebController,
+        disposeIpcHandlers,
+        log: {
+          error: () => {
+            throw new Error('sink failure')
+          }
+        }
+      })
+    ).resolves.toBe('failed')
+
+    expect(shutdownRemoteAccess).toHaveBeenCalledOnce()
+    expect(disposeWebController).toHaveBeenCalledOnce()
+    expect(disposeIpcHandlers).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['timeout', 'timeout'],
+    ['degraded', 'degraded']
+  ] as const)(
+    'preserves the fixed %s backend outcome without logging raw error details',
+    async (backendOutcome, expected) => {
+      const log = { error: vi.fn() }
+
+      await expect(
+        shutdownApplicationSurfaces({
+          disposeApplicationRuntime: () =>
+            Promise.reject(new BackendShutdownOutcomeError(expected)),
+          shutdownRemoteAccess: vi.fn(),
+          disposeWebController: vi.fn(),
+          disposeIpcHandlers: vi.fn(),
+          log
+        })
+      ).resolves.toBe(backendOutcome)
+
+      expect(log.error).toHaveBeenCalledWith('application surface shutdown failed', {
+        surface: 'application-runtime',
+        result: expected,
+        errorCategory: 'object'
+      })
+      expect(JSON.stringify(log.error.mock.calls)).not.toContain('Backend shutdown')
+    }
+  )
 })

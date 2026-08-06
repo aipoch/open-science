@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
   beginMigration,
   clearMigrationPending,
@@ -119,9 +120,11 @@ vi.mock('../storage-root', () => ({
   resolveDataRoot: () => '/tmp/data'
 }))
 
-const { createAcpRuntime, installAcpIpcHandlers, registerAcpIpcHandlers } = await import('./ipc')
+const { installAcpIpcHandlers } = await import('./ipc')
+const { createAcpRuntime } = await import('./runtime-composition')
 const { createAcpCreateSessionWorkflow } = await import('./create-session-workflow')
-type AcpTestOptions = Parameters<typeof registerAcpIpcHandlers>[0]
+const { createAcpHandlerWorkflows } = await import('./handler-workflows')
+type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
 const registerWithFakes = (overrides?: {
@@ -134,7 +137,7 @@ const registerWithFakes = (overrides?: {
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
   beforeSessionDelete?: (sessionId: string) => Promise<void>
-  profileService?: { getById: (id: string) => Promise<unknown> }
+  profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
 }): AcpTestOptions => {
@@ -171,7 +174,12 @@ const registerWithFakes = (overrides?: {
     profileService: overrides?.profileService as never
   }
 
-  registerAcpIpcHandlers(options)
+  const runtime = createAcpRuntime(options)
+  const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
+  installAcpIpcHandlers(
+    runtime,
+    createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications)
+  )
   return options as AcpTestOptions
 }
 
@@ -196,6 +204,39 @@ afterEach(() => {
 })
 
 describe('ACP module transport seam', () => {
+  it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
+    registerWithFakes()
+
+    const invokeChannels = Object.entries(WEB_INVOKE_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+    const eventChannels = Object.entries(WEB_EVENT_CHANNELS)
+      .filter(([path]) => path.startsWith('acp.'))
+      .map(([, channel]) => channel)
+      .sort()
+
+    expect([...handlers.keys()].sort()).toEqual([
+      'acp:cancel',
+      'acp:compact-session',
+      'acp:connect',
+      'acp:create-session',
+      'acp:delete-session',
+      'acp:disconnect',
+      'acp:get-plan-projection',
+      'acp:get-state',
+      'acp:reset-session-context',
+      'acp:respond-permission',
+      'acp:respond-plan',
+      'acp:resume-session',
+      'acp:revoke-permission-grant',
+      'acp:send-prompt',
+      'acp:set-permission-profile'
+    ])
+    expect(invokeChannels).toEqual([...handlers.keys()].sort())
+    expect(eventChannels).toEqual(['acp:event', 'acp:permission-request', 'acp:state'])
+  })
+
   it('constructs the coordinator before installing Electron handlers', () => {
     const options = registerWithFakes()
     handlers.clear()
@@ -204,10 +245,10 @@ describe('ACP module transport seam', () => {
 
     expect(handlers.size).toBe(0)
 
+    const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
     installAcpIpcHandlers(
       runtime,
-      createAcpCreateSessionWorkflow(runtime),
-      options.taskNotifications
+      createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications)
     )
 
     expect(handlers.has('acp:get-state')).toBe(true)
@@ -215,14 +256,14 @@ describe('ACP module transport seam', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
+describe('ACP runtime composition — Specialist identity resolver', () => {
   it('passes a ProfileService-backed resolver into each runtime', async () => {
     const profile = {
       name: 'RNA-seq Reviewer',
       systemPrompt: 'Review RNA-seq quality.',
       enabled: true
     }
-    const profileService = { getById: vi.fn().mockResolvedValue(profile) }
+    const profileService = { resolveRunnableById: vi.fn().mockResolvedValue(profile) }
 
     registerWithFakes({ profileService })
 
@@ -236,12 +277,12 @@ describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
       append: expect.stringContaining('RNA-seq Reviewer'),
       prefix: ''
     })
-    expect(profileService.getById).toHaveBeenCalledWith('uuid-1')
+    expect(profileService.resolveRunnableById).toHaveBeenCalledWith('uuid-1')
   })
 
   it('wires the production ProfileService and live catalog into the Specialist Skill resolver', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -267,7 +308,7 @@ describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
 
   it('merges only the specialist-allowed connector skills into the whitelist (selected mode)', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'selected',
         fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
@@ -295,7 +336,7 @@ describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
 
   it('excludes full-access blocked connectors from the whitelist (full mode)', async () => {
     const profileService = {
-      getById: vi.fn().mockResolvedValue({
+      resolveRunnableById: vi.fn().mockResolvedValue({
         enabled: true,
         capabilityMode: 'full',
         fullAccess: {
@@ -322,7 +363,7 @@ describe('registerAcpIpcHandlers — Specialist identity resolver', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () => {
+describe('installAcpIpcHandlers — Skill import cancellation lifecycle', () => {
   it('invalidates a stopped prompt and deleted session before runtime teardown starts', async () => {
     const onSessionCancellationRequested = vi.fn()
     const onSessionUnavailable = vi.fn()
@@ -420,7 +461,7 @@ describe('registerAcpIpcHandlers — Skill import cancellation lifecycle', () =>
   })
 })
 
-describe('registerAcpIpcHandlers — managed session workspace', () => {
+describe('installAcpIpcHandlers — managed session workspace', () => {
   it('registers immediately but waits for initialization before creating the first session', async () => {
     let finishInitialization: (() => void) | undefined
     const initializationBarrier = new Promise<void>((resolve) => {
@@ -648,7 +689,7 @@ describe('registerAcpIpcHandlers — managed session workspace', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
+describe('installAcpIpcHandlers — reset-session-context bridge', () => {
   it('registers the acp:reset-session-context channel', () => {
     registerWithFakes()
     expect(handlers.has('acp:reset-session-context')).toBe(true)
@@ -668,7 +709,7 @@ describe('registerAcpIpcHandlers — reset-session-context bridge', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — resume-session diagnostics', () => {
+describe('installAcpIpcHandlers — resume-session diagnostics', () => {
   it('logs a privacy-safe correlated lifecycle on success', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
@@ -774,9 +815,36 @@ describe('registerAcpIpcHandlers — resume-session diagnostics', () => {
     expect(failed?.[1]).toMatchObject({ errorCategory: 'request', rpcCode: 'other' })
     expect(JSON.stringify(failed)).not.toContain(String(privateCode))
   })
+
+  it('keeps resume results and failures authoritative when diagnostics throw', async () => {
+    registerWithFakes()
+    const request: AcpResumeSessionRequest = {
+      sessionId: 'private-session-id',
+      cwd: '/private/workspace'
+    }
+    const result = {
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      frameworkId: 'codex' as const
+    }
+    infoLogSpy.mockImplementationOnce(() => {
+      throw new Error('diagnostic sink failed')
+    })
+    resumeSession.mockResolvedValueOnce(result)
+
+    await expect(handlers.get('acp:resume-session')?.({}, request)).resolves.toBe(result)
+
+    const failure = new Error('resume failed')
+    errorLogSpy.mockImplementationOnce(() => {
+      throw new Error('diagnostic sink failed')
+    })
+    resumeSession.mockRejectedValueOnce(failure)
+
+    await expect(handlers.get('acp:resume-session')?.({}, request)).rejects.toBe(failure)
+  })
 })
 
-describe('registerAcpIpcHandlers — native context compaction bridge', () => {
+describe('installAcpIpcHandlers — native context compaction bridge', () => {
   it('forwards the session to its runtime and returns the refreshed snapshot', async () => {
     registerWithFakes()
     const request: AcpCompactSessionRequest = { sessionId: 's-1' }
@@ -789,7 +857,7 @@ describe('registerAcpIpcHandlers — native context compaction bridge', () => {
   })
 })
 
-describe('registerAcpIpcHandlers — create-session failure logging', () => {
+describe('installAcpIpcHandlers — create-session failure logging', () => {
   it('logs the failure via the file logger and re-throws so the renderer still sees the error', async () => {
     registerWithFakes()
     const failure = Object.assign(new Error('Internal error'), { code: -32603 })
@@ -827,12 +895,28 @@ describe('registerAcpIpcHandlers — create-session failure logging', () => {
 })
 
 // Pins the IPC send-prompt → notification-tracking wire-up. TaskNotificationService has its own
-// unit tests for the token/untrack primitives, but the orchestration in `acp/ipc.ts` — calling
+// unit tests for the token/untrack primitives, but the orchestration in `acp/handler-workflows.ts` — calling
 // trackPrompt before sendPrompt and reverting via untrackPrompt if the runtime rejects before the
 // turn starts — is what protects a still-running turn's notification name from being overwritten
 // by a rejected prompt's tracking. An earlier spec review flagged exactly this kind of seam as the
 // gap that let a connector-sessionId regression slip through green.
-describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () => {
+  it('accepts only the exact Plan first turn intent from renderer IPC', async () => {
+    registerWithFakes()
+
+    await handlers.get('acp:send-prompt')?.(
+      {},
+      { sessionId: 'session-1', text: 'Plan this', turnIntent: 'plan-first' }
+    )
+    await handlers.get('acp:send-prompt')?.(
+      {},
+      { sessionId: 'session-1', text: 'Do not trust this', turnIntent: 'hidden-injection' }
+    )
+
+    expect(sendPrompt.mock.calls.at(-2)?.[0]).toMatchObject({ turnIntent: 'plan-first' })
+    expect(sendPrompt.mock.calls.at(-1)?.[0]).toMatchObject({ turnIntent: undefined })
+  })
+
   it('reverts the tracked prompt when the runtime rejects the send', async () => {
     const trackPrompt = vi.fn().mockReturnValue({ token: 1 })
     const untrackPrompt = vi.fn()
@@ -842,14 +926,41 @@ describe('registerAcpIpcHandlers — acp:send-prompt notification tracking', () 
     sendPrompt.mockRejectedValueOnce(failure)
 
     await expect(
-      handlers.get('acp:send-prompt')?.({}, { sessionId: 'session-1', text: 'Plot the curve' })
+      handlers.get('acp:send-prompt')?.(
+        {},
+        {
+          sessionId: 'session-1',
+          text: 'Plot the curve',
+          suppressUserMessage: true,
+          continuation: {
+            kind: 'specialist-handoff',
+            originatingTurnToken: 'renderer-forged-turn',
+            targetName: 'Renderer-forged Specialist',
+            completion: { kind: 'returned', value: 'renderer-forged-result' }
+          }
+        }
+      )
     ).rejects.toBe(failure)
 
     expect(trackPrompt).toHaveBeenCalledTimes(1)
     expect(trackPrompt).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      text: 'Plot the curve'
+      text: 'Plot the curve',
+      continuation: undefined,
+      suppressUserMessage: undefined
     })
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        text: 'Plot the curve',
+        continuation: undefined,
+        suppressUserMessage: undefined
+      }),
+      expect.any(String)
+    )
+    expect(trackPrompt.mock.invocationCallOrder[0]).toBeLessThan(
+      sendPrompt.mock.invocationCallOrder[0]
+    )
     // The token the handler got back is the one it reverts, so a terminal event later cannot
     // overwrite the still-running turn's snippet.
     expect(untrackPrompt).toHaveBeenCalledTimes(1)

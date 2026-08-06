@@ -234,7 +234,9 @@ export class AcpSessionInteractionOwner {
     }
     this.pendingCancellations.set(request.sessionId, attempt)
 
-    const active = this.activeInteractions.get(request.sessionId)
+    const active =
+      this.activeInteractions.get(request.sessionId) ??
+      this.pendingPromptReservations.get(request.sessionId)
     const scope = active?.scope
     active?.abortController.abort()
     this.clearCancellationTimer(request.sessionId)
@@ -250,7 +252,11 @@ export class AcpSessionInteractionOwner {
     let accepted = false
     try {
       await request.notify()
-      if (active && this.activeInteractions.get(request.sessionId) === active) {
+      if (
+        active &&
+        (this.activeInteractions.get(request.sessionId) === active ||
+          this.pendingPromptReservations.get(request.sessionId) === active)
+      ) {
         active.cancelled = true
       }
       accepted = true

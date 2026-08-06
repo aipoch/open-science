@@ -3,6 +3,7 @@ import { ipcMainHandle } from './ipc-handler-registry'
 import { APP } from '../shared/app-config'
 
 type FetchFn = typeof fetch
+type GithubCommandOwner = Readonly<{ getStars: () => Promise<number | null> }>
 
 // Reads the repository star count. GitHub requires a User-Agent on API requests; anonymous requests
 // are rate-limited (60/hour/IP), so the result is cached for the app session and concurrent callers
@@ -26,26 +27,36 @@ const fetchStars = async (fetchFn: FetchFn): Promise<number | null> => {
   }
 }
 
-// The cache lives in this closure. In production register runs once, so the count is fetched at most
-// once per session; a failed attempt is not cached, so a later mount may retry.
-const registerGithubIpcHandlers = (deps: { fetch?: FetchFn } = {}): void => {
+// The cache lives in this owner. A failed attempt is not cached, so a later call may retry.
+const createGithubCommandOwner = (deps: { fetch?: FetchFn } = {}): GithubCommandOwner => {
   const fetchFn = deps.fetch ?? fetch
   let cachedStars: number | null = null
   let inFlight: Promise<number | null> | null = null
 
-  ipcMainHandle('github:get-stars', (): Promise<number | null> => {
-    if (cachedStars !== null) return Promise.resolve(cachedStars)
+  return {
+    getStars: (): Promise<number | null> => {
+      if (cachedStars !== null) return Promise.resolve(cachedStars)
 
-    if (!inFlight) {
-      inFlight = fetchStars(fetchFn).then((count) => {
-        if (count !== null) cachedStars = count
-        inFlight = null
-        return count
-      })
+      if (!inFlight) {
+        inFlight = fetchStars(fetchFn).then((count) => {
+          if (count !== null) cachedStars = count
+          inFlight = null
+          return count
+        })
+      }
+
+      return inFlight
     }
-
-    return inFlight
-  })
+  }
 }
 
-export { registerGithubIpcHandlers }
+const registerGithubIpcHandlers = (
+  deps: { fetch?: FetchFn } = {},
+  owner: GithubCommandOwner = createGithubCommandOwner(deps)
+): GithubCommandOwner => {
+  ipcMainHandle('github:get-stars', () => owner.getStars())
+  return owner
+}
+
+export type { GithubCommandOwner }
+export { registerGithubIpcHandlers, createGithubCommandOwner }

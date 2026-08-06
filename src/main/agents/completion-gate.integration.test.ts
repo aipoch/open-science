@@ -902,6 +902,7 @@ describe('completion gate tracer bullet', () => {
   it('uses the real repl host.agents.switch SDK route before the completion gate intercepts its outer result', async () => {
     const harness = createHarness({ status: 'approved' })
     const server = new NotebookLocalRpcServer({} as NotebookRuntimeService, {
+      transport: 'tcp',
       token: 'completion-gate-token',
       agentsService: harness.agents
     })
@@ -995,6 +996,8 @@ describe('completion gate tracer bullet', () => {
     const agents = new AgentsService({
       profileService: {
         getByName: vi.fn(async () => specialist),
+        resolveRunnableByName: vi.fn(async () => specialist),
+        resolveRunnableById: vi.fn(async () => specialist),
         list: vi.fn(async () => [specialist])
       } as unknown as ProfileService,
       catalog,
@@ -1007,6 +1010,7 @@ describe('completion gate tracer bullet', () => {
       switchNotifier: createCompletionGateSwitchNotifier(coordinator)
     })
     const server = new NotebookLocalRpcServer({} as NotebookRuntimeService, {
+      transport: 'tcp',
       token: 'opencode-handoff-token',
       agentsService: agents
     })

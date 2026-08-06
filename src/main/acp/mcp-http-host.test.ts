@@ -173,8 +173,7 @@ describe('AgentMcpHttpHost', () => {
     const result = await client.callTool({
       name: 'request_skill_import',
       arguments: {
-        attachment_uri: 'file:///workspace/demo.skill',
-        turn_token: '00000000-0000-4000-8000-000000000001'
+        github_url: 'https://github.com/acme/skills/tree/main/slide-master'
       }
     })
     expect(JSON.stringify(result.content)).toContain('cancelled')
@@ -184,8 +183,7 @@ describe('AgentMcpHttpHost', () => {
         method: 'skillImport',
         params: {
           sessionId: routingId,
-          turnToken: '00000000-0000-4000-8000-000000000001',
-          attachmentUri: 'file:///workspace/demo.skill'
+          githubUrl: 'https://github.com/acme/skills/tree/main/slide-master'
         }
       }
     })
@@ -199,6 +197,98 @@ describe('AgentMcpHttpHost', () => {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json'
       },
+      body: '{}'
+    })
+    expect(removed.status).toBe(404)
+  })
+
+  it('keeps Plan execution identity stable across stateless HTTP requests and revokes the route', async () => {
+    const routingId = 'plan-session-1'
+    const rpcBodies: unknown[] = []
+    rpcServer = createServer((request, response) => {
+      void (async () => {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+          params?: { operation?: string }
+        }
+        rpcBodies.push(body)
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            result:
+              body.params?.operation === 'approve'
+                ? { projection: { artifactVersionId: 'version-1', lifecycle: 'approved' } }
+                : { projection: { artifactVersionId: 'version-1', lifecycle: 'completed' } }
+          })
+        )
+      })()
+    })
+    await new Promise<void>((resolve, reject) => {
+      rpcServer?.once('error', reject)
+      rpcServer?.listen(0, '127.0.0.1', resolve)
+    })
+    const rpcAddress = rpcServer.address()
+    if (typeof rpcAddress !== 'object' || rpcAddress === null) {
+      throw new Error('Test Plan RPC server did not return a TCP address.')
+    }
+
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerPlan(routingId, {
+      endpoint: `http://127.0.0.1:${rpcAddress.port}/plan`,
+      token: 'plan-rpc-token',
+      projectId: 'project-1',
+      sessionId: routingId
+    })
+    const planUrl = host.urlFor('plan', routingId)
+    const client = new Client({ name: 'plan-http-test', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(planUrl), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'generate_plan',
+      'update_step_status'
+    ])
+    await client.callTool({ name: 'generate_plan', arguments: { approve: true } })
+    await client.callTool({
+      name: 'update_step_status',
+      arguments: { title: 'Analyze the data', status: 'completed' }
+    })
+    expect(rpcBodies).toEqual([
+      {
+        method: 'planCall',
+        params: {
+          projectId: 'project-1',
+          sessionId: routingId,
+          operation: 'approve'
+        }
+      },
+      {
+        method: 'planCall',
+        params: {
+          projectId: 'project-1',
+          sessionId: routingId,
+          operation: 'updateStepStatus',
+          input: {
+            title: 'Analyze the data',
+            status: 'completed',
+            expectedArtifactVersionId: 'version-1'
+          }
+        }
+      }
+    ])
+
+    await client.close()
+    host.unregister(routingId)
+    const removed = await fetch(planUrl, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: '{}'
     })
     expect(removed.status).toBe(404)

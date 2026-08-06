@@ -17,6 +17,7 @@ import type { AgentFramework } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
 import { extractProviderToolName } from './runtime-events'
+import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
 
 const log = createLogger('acp')
 
@@ -113,16 +114,14 @@ type ActiveReviewerSessionOwner = ReviewerSessionContext & {
   token: symbol
 }
 
-type ReviewerSessionCreationContext = {
-  connection: ClientConnection
-  framework: AgentFramework
-  sessionOptions: Record<string, unknown> | undefined
-  startupGeneration: number
-}
-
 export type ReviewerSessionOwnerDependencies = {
   addStartupBlocker: (token: symbol) => void
+  assertCurrentConnection: (connection: ClientConnection) => void
   clearPermissionCorrelations: (sessionId: string) => void
+  currentSessionSetup: () => {
+    framework: AgentFramework
+    sessionOptions: Record<string, unknown> | undefined
+  }
   currentStartupGeneration: () => number
   isPrimarySessionIdClaimed: (sessionId: string) => boolean
   onActiveSessionReleased: () => void
@@ -131,8 +130,12 @@ export type ReviewerSessionOwnerDependencies = {
   unregisterBridgeSession: (sessionId: string) => boolean | undefined
 }
 
-// Owns every ephemeral Reviewer identity and resource. Primary session state remains in AcpRuntime;
-// the two owners collaborate only through the narrow collision and startup-blocker ports above.
+export type ReviewerSessionCreateCapability = Readonly<{
+  ensureConnected: (cwd: string) => Promise<ClientConnection>
+}>
+
+// Owns every ephemeral Reviewer startup, identity, and resource. Runtime supplies only current
+// connection/setup facts plus narrow collision, bridge, cleanup, and startup-blocker ports.
 export class ReviewerSessionOwner {
   private readonly activeById = new Map<string, ActiveReviewerSessionOwner>()
   private readonly activeBySession = new WeakMap<ActiveSession, ActiveReviewerSessionOwner>()
@@ -143,10 +146,13 @@ export class ReviewerSessionOwner {
 
   async create(
     request: ReviewerSessionRequest,
-    prepare: () => Promise<ReviewerSessionCreationContext>
+    capability: ReviewerSessionCreateCapability
   ): Promise<ReviewerSessionResult> {
     const mcpServerNames = this.validateRequest(request)
-    const { connection, framework, sessionOptions, startupGeneration } = await prepare()
+    const connection = await capability.ensureConnected(request.cwd)
+    this.dependencies.assertCurrentConnection(connection)
+    const { framework, sessionOptions } = this.dependencies.currentSessionSetup()
+    const startupGeneration = this.dependencies.currentStartupGeneration()
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
     const setup = framework.buildSessionSetup({
       systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : [],
@@ -398,10 +404,6 @@ export class ReviewerSessionOwner {
     return { rejectedToolCalls, reviewerBridgeScoped }
   }
 
-  rejectedToolCallCount(sessionId: string): number {
-    return this.rejectedToolCalls.get(sessionId) ?? 0
-  }
-
   invalidatePending(): void {
     for (const token of this.pendingIds.values()) this.dependencies.removeStartupBlocker(token)
     this.pendingIds.clear()
@@ -441,6 +443,7 @@ export class ReviewerSessionOwner {
     const reviewerMcp = request.mcpServers[0]
     const reviewerMcpHttp =
       reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
+    const reviewerMcpStdio = reviewerMcp && !('type' in reviewerMcp) ? reviewerMcp : undefined
     let reviewerMcpUrl: URL | undefined
     try {
       reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
@@ -451,12 +454,22 @@ export class ReviewerSessionOwner {
       request.mcpServers.length !== 1 ||
       mcpServerNames.length !== 1 ||
       mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
-      !reviewerMcpHttp ||
-      reviewerMcpUrl?.protocol !== 'http:' ||
-      reviewerMcpUrl.hostname !== '127.0.0.1'
+      !(
+        (reviewerMcpHttp &&
+          reviewerMcpUrl?.protocol === 'http:' &&
+          reviewerMcpUrl.hostname === '127.0.0.1') ||
+        (reviewerMcpStdio &&
+          reviewerMcpStdio.args?.at(-1) === REVIEWER_MCP_PROXY_ARG &&
+          reviewerMcpStdio.env?.some(
+            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH' && entry.value
+          ) &&
+          reviewerMcpStdio.env.some(
+            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN' && entry.value
+          ))
+      )
     ) {
       throw new Error(
-        `Reviewer sessions require exactly one loopback HTTP ${REVIEWER_MCP_SERVER_NAME} MCP server.`
+        `Reviewer sessions require exactly one app-owned ${REVIEWER_MCP_SERVER_NAME} MCP server.`
       )
     }
     return mcpServerNames

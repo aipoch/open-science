@@ -114,6 +114,21 @@ describe('UpdateDialog', () => {
     expect(document.body.textContent).not.toContain('Open installer')
   })
 
+  it('explains the install wait and locks actions while applying', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'applying', current: '0.1.0', latest: '0.2.0', applyKind: 'restart' }
+    })
+    act(() => root.render(<UpdateDialog />))
+
+    expect(document.body.textContent).toContain('Preparing update…')
+    expect(document.body.textContent).toContain('update may take a moment')
+    expect(document.body.textContent).toContain("please don't reopen the app")
+    expect(
+      Array.from(document.body.querySelectorAll('button')).every((button) => button.disabled)
+    ).toBe(true)
+  })
+
   it('shows "Open installer" when a ready update applies via installer (mac)', () => {
     useUpdateStore.setState({
       isDialogOpen: true,

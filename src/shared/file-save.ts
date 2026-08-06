@@ -11,7 +11,7 @@ type SaveBlobFileResult = {
 }
 
 type SaveManagedFileRequest = {
-  source: 'artifact' | 'upload' | 'notebook-input'
+  source: 'artifact' | 'upload' | 'notebook-input' | 'local'
   path: string
   suggestedName: string
 }

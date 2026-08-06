@@ -131,6 +131,17 @@ class AcpSessionAggregate {
     this.refreshSnapshot()
   }
 
+  updateModel(
+    appliedModel: string,
+    configOptions: SessionConfigOption[] | null | undefined,
+    backendId?: string
+  ): void {
+    if (backendId !== undefined) this.backendId = backendId
+    this.appliedModel = appliedModel
+    this.configOptions = cloneConfigOptions(configOptions)
+    this.refreshSnapshot()
+  }
+
   detachProvider(): void {
     this.session = undefined
     this.appliedModel = undefined

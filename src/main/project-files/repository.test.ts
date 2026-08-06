@@ -305,6 +305,25 @@ describe('ManagedFileIndexRepository', () => {
         }
       ]
     })
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: [],
+        filenameContains: 'sin.png',
+        primaryLimit: 8,
+        otherLimit: 0
+      })
+    ).resolves.toMatchObject({
+      primary: {
+        items: [
+          {
+            sourceFileId: lineageId,
+            sourceVersionId: versionTwoId,
+            sortAtMs: new Date('2026-07-28T00:00:02.000Z').getTime()
+          }
+        ]
+      }
+    })
   })
 
   it('exposes immutable uploads as project-and-session-scoped Version references', async () => {
@@ -1668,6 +1687,146 @@ describe('ManagedFileIndexRepository', () => {
         limit: 1
       })
     ).rejects.toThrow(/cursor.*search/i)
+  })
+
+  it('searches generated artifacts with a primary cursor and bounded other-project results', async () => {
+    const primaryFiles = [
+      ['sin-old', 'sin-old.png', 100],
+      ['sin-new', 'sin-new.png', 300],
+      ['sin-mid', 'sin-mid.csv', 200]
+    ] as const
+    const otherFiles = Array.from({ length: 6 }, (_, index) => ({
+      id: `sin-other-${index}`,
+      name: `sin-other-${index}.png`,
+      path: join(
+        storageRoot,
+        'artifacts',
+        'project-b',
+        'session-b',
+        'message-1',
+        `sin-other-${index}.png`
+      ),
+      mtimeMs: 400 - index
+    }))
+    const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'sin-input.csv')
+
+    await Promise.all([
+      ...primaryFiles.map(([id, name]) =>
+        writeManagedFile(
+          join(
+            storageRoot,
+            'artifacts',
+            'default-project',
+            SESSION_ID,
+            'message-1',
+            `${id}-${name}`
+          ),
+          id
+        )
+      ),
+      ...otherFiles.map((file) => writeManagedFile(file.path, file.id)),
+      writeManagedFile(uploadPath, 'upload')
+    ])
+    await repository.syncSession(
+      createSession({
+        messages: [
+          {
+            id: 'message-user',
+            role: 'user',
+            content: 'Analyze',
+            status: 'complete',
+            eventIds: [],
+            uploads: [
+              {
+                id: 'sin-upload',
+                sessionId: SESSION_ID,
+                name: 'sin-input.csv',
+                originalName: 'sin-input.csv',
+                path: uploadPath,
+                size: 6
+              }
+            ],
+            createdAt: 50,
+            updatedAt: 50
+          }
+        ],
+        artifacts: primaryFiles.map(([id, name, mtimeMs]) => ({
+          id,
+          kind: 'managed-file' as const,
+          path: join(
+            storageRoot,
+            'artifacts',
+            'default-project',
+            SESSION_ID,
+            'message-1',
+            `${id}-${name}`
+          ),
+          name,
+          mtimeMs
+        }))
+      })
+    )
+    await repository.syncSession(
+      createSession({
+        id: 'session-b',
+        projectId: 'project-b',
+        artifacts: otherFiles.map((file) => ({
+          id: file.id,
+          kind: 'managed-file' as const,
+          path: file.path,
+          name: file.name,
+          mtimeMs: file.mtimeMs
+        }))
+      })
+    )
+
+    const first = await repository.searchArtifacts({
+      primaryProjectId: PROJECT_ID,
+      otherProjectIds: ['project-b'],
+      filenameContains: 'SIN',
+      primaryLimit: 2,
+      otherLimit: 5
+    })
+
+    expect(first.primary).toMatchObject({
+      totalCount: 3,
+      items: [
+        expect.objectContaining({ name: 'sin-new.png', source: 'artifact' }),
+        expect.objectContaining({ name: 'sin-mid.csv', source: 'artifact' })
+      ]
+    })
+    expect(first.primary.nextCursor).toBeDefined()
+    expect(first.other.map((item) => item.name)).toEqual(
+      otherFiles.slice(0, 5).map((file) => file.name)
+    )
+    expect(first.isIndexComplete).toBe(true)
+
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: ['project-b'],
+        primaryLimit: 2,
+        otherLimit: 6
+      } as never)
+    ).rejects.toThrow('otherLimit must be between 0 and 5')
+
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: PROJECT_ID,
+        otherProjectIds: ['project-b'],
+        filenameContains: 'sin',
+        primaryLimit: 2,
+        primaryCursor: first.primary.nextCursor,
+        otherLimit: 0
+      })
+    ).resolves.toMatchObject({
+      primary: {
+        totalCount: 3,
+        items: [expect.objectContaining({ name: 'sin-old.png' })],
+        nextCursor: undefined
+      },
+      other: []
+    })
   })
 
   it('indexes readable files while retrying an unreadable file from the same session', async () => {

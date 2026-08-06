@@ -1,0 +1,421 @@
+import { describe, expect, it } from 'vitest'
+
+import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
+import { validateSpecialistPackage } from './validator'
+
+const encoder = new TextEncoder()
+const packageFiles = (
+  manifest: unknown,
+  specialist: unknown,
+  extra: Array<{ path: string; bytes: Uint8Array }> = []
+): Array<{ path: string; bytes: Uint8Array }> => [
+  { path: 'manifest.json', bytes: encoder.encode(JSON.stringify(manifest)) },
+  { path: 'specialist.json', bytes: encoder.encode(JSON.stringify(specialist)) },
+  ...extra
+]
+
+const catalog: SpecialistPackageCatalogSnapshot = {
+  appVersion: '0.9.2',
+  builtinSkills: [],
+  skills: [],
+  connectorIds: [],
+  protectedSpecialistIds: ['reviewer']
+}
+
+const validManifest = {
+  schema_version: 1,
+  id: 'rna-reviewer',
+  version: '1.2.3',
+  exported_with_app_version: '0.9.2'
+}
+
+const validSpecialist = {
+  name: 'RNA Reviewer',
+  displayName: 'RNA Reviewer',
+  description: 'Reviews RNA-seq experiments.',
+  systemPrompt: 'Private identity instructions that must never appear in diagnostics.'
+}
+
+describe('validateSpecialistPackage', () => {
+  it('accepts only application metadata in manifest and author content in specialist.json', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview).toEqual({
+      summary: {
+        id: 'rna-reviewer',
+        version: '1.2.3',
+        name: 'RNA Reviewer',
+        description: 'Reviews RNA-seq experiments.',
+        source: 'zip',
+        bundledSkillIds: [],
+        requiredSkillIds: [],
+        builtinSkillIds: [],
+        connectorIds: [],
+        skills: []
+      },
+      diagnostics: [],
+      installable: true
+    })
+    expect(result.plan?.manifest).toEqual(validManifest)
+    expect(result.plan?.payload).toEqual(validSpecialist)
+    expect(result.plan?.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(Object.isFrozen(result.plan)).toBe(true)
+    expect(JSON.stringify(result.preview)).not.toContain(validSpecialist.systemPrompt)
+  })
+
+  it('accepts optional Skill and Connector IDs in the user-editable Specialist payload', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['document-reader'],
+        connectorIds: ['reference-library']
+      }),
+      {
+        ...catalog,
+        builtinSkills: [
+          {
+            id: 'document-reader',
+            appVersion: '0.9.2',
+            compatibility: 'sha256:document-reader'
+          }
+        ],
+        skills: [{ id: 'document-reader', builtin: true }],
+        connectorIds: ['reference-library']
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.payload).toMatchObject({
+      skillIds: ['document-reader'],
+      connectorIds: ['reference-library']
+    })
+    expect(result.plan?.skillIds).toEqual(['document-reader'])
+    expect(result.plan?.connectorIds).toEqual(['reference-library'])
+  })
+
+  it('canonicalizes legacy Connector aliases to the portable slug', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector']
+      }),
+      {
+        ...catalog,
+        connectorIds: ['example-connector'],
+        connectorAliases: {
+          'Example Connector': 'example-connector',
+          'installed-uuid': 'example-connector'
+        }
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.connectorIds).toEqual(['example-connector'])
+  })
+
+  it('changes the package content identity when bundled Skill bytes change', () => {
+    const bundled = (body: string): ReturnType<typeof validateSpecialistPackage> =>
+      validateSpecialistPackage(
+        packageFiles(validManifest, validSpecialist, [
+          {
+            path: 'skills/analysis-tools/SKILL.md',
+            bytes: encoder.encode(
+              `---\nname: analysis-tools\ndescription: Analyze data\nversion: 1.0.0\n---\n${body}`
+            )
+          }
+        ]),
+        catalog,
+        'zip'
+      )
+
+    expect(bundled('First behavior.').plan?.contentHash).not.toBe(
+      bundled('Changed behavior.').plan?.contentHash
+    )
+  })
+
+  it('warns and continues when optional capability IDs are malformed or unavailable', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['missing-skill', 42, ''],
+        connectorIds: 'not-an-array'
+      }),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.skillIds).toEqual([])
+    expect(result.plan?.connectorIds).toEqual([])
+    expect(result.preview.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'warning',
+          code: 'specialist.skillIds-entry-invalid'
+        }),
+        expect.objectContaining({
+          severity: 'warning',
+          code: 'specialist.skill-unavailable'
+        }),
+        expect.objectContaining({
+          severity: 'warning',
+          code: 'specialist.connectorIds-invalid'
+        })
+      ])
+    )
+  })
+
+  it('requires the complete current schema and rejects legacy dependency declarations', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(
+        {
+          schema_version: undefined,
+          id: 'rna-reviewer',
+          version: '1.2.3',
+          skills: { builtin: [], required: [], bundled: [] }
+        },
+        validSpecialist
+      ),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(false)
+    expect(result.preview.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        'manifest.schema-version-unsupported',
+        'manifest.exported-app-version-invalid',
+        'manifest.field-forbidden'
+      ])
+    )
+  })
+
+  it.each([
+    ['iconKey', 'specialist.presentation-field-forbidden'],
+    ['colorKey', 'specialist.presentation-field-forbidden'],
+    ['capabilityMode', 'specialist.capability-field-forbidden'],
+    ['fullAccess', 'specialist.capability-field-forbidden'],
+    ['selectedCapabilities', 'specialist.capability-field-forbidden'],
+    ['enabled', 'specialist.enabled-field-forbidden']
+  ])('clearly rejects application-owned specialist field %s', (field, code) => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, { ...validSpecialist, [field]: {} }),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(false)
+    expect(result.preview.diagnostics).toContainEqual(expect.objectContaining({ code }))
+  })
+
+  it('aggregates schema errors without exposing untrusted values', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(
+        {
+          schema_version: 99,
+          id: '../unsafe',
+          version: 'latest',
+          exported_with_app_version: 'now',
+          skills: { bundled: [] }
+        },
+        {
+          id: 'forbidden',
+          name: 42,
+          description: [],
+          systemPrompt: { secret: 'must-not-leak' },
+          connectorConfig: { token: 'credential-value' }
+        }
+      ),
+      catalog,
+      'zip'
+    )
+
+    expect(result.plan).toBeUndefined()
+    expect(result.preview.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        'manifest.schema-version-unsupported',
+        'manifest.id-invalid',
+        'manifest.version-invalid',
+        'manifest.exported-app-version-invalid',
+        'manifest.field-forbidden',
+        'specialist.identity-field-forbidden',
+        'specialist.field-forbidden',
+        'specialist.name-invalid',
+        'specialist.description-invalid',
+        'specialist.system-prompt-invalid'
+      ])
+    )
+    expect(JSON.stringify(result.preview)).not.toMatch(/must-not-leak|credential-value/)
+  })
+
+  it('discovers bundled Skills from canonical directories and defaults their version to 0.1.0', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [
+        {
+          path: 'skills/analysis-tools/SKILL.md',
+          bytes: encoder.encode(
+            '---\nname: analysis-tools\ndescription: Analyze data\n---\nUse the bundled tools.'
+          )
+        },
+        { path: 'skills/analysis-tools/scripts/run.sh', bytes: encoder.encode('exit 99') },
+        { path: 'skills/analysis-tools/references/guide.md', bytes: encoder.encode('Guide') },
+        { path: 'README.txt', bytes: encoder.encode('Import guide') }
+      ]),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.preview.summary?.bundledSkillIds).toEqual(['analysis-tools'])
+    expect(result.preview.summary?.skills).toEqual([
+      expect.objectContaining({
+        id: 'analysis-tools',
+        version: '0.1.0',
+        disposition: 'install',
+        files: ['SKILL.md', 'references/guide.md', 'scripts/run.sh']
+      })
+    ])
+    expect(result.plan?.skills[0]).toMatchObject({
+      id: 'analysis-tools',
+      version: '0.1.0',
+      disposition: 'install'
+    })
+    expect(result.preview.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'skill.executable-content-present',
+        relatedId: 'analysis-tools'
+      })
+    )
+    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+  })
+
+  it('keeps valid bundled Skill IDs selected when another bundled Skill cannot be parsed', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [
+        {
+          path: 'skills/analysis-tools/SKILL.md',
+          bytes: encoder.encode('---\nname: analysis-tools\n---\nBody')
+        },
+        {
+          path: 'skills/broken/SKILL.md',
+          bytes: encoder.encode('not valid skill frontmatter')
+        }
+      ]),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+    expect(result.preview.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'skill.name-mismatch',
+        relatedId: 'broken'
+      })
+    )
+  })
+
+  it('uses a valid SKILL.md frontmatter version when supplied', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [
+        {
+          path: 'skills/analysis-tools/SKILL.md',
+          bytes: encoder.encode('---\nname: analysis-tools\nversion: 2.3.4\n---\nBody')
+        }
+      ]),
+      catalog,
+      'zip'
+    )
+
+    expect(result.preview.summary?.skills[0]?.version).toBe('2.3.4')
+  })
+
+  it.each([
+    {
+      path: 'skills/Analysis/SKILL.md',
+      body: '---\nname: Analysis\n---\nBody',
+      code: 'skill.id-invalid'
+    },
+    {
+      path: 'skills/analysis/SKILL.md',
+      body: '---\nname: another-name\n---\nBody',
+      code: 'skill.name-mismatch'
+    },
+    {
+      path: 'skills/analysis/notes.md',
+      body: 'notes',
+      code: 'skill.document-missing'
+    }
+  ])('warns and skips a Skill that cannot be parsed: $code', ({ path, body, code }) => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [{ path, bytes: encoder.encode(body) }]),
+      catalog,
+      'zip'
+    )
+    expect(result.preview.installable).toBe(true)
+    expect(result.preview.diagnostics).toContainEqual(
+      expect.objectContaining({ severity: 'warning', code })
+    )
+  })
+
+  it('rejects README.md and accepts README.txt as the only package guidance file', () => {
+    const rejected = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [
+        { path: 'README.md', bytes: encoder.encode('old guide') }
+      ]),
+      catalog,
+      'zip'
+    )
+    const accepted = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [
+        { path: 'README.txt', bytes: encoder.encode('new guide') }
+      ]),
+      catalog,
+      'zip'
+    )
+
+    expect(rejected.preview.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'package.top-level-content-forbidden', path: 'README.md' })
+    )
+    expect(accepted.preview.installable).toBe(true)
+  })
+
+  it('blocks protected identities and duplicate public names', () => {
+    const result = validateSpecialistPackage(
+      packageFiles({ ...validManifest, id: 'reviewer' }, validSpecialist),
+      { ...catalog, specialists: [{ id: 'another', name: 'rna reviewer' }] },
+      'zip'
+    )
+
+    expect(result.preview.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['specialist.id-protected', 'specialist.name-duplicate'])
+    )
+  })
+
+  it('blocks an installed bundled Skill with different content', () => {
+    const skill = {
+      path: 'skills/analysis/SKILL.md',
+      bytes: encoder.encode('---\nname: analysis\n---\nBody')
+    }
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, validSpecialist, [skill]),
+      {
+        ...catalog,
+        skills: [{ id: 'analysis', version: '0.1.0', builtin: false, contentHash: 'different' }]
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(false)
+    expect(result.preview.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'skill.existing-conflict', relatedId: 'analysis' })
+    )
+  })
+})

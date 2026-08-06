@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from 'node:util'
 import type {
   AddCustomServerRequest,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplatePreview,
   ConnectorsSnapshot,
   ConnectorView,
   CustomServerView,
@@ -17,16 +19,37 @@ import type {
   ToolPermission,
   UpdateCustomServerRequest
 } from '../../shared/settings'
+import {
+  customConnectorAliasKey,
+  customConnectorAliases,
+  customConnectorSlug,
+  isCustomConnectorSlug,
+  toCustomConnectorSlug
+} from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
-import type { StoredConnectors, StoredCustomMcpServer } from './types'
+import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
+import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
 }
+
+const normalizeOAuthConfig = (
+  oauth: Exclude<AddCustomServerRequest['oauth'], null | undefined>
+): NonNullable<StoredCustomMcpServer['oauth']> => ({
+  ...(oauth.clientMetadataUrl?.trim() ? { clientMetadataUrl: oauth.clientMetadataUrl.trim() } : {}),
+  ...(oauth.authorizationServerUrl?.trim()
+    ? { authorizationServerUrl: oauth.authorizationServerUrl.trim() }
+    : {}),
+  ...(oauth.scopes?.length
+    ? { scopes: [...new Set(oauth.scopes.map((scope) => scope.trim()).filter(Boolean))] }
+    : {})
+})
 
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
@@ -79,7 +102,10 @@ class ConnectorSettingsModule {
       resolvedServers.push({
         ...secured,
         env: secured.envRefs ? this.decryptSecretRecord(secured.envRefs) : secured.env,
-        headers: secured.headerRefs ? this.decryptSecretRecord(secured.headerRefs) : secured.headers
+        headers: secured.headerRefs
+          ? this.decryptSecretRecord(secured.headerRefs)
+          : secured.headers,
+        ...(secured.oauthRef ? { oauthState: this.decryptOAuthState(secured.oauthRef) } : {})
       })
     }
 
@@ -89,15 +115,59 @@ class ConnectorSettingsModule {
   async provisionedConnectorSkillNames(): Promise<string[]> {
     const connectors = await this.getConnectors()
     const bundled = this.enabledConnectorIds(connectors)
-    const custom = (connectors?.customMcpServers ?? [])
-      .filter((server) => server.enabled)
-      .map((server) => server.id)
+    const customServers = connectors?.customMcpServers ?? []
+    const custom = customServers
+      .filter(
+        (server) =>
+          server.enabled &&
+          isCustomMcpServerRouteSafe(server, customServers) &&
+          (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
+      )
+      .map(customConnectorSlug)
 
     return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {
     return this.connectorsSnapshot()
+  }
+
+  async buildCustomServerTemplateExport(id: string): Promise<{
+    preview: ConnectorTemplateExportPreview
+    contents?: string
+  }> {
+    const server = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (candidate) => candidate.id === id
+    )
+    if (!server) throw new Error(`Unknown custom connector: ${id}`)
+
+    return buildConnectorTemplateExport({
+      id: server.id,
+      slug: customConnectorSlug(server),
+      name: server.name,
+      transport: server.transport,
+      ...(server.description ? { description: server.description } : {}),
+      ...(server.command ? { command: server.command } : {}),
+      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.url ? { url: server.url } : {}),
+      ...(server.envRefs || server.env
+        ? { environmentNames: Object.keys(server.envRefs ?? server.env ?? {}) }
+        : {}),
+      ...(server.headerRefs || server.headers
+        ? { headerNames: Object.keys(server.headerRefs ?? server.headers ?? {}) }
+        : {}),
+      ...(server.oauth ? { oauth: server.oauth } : {})
+    })
+  }
+
+  async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
+    const customServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    return parseConnectorTemplate(contents, {
+      existingIds: customServers.map((server) => server.id),
+      existingNames: customServers.map((server) => server.name),
+      existingSlugs: customServers.map(customConnectorSlug),
+      bundledIds: CONNECTOR_CATALOG.map((connector) => connector.id)
+    })
   }
 
   async getConnectorDetail(id: string): Promise<ConnectorDetailView> {
@@ -163,11 +233,46 @@ class ConnectorSettingsModule {
   }
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
+    const name = request.name.trim()
+    const normalizedName = name.toLowerCase()
+    const slug = request.slug?.trim() || toCustomConnectorSlug(name)
+    const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
+    const existingAliasKeys = new Set(
+      existingServers.flatMap(customConnectorAliases).map(customConnectorAliasKey)
+    )
+    if (CONNECTOR_CATALOG.some((connector) => connector.id.toLowerCase() === normalizedName)) {
+      throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
+    }
+    if (existingServers.some((server) => server.name.toLowerCase() === normalizedName)) {
+      throw new Error(`A custom connector named "${name}" already exists`)
+    }
+    if (existingAliasKeys.has(normalizedName)) {
+      throw new Error(`Connector name "${name}" conflicts with an existing Connector identity`)
+    }
+    if (!isCustomConnectorSlug(slug)) {
+      throw new Error('Connector ID must use only lowercase letters, numbers, and hyphens')
+    }
+    if (CONNECTOR_CATALOG.some((connector) => connector.id === slug)) {
+      throw new Error(`Connector ID "${slug}" is reserved by a built-in connector`)
+    }
+    if (existingServers.some((server) => customConnectorSlug(server) === slug)) {
+      throw new Error(`A custom connector with ID "${slug}" already exists`)
+    }
+    if (existingAliasKeys.has(customConnectorAliasKey(slug))) {
+      throw new Error(`Connector ID "${slug}" conflicts with an existing Connector alias`)
+    }
+    if (request.transport === 'stdio' && request.oauth) {
+      throw new Error('OAuth is only supported for remote custom connectors')
+    }
+    if (request.oauth && request.headers && Object.keys(request.headers).length > 0) {
+      throw new Error('OAuth and static headers cannot be configured together')
+    }
     const candidate: StoredCustomMcpServer = {
       id: randomUUID(),
-      name: request.name.trim(),
+      slug,
+      name,
       transport: request.transport,
-      enabled: true,
+      enabled: !request.oauth,
       trustedAt: Date.now(),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
@@ -178,6 +283,9 @@ class ConnectorSettingsModule {
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
       ...(request.headers && Object.keys(request.headers).length > 0
         ? { headerRefs: this.encryptSecretRecord(request.headers) }
+        : {}),
+      ...(request.oauth && request.transport !== 'stdio'
+        ? { oauth: normalizeOAuthConfig(request.oauth) }
         : {})
     }
     const server = sanitizeCustomMcpServer(candidate)
@@ -192,6 +300,15 @@ class ConnectorSettingsModule {
   async setCustomServerEnabled(
     request: SetCustomServerEnabledRequest
   ): Promise<ConnectorsSnapshot> {
+    if (request.enabled) {
+      const server = (await this.getConnectors())?.customMcpServers?.find(
+        (candidate) => candidate.id === request.id
+      )
+      if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
+      if (server.oauth && !server.oauthState?.tokens?.access_token) {
+        throw new Error(`Sign in to "${server.name}" before enabling it`)
+      }
+    }
     await this.repository.setCustomServerEnabled(request.id, request.enabled)
 
     return this.connectorsSnapshot()
@@ -218,18 +335,44 @@ class ConnectorSettingsModule {
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
 
     const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
-    const headerRefs = request.headers
-      ? this.encryptSecretRecord(request.headers)
-      : existing.headerRefs
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
     // unavailable. A later getConnectors() call migrates it as soon as encryption becomes available.
     const legacyEnv = request.env === undefined ? existing.env : undefined
-    const legacyHeaders = request.headers === undefined ? existing.headers : undefined
+    const nextOAuth =
+      request.transport === 'stdio' && request.oauth === undefined
+        ? undefined
+        : request.oauth === null
+          ? undefined
+          : request.oauth === undefined
+            ? existing.oauth
+            : normalizeOAuthConfig(request.oauth)
+    if (request.transport === 'stdio' && nextOAuth) {
+      throw new Error('OAuth is only supported for remote custom connectors')
+    }
+    if (nextOAuth && request.headers && Object.keys(request.headers).length > 0) {
+      throw new Error('OAuth and static headers cannot be configured together')
+    }
+    const headerRefs = nextOAuth
+      ? undefined
+      : request.headers
+        ? this.encryptSecretRecord(request.headers)
+        : existing.headerRefs
+    const legacyHeaders = nextOAuth
+      ? undefined
+      : request.headers === undefined
+        ? existing.headers
+        : undefined
+    const oauthChanged = !isDeepStrictEqual(existing.oauth ?? undefined, nextOAuth ?? undefined)
+    const oauthCredentialsChanged =
+      oauthChanged ||
+      existing.transport !== request.transport ||
+      existing.url !== request.url?.trim()
     const merged: StoredCustomMcpServer = {
       id: existing.id,
+      slug: customConnectorSlug(existing),
       name: existing.name,
       transport: request.transport,
-      enabled: existing.enabled,
+      enabled: nextOAuth && oauthCredentialsChanged ? false : existing.enabled,
       ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
       ...(request.description?.trim() ? { description: request.description.trim() } : {}),
       ...(request.command?.trim() ? { command: request.command.trim() } : {}),
@@ -238,7 +381,9 @@ class ConnectorSettingsModule {
       ...(legacyEnv && Object.keys(legacyEnv).length > 0 ? { env: legacyEnv } : {}),
       ...(request.url?.trim() ? { url: request.url.trim() } : {}),
       ...(headerRefs && Object.keys(headerRefs).length > 0 ? { headerRefs } : {}),
-      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {})
+      ...(legacyHeaders && Object.keys(legacyHeaders).length > 0 ? { headers: legacyHeaders } : {}),
+      ...(nextOAuth && request.transport !== 'stdio' ? { oauth: nextOAuth } : {}),
+      ...(!oauthCredentialsChanged && existing.oauthRef ? { oauthRef: existing.oauthRef } : {})
     }
     const server = sanitizeCustomMcpServer(merged)
 
@@ -250,7 +395,8 @@ class ConnectorSettingsModule {
       !isDeepStrictEqual(existing.args ?? [], server.args ?? []) ||
       existing.url !== server.url ||
       request.env !== undefined ||
-      request.headers !== undefined
+      request.headers !== undefined ||
+      oauthChanged
 
     const securityChangeGuard = securitySensitiveConfigChanged
       ? await beforeSecuritySensitiveUpdate?.(request.id)
@@ -285,6 +431,35 @@ class ConnectorSettingsModule {
     return values.length > 0 ? Object.fromEntries(values) : undefined
   }
 
+  async saveCustomServerOAuthState(
+    serverId: string,
+    state: StoredCustomMcpOAuthState | undefined
+  ): Promise<void> {
+    const stored = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
+      (server) => server.id === serverId
+    )
+    if (!stored) throw new Error(`Unknown custom connector: ${serverId}`)
+    if (!stored.oauth) throw new Error(`Custom connector "${serverId}" is not configured for OAuth`)
+
+    await this.repository.updateCustomServer(serverId, {
+      ...stored,
+      ...(state ? { oauthRef: encryptKey(JSON.stringify(state)) } : { oauthRef: undefined })
+    })
+  }
+
+  private decryptOAuthState(ref: string): StoredCustomMcpOAuthState | undefined {
+    const value = tryDecryptKey(ref)
+    if (!value) return undefined
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return parsed && typeof parsed === 'object'
+        ? (parsed as StoredCustomMcpOAuthState)
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
     const autoAllow = new Set(connectors?.autoAllowIds ?? [])
@@ -306,21 +481,49 @@ class ConnectorSettingsModule {
   }
 
   private toCustomServerViews(connectors: StoredConnectors | undefined): CustomServerView[] {
-    return (connectors?.customMcpServers ?? [])
+    const customServers = connectors?.customMcpServers ?? []
+    return customServers
       .map((server) => {
+        const routeUnavailable = !isCustomMcpServerRouteSafe(server, customServers)
         const unavailable =
+          routeUnavailable ||
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
+        const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
         return {
           id: server.id,
+          slug: customConnectorSlug(server),
           name: server.name,
           description: server.description,
           transport: server.transport,
-          enabled: server.enabled,
+          enabled: server.enabled && !unavailable && !unauthenticated,
           command: server.command,
           args: server.args,
           url: server.url,
-          ...(unavailable ? { availability: 'unavailable' as const } : {})
+          ...(server.transport !== 'stdio'
+            ? {
+                hasHeaders: Boolean(Object.keys(server.headerRefs ?? server.headers ?? {}).length)
+              }
+            : {}),
+          ...(server.oauth
+            ? {
+                oauth: {
+                  ...(server.oauth.clientMetadataUrl
+                    ? { clientMetadataUrl: server.oauth.clientMetadataUrl }
+                    : {}),
+                  ...(server.oauth.authorizationServerUrl
+                    ? { authorizationServerUrl: server.oauth.authorizationServerUrl }
+                    : {}),
+                  ...(server.oauth.scopes ? { scopes: server.oauth.scopes } : {}),
+                  hasTokens: Boolean(server.oauthState?.tokens?.access_token)
+                }
+              }
+            : {}),
+          ...(unavailable
+            ? { availability: 'unavailable' as const }
+            : unauthenticated
+              ? { availability: 'unauthenticated' as const }
+              : {})
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))

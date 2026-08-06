@@ -9,8 +9,13 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponse
 } from '../../shared/acp'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import type { AgentFrameworkId } from '../../shared/settings'
+import { getAgentFramework, type AgentFramework } from '../agent-framework'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
+import { createLogger } from '../logger'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
@@ -23,6 +28,8 @@ import {
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
+
+const log = createLogger('acp')
 
 type PermissionFramework = 'codex' | 'opencode' | 'claude-code' | string | undefined
 
@@ -66,6 +73,38 @@ type AuthorizedPermissionActionOrigin = Readonly<{
 
 type AcpPermissionContextOptions = {
   emitPermissionRequest: (request: AcpPermissionRequest) => void
+  routing: {
+    resolveAppSessionId: (providerSessionId: string) => string
+    sessionSnapshot: (sessionId: string) =>
+      | {
+          cwd?: string
+          frameworkId?: AgentFrameworkId
+          permissionProfile?: Readonly<
+            Pick<SessionPermissionProfileState, 'selectedProfile' | 'autoReviewStrategy'>
+          >
+        }
+      | undefined
+    hasActivePrimarySession: (sessionId: string) => boolean
+    capturePrompt: (sessionId: string) =>
+      | {
+          sequence: number
+          isCancellationAccepted: () => boolean
+        }
+      | undefined
+    currentInteractionSequence: (sessionId: string) => number | undefined
+    mcpServerNamesFor: (sessionId: string) => readonly string[]
+    reviewerContextFor: (providerSessionId: string) =>
+      | {
+          frameworkId: AgentFrameworkId
+          mcpServerNames: readonly string[]
+        }
+      | undefined
+    resolveReviewerPermission: (
+      request: RequestPermissionRequest
+    ) => RequestPermissionResponse | undefined
+    currentFramework: () => AgentFramework
+    resolveProjectId: (sessionId: string) => string
+  }
   conversationGrants?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -105,6 +144,15 @@ const MAX_CLAUDE_CODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION = 32
 const MAX_PERMISSION_CODE_PREVIEW_CHARS = 7_500
 const OPENCODE_PERMISSION_CONTEXT_WAIT_MS = 1_000
+
+const errorMessage = (error: unknown): string => {
+  try {
+    const raw = error instanceof Error ? (error as { message?: unknown }).message : error
+    return typeof raw === 'string' ? raw : String(raw)
+  } catch {
+    return 'unknown error'
+  }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -198,8 +246,8 @@ const codexMcpToolIdentity = (
 const countNested = <T>(contexts: Map<string, Map<string, T>>, sessionId: string): number =>
   contexts.get(sessionId)?.size ?? 0
 
-// Owns permission-specific provider correlation and pending decisions. It receives already-classified
-// framework/session context from the runtime and never infers human authority from protocol messages.
+// Owns provider permission routing, correlation, and pending decisions. Protocol messages never infer
+// human authority; only the explicit response origin can release a human-owned decision.
 class AcpPermissionContext {
   private readonly broker: AcpPermissionBroker
   private readonly humanOnlyRequestIds = new Set<string>()
@@ -219,13 +267,123 @@ class AcpPermissionContext {
     this.broker = new AcpPermissionBroker(
       (request) => {
         this.humanOnlyRequestIds.add(request.requestId)
-        options.emitPermissionRequest(request)
+        const sessionId = options.routing.resolveAppSessionId(request.sessionId)
+        options.emitPermissionRequest(
+          sessionId && sessionId !== request.sessionId ? { ...request, sessionId } : request
+        )
       },
       options.conversationGrants,
       options.permissionGrantRegistry
     )
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
+  }
+
+  async handleProviderRequest(
+    params: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
+    const routing = this.options.routing
+
+    const appSessionId = routing.resolveAppSessionId(params.sessionId)
+    const reviewerContext = routing.reviewerContextFor(params.sessionId)
+    const mcpServerNames =
+      reviewerContext?.mcpServerNames ?? routing.mcpServerNamesFor(appSessionId)
+    const promptInteraction = routing.capturePrompt(appSessionId)
+    const promptTurn = promptInteraction?.sequence
+    const aggregateSnapshot = routing.sessionSnapshot(appSessionId)
+    const framework = reviewerContext?.frameworkId ?? aggregateSnapshot?.frameworkId
+    const isCancelled = (): boolean =>
+      framework === 'opencode' &&
+      (promptTurn === undefined
+        ? routing.hasActivePrimarySession(appSessionId)
+        : routing.currentInteractionSequence(appSessionId) !== promptTurn ||
+          promptInteraction?.isCancellationAccepted() === true)
+    const restoreContext = {
+      sessionId: appSessionId,
+      framework,
+      mcpServerNames,
+      isCancelled
+    }
+    const normalizedParams = await this.restoreToolCall(params, restoreContext)
+    if (
+      !normalizedParams ||
+      this.isPermissionRequestCancelled(params.toolCall.toolCallId, restoreContext)
+    ) {
+      return { outcome: { outcome: 'cancelled' } }
+    }
+
+    // Keep the audit record useful without logging titles, URLs, raw input, or provider payloads.
+    const toolName = extractProviderToolName(normalizedParams.toolCall)
+    const isMcp =
+      isMcpToolName(normalizedParams.toolCall.title, mcpServerNames) ||
+      isMcpToolName(toolName, mcpServerNames)
+    log.info('permission request received', {
+      tool:
+        this.toolIdentityForDiagnostics(toolName, appSessionId) ?? normalizedParams.toolCall.kind,
+      isMcp,
+      toolCallId: normalizedParams.toolCall.toolCallId,
+      sessionId: params.sessionId,
+      optionCount: params.options.length
+    })
+
+    try {
+      if (reviewerContext) {
+        const response = routing.resolveReviewerPermission(normalizedParams)
+        if (response) return response
+        throw new Error(`Unknown ACP reviewer session: ${params.sessionId}`)
+      }
+
+      if (!routing.hasActivePrimarySession(appSessionId)) {
+        throw new Error(`Unknown ACP session: ${appSessionId}`)
+      }
+
+      const profileState = aggregateSnapshot?.permissionProfile
+      const currentFramework = routing.currentFramework()
+      const frameworkId = aggregateSnapshot?.frameworkId ?? currentFramework.id
+      const permissionFramework =
+        frameworkId === currentFramework.id ? currentFramework : getAgentFramework(frameworkId)
+
+      return await this.requestPermission(
+        appSessionId === normalizedParams.sessionId
+          ? normalizedParams
+          : { ...normalizedParams, sessionId: appSessionId },
+        {
+          profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
+          frameworkId,
+          shellDialect: permissionFramework.commandShellDialect,
+          autoReviewStrategy: profileState?.autoReviewStrategy,
+          cwd: aggregateSnapshot?.cwd,
+          mcpServerNames,
+          projectId: routing.resolveProjectId(appSessionId)
+        }
+      )
+    } catch (error) {
+      log.error('permission request failed', {
+        message: errorMessage(error),
+        tool:
+          this.toolIdentityForDiagnostics(
+            extractProviderToolName(normalizedParams.toolCall),
+            appSessionId
+          ) ?? normalizedParams.toolCall.kind,
+        toolCallId: params.toolCall.toolCallId,
+        sessionId: params.sessionId
+      })
+      throw error
+    }
+  }
+
+  observeProviderUpdate(notification: SessionNotification): void {
+    const routing = this.options.routing
+
+    const sessionId = routing.resolveAppSessionId(notification.sessionId)
+    const reviewerContext = routing.reviewerContextFor(notification.sessionId)
+    const routed = structuredClone(notification)
+    routed.sessionId = sessionId
+    this.observeToolCall(routed, {
+      sessionId,
+      framework: reviewerContext?.frameworkId ?? routing.sessionSnapshot(sessionId)?.frameworkId,
+      mcpServerNames: reviewerContext?.mcpServerNames ?? routing.mcpServerNamesFor(sessionId)
+    })
   }
 
   getPendingRequests(): AcpPermissionRequest[] {
@@ -753,6 +911,15 @@ class AcpPermissionContext {
       if (calls?.size === 0) sessions.delete(sessionId)
     }
     this.resolveOpenCodeWaiters(sessionId, toolCallId, 'cancelled')
+  }
+
+  private toolIdentityForDiagnostics(
+    providerToolName: string | undefined,
+    sessionId: string
+  ): string | undefined {
+    if (!providerToolName) return undefined
+    const mcpServerNames = this.options.routing.mcpServerNamesFor(sessionId)
+    return resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ?? providerToolName
   }
 }
 

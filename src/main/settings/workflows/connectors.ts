@@ -1,4 +1,5 @@
 import type {
+  AuthenticateCustomServerRequest,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
   SetConnectorAutoAllowRequest,
@@ -22,6 +23,8 @@ type ConnectorSettingsWorkflowStore = Pick<
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'updateCustomServer'
+  | 'authenticateCustomServer'
+  | 'cancelCustomServerAuthentication'
 >
 
 type ConnectorSettingsWorkflowEffects = {
@@ -30,6 +33,7 @@ type ConnectorSettingsWorkflowEffects = {
   requestSkillsReload: () => void
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
+  clearCustomServerFailure: (serverId: string) => void
 }
 
 type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promise<
@@ -98,6 +102,21 @@ class ConnectorSettingsWorkflows {
     return snapshot
   }
 
+  async authenticateCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'authenticateCustomServer'> {
+    const snapshot = await this.settings.authenticateCustomServer(request.id)
+    this.effects.clearCustomServerFailure(request.id)
+    this.connectorsChanged()
+    return snapshot
+  }
+
+  async cancelCustomServerAuthentication(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'cancelCustomServerAuthentication'> {
+    return this.settings.cancelCustomServerAuthentication(request.id)
+  }
+
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
     const result = await mutation()
     this.connectorsChanged()
@@ -117,6 +136,7 @@ class ConnectorSettingsWorkflows {
   ): Promise<CustomServerSecurityChangeGuard | void> {
     const guard = this.effects.beginCustomServerSecurityChange(serverId)
     try {
+      await this.settings.cancelCustomServerAuthentication(serverId)
       await this.effects.pruneCustomServerPermissions(serverId)
       return guard
     } catch (error) {

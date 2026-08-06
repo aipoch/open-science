@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   AcpConnectionStatus,
@@ -8,12 +8,14 @@ import type {
   AcpMessageImage,
   AcpContextUsage
 } from '../../../../shared/acp'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId,
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import {
+  imageAttachmentMimeType,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -22,9 +24,9 @@ import type { FileReference } from '../../../../shared/artifacts'
 import type { MessagePart } from '../../../../shared/session-persistence'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
 import type { AgentFrameworkId } from '../../../../shared/settings'
+import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import {
-  IMAGE_REPLAY_UNSUPPORTED_MESSAGE,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_TIMED_OUT_MESSAGE,
@@ -35,7 +37,12 @@ import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
-import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
+import {
+  buildWorkspaceHistoryReplay,
+  resolveHistoryReplayTarget,
+  resolveSessionHistoryReplayDescriptor,
+  type HistoryReplayDescriptor
+} from './history-preamble'
 import {
   applyWorkspaceRuntimeEvent,
   syncWorkspaceAgentFirstOutputState,
@@ -44,7 +51,14 @@ import {
 
 type SendWorkspaceMessageInput = {
   sessionId?: string
+  // Branch in New Session creates a fresh app/ACP Session from this source Session's active path.
+  // It is mutually exclusive with `sessionId`, which continues an existing app Session.
+  branchSourceSessionId?: string
   text: string
+  turnIntent?: 'plan-first'
+  planContinuation?: Pick<ActivePlanProjection, 'artifactVersionId' | 'revision'> & {
+    pendingAction?: 'review' | 'approve' | 'reject'
+  }
   attachments?: UploadedAttachment[]
   cwd?: string
   // Durable owning project stamped on new sessions.
@@ -57,6 +71,7 @@ type SendWorkspaceMessageInput = {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
+  historyReplayDescriptor?: HistoryReplayDescriptor
   // Skills the user picked in the composer; force-loaded and nudged for this turn only.
   forcedSkillIds?: string[]
   // Existing files referenced via `@` mentions; attached to the prompt as content blocks.
@@ -67,7 +82,7 @@ type SendWorkspaceMessageInput = {
   // internal re-resume below runs against an already-attached session and can't report the reset
   // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
   forceHistoryReplay?: boolean
-  // Current Provider capability, injected by the hook so context replay cannot bypass image gating.
+  // Current Provider capability, injected by the hook so replay can omit unsupported image media.
   supportsImageInput?: boolean
   // Internal edit-resend seam: reset the selected runtime first, then replace the active Branch from
   // this message and replay only the retained prefix into the fresh context.
@@ -81,7 +96,7 @@ type SendWorkspaceMessageInput = {
   // Immutable Specialist UUID from the new-conversation draft picker. Only used when creating a new
   // ACP session (sessionId === undefined). The renderer sends only the UUID; the main process reads
   // the latest Profile. Never passed for existing sessions (specialist binding is immutable).
-  specialistId?: string
+  specialistId?: string | null
 }
 
 type SendWorkspaceMessageResult = {
@@ -89,8 +104,45 @@ type SendWorkspaceMessageResult = {
   messageId: string
 }
 
+type HistoryReplayContext = {
+  historyPreamble?: string
+  historyAttachments?: UploadedAttachment[]
+  historyImages?: AcpMessageImage[]
+}
+
+const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
+  imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
+
+const hasHistoryImages = (messages: ChatMessage[]): boolean =>
+  messages.some(
+    (message) => (message.images?.length ?? 0) > 0 || message.uploads?.some(isReplayImage) === true
+  )
+
+const replayAttachmentsForModel = (
+  replay: HistoryReplayContext | undefined,
+  supportsImageInput: boolean | undefined
+): UploadedAttachment[] | undefined => {
+  if (supportsImageInput !== false) return replay?.historyAttachments
+  const attachments = replay?.historyAttachments?.filter((attachment) => !isReplayImage(attachment))
+  return attachments?.length ? attachments : undefined
+}
+
+const buildWorkspaceReplay = (
+  messages: ChatMessage[],
+  descriptor: HistoryReplayDescriptor | undefined,
+  frameworkId: AgentFrameworkId | undefined,
+  projectId?: string,
+  supportsImageInput?: boolean
+): HistoryReplayContext | undefined =>
+  buildWorkspaceHistoryReplay(
+    messages,
+    descriptor ?? { target: resolveHistoryReplayTarget(frameworkId) },
+    projectId,
+    supportsImageInput
+  )
+
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
-type RuntimeEventDrain = () => Promise<void>
+type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
 // Payload of an inline edit resend: the adjusted prompt text plus the mentions it carries. The
 // session/message ids stay separate because they address the truncation point, not the prompt.
@@ -109,6 +161,7 @@ type ResendEditedWorkspaceMessageOptions = {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
+  historyReplayDescriptor?: HistoryReplayDescriptor
   onSendPreparationStateChange?: SendPreparationStateChange
   drainRuntimeEvents?: RuntimeEventDrain
 }
@@ -116,6 +169,7 @@ type ResendEditedWorkspaceMessageOptions = {
 type ResumeInterruptedWorkspaceSessionOptions = {
   supportsImageInput?: boolean
   agentModel?: string
+  historyReplayDescriptor?: HistoryReplayDescriptor
   onSendPreparationStateChange?: SendPreparationStateChange
   drainRuntimeEvents?: RuntimeEventDrain
 }
@@ -134,6 +188,7 @@ type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
 
 type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
+  drain: (sessionId?: string) => Promise<void>
 }
 
 // Runtime adoption and Branch reset intentionally complete before appendUserMessage creates the next
@@ -305,6 +360,57 @@ const finalizeWorkspaceAttachments = async (
   return finalizedAttachments
 }
 
+// Publishes copied staged history under its source Session before the child reuses the Version refs.
+const reconcileBranchedHistoryAttachments = async (
+  sourceSessionId: string,
+  childSessionId: string,
+  historyMessages: ChatMessage[],
+  projectId: string | undefined
+): Promise<void> => {
+  const stagedById = new Map<string, UploadedAttachment>()
+  for (const message of historyMessages) {
+    for (const upload of message.uploads ?? []) {
+      if (!upload.versionId && !stagedById.has(upload.id)) {
+        stagedById.set(upload.id, toRuntimeUploadedAttachment(upload, projectId))
+      }
+    }
+  }
+  if (stagedById.size === 0) return
+
+  const finalized = await window.api.uploads.finalizeSession({
+    projectId,
+    sessionId: sourceSessionId,
+    attachments: [...stagedById.values()]
+  })
+  const finalizedById = new Map(finalized.map((upload) => [upload.id, upload]))
+
+  for (const stagedId of stagedById.keys()) {
+    if (!finalizedById.has(stagedId)) {
+      throw new Error(`Upload finalization did not return the staged attachment: ${stagedId}`)
+    }
+  }
+
+  for (const message of historyMessages) {
+    if (!message.uploads?.some((upload) => stagedById.has(upload.id))) continue
+    const uploads = message.uploads.map((upload) => {
+      const finalizedUpload = finalizedById.get(upload.id)
+      return finalizedUpload ? toPersistedUploadedAttachment(finalizedUpload) : upload
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: sourceSessionId,
+      messageId: message.id,
+      uploads
+    })
+    useSessionStore.getState().replaceMessageUploads({
+      sessionId: childSessionId,
+      messageId: message.id,
+      uploads
+    })
+  }
+
+  usePreviewWorkbenchStore.getState().reconcileFinalizedUploads(finalized)
+}
+
 const getPromptProvenanceContext = (
   sessionId: string,
   promptMessageId: string
@@ -366,44 +472,160 @@ const processVisibleWorkspaceRuntimeEvents = async (
 const createWorkspaceRuntimeEventProcessor = (
   applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent
 ): WorkspaceRuntimeEventProcessor => {
-  const processedEventIds = new Set<string>()
-  const processingEventIds = new Set<string>()
-  let latestEvents: AcpRuntimeEvent[] = []
-  let drainInFlight: Promise<void> | undefined
-  let drainAgain = false
+  type EventLane = {
+    acceptedEvents: Map<string, AcpRuntimeEvent>
+    failedEventIds: Set<string>
+    processedEventIds: Set<string>
+    processingEventIds: Set<string>
+    drainInFlight?: Promise<void>
+    drainAgain: boolean
+  }
 
-  // Coalesces rapid runtime snapshots while preserving a single ordered drain loop.
-  const drain = async (): Promise<void> => {
-    if (drainInFlight) {
-      drainAgain = true
-      return drainInFlight
+  const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
+  const eventLanes = new Map<string | symbol, EventLane>()
+  let latestEvents: AcpRuntimeEvent[] = []
+  let acceptedEventVersion = 0
+
+  const getEventLaneKey = (event: AcpRuntimeEvent): string | symbol =>
+    event.sessionId ?? unscopedEventLane
+
+  const getEventLane = (laneKey: string | symbol): EventLane => {
+    let lane = eventLanes.get(laneKey)
+    if (!lane) {
+      lane = {
+        acceptedEvents: new Map<string, AcpRuntimeEvent>(),
+        failedEventIds: new Set<string>(),
+        processedEventIds: new Set<string>(),
+        processingEventIds: new Set<string>(),
+        drainAgain: false
+      }
+      eventLanes.set(laneKey, lane)
     }
 
-    drainInFlight = (async () => {
+    return lane
+  }
+
+  const cleanEventLane = (laneKey: string | symbol, lane: EventLane): void => {
+    const visibleEventIds = new Set(
+      latestEvents.filter((event) => getEventLaneKey(event) === laneKey).map((event) => event.id)
+    )
+
+    for (const eventId of lane.acceptedEvents.keys()) {
+      if (!visibleEventIds.has(eventId) && lane.processedEventIds.has(eventId)) {
+        lane.acceptedEvents.delete(eventId)
+        lane.failedEventIds.delete(eventId)
+        lane.processedEventIds.delete(eventId)
+        lane.processingEventIds.delete(eventId)
+      }
+    }
+
+    if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) {
+      eventLanes.delete(laneKey)
+    }
+  }
+
+  const drainLane = async (laneKey: string | symbol): Promise<void> => {
+    const lane = getEventLane(laneKey)
+
+    if (lane.drainInFlight) {
+      lane.drainAgain = true
+      return lane.drainInFlight
+    }
+
+    lane.drainInFlight = (async () => {
       do {
-        drainAgain = false
+        lane.drainAgain = false
         await processVisibleWorkspaceRuntimeEvents(
-          latestEvents,
-          processedEventIds,
-          applyEvent,
-          processingEventIds
+          [...lane.acceptedEvents.values()],
+          lane.processedEventIds,
+          async (event) => {
+            const hadFailed = lane.failedEventIds.has(event.id)
+            try {
+              const applied = await applyEvent(event)
+              lane.failedEventIds.delete(event.id)
+              return applied
+            } catch (error) {
+              const isVisible = latestEvents.some(
+                (candidate) => candidate.id === event.id && getEventLaneKey(candidate) === laneKey
+              )
+              if (hadFailed && !isVisible) {
+                lane.acceptedEvents.delete(event.id)
+                lane.failedEventIds.delete(event.id)
+              } else {
+                lane.failedEventIds.add(event.id)
+              }
+              throw error
+            }
+          },
+          lane.processingEventIds
         )
-      } while (drainAgain)
+      } while (lane.drainAgain)
     })()
 
     try {
-      await drainInFlight
+      await lane.drainInFlight
     } finally {
-      drainInFlight = undefined
+      lane.drainInFlight = undefined
+      cleanEventLane(laneKey, lane)
     }
   }
 
   return {
     process: (events) => {
       latestEvents = events
-      return drain()
+      const visibleLaneKeys = new Set<string | symbol>()
+
+      for (const event of events) {
+        const laneKey = getEventLaneKey(event)
+        const lane = getEventLane(laneKey)
+        visibleLaneKeys.add(laneKey)
+
+        if (
+          !lane.processedEventIds.has(event.id) &&
+          !lane.processingEventIds.has(event.id) &&
+          !lane.acceptedEvents.has(event.id)
+        ) {
+          // A bounded source snapshot may evict this event before a slow predecessor finishes.
+          lane.acceptedEvents.set(event.id, event)
+          acceptedEventVersion += 1
+        }
+      }
+
+      for (const [laneKey, lane] of eventLanes) {
+        cleanEventLane(laneKey, lane)
+      }
+
+      const drains = [...visibleLaneKeys].map((laneKey) => drainLane(laneKey))
+      for (const [laneKey, lane] of eventLanes) {
+        if (!visibleLaneKeys.has(laneKey) && lane.acceptedEvents.size > 0) {
+          void drainLane(laneKey)
+        }
+      }
+
+      return Promise.all(drains).then(() => undefined)
+    },
+    drain: async (sessionId) => {
+      if (sessionId !== undefined) {
+        if (eventLanes.has(sessionId)) await drainLane(sessionId)
+        return
+      }
+
+      let drainedVersion: number
+      do {
+        drainedVersion = acceptedEventVersion
+        await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
+      } while (drainedVersion !== acceptedEventVersion)
     }
   }
+}
+
+const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor()
+
+const sessionOwnsActivePrompt = (sessionId: string, messageId: string): boolean => {
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
 }
 
 // Finishes the ACP session handshake for a prompt that is already visible locally.
@@ -417,9 +639,14 @@ const startPendingSessionPrompt = (
   permissionProfile: PermissionProfileId,
   forcedSkillIds: string[] | undefined,
   referencedArtifacts: FileReference[] | undefined,
-  specialistId: string | undefined
+  specialistId: string | undefined,
+  turnIntent: SendWorkspaceMessageInput['turnIntent'],
+  historyReplay?: HistoryReplayContext,
+  contextReset = false
 ): void => {
   void (async () => {
+    if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return
+
     let createdSession
 
     try {
@@ -432,9 +659,13 @@ const startPendingSessionPrompt = (
     } catch (error) {
       // Unwrap the IPC wrapper so an app-authored setup failure (model-incompat / no provider / Codex
       // bridge / missing executable) is recognized by the classifier and hides the report button.
-      useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
+      if (sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) {
+        useSessionStore.getState().failRun(pending.sessionId, getCreateSessionFailureMessage(error))
+      }
       return
     }
+
+    if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return
 
     const runtimeSessionId = createdSession?.sessionId
 
@@ -460,6 +691,7 @@ const startPendingSessionPrompt = (
     })
 
     if (!bound) return
+    if (!sessionOwnsActivePrompt(runtimeSessionId, bound.messageId)) return
 
     let promptAttachments = attachments
 
@@ -478,22 +710,32 @@ const startPendingSessionPrompt = (
       return
     }
 
+    if (!sessionOwnsActivePrompt(runtimeSessionId, bound.messageId)) return
+
     // Baseline the newest prompt-failure event before dispatch so the rejection path can tell this
     // turn's error event from a stale one when it derives the report affordance.
     const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, runtimeSessionId)
-    void runtime
-      .sendPrompt(
-        runtimeSessionId,
-        content,
-        promptAttachments,
-        forcedSkillIds,
-        referencedArtifacts,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        getPromptProvenanceContext(runtimeSessionId, bound.messageId)
-      )
+    const sendPromptArguments = [
+      runtimeSessionId,
+      content,
+      promptAttachments,
+      forcedSkillIds,
+      referencedArtifacts,
+      historyReplay?.historyPreamble,
+      historyReplay?.historyAttachments,
+      historyReplay?.historyImages,
+      undefined,
+      getPromptProvenanceContext(runtimeSessionId, bound.messageId),
+      contextReset
+    ] as const
+    const promptRequest = turnIntent
+      ? runtime.sendPrompt(...sendPromptArguments, undefined, turnIntent)
+      : runtime.sendPrompt(...sendPromptArguments)
+    void promptRequest
+      .then((snapshot) => {
+        useSessionStore.getState().clearPendingContextReplay(runtimeSessionId, bound.messageId)
+        return snapshot
+      })
       .catch((error) => {
         // A rejected prompt surfaces as a Resume banner if the connection dropped, otherwise a
         // visible session error, instead of being swallowed as an unhandled rejection.
@@ -508,6 +750,7 @@ const sendWorkspaceMessage = async (
   runtime: WorkspaceMessageRuntime,
   {
     sessionId,
+    branchSourceSessionId,
     text,
     attachments = [],
     cwd,
@@ -517,6 +760,7 @@ const sendWorkspaceMessage = async (
     agentFrameworkId,
     agentBackendId,
     agentModel,
+    historyReplayDescriptor,
     forcedSkillIds,
     referencedArtifacts,
     parts,
@@ -525,18 +769,116 @@ const sendWorkspaceMessage = async (
     truncateFromMessageId,
     allowCompactionRecovery,
     requireExistingSession,
-    specialistId
+    specialistId,
+    planContinuation,
+    turnIntent
   }: SendWorkspaceMessageInput,
   onSendPreparationStateChange?: SendPreparationStateChange,
   drainRuntimeEvents?: RuntimeEventDrain
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = text.trim()
+  const targetSessionId = sessionId
+  const replaySession = targetSessionId
+    ? useSessionStore.getState().sessions.find((session) => session.id === targetSessionId)
+    : undefined
+  const replayPrompt = replaySession?.pendingContextReplayMessageId
+    ? replaySession.messages.find(
+        (message) => message.id === replaySession.pendingContextReplayMessageId
+      )
+    : undefined
+  const effectiveAttachments =
+    attachments.length > 0 || !replayPrompt?.uploads?.length
+      ? attachments
+      : replayPrompt.uploads.map((upload) =>
+          toRuntimeUploadedAttachment(upload, replaySession?.projectId)
+        )
 
   // Empty drafts are allowed only when the user attached at least one file.
-  if (!content && attachments.length === 0) return undefined
+  if (!content && effectiveAttachments.length === 0) return undefined
 
-  const targetSessionId = sessionId
   const targetCwd = cwd
+
+  if (branchSourceSessionId) {
+    // The store snapshot is the transaction boundary: it selects precisely the source active path,
+    // appends the new prompt once, and makes the pending child Session visible before any async ACP work.
+    const pending = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: branchSourceSessionId,
+      content,
+      attachments,
+      parts,
+      permissionProfile,
+      agentFrameworkId,
+      agentBackendId,
+      agentModel,
+      specialistId
+    })
+
+    if (!pending) return undefined
+
+    const pendingSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === pending.sessionId)
+    if (!pendingSession) return undefined
+
+    // The new prompt is already in the snapshot. Replay only the copied prior path so the agent sees
+    // this user request exactly once.
+    let historyMessages = pendingSession.messages.filter(
+      (message) => message.id !== pending.messageId
+    )
+    // The snapshot owns the child Session's project. Do not let a stale workspace selection route a
+    // branched conversation's fresh runtime (or its replayed uploads) to a different project.
+    const sessionProjectName = pendingSession.projectId
+    try {
+      await reconcileBranchedHistoryAttachments(
+        branchSourceSessionId,
+        pending.sessionId,
+        historyMessages,
+        sessionProjectName
+      )
+      const reconciledSession = useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === pending.sessionId)
+      if (!reconciledSession) return undefined
+      if (!sessionOwnsActivePrompt(pending.sessionId, pending.messageId)) return pending
+      historyMessages = reconciledSession.messages.filter(
+        (message) => message.id !== pending.messageId
+      )
+    } catch (error) {
+      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      return pending
+    }
+    let historyReplay: HistoryReplayContext | undefined
+    try {
+      historyReplay = buildWorkspaceReplay(
+        historyMessages,
+        historyReplayDescriptor,
+        agentFrameworkId,
+        sessionProjectName,
+        supportsImageInput
+      )
+    } catch (error) {
+      useSessionStore.getState().failRun(pending.sessionId, getErrorMessage(error))
+      return pending
+    }
+
+    startPendingSessionPrompt(
+      runtime,
+      pending,
+      content,
+      attachments,
+      pendingSession.cwd || targetCwd,
+      sessionProjectName,
+      pendingSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      forcedSkillIds,
+      referencedArtifacts,
+      pendingSession.specialistId,
+      turnIntent,
+      historyReplay,
+      true
+    )
+
+    return pending
+  }
 
   if (targetSessionId) {
     const currentSession = useSessionStore
@@ -556,14 +898,41 @@ const sendWorkspaceMessage = async (
     }
 
     // Existing sessions keep their own project; new/pending ones fall back to the caller's project.
-    const sessionProjectName = projectName ?? currentSession?.projectId
+    const sessionProjectName = projectName ?? currentSession?.projectId ?? projectId
+    if (planContinuation && !sessionProjectName) return undefined
 
     if (currentSession?.isPending) {
       const retryCwd = targetCwd || currentSession.cwd || undefined
+      let historyReplay: HistoryReplayContext | undefined
+
+      if (currentSession.pendingContextReplayMessageId) {
+        const historyMessages = currentSession.messages.filter(
+          (message) => message.id !== currentSession.pendingContextReplayMessageId
+        )
+        let replay: HistoryReplayContext | undefined
+        try {
+          replay = buildWorkspaceReplay(
+            historyMessages,
+            historyReplayDescriptor,
+            agentFrameworkId,
+            sessionProjectName,
+            supportsImageInput
+          )
+        } catch (error) {
+          useSessionStore.getState().failRun(currentSession.id, getErrorMessage(error))
+          return {
+            sessionId: currentSession.id,
+            messageId: currentSession.pendingContextReplayMessageId
+          }
+        }
+
+        historyReplay = replay
+      }
+
       const appended = useSessionStore.getState().appendUserMessage({
         sessionId: currentSession.id,
         content,
-        attachments,
+        attachments: effectiveAttachments,
         parts,
         cwd: retryCwd,
         projectId: projectId ?? currentSession.projectId,
@@ -578,13 +947,16 @@ const sendWorkspaceMessage = async (
         runtime,
         appended,
         content,
-        attachments,
+        effectiveAttachments,
         retryCwd,
         sessionProjectName,
         currentSession.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         forcedSkillIds,
         referencedArtifacts,
-        undefined // existing pending sessions do not re-apply specialistId
+        currentSession.pendingContextReplayMessageId ? currentSession.specialistId : undefined,
+        turnIntent,
+        historyReplay,
+        Boolean(currentSession.pendingContextReplayMessageId)
       )
       return appended
     }
@@ -607,6 +979,10 @@ const sendWorkspaceMessage = async (
     const branchResetRequired = Boolean(
       truncateFromMessageId || currentSession?.branchContextResetRequired
     )
+    const resumeNeedsImageFiltering =
+      runtimeMustAdoptSession &&
+      supportsImageInput === false &&
+      hasHistoryImages(currentSession?.messages ?? [])
     const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
 
     if (sendPreparationRequired) {
@@ -681,8 +1057,8 @@ const sendWorkspaceMessage = async (
           .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
 
         // A provider may resume an existing selected-runtime session without resetting its hidden
-        // history. Branch isolation requires a fresh context even in that case, now on the adopted owner.
-        if (branchContextResetPerformed && !contextResetFromResume) {
+        // history. Branch isolation and text-only models both require a fresh context in that case.
+        if ((branchContextResetPerformed || resumeNeedsImageFiltering) && !contextResetFromResume) {
           const reset = await runtime.resetSessionContext(
             targetSessionId,
             resumeCwd,
@@ -698,7 +1074,7 @@ const sendWorkspaceMessage = async (
         // The coordinator waits for the prior owner to stop before committing adoption, but its
         // retained events still cross the asynchronous renderer bridge. Apply the latest accepted
         // snapshot before opening the new optimistic run so a terminal event cannot settle that run.
-        await drainRuntimeEvents?.()
+        await drainRuntimeEvents?.(targetSessionId)
       }
     } catch (error) {
       useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
@@ -724,10 +1100,11 @@ const sendWorkspaceMessage = async (
         ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
         : -1
     if (truncateFromMessageId && historyCutIndex < 0) return undefined
-    const historyMessages =
+    const historyMessages = (
       preparedSession && historyCutIndex >= 0
         ? preparedSession.messages.slice(0, historyCutIndex)
         : preparedSession?.messages
+    )?.filter((message) => message.id !== preparedSession?.pendingContextReplayMessageId)
 
     // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
     // adoption is in flight; keeping the old Runtime Segment active until resume succeeds lets that
@@ -743,7 +1120,7 @@ const sendWorkspaceMessage = async (
     const appended = useSessionStore.getState().appendUserMessage({
       sessionId: targetSessionId,
       content,
-      attachments,
+      attachments: effectiveAttachments,
       parts,
       cwd: targetCwd,
       projectId: projectId ?? preparedSession?.projectId,
@@ -765,43 +1142,56 @@ const sendWorkspaceMessage = async (
       (branchContextResetPerformed ||
         contextResetFromResume ||
         forceHistoryReplay ||
-        specialistSwitchReplay) &&
+        specialistSwitchReplay ||
+        preparedSession?.pendingContextReplayMessageId) &&
       historyMessages
     ) {
-      historyPreamble = buildHistoryPreamble(historyMessages)
-      const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
-      if (
-        supportsImageInput === false &&
-        (media.images.length > 0 || media.attachments.length > 0)
-      ) {
-        useSessionStore.getState().failRun(targetSessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
-        return appended
-      }
-      historyAttachments = media.attachments
-      historyImages = media.images
+      const replay = buildWorkspaceReplay(
+        historyMessages,
+        historyReplayDescriptor,
+        agentFrameworkId,
+        sessionProjectName,
+        supportsImageInput
+      )
+      historyPreamble = replay?.historyPreamble
+      historyAttachments = replayAttachmentsForModel(replay, supportsImageInput)
+      historyImages = supportsImageInput === false ? undefined : replay?.historyImages
     }
 
     const resumeFallback =
       forcedSkillIds && forcedSkillIds.length > 0 && historyMessages
         ? (() => {
-            const media = buildHistoryReplayMedia(historyMessages, sessionProjectName)
+            const replay = buildWorkspaceReplay(
+              historyMessages,
+              historyReplayDescriptor,
+              agentFrameworkId,
+              sessionProjectName,
+              supportsImageInput
+            )
             return {
-              historyPreamble: buildHistoryPreamble(historyMessages),
-              historyAttachments: media.attachments,
-              historyImages: supportsImageInput === false ? undefined : media.images
+              historyPreamble: replay?.historyPreamble,
+              historyAttachments: replayAttachmentsForModel(replay, supportsImageInput),
+              historyImages: supportsImageInput === false ? undefined : replay?.historyImages
             }
           })()
         : undefined
+    const contextReset = Boolean(
+      branchContextResetPerformed ||
+      contextResetFromResume ||
+      forceHistoryReplay ||
+      specialistSwitchReplay ||
+      preparedSession?.pendingContextReplayMessageId
+    )
 
-    let promptAttachments = attachments
+    let promptAttachments = effectiveAttachments
 
     try {
       // Existing sessions can finalize immediately because their durable id is already known.
-      if (attachments.length > 0) {
+      if (effectiveAttachments.length > 0) {
         promptAttachments = await finalizeWorkspaceAttachments(
           targetSessionId,
           appended.messageId,
-          attachments,
+          effectiveAttachments,
           sessionProjectName
         )
       }
@@ -815,22 +1205,42 @@ const sendWorkspaceMessage = async (
     const priorErrorEventId = latestPromptFailureEventId(runtime.state.events, targetSessionId)
 
     // The hook returns after local state is updated; event listeners handle the streamed result.
-    void runtime
-      .sendPrompt(
-        targetSessionId,
-        content,
-        promptAttachments,
-        forcedSkillIds,
-        referencedArtifacts,
-        historyPreamble,
-        historyAttachments,
-        historyImages,
-        resumeFallback,
-        getPromptProvenanceContext(targetSessionId, appended.messageId)
-      )
+    const sendPromptArguments = [
+      targetSessionId,
+      content,
+      promptAttachments,
+      forcedSkillIds,
+      referencedArtifacts,
+      historyPreamble,
+      historyAttachments,
+      historyImages,
+      resumeFallback,
+      getPromptProvenanceContext(targetSessionId, appended.messageId),
+      contextReset
+    ] as const
+    const continuation = planContinuation
+      ? {
+          projectId: sessionProjectName!,
+          artifactVersionId: planContinuation.artifactVersionId,
+          expectedRevision: planContinuation.revision,
+          ...(planContinuation.pendingAction
+            ? { pendingAction: planContinuation.pendingAction }
+            : {})
+        }
+      : undefined
+    const promptRequest = turnIntent
+      ? runtime.sendPrompt(...sendPromptArguments, continuation, turnIntent)
+      : continuation
+        ? runtime.sendPrompt(...sendPromptArguments, continuation)
+        : runtime.sendPrompt(...sendPromptArguments)
+
+    void promptRequest
       .then((snapshot) => {
         if (branchContextResetPerformed) {
           useSessionStore.getState().clearBranchContextReset(targetSessionId)
+        }
+        if (preparedSession?.pendingContextReplayMessageId) {
+          useSessionStore.getState().clearPendingContextReplay(targetSessionId, appended.messageId)
         }
         return snapshot
       })
@@ -855,7 +1265,7 @@ const sendWorkspaceMessage = async (
     agentFrameworkId,
     agentBackendId,
     agentModel,
-    specialistId
+    specialistId: specialistId ?? undefined
   })
 
   if (!pending) return undefined
@@ -871,7 +1281,8 @@ const sendWorkspaceMessage = async (
     permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     forcedSkillIds,
     referencedArtifacts,
-    specialistId
+    specialistId ?? undefined,
+    turnIntent
   )
 
   return pending
@@ -936,6 +1347,7 @@ const resumeInterruptedWorkspaceSession = async (
   {
     supportsImageInput,
     agentModel,
+    historyReplayDescriptor,
     onSendPreparationStateChange,
     drainRuntimeEvents
   }: ResumeInterruptedWorkspaceSessionOptions = {}
@@ -1012,7 +1424,8 @@ const resumeInterruptedWorkspaceSession = async (
       forceHistoryReplay: contextReset,
       requireExistingSession: true,
       supportsImageInput,
-      agentModel
+      agentModel,
+      historyReplayDescriptor
     },
     onSendPreparationStateChange,
     drainRuntimeEvents
@@ -1082,7 +1495,10 @@ const compactWorkspaceSession = async (
 const recoverContextOverflowWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
-  cancelledSessionIds?: Set<string>
+  supportsImageInput?: boolean,
+  cancelledSessionIds?: Set<string>,
+  historyReplayDescriptor?: HistoryReplayDescriptor,
+  planContinuation?: SendWorkspaceMessageInput['planContinuation']
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -1173,6 +1589,23 @@ const recoverContextOverflowWorkspaceSession = async (
   // replayed as a text preamble via forceHistoryReplay (session.messages was captured before removal).
   useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
 
+  // Captured provenance proves that the interrupted turn was explicitly authorized. Durable status
+  // updates may have advanced the revision since admission, so refresh only the matching approved
+  // Artifact Version and strip the one-shot pending decision before retrying.
+  const activePlan = useSessionStore
+    .getState()
+    .sessions.find((item) => item.id === sessionId)?.activePlanProjection
+  const retryPlanContinuation =
+    planContinuation &&
+    activePlan?.artifactVersionId === planContinuation.artifactVersionId &&
+    activePlan.approval === 'approved' &&
+    !['completed', 'rejected'].includes(activePlan.lifecycle)
+      ? {
+          artifactVersionId: activePlan.artifactVersionId,
+          revision: activePlan.revision
+        }
+      : planContinuation
+
   const retried = await sendWorkspaceMessage(retryRuntime, {
     sessionId,
     text: interruptedTurn.content,
@@ -1187,7 +1620,10 @@ const recoverContextOverflowWorkspaceSession = async (
     // OpenScience to replay the prior transcript into its first prompt.
     forceHistoryReplay: !nativeCompacted,
     allowCompactionRecovery: true,
-    agentModel: session.agentModel
+    supportsImageInput,
+    agentModel: session.agentModel,
+    historyReplayDescriptor,
+    ...(retryPlanContinuation ? { planContinuation: retryPlanContinuation } : {})
   })
 
   if (!retried) restoreRemovedTurnProjection(session)
@@ -1202,9 +1638,17 @@ const cancelWorkspaceRun = async (
   sessionId: string,
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
-  const wasCompacting =
-    useSessionStore.getState().sessions.find((session) => session.id === sessionId)?.compacting ===
-    true
+  const session = useSessionStore
+    .getState()
+    .sessions.find((candidate) => candidate.id === sessionId)
+  // Pending Sessions have no ACP identity yet. Settle their local run immediately; every startup
+  // await revalidates activeRun before it may create, bind, or prompt a runtime Session.
+  if (session?.isPending) {
+    useSessionStore.getState().finishRun(sessionId, undefined, session.activeRun?.promptMessageId)
+    return
+  }
+
+  const wasCompacting = session?.compacting === true
   if (wasCompacting) cancelledSessionIds?.add(sessionId)
   const snapshot = await runtime.cancel(sessionId)
 
@@ -1229,6 +1673,7 @@ const resendEditedWorkspaceMessage = async (
     agentFrameworkId,
     agentBackendId,
     agentModel,
+    historyReplayDescriptor,
     onSendPreparationStateChange,
     drainRuntimeEvents
   }: ResendEditedWorkspaceMessageOptions = {}
@@ -1250,22 +1695,6 @@ const resendEditedWorkspaceMessage = async (
     return false
   }
 
-  // Validate replay compatibility before the Branch switch: a kept history with images — whether
-  // agent-emitted blocks or user uploads — cannot be replayed on a model without image input, and
-  // discovering that after the truncation would leave the later turns dropped with no prompt dispatched.
-  const replayMedia = buildHistoryReplayMedia(
-    session.messages.slice(0, cutIndex),
-    session.projectId
-  )
-
-  if (
-    supportsImageInput === false &&
-    (replayMedia.images.length > 0 || replayMedia.attachments.length > 0)
-  ) {
-    useSessionStore.getState().failRun(input.sessionId, IMAGE_REPLAY_UNSUPPORTED_MESSAGE)
-    return false
-  }
-
   const resent = await sendWorkspaceMessage(
     runtime,
     {
@@ -1281,6 +1710,7 @@ const resendEditedWorkspaceMessage = async (
       agentFrameworkId,
       agentBackendId,
       agentModel,
+      historyReplayDescriptor,
       // Reset/adopt while the old Branch remains visible, then replace it only after preparation.
       truncateFromMessageId: input.messageId,
       supportsImageInput
@@ -1396,6 +1826,13 @@ const syncWorkspaceContextUsage = (
   }
 }
 
+const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
+  const snapshot = await window.api.acp.getState()
+  void liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
+  syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
+}
+
 // Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
 // state. A failure in either authoritative layer leaves the session visible with an actionable error.
 const deleteWorkspaceSession = async (
@@ -1450,14 +1887,42 @@ const useWorkspaceAgentRuntime = (): {
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
 } => {
   const runtime = useAcpRuntime()
-  const supportsImageInput = useSettingsStore((state) => {
-    const provider = state.providers.find((candidate) => candidate.id === state.activeProviderId)
-    return provider?.supportsImageInput ?? false
-  })
+  const activeProvider = useSettingsStore((state) =>
+    state.providers.find((candidate) => candidate.id === state.activeProviderId)
+  )
+  const supportsImageInput = activeProvider?.supportsImageInput ?? false
   const activeModel = useSettingsStore((state) => state.activeModel)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const agentFramework = useSettingsStore((state) =>
+    state.agentFrameworks.find((candidate) => candidate.id === state.agentFrameworkId)
+  )
+  const providers = useSettingsStore((state) => state.providers)
+  const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const agentBackendId = activeProviderId ? `${agentFrameworkId}:${activeProviderId}` : undefined
+  const historyReplayDescriptor = useMemo<HistoryReplayDescriptor>(
+    () => ({
+      target: resolveHistoryReplayTarget(agentFrameworkId, activeProvider, agentFramework),
+      contextWindow: activeProvider?.vendorId
+        ? resolveModelContextWindow(
+            activeProvider.vendorId,
+            activeModel ?? activeProvider.model ?? activeProvider.models[0]
+          )
+        : activeProvider?.contextWindow
+    }),
+    [activeModel, activeProvider, agentFramework, agentFrameworkId]
+  )
+  const getSessionHistoryReplayDescriptor = useCallback(
+    (sessionId: string): HistoryReplayDescriptor => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      return session
+        ? resolveSessionHistoryReplayDescriptor(session, providers, agentFrameworks)
+        : { target: 'codex-bridge' }
+    },
+    [agentFrameworks, providers]
+  )
   const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
     string[]
   >([])
@@ -1471,11 +1936,7 @@ const useWorkspaceAgentRuntime = (): {
     },
     []
   )
-  const eventProcessor = useRef(createWorkspaceRuntimeEventProcessor())
-  const drainRuntimeEvents = useCallback(async (): Promise<void> => {
-    const snapshot = await window.api.acp.getState()
-    await eventProcessor.current.process(snapshot.events)
-  }, [])
+  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
   // Tracks the last connection status so the disconnect effect fires only on a transition, not on
   // every unrelated snapshot re-render.
   const previousStatusRef = useRef(runtime.state.status)
@@ -1485,6 +1946,11 @@ const useWorkspaceAgentRuntime = (): {
   const overflowRecoveryCooldownSessionIds = useRef(new Set<string>())
   const activeOverflowRecoverySessionIds = useRef(new Set<string>())
   const cancelledOverflowRecoverySessionIds = useRef(new Set<string>())
+  // Overflow retry may replay only authority carried by the interrupted human turn. Never infer
+  // authority from the currently active Plan, because an unrelated message can overflow too.
+  const planContinuationBySessionId = useRef(
+    new Map<string, NonNullable<SendWorkspaceMessageInput['planContinuation']>>()
+  )
 
   // Auto-recovers when a conversation outgrows the provider's request-size limit: asks capable agents
   // to compact natively, with context replacement + text replay as a fallback. Runs
@@ -1502,15 +1968,19 @@ const useWorkspaceAgentRuntime = (): {
         // Cancellation intent belongs only to this live attempt; never let a stale marker from an
         // already-settled recovery abort a later overflow retry.
         cancelledOverflowRecoverySessionIds.current.delete(sessionId)
+        const planContinuation = planContinuationBySessionId.current.get(sessionId)
         return recoverContextOverflowWorkspaceSession(
           recoveryRuntime,
           sessionId,
-          cancelledOverflowRecoverySessionIds.current
-        )
+          supportsImageInput,
+          cancelledOverflowRecoverySessionIds.current,
+          getSessionHistoryReplayDescriptor(sessionId),
+          planContinuation
+        ).finally(() => planContinuationBySessionId.current.delete(sessionId))
       }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
-  }, [runtime.state.events])
+  }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsImageInput])
 
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
@@ -1519,7 +1989,7 @@ const useWorkspaceAgentRuntime = (): {
   // the wait monotonically instead of a later effect rearming it from that snapshot.
   useEffect(() => {
     syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
-    void eventProcessor.current.process(runtime.state.events)
+    void liveWorkspaceRuntimeEventProcessor.process(runtime.state.events)
   }, [agentPromptInFlightSessionIds, runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
@@ -1548,25 +2018,33 @@ const useWorkspaceAgentRuntime = (): {
 
   // Creates a session if needed, records the user message, then starts the prompt in the background.
   const sendMessage = useCallback(
-    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> =>
-      sendWorkspaceMessage(
+    (input: SendWorkspaceMessageInput): Promise<SendWorkspaceMessageResult | undefined> => {
+      if (input.sessionId && input.planContinuation) {
+        planContinuationBySessionId.current.set(input.sessionId, input.planContinuation)
+      } else if (input.sessionId) {
+        planContinuationBySessionId.current.delete(input.sessionId)
+      }
+      return sendWorkspaceMessage(
         runtime,
         {
           ...input,
           supportsImageInput,
           agentFrameworkId,
           agentBackendId,
-          agentModel: activeModel
+          agentModel: activeModel,
+          historyReplayDescriptor
         },
         handleSendPreparationStateChange,
         drainRuntimeEvents
-      ),
+      )
+    },
     [
       runtime,
       supportsImageInput,
       agentFrameworkId,
       agentBackendId,
       activeModel,
+      historyReplayDescriptor,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
@@ -1584,6 +2062,7 @@ const useWorkspaceAgentRuntime = (): {
           agentFrameworkId,
           agentBackendId,
           agentModel: activeModel,
+          historyReplayDescriptor,
           onSendPreparationStateChange: handleSendPreparationStateChange,
           drainRuntimeEvents
         }
@@ -1594,6 +2073,7 @@ const useWorkspaceAgentRuntime = (): {
       agentFrameworkId,
       agentBackendId,
       activeModel,
+      historyReplayDescriptor,
       handleSendPreparationStateChange,
       drainRuntimeEvents
     ]
@@ -1607,14 +2087,25 @@ const useWorkspaceAgentRuntime = (): {
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> =>
-      resumeInterruptedWorkspaceSession(runtime, sessionId, {
+    (sessionId: string): Promise<void> => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      return resumeInterruptedWorkspaceSession(runtime, sessionId, {
         supportsImageInput,
-        agentModel: activeModel,
+        agentModel: session?.agentModel,
+        historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
         onSendPreparationStateChange: handleSendPreparationStateChange,
         drainRuntimeEvents
-      }),
-    [runtime, supportsImageInput, activeModel, handleSendPreparationStateChange, drainRuntimeEvents]
+      })
+    },
+    [
+      runtime,
+      supportsImageInput,
+      getSessionHistoryReplayDescriptor,
+      handleSendPreparationStateChange,
+      drainRuntimeEvents
+    ]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.
@@ -1705,6 +2196,7 @@ export {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeEventProcessor,
+  drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
   deleteWorkspaceSession,
   markRunningSessionsDisconnectedOnDrop,

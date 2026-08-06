@@ -14,6 +14,7 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  packagedMainEntryPath,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
@@ -47,7 +48,7 @@ describe('Windows installer smoke plan', () => {
     )
   })
 
-  it('checks the previous version before the current version in one install location', async () => {
+  it('drills upgrade, process-lock rollback, and final restart in one install location', async () => {
     const plan = buildSmokePlan({
       currentInstaller: 'current.exe',
       previousInstaller: 'previous.exe'
@@ -58,7 +59,9 @@ describe('Windows installer smoke plan', () => {
 
     expect(runCycle.mock.calls).toEqual([
       [{ installer: 'previous.exe', phase: 'previous' }],
-      [{ installer: 'current.exe', phase: 'current' }]
+      [{ installer: 'current.exe', phase: 'current', runningInstaller: 'previous.exe' }],
+      [{ installer: 'previous.exe', phase: 'rollback', runningInstaller: 'current.exe' }],
+      [{ installer: 'current.exe', phase: 'restart', runningInstaller: 'previous.exe' }]
     ])
   })
 
@@ -281,6 +284,12 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         'query_engine-windows.dll.node'
       )
     ])
+  })
+
+  it('targets the bundled main entry for packaged MCP subprocesses', () => {
+    expect(packagedMainEntryPath(join('smoke', 'app'))).toBe(
+      join('smoke', 'app', 'resources', 'app.asar', 'out', 'main', 'index.js')
+    )
   })
 
   it('builds an isolated profile environment for smoke child processes', () => {

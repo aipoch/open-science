@@ -4,6 +4,8 @@ import { DEFAULT_ARTIFACT_PROJECT_NAME } from './artifacts'
 export const DEFAULT_UPLOAD_PROJECT_NAME = DEFAULT_ARTIFACT_PROJECT_NAME
 // New-conversation uploads are staged here until the runtime returns a durable session id.
 export const PENDING_UPLOAD_SESSION_ID = '.pending'
+// Local-file "Save as artifact" uploads without an associated conversation session.
+export const STANDALONE_UPLOAD_SESSION_ID = 'standalone-uploads'
 
 // Per-file storage cap. Content sent to the model has separate, much smaller inline/read limits.
 export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024
@@ -11,6 +13,31 @@ export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024 * 1024
 export const MAX_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 // Composer total attachment cap; enforced renderer-side since main is stateless about composer state.
 export const MAX_COMPOSER_ATTACHMENTS = 10
+
+const GENERIC_UPLOAD_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream'])
+const RASTER_IMAGE_MIME_BY_EXTENSION = new Map<string, string>([
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+  ['avif', 'image/avif']
+])
+
+// Shared by renderer replay selection and main-process prompt materialization so generic or missing
+// MIME metadata cannot make the two layers disagree about whether an upload is a supported image.
+export const imageAttachmentMimeType = (name: string, mimeType?: string): string | undefined => {
+  const essence = mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+
+  if (essence?.startsWith('image/')) {
+    return essence === 'image/svg+xml' ? undefined : essence
+  }
+  if (essence && !GENERIC_UPLOAD_MIME_TYPES.has(essence)) return undefined
+
+  const dot = name.lastIndexOf('.')
+  const extension = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+  return RASTER_IMAGE_MIME_BY_EXTENSION.get(extension)
+}
 
 export const formatUploadSizeLimit = (bytes: number): string => {
   const gibibytes = bytes / (1024 * 1024 * 1024)
@@ -42,6 +69,14 @@ export type UploadTransferProgress = {
 }
 
 export type BeginUploadTransferRequest = Omit<StageLocalUploadRequest, 'sourcePath'>
+
+// Save-as-artifact from the local-file preview: the renderer already knows the native path, and
+// main stats the file itself so neither a stale renderer-side size nor a guessed mime type can
+// reach the staging pipeline. The renderer passes its active project id so the upload lands in the
+// correct project bucket; falls back to DEFAULT_UPLOAD_PROJECT_NAME when absent.
+export type StageLocalPathUploadRequest = Omit<StageLocalUploadRequest, 'size' | 'mimeType'> & {
+  projectId?: string
+}
 
 export type AppendUploadTransferRequest = {
   transferId: string

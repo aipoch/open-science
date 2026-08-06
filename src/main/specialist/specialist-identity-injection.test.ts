@@ -7,7 +7,7 @@ import {
   buildSpecialistIdentityPrefix,
   SPECIALIST_IDENTITY_TAG
 } from './identity'
-import { AcpRuntime } from '../acp/runtime'
+import { AcpRuntime } from '../acp/runtime.test-utils'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
 import type { SpecialistProfileView } from '../../shared/specialist'

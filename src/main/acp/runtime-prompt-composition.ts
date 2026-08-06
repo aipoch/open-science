@@ -1,0 +1,258 @@
+import type { AcpPromptRequest } from '../../shared/acp'
+import type { ArtifactTurnHandle } from './artifact-turn-owner'
+import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
+import { createLogger, errorLogFields } from '../logger'
+import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
+import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import type { AcpRuntimeOptions } from './runtime'
+import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+
+type AcpRuntimePromptPlanHost = Readonly<{
+  preflight: AcpPromptTurnWorkflowOptions['preflightPlan']
+  admit: AcpPromptTurnWorkflowOptions['admitPlan']
+  beforeStop: AcpPromptTurnWorkflowOptions['planLifecycle']['beforeStop']
+  beforeRelease: AcpPromptTurnWorkflowOptions['planLifecycle']['beforeRelease']
+  afterRelease: AcpPromptTurnWorkflowOptions['planLifecycle']['afterRelease']
+}>
+
+type AcpRuntimePromptReloadHost = Readonly<{
+  disconnect: AcpPromptTurnWorkflowOptions['disconnectForReload']
+  resume: AcpPromptTurnWorkflowOptions['resumeAfterReload']
+}>
+
+type AcpRuntimePromptHost = Readonly<{
+  plan: AcpRuntimePromptPlanHost
+  reload: AcpRuntimePromptReloadHost
+}>
+
+const log = createLogger('acp')
+
+const errorMessage = (error: unknown): string => {
+  try {
+    const raw = error instanceof Error ? (error as { message?: unknown }).message : error
+    return typeof raw === 'string' ? raw : String(raw)
+  } catch {
+    return 'unknown error'
+  }
+}
+
+const acpErrorKind = (error: unknown): string | undefined => {
+  try {
+    const data = (error as { data?: unknown } | null)?.data
+    const kind = (data as { errorKind?: unknown } | null | undefined)?.errorKind
+    return typeof kind === 'string' ? kind : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const safeLogError = (message: string, error: unknown): void => {
+  try {
+    log.error(message, errorLogFields(error))
+  } catch {
+    // Prompt projection and the original provider outcome take precedence over diagnostics.
+  }
+}
+
+// Composes the complete Prompt workflow around authoritative Base and Session owners. The host is
+// limited to Plan application policy and public reload re-entry; constructors never invoke it.
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+const composeAcpRuntimePromptOwners = (
+  options: AcpRuntimeOptions,
+  base: AcpRuntimeBaseOwners,
+  session: AcpRuntimeSessionOwners,
+  host: AcpRuntimePromptHost
+) => {
+  const callbacks = options.callbacks ?? {}
+  const activeSession = (sessionId: string) =>
+    session.sessionRegistry.lookup(sessionId)?.attachment?.session
+  const currentFramework = () => base.backendGeneration.current.framework
+  const projectName = (sessionId: string): string =>
+    session.sessionEnvironment.projectName(sessionId)
+  const emitState = (): void => session.publication.emitState()
+  const diagnosticContext = () => ({
+    framework: currentFramework().id,
+    generation: base.connectionResources.epoch,
+    status: base.snapshotOwner.status
+  })
+  const emitSkillActivities = (
+    sessionId: string,
+    promptTurn: number,
+    inputs: ReadonlyArray<{ name: string }>,
+    status: 'in_progress' | 'completed' | 'failed'
+  ): void => {
+    for (const [index, { name }] of inputs.entries()) {
+      session.publication.pushEvent({
+        kind: 'tool',
+        level: status === 'failed' ? 'error' : 'info',
+        sessionId,
+        toolCallId: `open-science-skill-${promptTurn}-${index}`,
+        providerToolName: 'skill',
+        title: `Loaded skill: ${name}`,
+        status
+      })
+    }
+  }
+  const openArtifact = async (
+    sessionId: string,
+    provenanceContext: AcpPromptRequest['provenanceContext']
+  ): Promise<ArtifactTurnHandle | undefined> => {
+    if (!base.artifactTurns) return undefined
+    return base.artifactTurns.open({
+      appSessionId: sessionId,
+      artifactStorageSessionId:
+        base.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,
+      projectId: projectName(sessionId),
+      agentName: currentFramework().displayName,
+      provenanceContext
+    })
+  }
+  const publishArtifact = async (
+    sessionId: string,
+    artifact: ArtifactTurnHandle | undefined,
+    onPublished?: () => void
+  ): Promise<void> => {
+    if (!artifact || !base.artifactTurns) return
+    const publication = await base.artifactTurns.finalize(artifact)
+    if (!publication) return
+    session.publication.pushEvent(
+      {
+        kind: 'artifact',
+        level: 'info',
+        sessionId,
+        title: 'Generated files',
+        runId: publication.runId,
+        promptMessageId: publication.promptMessageId,
+        artifactSessionId: publication.artifactStorageSessionId,
+        artifactClaimId: publication.artifactClaimId,
+        artifacts: publication.artifacts
+      },
+      onPublished
+    )
+  }
+  const disposeArtifact = async (artifact: ArtifactTurnHandle | undefined): Promise<void> => {
+    if (artifact) await base.artifactTurns?.dispose(artifact)
+  }
+
+  const promptPreparation = new AcpPromptPreparationOwner({
+    promptContent: base.promptContentOwner,
+    presentation: base.sessionPresentationPolicy,
+    contextUsage: base.contextUsageTracker,
+    selectBridgeSkills: async (text, catalog, signal) =>
+      (await base.connectionResources.selectBridgeSkills(text, catalog, signal)) ?? [],
+    authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
+    ...(options.notebook
+      ? {
+          notebook: {
+            peekHandoffContext: options.notebook.peekHandoffContext,
+            registerTurnInputs: options.notebook.registerTurnInputs
+          }
+        }
+      : {}),
+    emitState
+  })
+  const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
+    sessions: { activeSession, currentFramework },
+    interactions: base.sessionInteractions,
+    context: base.contextUsageTracker,
+    promptContent: base.promptContentOwner,
+    contextEstimateInput: (sessionId) =>
+      session.contextUsagePolicy.resolve(sessionId).estimateInput,
+    selectedContextWindow: (sessionId) =>
+      session.contextUsagePolicy.resolve(sessionId).selectedWindow,
+    routeHiddenNotification: (notification, sessionId) =>
+      session.sessionUpdateProjector.route(notification, {
+        appSessionId: sessionId,
+        visible: false,
+        emitState: () => {
+          try {
+            emitState()
+          } catch (error) {
+            safeLogError('compaction state callback failed', error)
+          }
+        }
+      }),
+    pushEvent: (event) => session.publication.pushEvent(event),
+    emitState,
+    errorMessage
+  })
+  const promptTurnWorkflow = new AcpPromptTurnWorkflow({
+    registry: session.sessionRegistry,
+    interactions: base.sessionInteractions,
+    skills: base.turnSkills,
+    preparation: promptPreparation,
+    executor: base.providerPromptExecutor,
+    contextUsage: base.contextUsageTracker,
+    providerReconnectPending: () => base.connectionTransitions.providerReconnectPending,
+    finalizer: base.promptOutcomeFinalizer,
+    permission: session.permissionContext,
+    environment: {
+      backend: () => base.backendGeneration.current,
+      tooling: () => session.sessionEnvironment.toolingAvailability(),
+      bridgeSkillsAvailable: () => base.connectionResources.bridgeSkillsAvailable,
+      skillImportEnabled: () => base.sessionCapabilities.isSkillImportEnabled(),
+      contextEstimateInput: (sessionId) =>
+        session.contextUsagePolicy.resolve(sessionId).estimateInput,
+      selectedContextWindow: (sessionId) =>
+        session.contextUsagePolicy.resolve(sessionId).selectedWindow,
+      emitSkillActivities,
+      onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
+      onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
+      routeNotification: (notification, sessionId) =>
+        session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
+      diagnosticContext,
+      pushUserMessage: ({ sessionId, promptMessageId, text }) =>
+        session.publication.pushEvent({
+          kind: 'message',
+          level: 'info',
+          sessionId,
+          ...(promptMessageId ? { promptMessageId } : {}),
+          role: 'user',
+          text
+        })
+    },
+    artifacts: {
+      open: openArtifact,
+      promptMessageIdFor: (sessionId) => base.artifactTurns?.promptMessageIdFor(sessionId),
+      publish: publishArtifact,
+      dispose: disposeArtifact
+    },
+    planLifecycle: {
+      beforeStop: host.plan.beforeStop,
+      beforeRelease: host.plan.beforeRelease,
+      afterRelease: host.plan.afterRelease
+    },
+    finalization: {
+      errorMessage,
+      errorKind: acpErrorKind,
+      pushEvent: (event) => session.publication.pushEvent(event),
+      onPromptEnded: (sessionId, turnToken) => callbacks.onPromptEnded?.(sessionId, turnToken),
+      generationActivityChanged: base.notifyGenerationActivityChanged,
+      autoCompact: (sessionId, active, interaction) =>
+        contextCompactionWorkflow.compactAutomatic({
+          sessionId,
+          session: active,
+          interaction
+        })
+    },
+    currentCwd: () => base.snapshotOwner.cwd,
+    resolveProjectName: projectName,
+    preflightPlan: host.plan.preflight,
+    admitPlan: host.plan.admit,
+    disconnectForReload: host.reload.disconnect,
+    resumeAfterReload: host.reload.resume,
+    recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
+    onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
+      callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
+    emitState
+  })
+
+  return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })
+}
+/* eslint-enable @typescript-eslint/explicit-function-return-type */
+
+type AcpRuntimePromptOwners = ReturnType<typeof composeAcpRuntimePromptOwners>
+
+export { composeAcpRuntimePromptOwners }
+export type { AcpRuntimePromptHost, AcpRuntimePromptOwners }

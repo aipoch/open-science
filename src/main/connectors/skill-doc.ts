@@ -1,5 +1,6 @@
 import { CONNECTOR_CATALOG } from './catalog'
 import { getConnectorTools } from './registry'
+import { customConnectorSlug } from '../../shared/custom-connector'
 
 const CONVENTIONS = [
   'Reach this service ONLY from the REPL control-plane kernel: call it inside the `repl_execute` tool as `const result = await host.mcp(server, method, {...})`. host.mcp is async — always `await` it. The python and r DATA cells have NO connector access; do not call host.mcp (or urllib / requests / fetch) from them — it will fail.',
@@ -7,7 +8,7 @@ const CONVENTIONS = [
   'The REPL is a persistent session: assign a result you will reuse to `globalThis` (e.g. `globalThis.hits = result`) so later `repl_execute` calls can see it, instead of running the call again. Each call hits the rate-limited upstream — never re-issue the same call to look at or reprocess a result you already have.',
   'Do NOT reimplement these calls with raw HTTP (urllib / requests / httpx / fetch) or hit the upstream endpoints directly — that bypasses the approval gate, per-tool policy, credentials, and rate limits, and can leak project data.',
   'Prefer bulk/list tools over per-item loops — the upstream API is rate-limited and shared across subagents.',
-  'To use a result in a python or r cell, have the REPL write it to `./handoff/<name>.json` (the shared `$OPEN_SCIENCE_HANDOFF_DIR`), then read that file from the data cell — not through the model context.'
+  'To use a result in a python or r cell, have the REPL write it under `process.env.OPEN_SCIENCE_HANDOFF_DIR`, then read the same `OPEN_SCIENCE_HANDOFF_DIR` path from the data cell — not through the model context or a cwd-relative handoff path.'
 ].join('\n')
 
 // A Skill may be loaded outside the bundled-connector baseline (notably for custom MCP servers), so
@@ -124,29 +125,28 @@ export function renderConnectorInstructions(connectorIds: string[]): string {
   )
 }
 
-export type CustomSkillDocServer = { id: string; name: string; description?: string }
+export type CustomSkillDocServer = { name: string; slug?: string; description?: string }
 export type CustomSkillDocTool = { name: string; description?: string; inputSchema?: unknown }
 
 // Same shape as renderSkillDoc, but for a user-added custom MCP server: schema comes from
 // McpClientManager.listTools() at runtime rather than a bundled descriptor table, and the
 // trigger-style description falls back to a composed one when the server has no useWhen text.
-// The skill `name` is keyed on the server's immutable id, never its display name: the name is
-// user-controlled and can contain characters that are unsafe as a filesystem path or that collide
-// with a bundled connector's skill name. The runtime routing key (`host.mcp("<name>", ...)`) still
-// uses the display name, which is what McpClientManager registers the server under.
+// The skill name and host.mcp route both use the immutable safe slug. The display name remains free
+// to contain spaces and punctuation and is used only in user-facing prose.
 export function renderCustomSkillDoc(
   server: CustomSkillDocServer,
   tools: CustomSkillDocTool[]
 ): string {
+  const slug = customConnectorSlug(server)
   const useWhen =
     server.description ??
     `Use when you need tools from the ${server.name} MCP server — ${tools.map((t) => t.name).join(', ')}.`
-  const header = `---\nname: mcp-${server.id}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
+  const header = `---\nname: mcp-${slug}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
   const methods = tools
     .map(
       (t) =>
         `### ${t.name}\n\n${t.description ?? ''}\n\n**Input:** ${inlineCode(JSON.stringify(t.inputSchema ?? {}))}\n\n` +
-        renderExample(server.name, t.name, t.inputSchema)
+        renderExample(slug, t.name, t.inputSchema)
     )
     .join('\n')
   return (

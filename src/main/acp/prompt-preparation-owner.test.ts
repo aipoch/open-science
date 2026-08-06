@@ -1,0 +1,242 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import type { AcpPromptRequest } from '../../shared/acp'
+import { codexFramework } from '../agent-framework/codex'
+import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+
+type Mock = ReturnType<typeof vi.fn>
+type TestContextTurn = ContextUsageTurnHandle & {
+  complete: Mock
+  fail: Mock
+  supersede: Mock
+}
+type Fixture = {
+  owner: AcpPromptPreparationOwner
+  prepare: (overrides?: Record<string, unknown>) => Promise<PreparedPromptHandle>
+  promptContent: { prepare: Mock }
+  contextUsage: { beginTurn: Mock; replacePromptSkillDocuments: Mock }
+  turn: TestContextTurn
+  turnSkill: { prepareProvider: Mock }
+  authorizeReferencedUploads: Mock
+  releaseGrant: Mock
+  registerTurnInputs: Mock
+}
+
+const request = (overrides: Partial<AcpPromptRequest> = {}): AcpPromptRequest => ({
+  sessionId: 'session-1',
+  text: 'Analyze the result.',
+  ...overrides
+})
+
+const contextTurn = (): TestContextTurn => {
+  const handle = {
+    complete: vi.fn(() => false),
+    fail: vi.fn(),
+    supersede: vi.fn()
+  } as unknown as TestContextTurn
+  return handle
+}
+
+const setup = (): Fixture => {
+  const turn = contextTurn()
+  const promptContent = {
+    prepare: vi.fn(async () => ({
+      content: 'provider-content',
+      turnInputs: { uploads: [], references: [] }
+    }))
+  }
+  const contextUsage = {
+    beginSession: vi.fn(),
+    beginTurn: vi.fn(() => turn),
+    commitPendingAssistantOutput: vi.fn(),
+    appendText: vi.fn(),
+    appendPromptContent: vi.fn(),
+    replacePromptSkillDocuments: vi.fn(),
+    usage: vi.fn(() => undefined),
+    refreshUsage: vi.fn(() => true)
+  }
+  const releaseGrant = vi.fn()
+  const authorizeReferencedUploads = vi.fn(async () => releaseGrant)
+  const registerTurnInputs = vi.fn(async () => undefined)
+  const owner = new AcpPromptPreparationOwner({
+    promptContent,
+    presentation: new AcpSessionPresentationPolicy(),
+    contextUsage,
+    selectBridgeSkills: vi.fn(async () => []),
+    authorizeReferencedUploads,
+    notebook: {
+      peekHandoffContext: vi.fn(() => ({
+        executionCount: 1,
+        cells: [],
+        kernels: [],
+        runtimes: [{ language: 'python' as const, label: 'dataset' }]
+      })),
+      registerTurnInputs
+    },
+    emitState: vi.fn()
+  })
+  const turnSkill = {
+    reloadDecision: { kind: 'continue' as const },
+    prepareProvider: vi.fn(async () => ({
+      text: 'prepared task',
+      specialistSkillGuidance: 'Allowed Specialist Skills for this session:\n- Research',
+      codexSkillInputs: [{ name: 'Research', path: '/missing/Research/SKILL.md' }]
+    })),
+    close: vi.fn()
+  }
+  const prepare = (overrides: Record<string, unknown> = {}): Promise<PreparedPromptHandle> =>
+    owner.prepare({
+      request: request({
+        contextReset: true,
+        historyPreamble: 'replayed history',
+        referencedArtifacts: [
+          {
+            id: 'skill-1',
+            name: 'Research.skill',
+            path: '/uploads/Research.skill',
+            source: 'upload'
+          }
+        ]
+      }),
+      backend: {
+        framework: codexFramework,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'baked instructions' },
+        context: { window: 100_000, supportsImageInput: true },
+        adapter: {
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          codexHome: '/codex'
+        }
+      },
+      tooling: { artifacts: true, notebook: true, skillImport: true },
+      specialistPrefix: 'Specialist identity.',
+      projectId: 'project-1',
+      fallbackPromptMessageId: 'prompt-fallback',
+      bridgeSkillsAvailable: true,
+      skillImportEnabled: true,
+      skillImportTurnToken: 'turn-1',
+      turnSkill,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      cancellationCheckpoint: async () => 'active' as const,
+      contextEstimateInput: { frameworkId: 'codex' as const },
+      selectedContextWindow: 100_000,
+      ...overrides
+    })
+
+  return {
+    owner,
+    prepare,
+    promptContent,
+    contextUsage,
+    turn,
+    turnSkill,
+    authorizeReferencedUploads,
+    releaseGrant,
+    registerTurnInputs
+  }
+}
+
+describe('AcpPromptPreparationOwner', () => {
+  it('composes handoff, presentation, Notebook and prompt content and transfers Context once', async () => {
+    const fixture = setup()
+
+    const handle = await fixture.prepare()
+
+    expect(handle.status).toBe('ready')
+    if (handle.status !== 'ready') throw new Error('expected a ready prompt')
+    expect(fixture.turnSkill.prepareProvider).toHaveBeenCalledWith({
+      frameworkId: 'codex',
+      selectionText: 'Analyze the result.',
+      promptText: 'Analyze the result.',
+      codex: {
+        home: '/codex',
+        bridgeSkillsAvailable: true,
+        selectSkills: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      }
+    })
+    expect(fixture.promptContent.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        codexSkillInputs: [{ name: 'Research', path: '/missing/Research/SKILL.md' }],
+        fileTextBudget: expect.any(Number)
+      })
+    )
+    const preparedCalls = fixture.promptContent.prepare.mock.calls as unknown as Array<
+      [{ text: string }]
+    >
+    const preparedText = preparedCalls[0]?.[0].text
+    expect(preparedText).toEqual(expect.stringContaining('<open_science_notebook_continuity>'))
+    expect(preparedText).toEqual(expect.stringContaining('"label":"dataset"'))
+    expect(preparedText).toMatch(
+      /^replayed history[\s\S]+Specialist identity\.\n\nAllowed Specialist Skills for this session:\n- Research\n\nprepared task$/
+    )
+    expect(fixture.authorizeReferencedUploads).toHaveBeenCalledWith('project-1', 'session-1', [
+      '/uploads/Research.skill'
+    ])
+    expect(fixture.registerTurnInputs).toHaveBeenCalledWith(
+      expect.objectContaining({ promptMessageId: 'prompt-fallback' })
+    )
+    expect(handle.content).toBe('provider-content')
+    expect(handle.promptPrefix).toBe(
+      'Specialist identity.\n\nAllowed Specialist Skills for this session:\n- Research'
+    )
+    expect(handle.skillActivityInputs).toEqual([
+      { name: 'Research', path: '/missing/Research/SKILL.md' }
+    ])
+    expect(Object.isFrozen(handle.skillActivityInputs)).toBe(true)
+    expect(handle.transferContextTurn()).toBe(fixture.turn)
+    expect(() => handle.transferContextTurn()).toThrow('already transferred')
+    handle.close()
+    handle.close()
+    expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.turn.fail).not.toHaveBeenCalled()
+  })
+
+  it('stops a superseded prompt after stalled content preparation and releases its grant', async () => {
+    const fixture = setup()
+    let resolveContent!: () => void
+    fixture.promptContent.prepare.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveContent = () =>
+            resolve({
+              content: 'stale-provider-content',
+              turnInputs: { uploads: [], references: [] }
+            })
+        })
+    )
+    let current = true
+    const pending = fixture.prepare({ isCurrent: () => current })
+    await vi.waitFor(() => expect(fixture.promptContent.prepare).toHaveBeenCalled())
+
+    current = false
+    resolveContent()
+    const handle = await pending
+
+    expect(handle.status).toBe('cancelled')
+    expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+    expect(fixture.contextUsage.beginTurn).not.toHaveBeenCalled()
+    expect(fixture.registerTurnInputs).not.toHaveBeenCalled()
+  })
+
+  it('fails and supersedes a preparation-owned Context turn when cancellation wins preflight', async () => {
+    const fixture = setup()
+    let current = true
+    fixture.contextUsage.replacePromptSkillDocuments.mockImplementationOnce(() => {
+      current = false
+    })
+
+    const handle = await fixture.prepare({ isCurrent: () => current })
+
+    expect(handle.status).toBe('cancelled')
+    expect(fixture.turn.fail).toHaveBeenCalledTimes(1)
+    expect(fixture.turn.supersede).toHaveBeenCalledTimes(1)
+    expect(fixture.releaseGrant).toHaveBeenCalledTimes(1)
+  })
+})

@@ -200,6 +200,20 @@ export const installArgv = (
   ...pkgs
 ]
 
+// micromamba list --root-prefix <root> --prefix <prefix> --json
+// Read-only inventory of one env: a JSON array of {name, version, build, channel} objects. Same
+// argv shape as installArgv so the Settings package listing reuses the install path's conventions.
+export const listArgv = (mm: string, root: string, prefix: string): string[] => [
+  mm,
+  '--no-rc',
+  'list',
+  '--root-prefix',
+  root,
+  '--prefix',
+  prefix,
+  '--json'
+]
+
 // Normalizes raw `micromamba list --explicit --md5` output into a valid @EXPLICIT lock. The raw
 // output lacks the @EXPLICIT header and includes comment/title lines; feeding it to
 // `create --file --offline` as-is silently degrades to an online solve and errors (spec §2.5). We

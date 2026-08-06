@@ -28,6 +28,21 @@ describe('sanitizeCustomMcpServer', () => {
     })
   })
 
+  it('keeps a safe explicit slug and drops an invalid legacy value', () => {
+    const base = {
+      id: 'srv-1',
+      name: 'Example OAuth E2E',
+      transport: 'stdio',
+      command: 'npx',
+      enabled: true
+    }
+
+    expect(sanitizeCustomMcpServer({ ...base, slug: 'example-oauth-e2e' })).toMatchObject({
+      slug: 'example-oauth-e2e'
+    })
+    expect(sanitizeCustomMcpServer({ ...base, slug: '../unsafe' })).not.toHaveProperty('slug')
+  })
+
   it('drops a stdio server missing command', () => {
     expect(
       sanitizeCustomMcpServer({
@@ -145,6 +160,37 @@ describe('sanitizeCustomMcpServer', () => {
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer token' },
       enabled: true
+    })
+  })
+
+  it('sanitizes OAuth fields and removes conflicting static headers', () => {
+    expect(
+      sanitizeCustomMcpServer({
+        id: 'srv-oauth',
+        name: 'OAuth Server',
+        transport: 'streamable_http',
+        url: 'https://example.com/mcp',
+        enabled: true,
+        headers: { Authorization: 'Bearer stale' },
+        headerRefs: { Authorization: 'encrypted-stale' },
+        oauth: {
+          clientMetadataUrl: 'https://client.example.test/metadata.json',
+          authorizationServerUrl: 42,
+          scopes: ['openid', ' openid ', 'profile', 42]
+        },
+        oauthRef: 'encrypted-oauth-state'
+      })
+    ).toEqual({
+      id: 'srv-oauth',
+      name: 'OAuth Server',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      enabled: true,
+      oauth: {
+        clientMetadataUrl: 'https://client.example.test/metadata.json',
+        scopes: ['openid', 'profile']
+      },
+      oauthRef: 'encrypted-oauth-state'
     })
   })
 })

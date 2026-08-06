@@ -62,6 +62,7 @@ const sessionStatusDotClassName: Record<SessionStatus, string> = {
   idle: 'border border-text-100 bg-transparent',
   running: 'bg-session-running ring-2 ring-session-running/20',
   'waiting-permission': 'bg-session-waiting ring-2 ring-session-waiting/25',
+  'waiting-plan-approval': 'bg-session-waiting ring-2 ring-session-waiting/25',
   error: 'bg-destructive'
 }
 
@@ -69,6 +70,7 @@ const sessionStatusLabel: Record<SessionStatus, string> = {
   idle: 'Idle',
   running: 'Running',
   'waiting-permission': 'Waiting for permission',
+  'waiting-plan-approval': 'Waiting for plan approval',
   error: 'Error'
 }
 

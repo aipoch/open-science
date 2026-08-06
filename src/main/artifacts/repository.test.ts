@@ -50,6 +50,36 @@ afterEach(async () => {
 })
 
 describe('artifact repository', () => {
+  it('persists trusted Plan kind metadata beside pending immutable-Version bytes', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    await repository.writePendingFile({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      runId: 'run-plan',
+      filename: 'plan.json',
+      mimeType: 'application/json',
+      kind: 'plan',
+      source: createInlineSource('{"schema_version":1}')
+    })
+
+    await expect(
+      readFile(
+        join(
+          root,
+          'artifacts',
+          'default-project',
+          'session-1',
+          '.pending',
+          'run-plan',
+          '.metadata',
+          'plan.json.json'
+        ),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({ kind: 'plan' })
+  })
+
   it('writes pending artifact files under the project and session run directory', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

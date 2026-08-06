@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -83,7 +84,7 @@ describe('notebook shell process behavior', () => {
     })
   })
 
-  describe('Windows support', () => {
+  describe('platform support', () => {
     const completedProgressClixml =
       '#< CLIXML\n' +
       '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">' +
@@ -161,6 +162,46 @@ describe('notebook shell process behavior', () => {
       expect(terminateTree).toHaveBeenCalledWith(child)
       finishTermination?.({ reaped: true })
       return expect(termination).resolves.toBe(true)
+    })
+
+    it('terminates the dedicated POSIX process group even after its shell leader exits', async () => {
+      vi.useFakeTimers()
+      const signal = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      const child = Object.assign(new EventEmitter(), { pid: 4321 }) as unknown as ChildProcess
+      const terminateTree = vi.fn(async () => ({ reaped: true }))
+
+      try {
+        await expect(terminateShellOnTimeout(child, 'linux', terminateTree)).resolves.toBe(false)
+        expect(signal).toHaveBeenCalledWith(-4321, 'SIGTERM')
+        expect(terminateTree).not.toHaveBeenCalled()
+
+        child.emit('exit', 0, 'SIGTERM')
+        await vi.advanceTimersByTimeAsync(2_000)
+
+        expect(signal).toHaveBeenCalledWith(-4321, 'SIGKILL')
+      } finally {
+        vi.useRealTimers()
+        signal.mockRestore()
+      }
+    })
+
+    it('never derives a POSIX process-group id from a missing or non-positive child pid', async () => {
+      vi.useFakeTimers()
+      const signal = vi.spyOn(process, 'kill').mockImplementation(() => true)
+      const kill = vi.fn(() => true)
+      const child = { pid: 0, kill } as unknown as ChildProcess
+
+      try {
+        await expect(terminateShellOnTimeout(child, 'darwin')).resolves.toBe(false)
+        expect(signal).not.toHaveBeenCalled()
+        expect(kill).toHaveBeenCalledWith('SIGTERM')
+
+        await vi.advanceTimersByTimeAsync(2_000)
+        expect(kill).toHaveBeenCalledWith('SIGKILL')
+      } finally {
+        vi.useRealTimers()
+        signal.mockRestore()
+      }
     })
   })
 

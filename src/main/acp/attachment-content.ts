@@ -165,33 +165,7 @@ export const isDatasetAttachment = (name: string, mimeType?: string): boolean =>
   )
 }
 
-// Raster image extensions that vision-capable agents can read as pixels, mapped to the MIME type to
-// inline them as. SVG is deliberately absent: it is vector/text, not a raster type the providers accept
-// as image content. Matches the accepted set in ACP_MESSAGE_IMAGE_MIME_TYPES.
-const IMAGE_EXTENSION_MIME = new Map<string, string>([
-  ['png', 'image/png'],
-  ['jpg', 'image/jpeg'],
-  ['jpeg', 'image/jpeg'],
-  ['gif', 'image/gif'],
-  ['webp', 'image/webp'],
-  ['avif', 'image/avif']
-])
-
-// The image MIME type to inline a file as, or undefined when it is not a supported raster image. A
-// concrete image/* MIME wins; a missing or generic MIME (browsers omit it for some drag/drop and paste
-// sources) falls back to the file extension — so a `.png` upload is still sent as pixels rather than a
-// bare file link the model can only reach by writing code. A concrete non-image MIME is authoritative.
-export const imageAttachmentMimeType = (name: string, mimeType?: string): string | undefined => {
-  const essence = mimeEssence(mimeType)
-
-  if (essence && essence.startsWith('image/')) {
-    return essence === 'image/svg+xml' ? undefined : essence
-  }
-
-  if (essence && !GENERIC_MIME_TYPES.has(essence)) return undefined
-
-  return IMAGE_EXTENSION_MIME.get(fileExtension(name))
-}
+export { imageAttachmentMimeType } from '../../shared/uploads'
 
 // Human-readable byte size for the notice (binary units, one decimal past KB).
 export const formatBytes = (bytes: number): string => {
@@ -209,7 +183,7 @@ export const formatBytes = (bytes: number): string => {
   return `${value.toFixed(1)} ${units[unit]}`
 }
 
-// Builds the text block that accompanies an oversized file's resource_link: it states why the file is
+// Builds the notice that accompanies an oversized file's local descriptor: it states why the file is
 // not inlined, tells the agent to read only what it needs, and shows a bounded preview of the start.
 export const buildOversizedAttachmentNotice = (input: {
   name: string
@@ -225,7 +199,7 @@ export const buildOversizedAttachmentNotice = (input: {
   const trailer = truncated ? '\n\n… file continues beyond this preview.' : ''
 
   return [
-    `[Attached file "${name}" (${formatBytes(size)}) is too large to include in full and is available on disk via the linked resource below.`,
+    `[Attached file "${name}" (${formatBytes(size)}) is too large to include in full and is available on disk via the local file reference below.`,
     `Do not load the whole file — read ${readHint}. For analysis over the full file, compute in the notebook rather than reading it into the conversation.`,
     'Preview of the start of the file:',
     '',
@@ -235,10 +209,10 @@ export const buildOversizedAttachmentNotice = (input: {
 }
 
 // Binary spreadsheets and scientific containers cannot provide a useful UTF-8 preview. Give the
-// agent an explicit analysis contract alongside the resource link instead of a context-free URI.
+// agent an explicit analysis contract alongside a local file reference instead of a provider file.
 export const buildDatasetAttachmentNotice = (input: { name: string; size: number }): string =>
   [
-    `[Attached dataset "${input.name}" (${formatBytes(input.size)}) is available on disk via the linked resource below.`,
+    `[Attached dataset "${input.name}" (${formatBytes(input.size)}) is available on disk via the local file reference below.`,
     'Do not load the whole file into the conversation. Inspect its schema and a small sample first, then use the notebook or a streaming/query tool to compute over the full dataset.]'
   ].join('\n')
 

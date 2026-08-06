@@ -5,12 +5,20 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import {
+  createLinearConversationGraph,
+  forkEditedConversationMessage,
+  synchronizeActiveConversationMessages
+} from '../../shared/conversation-graph'
+import {
   materializeSessionConversationGraph,
   type PersistedArtifact,
-  type PersistedChatSession
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type SessionPlanRuntimeContext
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
+import type { Logger } from '../logger'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
@@ -18,6 +26,7 @@ import {
   UploadRepository
 } from '../uploads/repository'
 import {
+  SessionRuntimeContextRevisionConflictError,
   SessionPersistenceCoordinator,
   type SessionDeletionHandlers,
   type SessionFileIndex,
@@ -35,6 +44,17 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   filesRevision: 1,
   createdAt: 1,
   updatedAt: 2,
+  ...overrides
+})
+
+const createRuntimePlan = (
+  overrides: Partial<SessionPlanRuntimeContext> = {}
+): SessionPlanRuntimeContext => ({
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  approval: 'pending',
+  stepStatuses: {},
   ...overrides
 })
 
@@ -140,6 +160,386 @@ const createProjectReconciliationSnapshot = (): ArtifactProjectReconciliationSna
   ({}) as ArtifactProjectReconciliationSnapshot
 
 describe('SessionPersistenceCoordinator', () => {
+  it('resolves Message membership from the durable active Branch', async () => {
+    const prompt = (id: string, createdAt: number): PersistedChatMessage => ({
+      id,
+      role: 'user',
+      content: id,
+      status: 'complete',
+      eventIds: [],
+      createdAt,
+      updatedAt: createdAt
+    })
+    const promptA = prompt('prompt-a', 1)
+    const promptB = prompt('prompt-b', 2)
+    const original = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [promptA],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const branchB = synchronizeActiveConversationMessages(
+      forkEditedConversationMessage(original, promptA.id, 'branch-b', 2),
+      [promptB],
+      2
+    )
+    const durable = createSession({ messages: [promptB], conversationGraph: branchB })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', promptB.id)
+    ).resolves.toBe(true)
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', promptA.id)
+    ).resolves.toBe(false)
+  })
+
+  it('materializes a legacy linear Session before checking its active Branch', async () => {
+    const durable = createSession({
+      messages: [
+        {
+          id: 'legacy-prompt',
+          role: 'user',
+          content: 'Legacy prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.containsMessageOnActiveBranch('project-1', 'session-1', 'legacy-prompt')
+    ).resolves.toBe(true)
+  })
+
+  it.each(['missing', 'unreadable'] as const)(
+    'fails closed when the durable Session is %s',
+    async (status) => {
+      const repository = createSessionRepository({
+        loadSessionWithDiagnostics: vi.fn(async () => ({ status }))
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      await expect(
+        coordinator.containsMessageOnActiveBranch('project-1', 'session-1', 'prompt-a')
+      ).rejects.toThrow(`Cannot read active Message Branch for a ${status} Session.`)
+    }
+  )
+
+  it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
+    let durable = createSession({
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.appendUserMessageToInteraction({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content: 'Split the analysis by cohort.'
+    })
+
+    expect(durable.messages).toContainEqual(
+      expect.objectContaining({
+        role: 'user',
+        content: 'Split the analysis by cohort.',
+        responseToMessageId: 'interaction-1',
+        status: 'complete'
+      })
+    )
+    expect(durable.runtimeContext).toEqual({
+      version: 1,
+      revision: 2,
+      plan: createRuntimePlan()
+    })
+    expect(durable.status).toBe('waiting-plan-approval')
+  })
+
+  it('atomically reads and patches main-owned runtime context with a new revision', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({ updatedAt: previousUpdatedAt })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).resolves.toEqual({
+      version: 1,
+      revision: 0
+    })
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 0,
+        patch: { plan: createRuntimePlan() }
+      })
+    ).resolves.toEqual({
+      version: 1,
+      revision: 1,
+      plan: createRuntimePlan()
+    })
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).resolves.toEqual({
+      version: 1,
+      revision: 1,
+      plan: createRuntimePlan()
+    })
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('rejects stale and duplicate runtime context patches without overwriting durable authority', async () => {
+    let durable = createSession({
+      runtimeContext: { version: 1, revision: 4, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const command = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      expectedRevision: 4,
+      patch: { plan: createRuntimePlan({ approval: 'approved' }) }
+    } as const
+
+    await expect(coordinator.patchSessionRuntimeContext(command)).resolves.toMatchObject({
+      revision: 5,
+      plan: createRuntimePlan({ approval: 'approved' })
+    })
+    await expect(coordinator.patchSessionRuntimeContext(command)).rejects.toMatchObject({
+      code: 'revision-conflict',
+      expectedRevision: 4,
+      actualRevision: 5
+    })
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(durable.runtimeContext).toMatchObject({
+      revision: 5,
+      plan: createRuntimePlan({ approval: 'approved' })
+    })
+    expect(SessionRuntimeContextRevisionConflictError).toBeTypeOf('function')
+  })
+
+  it('preserves authoritative runtime context and approval waiting status on a stale renderer save', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({
+      title: 'Before rename',
+      status: 'waiting-plan-approval',
+      updatedAt: previousUpdatedAt,
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const staleRendererSnapshot = createSession({
+      title: 'Renamed by renderer',
+      status: 'idle',
+      runtimeContext: {
+        version: 1,
+        revision: 0,
+        plan: createRuntimePlan({ approval: 'approved' })
+      }
+    })
+
+    await expect(coordinator.saveSession(staleRendererSnapshot)).resolves.toMatchObject({
+      title: 'Renamed by renderer',
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    expect(durable.runtimeContext).toEqual({
+      version: 1,
+      revision: 2,
+      plan: createRuntimePlan()
+    })
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('does not let a renderer whole-session save create runtime authority', async () => {
+    let durable: PersistedChatSession | undefined
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({ status: 'missing' as const })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const result = await coordinator.saveSession(
+      createSession({
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 9,
+          plan: createRuntimePlan({ approval: 'approved' })
+        }
+      })
+    )
+
+    expect(result.runtimeContext).toBeUndefined()
+    expect(result.status).toBe('idle')
+    expect(durable?.runtimeContext).toBeUndefined()
+  })
+
+  it('commits approval waiting state with context only after the atomic write succeeds', async () => {
+    let durable = createSession()
+    let failNextSave = true
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        if (failNextSave) {
+          failNextSave = false
+          throw new Error('partial write rejected')
+        }
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const command = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      expectedRevision: 0,
+      patch: { plan: createRuntimePlan() },
+      sessionStatus: 'waiting-plan-approval'
+    } as const
+
+    await expect(coordinator.patchSessionRuntimeContext(command)).rejects.toThrow(
+      'partial write rejected'
+    )
+    expect(durable).toMatchObject({ status: 'idle' })
+    expect(durable.runtimeContext).toBeUndefined()
+
+    await expect(coordinator.patchSessionRuntimeContext(command)).resolves.toMatchObject({
+      revision: 1,
+      plan: createRuntimePlan()
+    })
+    expect(durable).toMatchObject({
+      status: 'waiting-plan-approval',
+      runtimeContext: { revision: 1, plan: createRuntimePlan() }
+    })
+  })
+
+  it('serializes a runtime patch before concurrent Session deletion and never revives it', async () => {
+    let durable: PersistedChatSession | undefined = createSession()
+    const saveGate = createDeferred<void>()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () =>
+        durable ? { status: 'found' as const, session: durable } : { status: 'missing' as const }
+      ),
+      saveSession: vi.fn(async (session) => {
+        await saveGate.promise
+        durable = structuredClone(session)
+      }),
+      deleteSession: vi.fn(async () => {
+        durable = undefined
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const patch = coordinator.patchSessionRuntimeContext({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      expectedRevision: 0,
+      patch: { plan: createRuntimePlan() }
+    })
+    const deletion = coordinator.deleteSession('project-1', 'session-1')
+    await vi.waitFor(() => expect(repository.saveSession).toHaveBeenCalledOnce())
+    saveGate.resolve()
+
+    await expect(patch).resolves.toMatchObject({ revision: 1 })
+    await expect(deletion).resolves.toBeUndefined()
+    expect(durable).toBeUndefined()
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 1,
+        patch: { plan: undefined }
+      })
+    ).rejects.toThrow(/deleted/)
+  })
+
+  it('removes embedded runtime context with Project Session authority', async () => {
+    let durable: PersistedChatSession | undefined = createSession({
+      runtimeContext: {
+        version: 1,
+        revision: 7,
+        plan: createRuntimePlan({ approval: 'approved' })
+      }
+    })
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn(async () => ({
+        sessions: durable ? [durable] : [],
+        isComplete: true
+      })),
+      loadSessionWithDiagnostics: vi.fn(async () =>
+        durable ? { status: 'found' as const, session: durable } : { status: 'missing' as const }
+      ),
+      deleteProjectSessions: vi.fn(async () => {
+        durable = undefined
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.deleteProjectSessions('project-1')).resolves.toEqual({
+      status: 'completed'
+    })
+    expect(durable).toBeUndefined()
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 7,
+        patch: { plan: undefined }
+      })
+    ).rejects.toThrow(/project.*deleted/i)
+  })
+
   it('exposes Session metadata from the latest complete load without reading storage again', async () => {
     const session = createSession({ title: 'Cached session' })
     const loadAllWithDiagnostics = vi.fn().mockResolvedValue({
@@ -413,33 +813,73 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('keeps JSON-first durability when pre-save provenance lookup is unavailable', async () => {
-    const validationError = new Error('artifact database unavailable')
+    const validationError = new Error('artifact database unavailable at /private/session.json')
     const repository = createSessionRepository()
     const provenance = createProvenancePersistence({
       validateFinalizedMessageBindings: vi.fn().mockRejectedValue(validationError)
     })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       createFileIndex(),
       undefined,
-      provenance
+      provenance,
+      undefined,
+      undefined,
+      undefined,
+      log
     )
 
-    try {
-      await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
-        id: 'session-1'
-      })
-      await expect(
-        coordinator.saveSession(createSession({ title: 'Retry validation' }))
-      ).resolves.toMatchObject({ id: 'session-1' })
-    } finally {
-      warn.mockRestore()
-    }
+    await expect(
+      coordinator.saveSession(createSession({ title: 'Private research' }))
+    ).resolves.toMatchObject({
+      id: 'session-1'
+    })
+    await expect(
+      coordinator.saveSession(createSession({ title: 'Retry validation' }))
+    ).resolves.toMatchObject({ id: 'session-1' })
 
     expect(provenance.validateFinalizedMessageBindings).toHaveBeenCalledTimes(2)
     expect(repository.saveSession).toHaveBeenCalledTimes(2)
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledTimes(2)
+    expect(log.warn).toHaveBeenCalledTimes(2)
+    expect(log.warn).toHaveBeenCalledWith('pre-save provenance validation unavailable', {
+      operation: 'session-save',
+      phase: 'validate-provenance',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('artifact database unavailable')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private research')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('/private/session.json')
+  })
+
+  it('keeps JSON-first durability when degraded diagnostics cannot be emitted', async () => {
+    const repository = createSessionRepository()
+    const provenance = createProvenancePersistence({
+      validateFinalizedMessageBindings: vi.fn().mockRejectedValue(new Error('lookup unavailable'))
+    })
+    const log = createTestLogger()
+    log.warn.mockImplementation(() => {
+      throw new Error('diagnostic sink unavailable')
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      provenance,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+      id: 'session-1'
+    })
+
+    expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(provenance.captureFinalizedMessages).toHaveBeenCalledOnce()
   })
 
   it('revalidates finalized bindings only when topology or artifact bindings change', async () => {
@@ -929,8 +1369,142 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
+  it('records a phased terminal aggregate for complete Session hydration', async () => {
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.info.mock.calls.map(([message]) => message)).toEqual([
+      'operation started',
+      'operation phase',
+      'operation phase',
+      'operation phase',
+      'operation completed'
+    ])
+    expect(
+      log.info.mock.calls
+        .map(([, fields]) => (fields as { phase?: string } | undefined)?.phase)
+        .filter(Boolean)
+    ).toEqual([
+      'load-authority',
+      'reconcile-unread-deletions',
+      'reconcile-derived-state',
+      'reconcile-derived-state'
+    ])
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'reconcile',
+        startupCleanupEligible: true,
+        phase: 'reconcile-derived-state',
+        outcome: 'completed',
+        status: 'ready',
+        sessionCount: 1,
+        warningCount: 0,
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('/private/workspace')
+  })
+
+  it('records a terminal failure when the Session authority scan rejects', async () => {
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi
+        .fn()
+        .mockRejectedValue(new Error('Session authority unavailable at /private/sessions'))
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    await expect(coordinator.loadAll()).rejects.toThrow('Session authority unavailable')
+
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        phase: 'load-authority',
+        outcome: 'failed',
+        status: 'failed',
+        hydrationAvailable: false,
+        errorCategory: 'error'
+      })
+    )
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain('Session authority unavailable')
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain('/private/sessions')
+  })
+
+  it('keeps hydration available and records unread deletion reconciliation degradation', async () => {
+    const session = createSession({ title: 'Private analysis' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+    coordinator.setSessionDeletionHandlers(
+      createSessionDeletionHandlers({
+        reconcile: vi
+          .fn()
+          .mockRejectedValue(new Error('unread database unavailable at /private/unread.sqlite'))
+      })
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.warn).toHaveBeenCalledWith('unread deletion reconciliation failed', {
+      operation: 'session-hydration',
+      phase: 'reconcile-unread-deletions',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private analysis')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('unread database unavailable')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('/private/unread.sqlite')
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({ status: 'degraded', degradedReconciliationCount: 1 })
+    )
+  })
+
   it('hydrates a read-only snapshot without running startup reconciliation', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({
@@ -953,13 +1527,16 @@ describe('SessionPersistenceCoordinator', () => {
       prepareProjectReconciliation: vi.fn(),
       reconcileSession: vi.fn()
     }
+    const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       fileIndex,
       undefined,
       provenance,
       uploads,
-      artifactStorage
+      artifactStorage,
+      undefined,
+      log
     )
 
     await expect(coordinator.loadAllReadOnly()).resolves.toEqual({
@@ -980,6 +1557,28 @@ describe('SessionPersistenceCoordinator', () => {
     expect(uploads.upgradeLegacySessionUploads).not.toHaveBeenCalled()
     expect(artifactStorage.prepareProjectReconciliation).not.toHaveBeenCalled()
     expect(artifactStorage.reconcileSession).not.toHaveBeenCalled()
+    expect(log.info.mock.calls.map(([message]) => message)).toEqual([
+      'operation started',
+      'operation phase',
+      'operation completed'
+    ])
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'read-only',
+        phase: 'load-authority',
+        outcome: 'completed',
+        status: 'degraded',
+        sessionCount: 1,
+        warningCount: 0,
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('/private/workspace')
   })
 
   it('reconciles durable Session grants only on the first complete startup scan', async () => {
@@ -1006,6 +1605,44 @@ describe('SessionPersistenceCoordinator', () => {
     expect(reconcileSessions).toHaveBeenCalledWith([
       { projectId: 'project-1', sessionId: 'session-1' }
     ])
+  })
+
+  it('keeps hydration available and records permission grant reconciliation degradation', async () => {
+    const session = createSession({ title: 'Private analysis' })
+    const result = { sessions: [session], manifest: { version: 1 as const } }
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+    })
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        reconcileSessions: vi
+          .fn()
+          .mockRejectedValue(new Error('permission registry unavailable for Private analysis'))
+      },
+      log
+    )
+
+    await expect(coordinator.loadAll()).resolves.toBe(result)
+
+    expect(log.warn).toHaveBeenCalledWith('permission grant reconciliation failed', {
+      operation: 'session-hydration',
+      phase: 'reconcile-permission-grants',
+      outcome: 'degraded',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('Private analysis')
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('permission registry unavailable')
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({ status: 'degraded', degradedReconciliationCount: 1 })
+    )
   })
 
   it('does not prune durable Session grants from a partial startup scan', async () => {
@@ -2046,7 +2683,7 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('marks startup reconciliation incomplete when a Session file-index sync fails', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
@@ -2054,9 +2691,21 @@ describe('SessionPersistenceCoordinator', () => {
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({
       markReconciliationIncomplete,
-      syncSession: vi.fn().mockRejectedValue(new Error('file index database is locked'))
+      syncSession: vi
+        .fn()
+        .mockRejectedValue(new Error('file index database is locked at /private/files.sqlite'))
     })
-    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
 
     await expect(coordinator.loadAll()).resolves.toMatchObject({
       diagnostics: {
@@ -2065,10 +2714,31 @@ describe('SessionPersistenceCoordinator', () => {
       }
     })
     await expect(coordinator.sessionMetadataSnapshot()).resolves.toEqual({
-      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Session' }],
+      sessions: [{ id: 'session-1', projectId: 'project-1', title: 'Private analysis' }],
       isComplete: false
     })
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        operationId: expect.any(String),
+        mode: 'reconcile',
+        startupCleanupEligible: true,
+        phase: 'reconcile-derived-state',
+        outcome: 'failed',
+        status: 'degraded',
+        hydrationAvailable: true,
+        sessionCount: 1,
+        warningCount: 0,
+        errorCategory: 'error',
+        durationMs: expect.any(Number)
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.error.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('file index database is locked')
+    expect(diagnosticPayload).not.toContain('/private/files.sqlite')
   })
 
   it('retries surviving project sessions after deleting a collision owner', async () => {
@@ -2110,13 +2780,13 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('marks the index incomplete when the sessions scan is partial', async () => {
-    const session = createSession()
+    const session = createSession({ title: 'Private analysis' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const warnings = [
       {
         kind: 'unreadable' as const,
         projectId: 'project-1',
-        fileName: 'session-2.json',
+        fileName: 'private-session-2.json',
         recovered: false
       }
     ]
@@ -2125,7 +2795,17 @@ describe('SessionPersistenceCoordinator', () => {
     })
     const markReconciliationIncomplete = vi.fn()
     const fileIndex = createFileIndex({ markReconciliationIncomplete })
-    const coordinator = new SessionPersistenceCoordinator(repository, fileIndex)
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
     const reconcile = vi.fn(async () => undefined)
     coordinator.setSessionDeletionHandlers(createSessionDeletionHandlers({ reconcile }))
 
@@ -2136,6 +2816,20 @@ describe('SessionPersistenceCoordinator', () => {
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
     expect(reconcile).not.toHaveBeenCalled()
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'session-hydration',
+        phase: 'load-authority',
+        outcome: 'completed',
+        status: 'partial',
+        sessionCount: 1,
+        warningCount: 1
+      })
+    )
+    const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(diagnosticPayload).not.toContain('Private analysis')
+    expect(diagnosticPayload).not.toContain('private-session-2.json')
   })
 
   it('marks reconciliation incomplete when startup Provenance recovery fails', async () => {
@@ -2959,6 +3653,18 @@ const createDeferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void
   })
   return { promise, resolve }
 }
+
+type TestLogger = Logger & {
+  [Method in keyof Logger]: ReturnType<typeof vi.fn<Logger[Method]>>
+}
+
+const createTestLogger = (): TestLogger =>
+  ({
+    debug: vi.fn<Logger['debug']>(),
+    info: vi.fn<Logger['info']>(),
+    warn: vi.fn<Logger['warn']>(),
+    error: vi.fn<Logger['error']>()
+  }) satisfies Logger
 
 const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve()

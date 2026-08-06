@@ -79,6 +79,7 @@ const SkillsPanel = ({
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
+  const [deleteError, setDeleteError] = useState<string | undefined>()
 
   useEffect(() => {
     void loadSkills()
@@ -245,6 +246,15 @@ const SkillsPanel = ({
         </DropdownMenu>
       </div>
 
+      {deleteError ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {deleteError}
+        </p>
+      ) : null}
+
       <div className="flex flex-col gap-4">
         {groups.map((group) => {
           const rows = visible.filter((skill) => skill.source === group.source)
@@ -304,7 +314,16 @@ const SkillsPanel = ({
                           <SettingsIconAction
                             label={`Delete ${skill.name}`}
                             icon={Trash2}
-                            onClick={() => void deleteSkill(skill.id)}
+                            onClick={() => {
+                              setDeleteError(undefined)
+                              void deleteSkill(skill.id).catch((error) =>
+                                setDeleteError(
+                                  error instanceof Error
+                                    ? error.message
+                                    : 'This Skill is protected and cannot be deleted.'
+                                )
+                              )
+                            }}
                             danger
                           />
                         ) : null}

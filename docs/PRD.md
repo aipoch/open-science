@@ -72,15 +72,62 @@ Open Science today is an Electron + React + TypeScript desktop application built
 | **Execution / Data Plane** | Managed code execution, artifact generation                               | Persistent Python, R, and REPL control-plane kernels plus stateless shell execution (`src/main/notebook/`) with durable, inspectable run history, app-managed environments, and remote SSH execution targets                              |
 | **Persistence**            | Project/session storage, artifact storage                                 | Prisma + SQLite for project and provenance metadata; per-project, per-file session storage on disk (`src/main/session-persistence/`); immutable artifact versions and evidence sidecars under app-managed storage (`src/main/artifacts/`) |
 
+### Runtime State Ownership and Surface Boundaries
+
+The main process has one composition root (`src/main/ipc.ts`). It constructs state owners once,
+installs transport adapters after ownership is established, and disposes modules in reverse order.
+The transport-neutral application command router and application event hub expose capabilities; they
+do not become alternate state stores.
+
+| Owner boundary                  | State and lifecycle responsibility                                                                                                                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Settings modules                | Persist provider, runtime, skill, connector, appearance, and related configuration. Runtime consumers capture a non-secret backend selection and resolve fresh credentials/configuration when a generation starts; they do not retain Settings mutable state.    |
+| ACP runtime coordinator         | Own runtime generations and stable application Session identity across reconnect/reset. A provider protocol Session id belongs to its generation and may be replaced; Codex fresh-session adoption, transcript replay, context reset, and cleanup remain intact. |
+| ACP runtime and Session owners  | Own one generation's live processes, prompts, permissions, resources, and per-turn terminal results. Context-window aggregation stays with the context-usage tracker; terminal timestamp, token usage, and model-turn count stay with the completed prompt turn. |
+| Notebook runtime                | Own runtime discovery, Session binding decisions, execution, environment operations, and durable run history. It consumes enablement snapshots through the named Settings capability rather than owning or reading raw Settings state.                           |
+| Persistence and artifact owners | Own project/session files, uploads, artifact versions, provenance, and deletion/finalization coordination. Application commands receive narrow handler capabilities instead of repositories.                                                                     |
+
+```mermaid
+flowchart LR
+  Electron["Electron IPC adapters"] --> Commands["Application command interfaces"]
+  LocalWeb["Local Web direct dispatcher"] --> Commands
+  RemoteWeb["Remote Web allow/reject dispatcher"] --> Commands
+  Task["Task / CLI subset"] --> Commands
+  Commands --> Owners["Existing Settings / ACP / Notebook / data owners"]
+  Owners --> Events["Application event interfaces"]
+  Future["Future orchestration (Issue #458)"] -. "declared interfaces only" .-> Commands
+  Future -. "publish / subscribe only" .-> Events
+```
+
+This boundary preserves the current surface asymmetry; it is not a parity roadmap:
+
+- Specialist management remains fully exposed only by Electron. The existing authenticated
+  `host.agents` capability remains separate and is not expanded into new Web or CLI management UI.
+- Permission management remains available on Electron and Web. Task/CLI retain only their current
+  permission-profile and event subset.
+- Compute management remains available on Electron and local Web. Remote Web continues to reject
+  download/reveal operations, and CLI/Task have no direct Compute management API.
+- Web and Task invoke transport-neutral application commands directly. Electron continues to use
+  typed IPC adapters; no Web or Task path captures or synthesizes an Electron sender.
+
+Issue #458 may add an orchestration layer above the ACP coordinator later. That layer must consume
+only declared Settings, ACP, Notebook, Artifact, Permission, Workspace, and Event interfaces. Compute
+remains orthogonal. It must not import concrete runtimes, Settings storage, repositories, Electron,
+renderer, Web/HTTP, Task, CLI, or Specialist modules. This refactor adds an architecture test for that
+future dependency rule, but adds no orchestration state, schema, public wire contract, or user-facing
+behavior.
+
 Key implemented capabilities, mapped to the codebase:
 
 - **Project layer.** Prisma + SQLite `Project` model; full CRUD via IPC (`projects:create/list/get/update/delete`); a home page showing all projects and the five most recent sessions across them.
 - **Per-project session storage.** Sessions live at `sessions/<projectId>/<sessionId>.json` (migrated from a legacy single-file format on first run, idempotently); a manifest file restores the last-open project/session; a save bridge diffs the in-memory store against disk so only changed sessions get written.
 - **Notebook execution runtime.** Warm Python, R, and REPL control-plane kernels are routed by session binding, while shell commands run in a fresh stateless process for each call in the session workspace. Cross-kernel handoff uses the shared workspace, and execution retains durable per-run history (`run.json`) through write-locking and atomic persistence. Environment and package mutations use a separate crash-recoverable operation journal. App-managed conda environments support offline provisioning and named-environment lifecycle; bring-your-own interpreter discovery and registration apply to Python and R, while package management for external R runtimes remains manual.
+- **App-local tool transport.** App-owned stdio MCP and control-REPL processes call the main-process Notebook, Artifact, and Skill services over authenticated local RPC. Windows uses named pipes for this boundary so host firewall or endpoint-security loopback rules cannot break the child-process connection; macOS and Linux retain loopback HTTP. The Windows Reviewer uses a stdio MCP proxy over the same named-pipe transport while keeping its existing scope and token checks in the main process.
 - **Artifacts and provenance.** An in-process MCP server (`open-science-artifacts`) exposes a `write_artifact_file` tool the agent calls with either inline content or a local file path. Each save creates an immutable, session-scoped artifact version with available producer code, execution history, input references, environment inventory, message context, and reviewer evidence.
 - **File preview.** Responsive multi-tab renderers cover CSV, FASTA, HTML, PDF, images including TIFF, JSON, Markdown, plain text, Office documents, molecular structures/reactions, and read-only Notebook history, with inline and full-screen preview surfaces.
 - **Permissions.** An `AcpPermissionBroker` intercepts tool-call permission requests from the agent runtime, resolves matching app-owned remembered grants, and surfaces unmatched requests to the renderer for explicit approval before the call proceeds. Durable allow grants can be scoped globally, by project, or by session, then filtered, revoked individually or by family, and restored through Undo. Secret values are encrypted through OS-backed secure storage when persisted by the app.
 - **Attachments.** File uploads up to 10 GB are streamed into managed storage and threaded into the agent's prompt context; existing project files can be referenced explicitly with `@`.
+- **Conversation Skill import.** Primary sessions receive an app-owned MCP action that can submit an eligible uploaded package or a validated public GitHub Skill URL to the same preview-and-confirm flow used by Settings. Its local RPC credential is bound to the owning session and restricted to the Skill import method; the server replaces request-body session fields with that authenticated binding before opening approval UI or importing content.
 
 ### Provenance Guarantee Level
 

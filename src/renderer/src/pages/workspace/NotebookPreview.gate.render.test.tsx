@@ -10,10 +10,20 @@ import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { NotebookPreview, type NotebookPreviewItem } from './NotebookPreview'
 import { deriveProvisionUi } from './provisioning-view'
 
+const notebookCodeBlockSpy = vi.hoisted(() => vi.fn())
+
+vi.mock('./notebook-code', () => ({
+  NotebookCodeBlock: (props: { code: string; language?: string; highlightLine?: number }) => {
+    notebookCodeBlockSpy(props)
+    return <pre data-testid="notebook-code-block">{props.code}</pre>
+  }
+}))
+
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  notebookCodeBlockSpy.mockClear()
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -377,6 +387,39 @@ describe('NotebookPreview per-kernel tabs', () => {
     // Stored kernelKind ('repl') wins over the R-looking script's detectCellLanguage heuristic.
     expect(cell.textContent).toContain('repl')
     expect(cell.querySelector('[data-testid="notebook-cell-origin"]')?.textContent).toBe('repl')
+  })
+
+  it('passes the active kernel language to notebook code blocks', async () => {
+    await mountWithRuns([
+      makeRun({ runId: 'p1', kernelKind: 'python', script: 'import pandas as pd' }),
+      makeRun({ runId: 'r1', kernelKind: 'r', script: 'library(ggplot2)' }),
+      makeRun({ runId: 'b1', kernelKind: 'bash', script: 'ls -la' }),
+      makeRun({ runId: 'x1', kernelKind: 'repl', script: 'await host.notebook.run()' })
+    ])
+
+    expect(notebookCodeBlockSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ code: 'import pandas as pd', language: 'python' })
+    )
+
+    const clickTab = (testId: string): void => {
+      const tab = container.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement
+      act(() => tab.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    }
+
+    clickTab('kernel-switcher-r')
+    expect(notebookCodeBlockSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ code: 'library(ggplot2)', language: 'r' })
+    )
+
+    clickTab('kernel-switcher-bash')
+    expect(notebookCodeBlockSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ code: 'ls -la', language: 'bash' })
+    )
+
+    clickTab('kernel-switcher-repl')
+    expect(notebookCodeBlockSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ code: 'await host.notebook.run()', language: 'javascript' })
+    )
   })
 })
 

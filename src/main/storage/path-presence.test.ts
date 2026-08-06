@@ -49,17 +49,32 @@ describe('isDataRootMissing', () => {
     expect(logger.warn).toHaveBeenCalledTimes(4)
   })
 
+  it('does not let a diagnostic sink failure change an indeterminate result', async () => {
+    const statFn = vi.fn().mockRejectedValue(errno('EIO'))
+
+    await expect(
+      isDataRootMissing('/mnt/data/OpenScience', {
+        statFn,
+        logger: {
+          warn: () => {
+            throw new Error('sink unavailable')
+          }
+        }
+      })
+    ).resolves.toBe(false)
+  })
+
   it('regression: a non-ASCII (CJK) path whose stat throws a non-ENOENT error is not missing', async () => {
     const logger = { warn: vi.fn() }
     const cjkPath = 'F:\\openscience产生数据\\OpenScience'
     const statFn = vi.fn().mockRejectedValue(errno('EINVAL'))
 
     expect(await isDataRootMissing(cjkPath, { statFn, logger })).toBe(false)
-    // The diagnostic logs code points so a non-ASCII path failure is decodable from a packaged log.
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ code: 'EINVAL', pathCodePoints: expect.stringContaining('U+4EA7') })
-    )
+    // Diagnostics retain only a fixed category: code points are reversible and would still disclose
+    // the user's absolute data-root path.
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), { errorCategory: 'system' })
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(cjkPath)
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('U+4EA7')
   })
 
   it('reports missing for a CJK path that genuinely does not exist (ENOENT)', async () => {

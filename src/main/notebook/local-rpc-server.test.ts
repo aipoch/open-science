@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookControlCompletionCapturedError, NotebookRuntimeService } from './runtime-service'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
@@ -72,6 +74,142 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('binds Plan calls to the issued Session capability and rejects the master token', async () => {
+    const root = await createStorageRoot()
+    const call = vi.fn(async (input: unknown) => input)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'master-token',
+      planService: { call }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    const request = (token: string): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          method: 'planCall',
+          params: {
+            projectId: 'forged-project',
+            sessionId: 'forged-session',
+            operation: 'approve'
+          }
+        })
+      })
+
+    try {
+      expect((await request('master-token')).status).toBe(401)
+      expect((await request(connection.token)).status).toBe(200)
+      expect(call).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'approve',
+        input: undefined
+      })
+
+      call.mockRejectedValueOnce(
+        new PlanCommandError('dependency-not-satisfied', 'A previous step is unfinished.')
+      )
+      const rejected = await request(connection.token)
+      expect(rejected.status).toBe(500)
+      await expect(rejected.json()).resolves.toEqual({
+        error: {
+          code: 'dependency-not-satisfied',
+          message: 'A previous step is unfinished.'
+        }
+      })
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('preserves structured Plan error codes across the session-bound RPC transport', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      token: 'master-token',
+      planService: {
+        call: async () => {
+          throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'planCall',
+          params: { operation: 'updateStepStatus', input: { title: 'Old step' } }
+        })
+      })
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({
+        error: { code: 'stale-plan', message: 'A newer Plan is active.' }
+      })
+    } finally {
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('propagates a local socket through every issued capability connection', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'pipe' })
+    const session = await server.issueSessionConnection('session-1', 'default-project')
+    const skillImport = await server.issueSkillImportConnection('session-1')
+    const control = await server.issueControlConnection('session-1', 'default-project')
+
+    try {
+      expect(session.socketPath).toBeTruthy()
+      expect(skillImport.socketPath).toBe(session.socketPath)
+      expect(control.socketPath).toBe(session.socketPath)
+
+      const response = await fetchLocalRpc(
+        session,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${session.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'state',
+            params: { sessionId: 'session-1', workspaceCwd: root }
+          })
+        },
+        'Notebook capability test RPC'
+      )
+      expect(response.status).toBe(200)
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
   it('requires a bearer token and dispatches notebook execute calls', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
@@ -92,7 +230,10 @@ describe('notebook local RPC server', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -170,7 +311,10 @@ describe('notebook local RPC server', () => {
         refreshAfterPackageMutation: vi.fn()
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -224,7 +368,10 @@ describe('notebook local RPC server', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
@@ -267,6 +414,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       onSessionReleased,
       connectorService: { call: connectorCall }
@@ -316,6 +464,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
@@ -358,6 +507,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       agentsService: { read: agentsRead },
       inputRegistry: {
@@ -461,7 +611,7 @@ describe('notebook local RPC server', () => {
           throw new NotebookControlCompletionCapturedError()
         }
       } as unknown as NotebookRuntimeService,
-      { token: 'secret-token' }
+      { transport: 'tcp', token: 'secret-token' }
     )
     const connection = await server.ensureStarted()
 
@@ -494,6 +644,7 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
@@ -533,6 +684,7 @@ describe('notebook local RPC server', () => {
     })
     const requests: unknown[] = []
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: {
         createVersion: async (request) => {
@@ -620,6 +772,7 @@ describe('notebook local RPC server', () => {
     const releaseCreate = createDeferred()
     let now = 1_000
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: {
@@ -710,6 +863,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: { createVersion }
     })
@@ -756,6 +910,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn()
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: { createVersion }
@@ -819,6 +974,7 @@ describe('notebook local RPC server', () => {
     })
     const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       now: () => now,
       artifactProvenance: { createVersion }
@@ -875,6 +1031,7 @@ describe('notebook local RPC server', () => {
       promptMessageId: 'message-user-1'
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: {
         createVersion: vi.fn(),
@@ -904,6 +1061,7 @@ describe('notebook local RPC server', () => {
     }
 
     const unconfigured = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       artifactProvenance: { createVersion: vi.fn() }
     })
@@ -973,6 +1131,7 @@ describe('notebook local RPC server', () => {
       })
     })
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       inputRegistry: {
         registerTurn: async () => undefined,
@@ -1049,6 +1208,89 @@ describe('notebook local RPC server', () => {
     }
   })
 
+  it('closes and revokes an input-run lease when notebook execution rejects', async () => {
+    const root = await createStorageRoot()
+    const failure = new Error('execution failed')
+    let inputRunLeaseId: string | undefined
+    const close = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    vi.spyOn(service, 'execute').mockImplementation(async (executeRequest) => {
+      inputRunLeaseId = executeRequest.inputRunLeaseId
+      throw failure
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token',
+      inputRegistry: {
+        registerTurn: vi.fn().mockResolvedValue(undefined),
+        getTurnInputs: () => [registeredInput],
+        openRun: vi.fn().mockResolvedValue({
+          getRunInputFiles: () => [registeredInput],
+          resolve: vi.fn().mockResolvedValue('/managed/groups.csv'),
+          close
+        }),
+        clearSession: vi.fn()
+      }
+    })
+    const connection = await server.ensureStarted()
+    server.setArtifactProvenanceContext('session-1', {
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'root-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-1',
+      promptMessageId: 'message-user-1'
+    })
+    await server.registerNotebookTurnInputs({
+      projectId: 'default-project',
+      appSessionId: 'session-1',
+      promptMessageId: 'message-user-1',
+      uploads: [],
+      references: []
+    })
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'execute',
+          params: {
+            sessionId: 'session-1',
+            workspaceCwd: '/workspace',
+            code: 'throw new Error()'
+          }
+        })
+      })
+
+      expect(response.status).toBe(500)
+      await expect(response.json()).resolves.toEqual({ error: failure.message })
+      expect(inputRunLeaseId).toEqual(expect.any(String))
+      expect(close).toHaveBeenCalledTimes(1)
+
+      const internals = server as unknown as {
+        dispatch(method: string, params: Record<string, unknown>): Promise<unknown>
+      }
+      await expect(
+        internals.dispatch('resolveNotebookInput', {
+          sessionId: 'session-1',
+          inputRunLeaseId,
+          sourceKind: 'upload-version',
+          inputFileVersionId: 'upload-version-1'
+        })
+      ).rejects.toThrow('Notebook input resolution requires an active run lease.')
+    } finally {
+      await server.close()
+    }
+  })
+
   it('resolves an immutable input only for the calling run while leases overlap', async () => {
     const root = await createStorageRoot()
     const server = new NotebookLocalRpcServer(
@@ -1058,7 +1300,7 @@ describe('notebook local RPC server', () => {
         projectName: 'default-project',
         repository: new NotebookRunRepository(root)
       }),
-      { token: 'secret-token' }
+      { transport: 'tcp', token: 'secret-token' }
     )
     const firstResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
     const secondResolve = vi.fn().mockResolvedValue('/managed/groups.csv')
@@ -1113,7 +1355,10 @@ describe('notebook local RPC server', () => {
         return { ok: true, needsRestart: false, log: 'installed' }
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -1163,7 +1408,10 @@ describe('notebook local RPC server', () => {
         removeEnvironment: () => []
       }
     })
-    const server = new NotebookLocalRpcServer(service, { token: 'secret-token' })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
     const connection = await server.ensureStarted()
 
     try {
@@ -1226,6 +1474,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })
@@ -1305,6 +1554,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })
@@ -1358,6 +1608,7 @@ describe('notebook local RPC server', () => {
       })
     }
     const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
       token: 'secret-token',
       computeService: fakeComputeService
     })

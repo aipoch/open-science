@@ -161,6 +161,21 @@ describe('AcpSessionInteractionOwner', () => {
     expect(owner.current('session-1')).toBe(scope)
   })
 
+  it('cancels a prompt reservation that is still in preflight', async () => {
+    const owner = new AcpSessionInteractionOwner()
+    const scope = owner.reservePrompt({ sessionId: 'session-1', kind: 'prompt' })
+
+    await owner.cancelPrompt({
+      sessionId: 'session-1',
+      notify: async () => undefined,
+      onAccepted: vi.fn(),
+      onTimeout: vi.fn()
+    })
+    owner.activatePrompt(scope)
+
+    await expect(owner.cancellationCheckpoint(scope)).resolves.toBe('cancelled')
+  })
+
   it('keeps cancellation inactive and clears its timer when notify fails', async () => {
     const clearTimer = vi.fn()
     const owner = new AcpSessionInteractionOwner({

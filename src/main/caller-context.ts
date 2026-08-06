@@ -96,30 +96,17 @@ export type ClientLease = Readonly<{
 type CallerEvent = {
   sender: {
     id: number
-    callerContext?: CallerContext
-    lifecycleClientId?: string
   }
 }
 
 const nativeCallerContexts = new WeakMap<object, CallerContext>()
 
 const callerContextForEvent = (event: CallerEvent): CallerContext => {
-  if (event.sender.callerContext) return event.sender.callerContext
+  if (event.sender.id <= 0) throw new Error('Electron caller sender id must be positive.')
   const sender = event.sender as object
   const existing = nativeCallerContexts.get(sender)
   if (existing) return existing
-  const context =
-    event.sender.id > 0
-      ? createElectronCallerContext(event.sender.id)
-      : createCallerContext({
-          clientId: event.sender.lifecycleClientId?.replace(/^web:/, '') ?? String(event.sender.id),
-          lifecycleClientId: event.sender.lifecycleClientId ?? `electron:${event.sender.id}`,
-          leaseId: event.sender.lifecycleClientId?.replace(/^web:/, '') ?? String(event.sender.id),
-          surface: 'web',
-          location: 'remote',
-          principalKind: 'automation',
-          actionOrigin: 'automation'
-        })
+  const context = createElectronCallerContext(event.sender.id)
   nativeCallerContexts.set(sender, context)
   return context
 }

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
 import {
   CliUsageError,
   parseCliArgs,
   reportCliError,
   rollbackCommand,
+  runCli,
   runTaskCommand
 } from './cli.mjs'
 
@@ -260,7 +262,7 @@ describe('task CLI', () => {
   it('reads stdin, emits JSONL events, and sets a failed-run exit code', async () => {
     const client = {
       events: async function* () {
-        yield { type: 'run.event', data: { sessionId: 'session-1', kind: 'tool' } }
+        yield PUBLIC_TERMINAL_FIXTURE
       },
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
@@ -302,7 +304,7 @@ describe('task CLI', () => {
       prompt: 'Research from stdin.'
     })
     expect(log.mock.calls.map(([line]) => JSON.parse(line))).toEqual([
-      { type: 'run.event', data: { sessionId: 'session-1', kind: 'tool' } },
+      PUBLIC_TERMINAL_FIXTURE,
       expect.objectContaining({ id: 'run-1', status: 'failed' })
     ])
     expect(setExitCode).toHaveBeenCalledWith(1)
@@ -466,13 +468,16 @@ describe('task CLI', () => {
     expect(client).not.toHaveProperty('cancelRun')
   })
 
-  it('keeps permission approval, Specialist, and Compute management outside the CLI', async () => {
-    const connect = vi.fn().mockResolvedValue({})
-
-    for (const command of ['permission', 'specialist', 'compute']) {
-      await expect(
-        runTaskCommand({ command, options: { json: false } }, { connect, stdinIsTTY: true })
-      ).rejects.toThrow(`Unknown command: ${command}`)
+  it('keeps capability management surfaces outside the CLI', async () => {
+    for (const command of [
+      'permission',
+      'specialist',
+      'compute',
+      'notebook',
+      'notebook-env',
+      'runtime'
+    ]) {
+      await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }
   })
 

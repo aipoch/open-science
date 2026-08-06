@@ -442,6 +442,9 @@ const ComposerAgentControlsMenu = ({
                 </div>
               ) : null}
 
+              {/* Specialist + Compute are one resource-selection group: a single divider leads
+                  the group (above Specialist when present, above Compute otherwise), so the two
+                  hover submenus stay adjacent with nothing between them. */}
               {showSpecialist ? (
                 <>
                   <DropdownMenuSeparator />
@@ -452,74 +455,96 @@ const ComposerAgentControlsMenu = ({
                     readOnly={specialistReadOnly || readOnly}
                   />
                 </>
-              ) : null}
-
-              {/* Keep compute controls visible in the viewport-safe primary panel. */}
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="flex items-center gap-2 px-2 py-1.5">
-                <Server
-                  className="size-4 shrink-0 text-text-200"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">Compute</span>
-                  <span className="block text-[11px] leading-4 text-text-300">
-                    Run jobs on a remote SSH host, or manage hosts.
-                  </span>
-                </span>
-              </DropdownMenuLabel>
-              {sshHosts.length > 0 ? (
-                <>
-                  <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
-                    SSH
-                  </DropdownMenuLabel>
-                  <DropdownMenuGroup>
-                    {sshHosts.map((host) => {
-                      const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
-                      return (
-                        <DropdownMenuItem
-                          key={host.providerId}
-                          disabled={readOnly}
-                          onSelect={(event) => {
-                            event.preventDefault()
-                            handleHostToggle(host.providerId, isEnabled)
-                          }}
-                          className="items-center gap-2 px-2 py-1.5"
-                        >
-                          <span
-                            className={cn(
-                              'min-w-0 flex-1 truncate text-[13px] leading-5',
-                              isEnabled ? 'font-medium text-text-100' : 'font-normal text-text-200'
-                            )}
-                          >
-                            {host.displayName}
-                          </span>
-                          <Switch
-                            size="sm"
-                            checked={isEnabled}
-                            aria-hidden="true"
-                            tabIndex={-1}
-                            className="pointer-events-none"
-                          />
-                        </DropdownMenuItem>
-                      )
-                    })}
-                  </DropdownMenuGroup>
-                </>
               ) : (
-                <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
-                  {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
-                </DropdownMenuItem>
+                <DropdownMenuSeparator />
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={() => openSettingsToCompute()}
-                className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
-              >
-                <Settings className="size-4 shrink-0" aria-hidden="true" />
-                Manage compute...
-              </DropdownMenuItem>
+
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
+                  <Server
+                    className="size-4 shrink-0 text-text-200"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-medium leading-5">Compute</span>
+                    <span className="block text-[11px] leading-4 text-text-300">
+                      Run jobs on a remote SSH host, or manage hosts.
+                    </span>
+                  </span>
+                  {/* Align the chevron with the capsule chevrons on the Permission/Specialist
+                      rows: same px-2 (one vertical line) and text-text-100 (depth) as the
+                      capsule chevrons — Compute has no capsule, so the color is set here. */}
+                  <span className="flex shrink-0 items-center px-2 py-0.5 text-text-100">
+                    <ChevronRight
+                      className="size-3 shrink-0 opacity-60"
+                      strokeWidth={2}
+                      aria-hidden="true"
+                    />
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent
+                  collisionPadding={8}
+                  className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
+                >
+                  {/* SSH hosts are single-select; Manage compute opens the settings panel. */}
+                  {sshHosts.length > 0 ? (
+                    <>
+                      <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
+                        SSH
+                      </DropdownMenuLabel>
+                      <DropdownMenuGroup>
+                        {sshHosts.map((host) => {
+                          const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
+                          return (
+                            <DropdownMenuItem
+                              key={host.providerId}
+                              disabled={readOnly}
+                              onSelect={(event) => {
+                                event.preventDefault()
+                                handleHostToggle(host.providerId, isEnabled)
+                              }}
+                              className="items-center gap-2 px-2 py-1.5"
+                            >
+                              <span
+                                className={cn(
+                                  'min-w-0 flex-1 truncate text-[13px] leading-5',
+                                  isEnabled
+                                    ? 'font-medium text-text-100'
+                                    : 'font-normal text-text-200'
+                                )}
+                              >
+                                {host.displayName}
+                              </span>
+                              {/* pointer-events-none: the Switch is a visual indicator only;
+                                  the row's onSelect is the single toggle entry point. */}
+                              <Switch
+                                size="sm"
+                                checked={isEnabled}
+                                aria-hidden="true"
+                                tabIndex={-1}
+                                className="pointer-events-none"
+                              />
+                            </DropdownMenuItem>
+                          )
+                        })}
+                      </DropdownMenuGroup>
+                    </>
+                  ) : (
+                    <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
+                      {isLoaded ? 'No SSH hosts registered' : 'Loading…'}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onSelect={() => openSettingsToCompute()}
+                    className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
+                  >
+                    <Settings className="size-4 shrink-0" aria-hidden="true" />
+                    Manage compute...
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
             </>
           )}
         </DropdownMenuContent>

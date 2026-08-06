@@ -32,23 +32,36 @@ import {
 } from '@/lib/acp/workspace-events'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
-import type { CompletionHandoffLifecycleEvent } from '../../../../shared/specialist'
+import {
+  resolveEffectiveSpecialistSkills,
+  type CompletionHandoffLifecycleEvent
+} from '../../../../shared/specialist'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import { stageComposerFile, type ComposerUploadTransfer } from './composer-upload-transfer'
 import {
+  appendArtifactMention,
+  docArtifactCount,
   docIsEmpty,
   docToArtifactRefs,
   docToSkillIds,
   docToText,
   emptyDoc,
+  MAX_COMPOSER_ARTIFACT_MENTIONS,
   type ComposerDoc
 } from './composer/composer-doc'
+import {
+  buildSessionComposerHistory,
+  buildStarterComposerHistory,
+  normalizeHistorySkills,
+  type ComposerHistoryEntry
+} from './composer/composer-history'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
+import { FilePreviewDialog } from './FilePreviewDialog'
 import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
@@ -56,11 +69,18 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
+import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   canDeleteConversations: boolean
+}
+
+type ComposerHistoryNavigation = {
+  entries: ComposerHistoryEntry[]
+  cursorId: string
+  scratch: ComposerDoc
 }
 
 // Converts unknown async failures into composer-visible text.
@@ -81,8 +101,8 @@ const compareHandoffEventOrder = (
   left.sequence - right.sequence ||
   left.id.localeCompare(right.id)
 
-// Stable draft-map key for the "new conversation" composer, which has no selected session id.
-const NEW_CONVERSATION_DRAFT_KEY = '__new_conversation__'
+// New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
+const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 
 const PANEL_COLLAPSED_SIZE = 0
 const PANEL_COLLAPSED_SIZE_CSS = `${PANEL_COLLAPSED_SIZE}%`
@@ -393,10 +413,17 @@ const WorkspacePage = ({
   // matches no session and triggers the redirect below.
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const pendingCustomizePrefill = useNavigationStore((state) => state.pendingCustomizePrefill)
+  const pendingArtifactMention = useNavigationStore((state) => state.pendingArtifactMention)
   const consumeCustomizePrefill = useNavigationStore((state) => state.consumeCustomizePrefill)
+  const consumeArtifactMention = useNavigationStore((state) => state.consumeArtifactMention)
+  const setArtifactMentionAvailability = useNavigationStore(
+    (state) => state.setArtifactMentionAvailability
+  )
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const catalogSkills = useSettingsStore((state) => state.skills)
+  const loadSkills = useSettingsStore((state) => state.loadSkills)
   const supportsImageInput = useSettingsStore(
     (state) =>
       state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput
@@ -412,6 +439,8 @@ const WorkspacePage = ({
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const allSessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
+  const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
+  const currentDraftKey = selectedSessionId ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -422,6 +451,7 @@ const WorkspacePage = ({
     (state) => state.markSpecialistSwitchResetRequired
   )
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
+  const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   // Only sessions belonging to the active project are shown in this workspace.
   const sessions = useMemo(
     () => allSessions.filter((session) => session.projectId === scopedProjectId),
@@ -434,6 +464,8 @@ const WorkspacePage = ({
   )
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
+  const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
+  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
     (state) => state.upsertAndActivateItem
@@ -478,6 +510,21 @@ const WorkspacePage = ({
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage })
   const [draftDoc, setDraftDoc] = useState<ComposerDoc>(emptyDoc)
+  const [historySkillCatalogReady, setHistorySkillCatalogReady] = useState(
+    () => catalogSkills.length > 0 || !window.api?.settings?.listSkills
+  )
+  const previousDraftKeyRef = useRef<string>(currentDraftKey)
+  const composerHistoryRef = useRef<Record<string, ComposerHistoryNavigation>>({})
+  const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string | undefined>(undefined)
+  const [historyStatus, setHistoryStatus] = useState('')
+  const clearComposerHistory = useCallback(
+    (draftKey: string): void => {
+      delete composerHistoryRef.current[draftKey]
+      setHistoryBrowsingKey((current) => (current === draftKey ? undefined : current))
+      if (previousDraftKeyRef.current === draftKey) setHistoryStatus('')
+    },
+    [previousDraftKeyRef, setHistoryBrowsingKey, setHistoryStatus]
+  )
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
@@ -520,10 +567,18 @@ const WorkspacePage = ({
     appliedCustomizePrefill !== pendingCustomizePrefill
   ) {
     setAppliedCustomizePrefill(pendingCustomizePrefill)
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('')
     setDraftDoc(buildCustomizePrefillDoc())
     // A fresh New Conversation draft carries no Specialist binding (no badge, no Customize Profile).
     setNewConversationSpecialistId(undefined)
   }
+
+  useLayoutEffect(() => {
+    if (appliedCustomizePrefill === activeProjectId) {
+      delete composerHistoryRef.current[newConversationDraftKey]
+    }
+  }, [activeProjectId, appliedCustomizePrefill, composerHistoryRef, newConversationDraftKey])
 
   // Per-session pending specialist selection for existing conversations.
   // Key: sessionId. Value: the pending UUID (or undefined to clear binding).
@@ -579,18 +634,24 @@ const WorkspacePage = ({
       }
     >
   >({})
-  const previousDraftKeyRef = useRef<string>(selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY)
   // Tracks user-authored mutations separately from optimistic send clearing and conversation switches.
   // A failed prepared send may restore its captured draft only if this version has not advanced.
   const composerDraftVersionsRef = useRef<Record<string, number>>({})
-  const markComposerDraftChanged = (draftKey = previousDraftKeyRef.current): void => {
-    composerDraftVersionsRef.current[draftKey] =
-      (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
-  }
-  const changeComposerDraftDoc = (doc: ComposerDoc): void => {
-    markComposerDraftChanged()
-    setDraftDoc(doc)
-  }
+  const markComposerDraftChanged = useCallback(
+    (draftKey = previousDraftKeyRef.current): void => {
+      composerDraftVersionsRef.current[draftKey] =
+        (composerDraftVersionsRef.current[draftKey] ?? 0) + 1
+    },
+    [composerDraftVersionsRef, previousDraftKeyRef]
+  )
+  const changeComposerDraftDoc = useCallback(
+    (doc: ComposerDoc): void => {
+      clearComposerHistory(previousDraftKeyRef.current)
+      markComposerDraftChanged()
+      setDraftDoc(doc)
+    },
+    [clearComposerHistory, markComposerDraftChanged, previousDraftKeyRef, setDraftDoc]
+  )
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([])
   const [attachmentTransfers, setAttachmentTransfers] = useState<ComposerUploadTransfer[]>([])
   const attachmentTransfersRef = useRef<ComposerUploadTransfer[]>([])
@@ -639,6 +700,210 @@ const WorkspacePage = ({
     () => sessions.find((session) => session.id === selectedSessionId),
     [selectedSessionId, sessions]
   )
+  const composerHistoryEntries = useMemo(
+    () =>
+      activeSession
+        ? buildSessionComposerHistory(activeSession)
+        : buildStarterComposerHistory(sessions),
+    [activeSession, sessions]
+  )
+  const historySpecialistId = activeSession
+    ? Object.hasOwn(pendingSessionSpecialist, activeSession.id)
+      ? pendingSessionSpecialist[activeSession.id]
+      : activeSession.specialistId
+    : newConversationSpecialistId
+  const catalogSkillIds = useMemo(
+    () => new Set(catalogSkills.map((skill) => skill.id)),
+    [catalogSkills]
+  )
+  const historyAllowedSkillIds = useMemo(() => {
+    if (historySpecialistId === undefined) return undefined
+    const specialist = specialistItems.find(
+      (item) => item.kind === 'custom' && item.enabled && item.id === historySpecialistId
+    )
+    if (specialist?.kind !== 'custom') return new Set<string>()
+    const effective = resolveEffectiveSpecialistSkills(
+      specialist,
+      catalogSkills.map((skill) => ({
+        id: skill.id,
+        frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+        displayName: skill.name
+      }))
+    )
+    return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
+  }, [catalogSkills, historySpecialistId, specialistItems])
+  const navigateComposerHistory = useCallback(
+    (direction: 'previous' | 'next'): boolean => {
+      if (attachments.length > 0 || attachmentTransfers.length > 0) return false
+
+      let navigation = composerHistoryRef.current[currentDraftKey]
+      if (!navigation) {
+        if (direction === 'next' || composerHistoryEntries.length === 0) return false
+        navigation = {
+          entries: composerHistoryEntries,
+          cursorId: composerHistoryEntries[0].id,
+          scratch: draftDoc
+        }
+        composerHistoryRef.current[currentDraftKey] = navigation
+      } else {
+        const cursor = navigation.entries.findIndex((entry) => entry.id === navigation.cursorId)
+        if (cursor < 0) return false
+        if (direction === 'next' && cursor === 0) {
+          delete composerHistoryRef.current[currentDraftKey]
+          markComposerDraftChanged(currentDraftKey)
+          setDraftDoc(navigation.scratch)
+          setHistoryBrowsingKey(undefined)
+          setHistoryStatus('Draft restored')
+          return true
+        }
+        const nextCursor = direction === 'previous' ? cursor + 1 : cursor - 1
+        if (nextCursor < 0 || nextCursor >= navigation.entries.length) return false
+        navigation.cursorId = navigation.entries[nextCursor].id
+      }
+
+      const cursor = navigation.entries.findIndex((entry) => entry.id === navigation.cursorId)
+      const entry = navigation.entries[cursor]
+      if (!entry) return false
+      if (
+        entry.doc.nodes.some((node) => node.type === 'skill') &&
+        (!historySkillCatalogReady ||
+          (historySpecialistId !== undefined && !specialistCatalogLoaded))
+      ) {
+        delete composerHistoryRef.current[currentDraftKey]
+        if (!historySkillCatalogReady) {
+          void loadSkills()
+            .then(() => setHistorySkillCatalogReady(true))
+            .catch(() => undefined)
+        }
+        if (historySpecialistId !== undefined && !specialistCatalogLoaded) {
+          void loadSpecialists()
+        }
+        setHistoryStatus('Prompt history is loading. Press Up Arrow again shortly.')
+        return false
+      }
+
+      const normalized = normalizeHistorySkills(entry.doc, catalogSkillIds, historyAllowedSkillIds)
+      markComposerDraftChanged(currentDraftKey)
+      setDraftDoc(normalized.doc)
+      setHistoryBrowsingKey(currentDraftKey)
+      setHistoryStatus(
+        `History item ${cursor + 1} of ${navigation.entries.length}${
+          normalized.unavailableSkillNames.length > 0
+            ? `. ${normalized.unavailableSkillNames.map((name) => `/${name}`).join(', ')} unavailable`
+            : ''
+        }`
+      )
+      return true
+    },
+    [
+      attachmentTransfers.length,
+      attachments.length,
+      catalogSkillIds,
+      composerHistoryRef,
+      composerHistoryEntries,
+      currentDraftKey,
+      draftDoc,
+      historyAllowedSkillIds,
+      historySkillCatalogReady,
+      historySpecialistId,
+      loadSkills,
+      loadSpecialists,
+      markComposerDraftChanged,
+      setDraftDoc,
+      setHistoryBrowsingKey,
+      setHistorySkillCatalogReady,
+      setHistoryStatus,
+      specialistCatalogLoaded
+    ]
+  )
+
+  // Catalog or Specialist policy can change after a prompt was recalled; remove newly-invalid chips
+  // before the user can send a turn that the runtime would reject after optimistic append.
+  useEffect(() => {
+    if (
+      historyBrowsingKey !== currentDraftKey ||
+      !historySkillCatalogReady ||
+      (historySpecialistId !== undefined && !specialistCatalogLoaded)
+    ) {
+      return
+    }
+    const navigation = composerHistoryRef.current[currentDraftKey]
+    const cursor = navigation?.entries.findIndex((entry) => entry.id === navigation.cursorId) ?? -1
+    const entry = navigation?.entries[cursor]
+    if (!navigation || !entry) return
+    const normalized = normalizeHistorySkills(entry.doc, catalogSkillIds, historyAllowedSkillIds)
+    if (JSON.stringify(normalized.doc) !== JSON.stringify(draftDoc)) {
+      markComposerDraftChanged(currentDraftKey)
+      setDraftDoc(normalized.doc)
+    }
+    setHistoryStatus(
+      `History item ${cursor + 1} of ${navigation.entries.length}${
+        normalized.unavailableSkillNames.length > 0
+          ? `. ${normalized.unavailableSkillNames.map((name) => `/${name}`).join(', ')} unavailable`
+          : ''
+      }`
+    )
+  }, [
+    catalogSkillIds,
+    currentDraftKey,
+    draftDoc,
+    historyAllowedSkillIds,
+    historyBrowsingKey,
+    historySkillCatalogReady,
+    historySpecialistId,
+    markComposerDraftChanged,
+    specialistCatalogLoaded
+  ])
+
+  // A Branch switch or deleted starter source replaces the visible history projection; abandon the
+  // frozen round and restore its scratch instead of exposing prompts from a no-longer-visible source.
+  useEffect(() => {
+    if (historyBrowsingKey !== currentDraftKey) return
+    const navigation = composerHistoryRef.current[currentDraftKey]
+    if (!navigation) return
+    const visibleIds = new Set(composerHistoryEntries.map((entry) => entry.id))
+    const frozenSourcesStillVisible = navigation.entries.every((entry) => visibleIds.has(entry.id))
+    if (
+      frozenSourcesStillVisible &&
+      (!activeSession || navigation.entries.length === composerHistoryEntries.length)
+    ) {
+      return
+    }
+    delete composerHistoryRef.current[currentDraftKey]
+    markComposerDraftChanged(currentDraftKey)
+    setDraftDoc(navigation.scratch)
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('Draft restored')
+  }, [
+    activeSession,
+    composerHistoryEntries,
+    currentDraftKey,
+    historyBrowsingKey,
+    markComposerDraftChanged
+  ])
+  useEffect(() => {
+    const getPlanProjection = window.api.acp?.getPlanProjection
+    if (!activeSession || activeSession.activePlanProjection || !getPlanProjection) return
+    let cancelled = false
+    void getPlanProjection(activeSession.projectId, activeSession.id)
+      .then((projection) => {
+        if (cancelled) return
+        if (projection) {
+          setActivePlanProjection(activeSession.id, projection)
+          return
+        }
+        const current = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === activeSession.id)
+        if (current?.status === 'waiting-plan-approval' && !current.activePlanProjection) {
+          useSessionStore.getState().finishRun(activeSession.id)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [activeSession, setActivePlanProjection])
   const activeSessionHasSendPreparation = activeSession
     ? sendPreparationInFlightSessionIds.includes(activeSession.id)
     : false
@@ -713,7 +978,10 @@ const WorkspacePage = ({
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
   // Composer controls follow only the selected session and persistence readiness.
-  const canEditDraft = isSessionPersistenceReady && !activeSessionHasSendPreparation
+  const canEditDraft =
+    isSessionPersistenceReady &&
+    !activeSessionHasSendPreparation &&
+    activeSession?.status !== 'waiting-plan-approval'
   const isUploadingAttachments = attachmentTransfers.some(
     (transfer) =>
       transfer.status === 'queued' ||
@@ -740,6 +1008,47 @@ const WorkspacePage = ({
     // Block while the reconfigure barrier is running (async, between Enter and sendMessage). This
     // prevents a second Enter press from racing the first one through the same pending-switch barrier.
     !barrierInFlightSessions.has(activeSession?.id ?? '')
+
+  // Make the composer-owned mention capability available to Global Search without exposing its draft.
+  // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
+  // Artifact after navigation.
+  useEffect(() => {
+    if (!activeProjectId) {
+      setArtifactMentionAvailability(undefined)
+      return
+    }
+    setArtifactMentionAvailability({
+      projectId: activeProjectId,
+      canMention: canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
+    })
+    return () => setArtifactMentionAvailability(undefined)
+  }, [activeProjectId, canEditDraft, draftDoc, setArtifactMentionAvailability])
+
+  // Global Search can only request a same-Project mention. Consume it once in the composer owner so
+  // a palette never reaches into this page's local draft state or carries a reference across routing.
+  useEffect(() => {
+    if (!pendingArtifactMention) return
+    const file = consumeArtifactMention()
+    if (!file || file.projectId !== activeProjectId || !canEditDraft) return
+
+    changeComposerDraftDoc(
+      appendArtifactMention(draftDoc, {
+        id: file.id,
+        name: file.name,
+        path: file.path,
+        source: file.source,
+        mimeType: file.mimeType,
+        versionId: file.sourceVersionId
+      })
+    )
+  }, [
+    activeProjectId,
+    canEditDraft,
+    changeComposerDraftDoc,
+    consumeArtifactMention,
+    draftDoc,
+    pendingArtifactMention
+  ])
   // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
   // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
   const canEditMessage =
@@ -805,6 +1114,20 @@ const WorkspacePage = ({
     if (pendingCustomizePrefill !== undefined) consumeCustomizePrefill()
   }, [pendingCustomizePrefill, consumeCustomizePrefill])
 
+  // History can revive executable Skill chips, so resolve the catalog before recalling such entries.
+  useEffect(() => {
+    if (!window.api?.settings?.listSkills) return
+    let active = true
+    void loadSkills()
+      .then(() => {
+        if (active) setHistorySkillCatalogReady(true)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [loadSkills])
+
   // Escape closes the mobile navigation drawer without touching the active session or draft.
   useEffect(() => {
     if (!isMobile || !isMobileSidebarOpen) return
@@ -818,16 +1141,19 @@ const WorkspacePage = ({
   // Save the outgoing draft and load the incoming one whenever the selected session changes, covering
   // every selection path (session list, new conversation, project switch, deletes) in one place.
   useEffect(() => {
-    const currentDraftKey = selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY
     const previousDraftKey = previousDraftKeyRef.current
 
     if (currentDraftKey === previousDraftKey) return
 
+    const outgoingHistory = composerHistoryRef.current[previousDraftKey]
     composerDraftsRef.current[previousDraftKey] = {
-      doc: draftDoc,
+      doc: outgoingHistory?.scratch ?? draftDoc,
       attachments,
       attachmentTransfers
     }
+    delete composerHistoryRef.current[previousDraftKey]
+    setHistoryBrowsingKey(undefined)
+    setHistoryStatus('')
     // When the selection lands on the New Conversation key while a `Chat with agent` prefill is
     // pending for the active project, the render-phase consumer above has already set the exact
     // `/customize` doc. This effect runs AFTER that render-phase write, so loading the stored/empty
@@ -835,7 +1161,7 @@ const WorkspacePage = ({
     // tracked key so a later switch still saves the prefill draft, and clear any attachments that
     // leaked from the previously-selected session so the fresh draft starts clean.
     const customizePrefillPending =
-      currentDraftKey === NEW_CONVERSATION_DRAFT_KEY &&
+      currentDraftKey === newConversationDraftKey &&
       pendingCustomizePrefill !== undefined &&
       pendingCustomizePrefill === activeProjectId
     if (customizePrefillPending) {
@@ -862,7 +1188,8 @@ const WorkspacePage = ({
     setAttachmentTransfers(nextDraft.attachmentTransfers)
     previousDraftKeyRef.current = currentDraftKey
   }, [
-    selectedSessionId,
+    currentDraftKey,
+    newConversationDraftKey,
     draftDoc,
     attachments,
     attachmentTransfers,
@@ -1076,6 +1403,7 @@ const WorkspacePage = ({
     if (accepted.length === 0) return
 
     const draftKey = previousDraftKeyRef.current
+    clearComposerHistory(draftKey)
     markComposerDraftChanged(draftKey)
     const pending = accepted.map(
       (file, index): { file: File; transfer: ComposerUploadTransfer } => {
@@ -1224,14 +1552,67 @@ const WorkspacePage = ({
     [activeSessionId, resendEditedMessage]
   )
 
+  // Restart recovery intentionally does not revive the expired generate_plan interaction. Each card
+  // action starts a fresh user turn bound to the exact pending Plan. Main commits explicit decisions
+  // only after activating that turn; feedback receives protected Plan context without authority.
+  const respondToRestoredPlan = useCallback(
+    async (
+      response: { decision: 'approved' | 'rejected' } | { feedback: string }
+    ): Promise<void> => {
+      const session = activeSessionId
+        ? useSessionStore.getState().sessions.find((candidate) => candidate.id === activeSessionId)
+        : undefined
+      const plan = selectActiveBranchPlan(session)
+      if (!session || session.activeRun || plan?.approval !== 'pending') {
+        throw new Error('The pending Plan is no longer available for a response.')
+      }
+      const pendingAction =
+        'feedback' in response
+          ? ('review' as const)
+          : response.decision === 'approved'
+            ? ('approve' as const)
+            : ('reject' as const)
+      const text =
+        'feedback' in response
+          ? response.feedback
+          : response.decision === 'approved'
+            ? 'Approve the current Plan and continue.'
+            : 'Dismiss the current Plan.'
+
+      const result = await sendMessage({
+        sessionId: session.id,
+        text,
+        planContinuation: {
+          artifactVersionId: plan.artifactVersionId,
+          revision: plan.revision,
+          pendingAction
+        },
+        attachments: [],
+        cwd: session.cwd,
+        projectId: session.projectId,
+        projectName: session.projectId,
+        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+      })
+      if (!result) throw new Error('Unable to respond to the Plan.')
+    },
+    [activeSessionId, sendMessage]
+  )
+
   // Sends the current draft only after hydration so restored selection cannot overwrite intent.
   // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
   // For existing sessions with a pending specialist switch, the reconfigure barrier runs first:
   // dispose + resume the Claude ACP session with the new specialist identity. On failure, the
   // draft is preserved, no user turn is created, and a recovery banner is shown (fail-closed —
   // never silently fall back to Main Agent).
-  const sendCurrentMessage = (forcedSkillIds: string[]): void => {
+  const sendCurrentMessage = (
+    forcedSkillIds: string[],
+    options: { branchInNewSession?: boolean; turnIntent?: 'plan-first' } = {}
+  ): void => {
+    const branchInNewSession = options.branchInNewSession === true
     if (!canSendMessage) return
+    // A blank New conversation has no source transcript to snapshot; ordinary Send already creates the
+    // fresh Session for that case.
+    if (branchInNewSession && !activeSession) return
     // Secondary synchronous guard: blocks a second Enter press that arrives before the state update
     // from the first barrier start triggers a re-render and disables canSendMessage.
     if (activeSession && barrierInFlightRef.current.has(activeSession.id)) return
@@ -1267,7 +1648,7 @@ const WorkspacePage = ({
       }
     }
 
-    const sendRequestKey = activeSession?.id ?? NEW_CONVERSATION_DRAFT_KEY
+    const sendRequestKey = activeSession?.id ?? newConversationDraftKey
     if (sendRequestsInFlightRef.current.has(sendRequestKey)) return
     sendRequestsInFlightRef.current.add(sendRequestKey)
     const sendDraftVersion = composerDraftVersionsRef.current[sendRequestKey] ?? 0
@@ -1279,34 +1660,53 @@ const WorkspacePage = ({
     const wasNewConversation = !activeSession
     const draftAutoReviewEnabled = newConversationAutoReviewEnabled
     const draftEnabledComputeHosts = newConversationEnabledComputeHosts
-    // Capture the final specialist selection (last change wins before first send).
-    const draftSpecialistId = wasNewConversation ? newConversationSpecialistId : undefined
-    // Capture pending specialist for existing sessions (last change wins).
+    // Capture pending specialist for existing sessions (last change wins). `undefined` is a valid
+    // pending choice meaning Main Agent, so ownership—not truthiness—distinguishes it from no choice.
+    const hasStoredPendingSpecialist =
+      activeSession !== undefined && Object.hasOwn(pendingSessionSpecialist, activeSession.id)
     const pendingSpecialistId = activeSession
       ? pendingSessionSpecialist[activeSession.id]
       : undefined
-    const hasPendingSwitch =
-      activeSession !== undefined && Object.hasOwn(pendingSessionSpecialist, activeSession.id)
+    // Capture the final specialist selection (last change wins before first send).
+    const draftSpecialistId = branchInNewSession
+      ? hasStoredPendingSpecialist
+        ? (pendingSpecialistId ?? null)
+        : activeSession?.specialistId
+      : wasNewConversation
+        ? newConversationSpecialistId
+        : undefined
+    const hasPendingSwitch = !branchInNewSession && hasStoredPendingSpecialist
 
     // Dispatches the final send after draft/attachment state has been cleared.
     // Shared by the normal send path and the Retry recovery action so the logic stays in sync.
     const dispatchSend = (sessionId: string | undefined): void => {
-      void sendMessage({
-        sessionId,
-        text: docToText(doc),
-        attachments: attachmentsForSend,
-        // Existing files the user referenced via `@`; the runtime attaches each as a content block.
-        referencedArtifacts: docToArtifactRefs(doc),
-        // Persist the draft's structural segments so the sent bubble renders styled mention pills.
-        parts: doc.nodes,
-        cwd: activeSession?.cwd,
-        projectId: activeSession?.projectId ?? scopedProjectId,
-        projectName: activeSession?.projectId ?? scopedProjectId,
-        permissionProfile: activePermissionProfile,
-        forcedSkillIds,
-        // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
-        specialistId: draftSpecialistId
-      })
+      const send = async (): ReturnType<typeof sendMessage> => {
+        return sendMessage({
+          sessionId,
+          ...(branchInNewSession && activeSession
+            ? { branchSourceSessionId: activeSession.id }
+            : {}),
+          text: docToText(doc),
+          attachments: attachmentsForSend,
+          // Existing files the user referenced via `@`; the runtime attaches each as a content block.
+          referencedArtifacts: docToArtifactRefs(doc),
+          // Persist the draft's structural segments so the sent bubble renders styled mention pills.
+          parts: doc.nodes,
+          cwd: activeSession?.cwd,
+          projectId: activeSession?.projectId ?? scopedProjectId,
+          projectName: activeSession?.projectId ?? scopedProjectId,
+          permissionProfile: activePermissionProfile,
+          forcedSkillIds,
+          ...(options.turnIntent ? { turnIntent: options.turnIntent } : {}),
+          // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
+          specialistId: draftSpecialistId
+        })
+      }
+      void send()
+        .catch((error: unknown) => {
+          setAttachmentError(getErrorMessage(error))
+          return undefined
+        })
         .then((result) => {
           if (!result) {
             // A newer edit on the same draft key wins over this failed request. Otherwise restore the
@@ -1413,6 +1813,7 @@ const WorkspacePage = ({
         return next
       })
       setDraftDoc(emptyDoc)
+      clearComposerHistory(sessionId)
       delete composerDraftsRef.current[sessionId]
       setAttachments([])
       setAttachmentError(null)
@@ -1438,12 +1839,21 @@ const WorkspacePage = ({
 
     // No pending switch: proceed with the normal send path.
     setDraftDoc(emptyDoc)
+    clearComposerHistory(currentDraftKey)
     // Drop the stored draft for this key so a sent message never lingers as a restorable draft.
-    delete composerDraftsRef.current[selectedSessionId ?? NEW_CONVERSATION_DRAFT_KEY]
+    delete composerDraftsRef.current[currentDraftKey]
     setAttachments([])
     setAttachmentError(null)
 
-    dispatchSend(activeSession?.id)
+    dispatchSend(branchInNewSession ? undefined : activeSession?.id)
+  }
+
+  const branchCurrentMessage = (forcedSkillIds: string[]): void => {
+    sendCurrentMessage(forcedSkillIds, { branchInNewSession: true })
+  }
+
+  const planCurrentMessage = (forcedSkillIds: string[]): void => {
+    sendCurrentMessage(forcedSkillIds, { turnIntent: 'plan-first' })
   }
 
   // Opens the rename dialog with the current title prefilled.
@@ -1532,6 +1942,7 @@ const WorkspacePage = ({
       if (!deleted || !deletionCleanup) return
 
       delete composerDraftsRef.current[deletedSessionId]
+      clearComposerHistory(deletedSessionId)
       for (const transfer of deletionCleanup.attachmentTransfers) {
         // Queued files have no controller yet. Mark every transfer before aborting the active one so
         // the serialized loop skips later entries after the in-flight request settles.
@@ -2004,7 +2415,13 @@ const WorkspacePage = ({
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={changeComposerDraftDoc}
+            isHistoryBrowsing={historyBrowsingKey === currentDraftKey}
+            historyStatus={historyStatus}
+            onNavigateHistory={navigateComposerHistory}
             onSendMessage={sendCurrentMessage}
+            onPlanFirst={planCurrentMessage}
+            onRespondToRestoredPlan={respondToRestoredPlan}
+            onBranchInNewSession={activeSession ? branchCurrentMessage : undefined}
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}
             onCancelAttachmentTransfer={cancelAttachmentTransfer}
@@ -2185,6 +2602,11 @@ const WorkspacePage = ({
       <DownloadSessionArtifactsDialog
         session={sessionToDownloadArtifacts}
         onClose={() => setSessionToDownloadArtifacts(undefined)}
+      />
+
+      <FilePreviewDialog
+        item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
+        onClose={closeFileDialog}
       />
 
       <SessionNotebookDialog

@@ -48,7 +48,7 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       createSession: async () => ({ sessionId: 'session-created' }),
       resumeSession: async (request) => ({ sessionId: request.sessionId }),
       setPermissionProfile: async () => undefined,
-      sendPrompt: async () => undefined
+      prompt: async () => undefined
     },
     artifacts: {
       finalizeRun: async () => ({ ok: true, artifacts: [] })
@@ -216,7 +216,7 @@ describe('TaskRunner', () => {
         }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => {
+        prompt: async () => {
           emitEvent?.({
             id: 'event-1',
             timestamp: 10,
@@ -298,7 +298,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => promptGate
+        prompt: async () => promptGate
       },
       createId: () => ids.shift() ?? 'generated-id'
     })
@@ -351,7 +351,7 @@ describe('TaskRunner', () => {
       ]
     }
     const resumeRequests: Parameters<TaskRunnerDependencies['agent']['resumeSession']>[0][] = []
-    const prompts: Parameters<TaskRunnerDependencies['agent']['sendPrompt']>[0][] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
     const ids = ['new-user', 'run-2', 'new-agent']
     const runner = createRunner({
       sessions: { list: async () => [existing], save: async () => undefined },
@@ -363,7 +363,7 @@ describe('TaskRunner', () => {
           return { sessionId: existing.id, cwd: existing.cwd, contextReset: true }
         },
         setPermissionProfile: async () => undefined,
-        sendPrompt: async (request) => {
+        prompt: async (request) => {
           prompts.push(request)
         }
       },
@@ -384,7 +384,9 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        promptMessageId: 'new-user',
         text: 'Follow-up question',
+        contextReset: true,
         historyPreamble:
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }
@@ -415,7 +417,7 @@ describe('TaskRunner', () => {
         }
       ]
     }
-    const prompts: Parameters<TaskRunnerDependencies['agent']['sendPrompt']>[0][] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
     const ids = ['skill-user', 'skill-run', 'skill-agent']
     const runner = createRunner({
       sessions: { list: async () => [existing], save: async () => undefined },
@@ -424,7 +426,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async (request) => {
+        prompt: async (request) => {
           prompts.push(request)
         }
       },
@@ -442,8 +444,9 @@ describe('TaskRunner', () => {
     expect(prompts).toEqual([
       {
         sessionId: existing.id,
+        promptMessageId: 'skill-user',
         text: 'Use the selected skill.',
-        forcedSkillIds: ['literature-review'],
+        skillIds: ['literature-review'],
         resumeFallback: {
           historyPreamble:
             'Previous conversation:\n\nUser: Prior question\n\nAssistant: Prior answer'
@@ -468,7 +471,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-artifact', cwd: '/workspace/artifact' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => {
+        prompt: async () => {
           emitEvent?.({
             id: 'artifact-event',
             timestamp: 10,
@@ -549,7 +552,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-save', cwd: '/workspace/save' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => {
+        prompt: async () => {
           emitEvent?.({
             id: 'save-event',
             timestamp: 10,
@@ -599,7 +602,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-partial', cwd: '/workspace/partial' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => {
+        prompt: async () => {
           emitEvent?.({
             id: 'artifact-first',
             timestamp: 10,
@@ -702,7 +705,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-tool', cwd: '/workspace/tool' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => {
+        prompt: async () => {
           emitEvent?.({
             id: 'tool-start',
             timestamp: 10,
@@ -794,7 +797,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: `session-${++sessionCounter}` }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
-        sendPrompt: async () => undefined
+        prompt: async () => undefined
       },
       createId: () => `id-${++idCounter}`,
       now: () => ++time

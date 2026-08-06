@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
-import type {
-  AppendNotebookCodeCellRequest,
-  BeginNotebookCodeCellRequest,
-  ExecuteNotebookCodeRequest,
-  FinishNotebookCodeCellRequest,
-  NotebookRunProvenanceContext,
-  RunNotebookCellRequest
-} from '../../shared/notebook'
+import type { NotebookRunProvenanceContext } from '../../shared/notebook'
 import type { NotebookRpcConnection } from './mcp-server'
+import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
-  NotebookControlCompletionCapturedError,
-  type NotebookRuntimeService
-} from './runtime-service'
+  opensNotebookInputRun,
+  resolveNotebookLocalRpcHandler,
+  type NotebookLocalRpcCapability
+} from './local-rpc-notebook-adapter'
 import type {
   NotebookInputRegistry,
   NotebookInputRunLease,
@@ -35,12 +30,22 @@ import {
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
+import {
+  listenForLocalRpc,
+  localRpcServerLogFields,
+  type LocalRpcListenOptions
+} from '../local-rpc-transport'
+import { createLogger, errorLogFields } from '../logger'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+
+const log = createLogger('notebook:local-rpc')
 
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
+  transport?: LocalRpcListenOptions['transport']
   connectorService?: {
     call(
       server: string,
@@ -105,6 +110,14 @@ type NotebookLocalRpcServerOptions = {
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
+  planService?: {
+    call(input: {
+      projectId: string
+      sessionId: string
+      operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus'
+      input?: unknown
+    }): Promise<unknown>
+  }
   artifactProvenance?: {
     createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile>
     replayVersion?(request: ReplayArtifactVersionRequest): Promise<ArtifactVersionFile | undefined>
@@ -136,7 +149,7 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
 
 type NotebookRpcSessionBinding = {
   sessionId: string
-  projectId: string
+  projectId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
 }
@@ -159,6 +172,8 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])
+const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
+const PLAN_RPC_METHODS = new Set(['planCall'])
 
 const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
   ARTIFACT_RPC_METHODS.has(method as ArtifactRpcMethod)
@@ -184,22 +199,18 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
   response.end(`${JSON.stringify(payload)}\n`)
 }
 
-// Ensures every runtime command carries the session routing fields the service needs.
-const assertSessionParams = (params: Record<string, unknown>): void => {
-  if (typeof params.sessionId !== 'string' || typeof params.workspaceCwd !== 'string') {
-    throw new Error('Notebook RPC params must include sessionId and workspaceCwd.')
-  }
-}
-
-// Hosts an app-local authenticated HTTP bridge between MCP stdio tools and the runtime service.
+// Hosts an authenticated app-local bridge between MCP stdio tools and the runtime service. The wire
+// protocol is HTTP/JSON; Windows carries it over a named pipe instead of loopback TCP.
 class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
   private readonly now: () => number
   private readonly onSessionReleased: NotebookLocalRpcServerOptions['onSessionReleased']
+  private readonly transport: NotebookLocalRpcServerOptions['transport']
   private readonly connectorService: NotebookLocalRpcServerOptions['connectorService']
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
+  private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
@@ -208,6 +219,8 @@ class NotebookLocalRpcServer {
   private readonly sessionAliases = new Map<string, string>()
   private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
   private readonly sessionRpcTokens = new Map<string, string>()
+  private readonly skillImportRpcTokens = new Map<string, string>()
+  private readonly planRpcTokens = new Map<string, string>()
   // The session → Specialist relationship is established by the ACP runtime, not supplied by the
   // notebook process. Keeping it here prevents an agent from selecting another Specialist's scope
   // by forging an RPC parameter.
@@ -220,16 +233,18 @@ class NotebookLocalRpcServer {
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
 
   constructor(
-    private readonly service: NotebookRuntimeService,
+    private readonly service: NotebookLocalRpcCapability,
     options: NotebookLocalRpcServerOptions = {}
   ) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
+    this.transport = options.transport
     this.connectorService = options.connectorService
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
+    this.planService = options.planService
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.agentsService = options.agentsService
@@ -289,22 +304,26 @@ class NotebookLocalRpcServer {
       void this.handleRequest(request, response)
     })
     this.server = server
-    this.startPromise = new Promise((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(0, this.host, () => {
-        const address = server.address()
-
-        if (typeof address !== 'object' || address === null) {
-          reject(new Error('Notebook RPC server did not return a TCP address.'))
-          return
-        }
-
-        resolve({
-          endpoint: `http://${address.address}:${address.port}`,
-          token: this.token
-        })
-      })
+    log.info('notebook RPC server starting', {
+      transport: this.transport ?? (process.platform === 'win32' ? 'pipe' : 'tcp'),
+      listening: server.listening
     })
+    this.startPromise = listenForLocalRpc(server, {
+      name: 'notebook-rpc',
+      host: this.host,
+      transport: this.transport
+    })
+      .then((connection) => {
+        log.info('notebook RPC server listening', localRpcServerLogFields(server))
+        return { ...connection, token: this.token }
+      })
+      .catch((error) => {
+        log.error('notebook RPC server failed to listen', {
+          ...localRpcServerLogFields(server),
+          ...errorLogFields(error)
+        })
+        throw error
+      })
 
     return this.startPromise
   }
@@ -318,8 +337,12 @@ class NotebookLocalRpcServer {
     this.artifactRpcCapabilities.clear()
     this.sessionRpcCapabilities.clear()
     this.sessionRpcTokens.clear()
+    this.skillImportRpcTokens.clear()
 
     if (!server) return
+
+    const connection = localRpcServerLogFields(server)
+    log.info('notebook RPC server stopping', connection)
 
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -327,6 +350,7 @@ class NotebookLocalRpcServer {
         else resolve()
       })
     })
+    log.info('notebook RPC server stopped', { ...connection, listening: server.listening })
   }
 
   // Remembers the final ACP session id for notebook aliases created before session start.
@@ -366,12 +390,30 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private revokeSkillImportSessionCapabilities(sessionId: string): void {
+    for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
+      const token = this.skillImportRpcTokens.get(ownedSessionId)
+      if (token) this.sessionRpcCapabilities.delete(token)
+      this.skillImportRpcTokens.delete(ownedSessionId)
+    }
+  }
+
+  private revokePlanSessionCapabilities(sessionId: string): void {
+    for (const ownedSessionId of this.resolveSessionCapabilityOwners(sessionId)) {
+      const token = this.planRpcTokens.get(ownedSessionId)
+      if (token) this.sessionRpcCapabilities.delete(token)
+      this.planRpcTokens.delete(ownedSessionId)
+    }
+  }
+
   // Releases ACP-owned session state without revoking the persistent control-plane capability. The
   // Notebook RuntimeSession owns that capability and revokes it through connection.release().
   releaseSessionCapabilities(sessionId: string): void {
     const ownedSessionIds = this.resolveSessionCapabilityOwners(sessionId)
 
     this.revokeAgentSessionCapabilities(sessionId)
+    this.revokeSkillImportSessionCapabilities(sessionId)
+    this.revokePlanSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
       this.sessionSpecialists.delete(ownedSessionId)
     }
@@ -398,6 +440,7 @@ class NotebookLocalRpcServer {
     this.sessionRpcCapabilities.set(token, { sessionId, projectId })
     return {
       endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
       token,
       release: () => {
         // A stale startup may release after a same-ID successor has rotated the current token. Revoke
@@ -405,6 +448,51 @@ class NotebookLocalRpcServer {
         if (this.sessionRpcTokens.get(sessionId) === token) {
           this.sessionRpcTokens.delete(sessionId)
         }
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
+  }
+
+  async issueSkillImportConnection(sessionId: string): Promise<NotebookRpcConnection> {
+    const connection = await this.ensureStarted()
+    this.revokeSkillImportSessionCapabilities(sessionId)
+
+    const token = randomUUID()
+    this.skillImportRpcTokens.set(sessionId, token)
+    this.sessionRpcCapabilities.set(token, {
+      sessionId,
+      allowedMethods: SKILL_IMPORT_RPC_METHODS
+    })
+    return {
+      endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
+      token,
+      release: () => {
+        if (this.skillImportRpcTokens.get(sessionId) === token) {
+          this.skillImportRpcTokens.delete(sessionId)
+        }
+        this.sessionRpcCapabilities.delete(token)
+      }
+    }
+  }
+
+  async issuePlanConnection(sessionId: string, projectId: string): Promise<NotebookRpcConnection> {
+    const connection = await this.ensureStarted()
+    this.revokePlanSessionCapabilities(sessionId)
+
+    const token = randomUUID()
+    this.planRpcTokens.set(sessionId, token)
+    this.sessionRpcCapabilities.set(token, {
+      sessionId,
+      projectId,
+      allowedMethods: PLAN_RPC_METHODS
+    })
+    return {
+      endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
+      token,
+      release: () => {
+        if (this.planRpcTokens.get(sessionId) === token) this.planRpcTokens.delete(sessionId)
         this.sessionRpcCapabilities.delete(token)
       }
     }
@@ -433,6 +521,7 @@ class NotebookLocalRpcServer {
 
     return {
       endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
       token,
       beginControlInvocation: (context) => {
         binding.activeControlInvocation = context
@@ -597,7 +686,7 @@ class NotebookLocalRpcServer {
           params = {
             ...params,
             sessionId: sessionBinding.sessionId,
-            projectId: sessionBinding.projectId,
+            ...(sessionBinding.projectId ? { projectId: sessionBinding.projectId } : {}),
             ...(method === 'agentsCall'
               ? {
                   session_id: sessionBinding.sessionId,
@@ -612,7 +701,11 @@ class NotebookLocalRpcServer {
           if (authorization !== `Bearer ${this.token}`) {
             throw new RpcHttpError(401, 'Invalid notebook RPC token.')
           }
-          if (CONTROL_RPC_METHODS.has(method)) {
+          if (
+            CONTROL_RPC_METHODS.has(method) ||
+            SKILL_IMPORT_RPC_METHODS.has(method) ||
+            PLAN_RPC_METHODS.has(method)
+          ) {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
         }
@@ -630,9 +723,11 @@ class NotebookLocalRpcServer {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
+      const serializedError =
+        error instanceof PlanCommandError ? { code: error.code, message } : message
 
       writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
-        error: message
+        error: serializedError
       })
     } finally {
       releaseArtifactRequest?.()
@@ -662,12 +757,25 @@ class NotebookLocalRpcServer {
     if (method === 'skillImport') {
       if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
       if (
+        typeof params.sessionId === 'string' &&
+        typeof params.githubUrl === 'string' &&
+        params.turnToken === undefined &&
+        params.attachmentUri === undefined
+      ) {
+        const request: ConversationSkillImportRequest = {
+          sessionId: params.sessionId,
+          githubUrl: params.githubUrl
+        }
+        return this.skillImporter.request(request)
+      }
+      if (
         typeof params.sessionId !== 'string' ||
+        params.githubUrl !== undefined ||
         typeof params.turnToken !== 'string' ||
         typeof params.attachmentUri !== 'string'
       ) {
         throw new Error(
-          'Skill import RPC params must include sessionId, turnToken and attachmentUri.'
+          'Skill import RPC params must include sessionId and exactly one supported source.'
         )
       }
       const request: ConversationSkillImportRequest = {
@@ -676,6 +784,23 @@ class NotebookLocalRpcServer {
         attachmentUri: params.attachmentUri
       }
       return this.skillImporter.request(request)
+    }
+
+    if (method === 'planCall') {
+      if (!this.planService) throw new Error('Session Plan service is not configured.')
+      if (
+        typeof params.projectId !== 'string' ||
+        typeof params.sessionId !== 'string' ||
+        !['generate', 'approve', 'reject', 'updateStepStatus'].includes(String(params.operation))
+      ) {
+        throw new Error('Session Plan RPC params are invalid.')
+      }
+      return this.planService.call({
+        projectId: params.projectId,
+        sessionId: params.sessionId,
+        operation: params.operation as 'generate' | 'approve' | 'reject' | 'updateStepStatus',
+        input: params.input
+      })
     }
 
     if (method === 'resolveNotebookInput') {
@@ -975,67 +1100,14 @@ class NotebookLocalRpcServer {
       )
     }
 
-    assertSessionParams(params)
-
-    const handlers: Record<string, (request: Record<string, unknown>) => Promise<unknown>> = {
-      beginCodeCell: (request) =>
-        this.service.beginCodeCell(request as unknown as BeginNotebookCodeCellRequest),
-      appendCodeCell: (request) =>
-        this.service.appendCodeCell(request as unknown as AppendNotebookCodeCellRequest),
-      finishCodeCell: (request) =>
-        this.service.finishCodeCell(request as unknown as FinishNotebookCodeCellRequest),
-      runCell: (request) => this.service.runCell(request as unknown as RunNotebookCellRequest),
-      execute: (request) => this.service.execute(request as unknown as ExecuteNotebookCodeRequest),
-      executeControl: (request) =>
-        this.service.executeControl(
-          request as unknown as Parameters<NotebookRuntimeService['executeControl']>[0]
-        ),
-      executeShell: (request) =>
-        this.service.executeShell(
-          request as unknown as Parameters<NotebookRuntimeService['executeShell']>[0]
-        ),
-      state: (request) =>
-        this.service.state(request as Parameters<NotebookRuntimeService['state']>[0]),
-      restart: (request) =>
-        this.service.restart(request as Parameters<NotebookRuntimeService['restart']>[0]),
-      shutdown: (request) =>
-        this.service.shutdown(request as Parameters<NotebookRuntimeService['shutdown']>[0]),
-      inspectPackages: (request) =>
-        this.service.inspectPackages(
-          request as unknown as Parameters<NotebookRuntimeService['inspectPackages']>[0]
-        ),
-      managePackages: (request) =>
-        this.service.managePackages(
-          request as unknown as Parameters<NotebookRuntimeService['managePackages']>[0]
-        ),
-      manageEnvironments: (request) =>
-        this.service.manageEnvironments(
-          request as unknown as Parameters<NotebookRuntimeService['manageEnvironments']>[0]
-        ),
-      listRuntimes: (request) =>
-        this.service.listRuntimes(request as Parameters<NotebookRuntimeService['listRuntimes']>[0]),
-      bindRuntime: (request) =>
-        this.service.bindRuntime(
-          request as unknown as Parameters<NotebookRuntimeService['bindRuntime']>[0]
-        ),
-      switchRuntime: (request) =>
-        this.service.switchRuntime(
-          request as unknown as Parameters<NotebookRuntimeService['switchRuntime']>[0]
-        )
-    }
-
-    const handler = handlers[method]
-
-    if (!handler) {
-      throw new Error(`Unknown notebook RPC method: ${method}`)
-    }
+    const handler = resolveNotebookLocalRpcHandler(this.service, method, params)
 
     const projectId =
       typeof params.sessionId === 'string'
         ? this.activeTurnProjectIds.get(params.sessionId)
         : undefined
     const provenanceContext = params.provenanceContext
-    const opensInputRun = ['runCell', 'execute', 'executeControl', 'executeShell'].includes(method)
+    const opensInputRun = opensNotebookInputRun(method)
     if (
       opensInputRun &&
       projectId &&

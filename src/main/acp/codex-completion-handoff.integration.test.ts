@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as acp from '@agentclientprotocol/sdk'
 
-import { AcpRuntime } from './runtime'
+import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createCodexCompletionGateRuntime } from './codex-completion-handoff'
 import {
@@ -137,6 +137,7 @@ describe('Codex approved handoff', () => {
       localToolHandlers: { 'molecule/preview_molecule': localConnector }
     })
     const notebookRpcServer = new NotebookLocalRpcServer({} as NotebookRuntimeService, {
+      transport: 'tcp',
       connectorService
     })
     onTestFinished(async () => {

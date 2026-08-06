@@ -57,6 +57,28 @@ type SessionUpdateObservation = {
   skillFilePath?: string
 }
 
+const contextUsageTurnHandleKey = Symbol('context-usage-turn-handle')
+
+type ContextUsageTurnHandle = Readonly<{
+  readonly [contextUsageTurnHandleKey]: symbol
+  // Completion reports whether the transient preflight usage projection was restored, so the caller
+  // can publish that one observable change. Other terminal operations are state-owner cleanup only.
+  complete: () => boolean
+  fail: () => void
+  supersede: () => void
+}>
+
+type ContextUsageTurnOutcome =
+  'completed' | 'rejected-before-provider-data' | 'partially-observed-failure' | 'superseded'
+
+type ContextUsageTurn = {
+  readonly sessionId: string
+  readonly revision: number
+  readonly checkpoint: SessionEstimateCheckpoint
+  providerDataObserved: boolean
+  outcome?: ContextUsageTurnOutcome
+}
+
 const ESTIMATED_CATEGORY_KEYS: EstimatedCategoryKey[] = [
   'system',
   'tools',
@@ -317,8 +339,71 @@ class ContextUsageTracker {
   private readonly sessions = new Map<string, SessionEstimate>()
   private readonly usageBySession = new Map<string, AcpContextUsage>()
   private readonly usageRevisions = new Map<string, number>()
+  private readonly activeTurnsBySession = new Map<string, ContextUsageTurn>()
+  private nextTurnRevision = 0
 
   constructor(private readonly counter: TokenCounter = defaultTokenCounter) {}
+
+  beginTurn(sessionId: string): ContextUsageTurnHandle {
+    this.supersedeActiveTurn(sessionId)
+    const turn: ContextUsageTurn = {
+      sessionId,
+      revision: ++this.nextTurnRevision,
+      checkpoint: this.checkpointSession(sessionId),
+      providerDataObserved: false
+    }
+    this.activeTurnsBySession.set(sessionId, turn)
+    return Object.freeze({
+      [contextUsageTurnHandleKey]: Symbol(),
+      complete: () => this.completeTurn(turn),
+      fail: () => this.failTurn(turn),
+      supersede: () => this.supersedeTurn(turn)
+    })
+  }
+
+  private completeTurn(turn: ContextUsageTurn): boolean {
+    if (turn.outcome || this.activeTurnsBySession.get(turn.sessionId)?.revision !== turn.revision) {
+      return false
+    }
+    turn.outcome = 'completed'
+    this.activeTurnsBySession.delete(turn.sessionId)
+    this.finalizeAssistantOutput(turn.sessionId)
+    return this.restorePreflightUsage(turn.sessionId, turn.checkpoint)
+  }
+
+  private failTurn(turn: ContextUsageTurn): void {
+    if (turn.outcome || this.activeTurnsBySession.get(turn.sessionId)?.revision !== turn.revision) {
+      return
+    }
+    turn.outcome = turn.providerDataObserved
+      ? 'partially-observed-failure'
+      : 'rejected-before-provider-data'
+    this.activeTurnsBySession.delete(turn.sessionId)
+    if (turn.providerDataObserved) {
+      this.finalizeAssistantOutput(turn.sessionId)
+      this.restorePreflightUsage(turn.sessionId, turn.checkpoint)
+    } else {
+      this.restoreSession(turn.sessionId, turn.checkpoint)
+    }
+  }
+
+  private observeActiveTurn(sessionId: string): void {
+    const turn = this.activeTurnsBySession.get(sessionId)
+    if (turn && !turn.outcome) turn.providerDataObserved = true
+  }
+
+  private supersedeTurn(turn: ContextUsageTurn): void {
+    if (turn.outcome || this.activeTurnsBySession.get(turn.sessionId)?.revision !== turn.revision) {
+      return
+    }
+    turn.outcome = 'superseded'
+    this.activeTurnsBySession.delete(turn.sessionId)
+  }
+
+  private supersedeActiveTurn(sessionId: string): void {
+    const turn = this.activeTurnsBySession.get(sessionId)
+    if (turn) this.supersedeTurn(turn)
+  }
 
   beginSession(sessionId: string, input: SessionEstimateInput): void {
     const profile = tokenizerProfileFor(input.frameworkId, input.model)
@@ -353,11 +438,15 @@ class ContextUsageTracker {
   }
 
   resetSession(sessionId: string, input: SessionEstimateInput): void {
+    this.supersedeActiveTurn(sessionId)
     this.sessions.delete(sessionId)
     this.beginSession(sessionId, input)
   }
 
   checkpointSession(sessionId: string): SessionEstimateCheckpoint {
+    // A public checkpoint belongs to a control turn such as compaction. It supersedes any prompt
+    // handle first so delayed prompt cleanup cannot restore over the control turn or its successor.
+    this.supersedeActiveTurn(sessionId)
     const state = this.sessions.get(sessionId)
     const usage = this.usageBySession.get(sessionId)
     return {
@@ -394,6 +483,7 @@ class ContextUsageTracker {
     usage: AcpContextUsage,
     selectedContextWindow?: number
   ): void {
+    this.observeActiveTurn(sessionId)
     const breakdown = this.compare(sessionId, usage.used, 'reconciled')
     this.replaceUsage(sessionId, {
       ...usage,
@@ -405,6 +495,7 @@ class ContextUsageTracker {
   reconcileUsed(sessionId: string, used: number): boolean {
     const current = this.usageBySession.get(sessionId)
     if (!current || !Number.isSafeInteger(used)) return false
+    this.observeActiveTurn(sessionId)
     if (current.used === used && current.breakdown?.status === 'reconciled') return false
 
     this.replaceUsage(sessionId, {
@@ -580,6 +671,13 @@ class ContextUsageTracker {
     observation: SessionUpdateObservation = {}
   ): void {
     const update = notification.update
+    if (
+      update.sessionUpdate === 'agent_message_chunk' ||
+      update.sessionUpdate === 'tool_call' ||
+      update.sessionUpdate === 'tool_call_update'
+    ) {
+      this.observeActiveTurn(sessionId)
+    }
     if (update.sessionUpdate === 'agent_message_chunk') {
       const state = this.sessions.get(sessionId)
       if (state) state.pendingAssistantText += contentBlockText(update.content)
@@ -766,12 +864,15 @@ class ContextUsageTracker {
   }
 
   deleteSession(sessionId: string): void {
+    this.supersedeActiveTurn(sessionId)
     this.sessions.delete(sessionId)
     this.deleteUsage(sessionId)
     this.usageRevisions.delete(sessionId)
   }
 
   clear(): void {
+    for (const turn of this.activeTurnsBySession.values()) turn.outcome = 'superseded'
+    this.activeTurnsBySession.clear()
     this.sessions.clear()
     this.usageBySession.clear()
     this.usageRevisions.clear()
@@ -779,4 +880,10 @@ class ContextUsageTracker {
 }
 
 export { ContextUsageTracker, MAX_TOOL_ESTIMATE_CHARS, tokenizerProfileFor }
-export type { EstimatedCategoryKey, SessionEstimateInput, SessionUpdateObservation, TokenCounter }
+export type {
+  ContextUsageTurnHandle,
+  EstimatedCategoryKey,
+  SessionEstimateInput,
+  SessionUpdateObservation,
+  TokenCounter
+}

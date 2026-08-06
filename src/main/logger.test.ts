@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createLogger,
@@ -20,6 +20,7 @@ import {
 let logDir: string | undefined
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (logDir) {
     await rm(logDir, { recursive: true, force: true })
     logDir = undefined
@@ -64,6 +65,282 @@ describe('logger: formatLine', () => {
 
     expect(() => JSON.parse(line)).not.toThrow()
     expect((JSON.parse(line) as { data: unknown }).data).toBe('[unserializable]')
+  })
+
+  it('recursively redacts sensitive field variants while retaining token metrics', () => {
+    const sentinel = 'opaque-field-value-7319'
+    const sensitiveKeys = [
+      'authorization',
+      'proxy-authorization',
+      'providerApiKey',
+      'providerApiKeys',
+      'access_token',
+      'refreshToken',
+      'x-amz-security-token',
+      'clientSecret',
+      'secrets',
+      'privateKey',
+      'cookieValue',
+      'cookies',
+      'password',
+      'credentials'
+    ]
+    const nestings = [
+      (key: string): unknown => ({ [key]: sentinel }),
+      (key: string): unknown => ({ nested: { [key]: sentinel } }),
+      (key: string): unknown => ({ items: [{ [key]: sentinel }] }),
+      (key: string): unknown => ({ data: { cause: { [key]: sentinel } } })
+    ]
+
+    for (const key of sensitiveKeys) {
+      for (const nest of nestings) {
+        const line = formatLine('error', 'redaction', 'failed', nest(key))
+        expect(line).not.toContain(sentinel)
+        expect(line).toContain('[redacted]')
+      }
+    }
+
+    const preserved = JSON.parse(
+      formatLine('info', 'usage', 'counted', {
+        tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+        tokenCount: 29,
+        maxOutputTokens: 100
+      })
+    ) as {
+      data: {
+        tokenUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number }
+        tokenCount: number
+        maxOutputTokens: number
+      }
+    }
+
+    expect(preserved.data).toEqual({
+      tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+      tokenCount: 29,
+      maxOutputTokens: 100
+    })
+  })
+
+  it('redacts credential-shaped strings in messages and nested error context', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb2ctcmVkYWN0aW9uIn0.signaturevalue123'
+    const examples = [
+      { text: 'Bearer bearer-opaque-7319', secrets: ['bearer-opaque-7319'] },
+      { text: `jwt=${jwt}`, secrets: [jwt] },
+      { text: 'Authorization: Basic dXNlcjpwYXNz', secrets: ['dXNlcjpwYXNz'] },
+      {
+        text: 'Authorization: Digest comma-opaque-7319,remaining-opaque-7319',
+        secrets: ['comma-opaque-7319', 'remaining-opaque-7319']
+      },
+      { text: 'Cookie: session=cookie-opaque-7319; Path=/', secrets: ['cookie-opaque-7319'] },
+      { text: 'apiKey="json-opaque-7319"', secrets: ['json-opaque-7319'] },
+      {
+        text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
+        secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
+      },
+      {
+        text: 'Authorization=Bearer assignment-scheme-opaque-7319',
+        secrets: ['assignment-scheme-opaque-7319']
+      },
+      {
+        text: 'providerApiKey=compound-camel-opaque-7319',
+        secrets: ['compound-camel-opaque-7319']
+      },
+      {
+        text: 'openai_api_key=compound-lower-opaque-7319',
+        secrets: ['compound-lower-opaque-7319']
+      },
+      { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
+      { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
+      {
+        text: '--authorization Bearer cli-scheme-opaque-7319',
+        secrets: ['cli-scheme-opaque-7319']
+      },
+      {
+        text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&key=generic-key-opaque-7319&ok=1#access_token=fragment-opaque-7319',
+        secrets: [
+          'alice',
+          'password-opaque-7319',
+          'query-opaque-7319',
+          'generic-key-opaque-7319',
+          'fragment-opaque-7319'
+        ]
+      },
+      {
+        text: 'https://alice:malformed-url-opaque-7319@example.test:99999/path',
+        secrets: ['alice', 'malformed-url-opaque-7319']
+      },
+      { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
+      { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
+      { text: 'AKIA1234567890ABCDEF', secrets: ['AKIA1234567890ABCDEF'] }
+    ]
+
+    for (const { text, secrets } of examples) {
+      const line = formatLine('error', 'redaction', text, {
+        data: { cause: { message: text, stack: `Error: ${text}` } }
+      })
+      for (const secret of secrets) expect(line).not.toContain(secret)
+      expect(line).toContain('[redacted]')
+    }
+  })
+
+  it('drops content-bearing fields and unlabeled oversized text', () => {
+    const sentinel = 'opaque-body-value-7319'
+    for (const key of [
+      'body',
+      'rawBody',
+      'requestBody',
+      'response_body',
+      'payload',
+      'requestPayload',
+      'responsePayload'
+    ]) {
+      const line = formatLine('error', 'redaction', 'request failed', {
+        nested: { [key]: { research: sentinel } }
+      })
+      expect(line).not.toContain(sentinel)
+      expect(line).toContain('[redacted]')
+    }
+
+    const oversized = `${sentinel}${'x'.repeat(8192)}`
+    const line = formatLine('error', 'redaction', oversized, { detail: oversized })
+    expect(line).not.toContain(sentinel)
+    expect(line).toContain('[redacted: oversized text]')
+  })
+
+  it('preserves error classification, status, and correlation identifiers', () => {
+    const parsed = JSON.parse(
+      formatLine(
+        'error',
+        'provider',
+        'request failed',
+        {
+          errorCategory: 'request',
+          name: 'RequestError',
+          code: -32603,
+          status: 502,
+          statusCode: 503,
+          errno: -2,
+          syscall: 'connect',
+          requestId: 'req-1',
+          sessionId: 'session-1',
+          operationId: 'operation-1',
+          correlationId: 'correlation-1',
+          traceId: 'trace-1'
+        },
+        'run-1'
+      )
+    ) as Record<string, unknown>
+
+    expect(parsed).toMatchObject({
+      runId: 'run-1',
+      data: {
+        errorCategory: 'request',
+        name: 'RequestError',
+        code: -32603,
+        status: 502,
+        statusCode: 503,
+        errno: -2,
+        syscall: 'connect',
+        requestId: 'req-1',
+        sessionId: 'session-1',
+        operationId: 'operation-1',
+        correlationId: 'correlation-1',
+        traceId: 'trace-1'
+      }
+    })
+  })
+
+  it('redacts a rich provider RequestError at the persisted boundary', () => {
+    const sentinel = 'provider-opaque-value-7319'
+    const requestError = Object.assign(new Error(`request rejected: Bearer ${sentinel}`), {
+      name: 'RequestError',
+      code: -32603,
+      data: {
+        authorization: sentinel,
+        responseBody: { research: sentinel },
+        statusCode: 429,
+        requestId: 'request-7319'
+      },
+      cause: new Error(`upstream https://user:${sentinel}@example.test/v1`)
+    })
+
+    const line = formatLine('error', 'acp', 'prompt failed', {
+      sessionId: 'session-7319',
+      ...errorLogFields(requestError)
+    })
+    const parsed = JSON.parse(line) as {
+      data: { code: number; data: { statusCode: number; requestId: string }; sessionId: string }
+    }
+
+    expect(line).not.toContain(sentinel)
+    expect(parsed.data).toMatchObject({
+      code: -32603,
+      data: { statusCode: 429, requestId: 'request-7319' },
+      sessionId: 'session-7319'
+    })
+  })
+})
+
+describe('logger: redacted sinks', () => {
+  it('keeps secrets out of the console mirror and every rotated JSONL file', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-redaction-'))
+    const sentinel = 'sink-opaque-value-7319'
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      maxBytes: 240,
+      maxFiles: 3,
+      mirrorToConsole: true,
+      runId: 'redaction-run'
+    })
+    const log = createLogger('redaction')
+
+    log.warn('nested error', { error: new Error(`Bearer ${sentinel}`) })
+    for (let index = 0; index < 12; index += 1) {
+      log.warn(`Bearer ${sentinel}`, { authorization: sentinel, index })
+    }
+    await flushLogs()
+
+    const consoleOutput = JSON.stringify(consoleWarn.mock.calls)
+    expect(consoleOutput).not.toContain(sentinel)
+    expect(consoleOutput).toContain('Bearer [redacted]')
+    expect(consoleOutput).toContain('Error')
+    const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
+    expect(files.length).toBeGreaterThan(1)
+    const jsonl = (
+      await Promise.all(files.map((file) => readFile(join(logDir!, file), 'utf8')))
+    ).join('\n')
+    expect(jsonl).not.toContain(sentinel)
+    expect(jsonl).toContain('[redacted]')
+  })
+})
+
+describe('logger: process run context', () => {
+  it('adds the configured run ID to every emitted JSONL record without changing existing keys', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-run-'))
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      mirrorToConsole: false,
+      runId: 'test-run-id'
+    })
+
+    createLogger('startup').info('ready', { phase: 'ready' })
+    await flushLogs()
+
+    const record = JSON.parse(await readFile(join(logDir, 'main.log'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(record).toMatchObject({
+      level: 'info',
+      runId: 'test-run-id',
+      scope: 'startup',
+      msg: 'ready',
+      data: { phase: 'ready' }
+    })
+    expect(typeof record.t).toBe('string')
   })
 })
 
@@ -916,14 +1193,14 @@ describe('logger: errorLogFields', () => {
     expect(errorLogFields(42).error).toBe('42')
   })
 
-  it('survives the file logger nested in a context object (the {} regression it guards)', () => {
-    // A raw Error nested in a context object serializes to {} — its fields are non-enumerable.
+  it('preserves nested and explicitly expanded error diagnostics', () => {
     const raw = JSON.parse(
       formatLine('error', 'acp', 'failed', { error: new Error('x'), framework: 'claude-code' })
-    ) as { data: { error: unknown } }
-    expect(raw.data.error).toEqual({})
+    ) as { data: { error: { message: string; name: string; stack?: string } } }
+    expect(raw.data.error).toMatchObject({ message: 'x', name: 'Error' })
+    expect(typeof raw.data.error.stack).toBe('string')
 
-    // Spreading errorLogFields keeps message + stack + context visible.
+    // Spreading errorLogFields additionally keeps richer error details at the context root.
     const fixed = JSON.parse(
       formatLine('error', 'acp', 'failed', {
         ...errorLogFields(new Error('x')),
@@ -938,7 +1215,7 @@ describe('logger: errorLogFields', () => {
 })
 
 describe('logger: application shutdown diagnostics', () => {
-  it('persists every aggregate cause with the timed-out module name and budget', async () => {
+  it('persists fixed surface outcomes without aggregate error details', async () => {
     logDir = await mkdtemp(join(tmpdir(), 'os-logger-shutdown-'))
     initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
     const log = createLogger('shutdown')
@@ -948,12 +1225,12 @@ describe('logger: application shutdown diagnostics', () => {
         Promise.reject(
           new AggregateError([
             new ApplicationModuleDisposalTimeoutError('mcp-client-manager', 1000),
-            new Error('compute poller stop failed')
+            new Error('compute poller stop failed at /private/project')
           ])
         ),
       shutdownRemoteAccess: () => undefined,
-      closeWebController: () => undefined,
-      disposeWebRpc: () => undefined,
+      disposeWebController: () => undefined,
+      disposeIpcHandlers: () => undefined,
       log
     })
     await flushLogs()
@@ -961,13 +1238,37 @@ describe('logger: application shutdown diagnostics', () => {
     const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
       .trim()
       .split('\n')
-      .map((line) => JSON.parse(line) as { msg: string })
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            msg: string
+            data: { surface: string; result: string; errorCategory: string }
+          }
+      )
 
-    expect(records.map((record) => record.msg)).toEqual([
-      expect.stringContaining('mcp-client-manager'),
-      expect.stringContaining('compute poller stop failed')
+    expect(records).toEqual([
+      expect.objectContaining({
+        msg: 'application surface shutdown failed',
+        data: {
+          surface: 'application-runtime',
+          result: 'timeout',
+          errorCategory: 'object'
+        }
+      }),
+      expect.objectContaining({
+        msg: 'application surface shutdown failed',
+        data: {
+          surface: 'application-runtime',
+          result: 'failed',
+          errorCategory: 'error'
+        }
+      })
     ])
-    expect(records[0].msg).toContain('1000ms')
+    const json = JSON.stringify(records)
+    expect(json).not.toContain('mcp-client-manager')
+    expect(json).not.toContain('1000ms')
+    expect(json).not.toContain('compute poller stop failed')
+    expect(json).not.toContain('/private/project')
   })
 })
 

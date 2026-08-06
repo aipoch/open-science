@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsPage } from './SettingsPage'
-import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -695,8 +697,10 @@ describe('SettingsPage layout', () => {
       }))
     )
 
+    const onClose = vi.fn()
+    const settingsRef = createRef<SettingsPageHandle>()
     await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
+      root.render(<SettingsPage ref={settingsRef} open onClose={onClose} />)
     })
     const nav = document.body.querySelector<HTMLElement>('nav[aria-label="Settings"]')
     expect(nav?.getAttribute('aria-hidden')).toBe('true')
@@ -721,6 +725,25 @@ describe('SettingsPage layout', () => {
         heading.textContent?.includes('General')
       )
     ).toBe(true)
+
+    await act(async () => navButton('Model')?.click())
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
+    await act(async () => {
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Open settings navigation"]')
+        ?.click()
+    })
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(nav?.getAttribute('aria-hidden')).toBe('true')
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
@@ -764,6 +787,86 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('closes a nested dialog, then a breadcrumb, then Settings with the close-pane shortcut', () => {
+    const onClose = vi.fn()
+    const settingsRef = createRef<SettingsPageHandle>()
+    act(() => {
+      root.render(<SettingsPage ref={settingsRef} open onClose={onClose} />)
+    })
+
+    const addProvider = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Add provider')
+    act(() => addProvider?.click())
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+
+    act(() => {
+      root.render(
+        <>
+          <SettingsPage ref={settingsRef} open onClose={onClose} />
+          <Dialog.Root defaultOpen>
+            <Dialog.Portal>
+              <Dialog.Content>
+                <Dialog.Title>Nested Settings dialog</Dialog.Title>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+        </>
+      )
+    })
+    expect(document.body.textContent).toContain('Nested Settings dialog')
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(document.body.textContent).not.toContain('Nested Settings dialog')
+    expect(document.body.querySelector('[aria-label="Provider type"]')).not.toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+
+    const inlineDialog = document.createElement('div')
+    inlineDialog.setAttribute('role', 'dialog')
+    inlineDialog.setAttribute('aria-modal', 'true')
+    document.body.appendChild(inlineDialog)
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    inlineDialog.remove()
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
+      true
+    )
+    expect(onClose).not.toHaveBeenCalled()
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('dispatches the close-pane Escape to an active link-safety dialog', () => {
+    const settingsRef = createRef<SettingsPageHandle>()
+    const onLinkClose = vi.fn()
+    act(() => {
+      root.render(
+        <>
+          <SettingsPage ref={settingsRef} open onClose={vi.fn()} />
+          <LinkSafetyModal
+            url="https://example.com/paper"
+            isOpen
+            onClose={onLinkClose}
+            onConfirm={vi.fn()}
+          />
+        </>
+      )
+    })
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+
+    expect(onLinkClose).toHaveBeenCalledOnce()
   })
 
   it('defaults the Add provider type to the framework vendor (Codex → OpenAI, OpenCode → DeepSeek)', async () => {
@@ -1614,8 +1717,9 @@ describe('SettingsPage layout', () => {
     // A skill mention sets the pending id before the dialog opens.
     useSettingsStore.setState({ pendingSkillId: 'alpha' })
 
+    const settingsRef = createRef<SettingsPageHandle>()
     await act(async () => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
+      root.render(<SettingsPage ref={settingsRef} open onClose={vi.fn()} />)
     })
     // Flush the seeding effect, the skills-list load, and the skill-detail fetch.
     await act(async () => {
@@ -1631,6 +1735,14 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
     // The pending id is consumed so a later normal open won't jump back to it.
     expect(useSettingsStore.getState().pendingSkillId).toBeUndefined()
+
+    act(() => {
+      expect(settingsRef.current?.closeActivePane()).toBe(true)
+    })
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')?.disabled).toBe(
+      true
+    )
   })
 
   it('opens directly on a requested settings panel and consumes the target', async () => {

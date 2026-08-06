@@ -169,7 +169,7 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
   })
 
-  it('keeps actions left of the user bubble while the sent time stays in its own footer', async () => {
+  it('keeps hover actions left of the bubble and Branch navigation in its footer', async () => {
     await renderItem(createMessage(), {
       canEditMessage: true,
       revisionNavigation: { index: 1, total: 3 }
@@ -179,10 +179,13 @@ describe('WorkspaceMessageItem user message actions', () => {
     const bubble = bubbleRow?.querySelector('[data-slot="user-message-bubble"]')
     const actions = bubbleRow?.querySelector('[data-slot="user-message-actions"]')
     const footer = container.querySelector('[data-slot="user-message-footer"]')
+    const revisionNavigation = footer?.querySelector(
+      '[data-slot="user-message-revision-navigation"]'
+    )
     const sentTime = footer?.querySelector('time')
 
-    if (!bubbleRow || !bubble || !actions || !footer) {
-      throw new Error('user bubble layout, actions, or footer not found')
+    if (!bubbleRow || !bubble || !actions || !footer || !revisionNavigation || !sentTime) {
+      throw new Error('user bubble layout, actions, footer, time, or revision navigation not found')
     }
     expect(actions.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
@@ -190,13 +193,19 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(bubbleRow.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
-    expect(sentTime?.textContent).toMatch(/^Sent /)
-    expect(sentTime?.textContent).toMatch(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/)
-    expect(sentTime?.getAttribute('datetime')).toBe('2024-03-09T16:00:00.000Z')
+    expect(sentTime.textContent).toMatch(/^Sent /)
+    expect(sentTime.textContent).toMatch(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/)
+    expect(sentTime.getAttribute('datetime')).toBe('2024-03-09T16:00:00.000Z')
     expect(footer.classList.contains('text-text-000/70')).toBe(true)
     expect(footer.classList.contains('text-text-300')).toBe(false)
-    expect(footer.querySelector('[aria-label="Message revision"]')).toBeNull()
-    expect(actions.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/3')
+    expect(footer.classList.contains('w-full')).toBe(true)
+    expect(footer.classList.contains('flex-wrap')).toBe(true)
+    expect(footer.querySelector('[aria-label="Message revision"]')?.textContent).toBe('2/3')
+    expect(footer.querySelector('[data-slot="user-message-revision-icon"]')).not.toBeNull()
+    expect(actions.querySelector('[aria-label="Message revision"]')).toBeNull()
+    expect(
+      sentTime.compareDocumentPosition(revisionNavigation) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     const copyButton = actions.querySelector('[aria-label="Copy message"]')
     expect(copyButton?.getAttribute('data-state')).toBe('closed')
     expect(copyButton?.classList.contains('focus-visible:ring-[3px]')).toBe(true)
@@ -210,6 +219,17 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     expect(container.textContent).toContain('Prompt text')
     expect(container.querySelector('[data-slot="user-message-footer"]')).toBeNull()
+  })
+
+  it('keeps Branch navigation available when a persisted sent time is invalid', async () => {
+    await renderItem(createMessage({ createdAt: Number.MAX_VALUE }), {
+      canEditMessage: true,
+      revisionNavigation: { index: 0, total: 2, onNext: noop }
+    })
+
+    const footer = container.querySelector('[data-slot="user-message-footer"]')
+    expect(footer?.querySelector('time')).toBeNull()
+    expect(footer?.querySelector('[aria-label="Message revision"]')?.textContent).toBe('1/2')
   })
 
   it('hides copy and edit actions on an immutable message surface', async () => {

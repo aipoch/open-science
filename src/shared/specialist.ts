@@ -7,8 +7,16 @@ export const SPECIALIST_IPC = {
   CREATE: 'specialist:create',
   UPDATE: 'specialist:update',
   SET_ENABLED: 'specialist:set-enabled',
+  PREVIEW_DELETE: 'specialist:delete-preview',
   DELETE: 'specialist:delete',
   DUPLICATE: 'specialist:duplicate',
+  EXPORT_CONTRIBUTION_TEMPLATE: 'specialist:export-contribution-template',
+  SELECT_PACKAGE: 'specialist:package-select',
+  INSTALL_PACKAGE: 'specialist:package-install',
+  CANCEL_PACKAGE: 'specialist:package-cancel',
+  SAVE_PACKAGE_REPORT: 'specialist:package-report-save',
+  PREVIEW_EXPORT: 'specialist:export-preview',
+  EXPORT: 'specialist:export-save',
   CATALOG_CHANGED: 'specialist:catalog-changed',
   // Session switching (issue 07): per-session mutable binding.
   SET_SESSION_SPECIALIST: 'specialist:set-session-specialist',
@@ -196,10 +204,24 @@ export type SpecialistProfileView = {
   iconKey?: string
   colorKey?: string
   enabled: boolean
+  // Imported Specialists remain non-runnable until their first editor save completes setup.
+  setupPending?: boolean
   capabilityMode: SpecialistCapabilityMode
   fullAccess: SpecialistFullAccessConfig
   selectedCapabilities: SpecialistSelectedConfig
   revision: number
+  packageVersion?: string
+  origin?: 'local' | 'imported'
+  // Derived from the current portable profile and importBaseline; never persisted.
+  modifiedSinceImport?: boolean
+  ownedSkillIds?: string[]
+  importBaseline?: {
+    importedAt: string
+    archiveDigest: string
+    contentDigest: string
+    packageContentDigest?: string
+    packageVersion?: string
+  }
 }
 
 // The built-in Reviewer entry shown in the list (read-only, never a real profile).
@@ -208,8 +230,16 @@ export type ReviewerEntry = {
   id: 'reviewer'
 }
 
-// Union for the list — either a real profile or the reviewer placeholder.
-export type SpecialistListItem = ({ kind: 'custom' } & SpecialistProfileView) | ReviewerEntry
+export type BuiltinSpecialistEntry = {
+  kind: 'builtin'
+  readonly: true
+  version: string
+} & SpecialistProfileView
+
+// Exhaustive Settings/runtime catalog discriminant. Reviewer remains a placeholder, never a
+// runnable profile.
+export type SpecialistListItem =
+  ({ kind: 'custom' } & SpecialistProfileView) | BuiltinSpecialistEntry | ReviewerEntry
 
 // Resolution of a session's specialist binding at send time (requires SpecialistProfileView above).
 // 'main'        — no binding, main agent is used.
@@ -240,6 +270,7 @@ export type CreateSpecialistInput = {
 export type UpdateSpecialistInput = {
   id: string
   revision: number
+  packageVersion?: string
   name?: string
   displayName?: string
   description?: string
@@ -247,6 +278,9 @@ export type UpdateSpecialistInput = {
   iconKey?: string
   colorKey?: string
   enabled?: boolean
+  // Narrow import lifecycle operation. When true for a pending Specialist, the submitted editor
+  // fields and capabilities are committed atomically with setup completion and enablement.
+  completeSetup?: true
   capabilityMode?: SpecialistCapabilityMode
   fullAccess?: SpecialistFullAccessConfig
   selectedCapabilities?: SpecialistSelectedConfig
@@ -266,7 +300,7 @@ export type DuplicateSpecialistRequest = { id: string }
 
 // Validation error for a single field.
 export type SpecialistFieldError = {
-  field: 'name' | 'description' | 'systemPrompt'
+  field: 'name' | 'description' | 'systemPrompt' | 'packageVersion'
   message: string
 }
 
@@ -280,6 +314,12 @@ export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
 export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
+
+const SEMVER_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+
+export const validateSpecialistPackageVersion = (version: string): string | undefined =>
+  SEMVER_PATTERN.test(version) ? undefined : 'Package version must be valid SemVer.'
 
 // ---------------------------------------------------------------------------
 // Name validation
@@ -394,6 +434,13 @@ export const validateUpdateSpecialistInput = (
   existingIds?: Map<string, string>
 ): SpecialistFieldError[] => {
   const errors: SpecialistFieldError[] = []
+
+  if (input.packageVersion !== undefined) {
+    const packageVersionError = validateSpecialistPackageVersion(input.packageVersion)
+    if (packageVersionError) {
+      errors.push({ field: 'packageVersion', message: packageVersionError })
+    }
+  }
 
   if (input.name !== undefined) {
     const nameError = validateSpecialistName(input.name, existingNames, input.id, existingIds)

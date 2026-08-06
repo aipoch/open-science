@@ -37,6 +37,10 @@ import type {
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
+  MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
+  type ResolveArtifactVersionDescriptorsRequest
+} from '../../shared/artifacts'
+import {
   ArtifactCompatibilityScanIncompleteError,
   ArtifactRepository,
   type PendingArtifactRunPublication
@@ -147,6 +151,7 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
   filename: string
   content: string
   contentType?: string
+  kind?: 'plan'
 }
 
 type PersistedVersionFileRecord = {
@@ -1380,7 +1385,7 @@ class ArtifactProvenanceRepository {
   async writeAppGeneratedVersion(
     request: WriteAppGeneratedArtifactVersionRequest
   ): Promise<ArtifactVersionFile> {
-    const { content, ...versionRequest } = request
+    const { content, kind, ...versionRequest } = request
     const writeOperationId = `artifact-app-write-${this.createId()}`
 
     return this.compatibilityRepository.withPendingFileTransaction(
@@ -1390,6 +1395,7 @@ class ArtifactProvenanceRepository {
         runId: request.artifactRunId,
         filename: request.filename,
         mimeType: request.contentType,
+        kind,
         source: { kind: 'inline', content, encoding: 'utf8' }
       },
       {},
@@ -1406,7 +1412,7 @@ class ArtifactProvenanceRepository {
           })
         )
 
-        return this.createVersionWithOptions(
+        const version = await this.createVersionWithOptions(
           {
             ...versionRequest,
             writeOperationId,
@@ -1426,6 +1432,7 @@ class ArtifactProvenanceRepository {
               resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
             )
         )
+        return version
       }
     )
   }
@@ -1584,11 +1591,17 @@ class ArtifactProvenanceRepository {
       sessionId: artifactStorageSessionId,
       runId: artifactRunId
     })
-    const pendingFile = pendingFiles.find(
+    const matchingPendingFiles = pendingFiles.filter(
       (file) => normalizeFilename(file.name) === normalizedFilename
     )
+    const pendingFile =
+      matchingPendingFiles.find((file) => file.name === request.filename) ??
+      (matchingPendingFiles.length === 1 ? matchingPendingFiles[0] : undefined)
 
     if (!pendingFile) {
+      if (matchingPendingFiles.length > 1) {
+        throw new Error(`Pending artifact filename is ambiguous: ${request.filename}`)
+      }
       throw new Error(`Pending artifact file not found: ${request.filename}`)
     }
 
@@ -3574,6 +3587,56 @@ class ArtifactProvenanceRepository {
       messages,
       review
     }
+  }
+
+  // Resolves the stable Version ids embedded in copied historical messages. This intentionally
+  // returns only relocatable metadata: preview/open paths remain main-process capabilities.
+  async resolveVersionDescriptors(
+    request: ResolveArtifactVersionDescriptorsRequest
+  ): Promise<ArtifactVersionDescriptor[]> {
+    if (!Array.isArray(request.versionIds)) {
+      throw new Error('Artifact Version ids must be an array.')
+    }
+    if (request.versionIds.length > MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS) {
+      throw new Error(
+        `At most ${MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS} Artifact Version ids may be resolved at once.`
+      )
+    }
+
+    const versionIds = [...new Set(request.versionIds)].map((versionId) =>
+      assertSafeSegment(versionId, 'artifact version id')
+    )
+    if (versionIds.length === 0) return []
+
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
+    if (!this.options.loadSession) {
+      throw new Error('Session ownership authority is unavailable.')
+    }
+    const session = await this.options.loadSession(projectId, appSessionId)
+    if (!session || session.id !== appSessionId || session.projectId !== projectId) {
+      throw new Error('Session does not belong to the requested Project.')
+    }
+
+    const client = await this.options.getClient()
+    const versions = await client.artifactVersion.findMany({
+      where: {
+        id: { in: versionIds },
+        state: 'finalized',
+        artifact: { is: { projectId } }
+      },
+      include: { artifact: true }
+    })
+    const versionsById = new Map(versions.map((version) => [version.id, version]))
+
+    return Promise.all(
+      versionIds.flatMap((versionId) => {
+        const version = versionsById.get(versionId)
+        return version
+          ? [this.toDescriptor(version, version.artifact.projectId, version.artifact.sessionId)]
+          : []
+      })
+    )
   }
 
   async getVersionCore(

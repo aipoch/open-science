@@ -418,7 +418,8 @@ describe('ConnectorService', () => {
           customMcpServers: [
             {
               id: 'srv-1',
-              name: 'myserver',
+              slug: 'example-oauth-e2e',
+              name: 'Example OAuth E2E',
               transport: 'stdio',
               command: 'npx',
               args: ['-y', '@example/server'],
@@ -429,12 +430,12 @@ describe('ConnectorService', () => {
         }),
         resolveApiKey: () => undefined
       })
-      const out = await svc.call('myserver', 'do_thing', { x: 1 }, internal)
+      const out = await svc.call('example-oauth-e2e', 'do_thing', { x: 1 }, internal)
       expect(out).toEqual({ ok: true })
       expect(call).toHaveBeenCalledWith(
         {
           id: 'srv-1',
-          name: 'myserver',
+          name: 'Example OAuth E2E',
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],
@@ -445,6 +446,67 @@ describe('ConnectorService', () => {
         'do_thing',
         { x: 1 }
       )
+    })
+
+    it('fails closed when a legacy custom route collides with a bundled connector', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-reserved',
+              name: 'Chemistry!',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('Chemistry!', 'do_thing', {}, internal)).rejects.toThrow(/unavailable/)
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('fails closed when legacy custom Connectors derive the same route', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-duplicate-a',
+              name: 'Duplicate MCP',
+              transport: 'stdio',
+              command: 'first-command',
+              enabled: true
+            },
+            {
+              id: 'srv-duplicate-b',
+              name: 'Duplicate-MCP!',
+              transport: 'stdio',
+              command: 'second-command',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('duplicate-mcp', 'do_thing', {}, internal)).rejects.toThrow(
+        /unavailable/
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
     })
 
     it('does not discover or dispatch a custom server blocked while approval is pending', async () => {
@@ -902,6 +964,118 @@ describe('ConnectorService', () => {
         })
     })
 
+    it('does not contact an OAuth connector before it has tokens', async () => {
+      const call = vi.fn()
+      const mcpClientManager = manager(call)
+      const svc = new ConnectorService({
+        mcpClientManager,
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'oauth-1',
+              name: 'oauth-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              oauth: {},
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      expect(mcpClientManager.listTools).not.toHaveBeenCalled()
+      expect(call).not.toHaveBeenCalled()
+    })
+
+    it('recovers from a cached authentication failure after successful sign-in', async () => {
+      const call = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('401 Unauthorized'))
+        .mockResolvedValueOnce({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'secured-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unauthenticated'
+      )
+      expect(call).toHaveBeenCalledOnce()
+
+      svc.clearCustomServerFailure('srv-1')
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).resolves.toEqual({
+        ok: true
+      })
+      expect(call).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not restore a cached failure from a request started before sign-in', async () => {
+      let rejectStaleList: ((error: Error) => void) | undefined
+      const listTools = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<Array<{ name: string }>>((_, reject) => {
+              rejectStaleList = reject
+            })
+        )
+        .mockResolvedValue([{ name: 'lookup' }])
+      const call = vi.fn().mockResolvedValue({ ok: true })
+      const svc = new ConnectorService({
+        mcpClientManager: { listTools, call },
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'secured-server',
+              transport: 'streamable_http',
+              url: 'https://mcp.example.test',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined
+      })
+
+      const staleCall = svc.call('secured-server', 'lookup', {}, internal)
+      await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce())
+
+      svc.clearCustomServerFailure('srv-1')
+      rejectStaleList?.(new Error('401 Unauthorized'))
+      await expect(staleCall).rejects.toThrow('connector_unauthenticated')
+
+      await expect(svc.call('secured-server', 'lookup', {}, internal)).resolves.toEqual({
+        ok: true
+      })
+      expect(listTools).toHaveBeenCalledTimes(2)
+      expect(call).toHaveBeenCalledOnce()
+    })
+
     it('resolves remembered grants by immutable custom server id after a rename', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const requestApproval = vi.fn().mockResolvedValue('once')
@@ -1061,6 +1235,58 @@ describe('ConnectorService specialist capability gate', () => {
       )
     ).rejects.toThrow('specialist_capability_denied')
     expect(localHandler).toHaveBeenCalledTimes(3)
+  })
+
+  it('accepts a legacy custom Connector UUID as a Specialist capability alias', async () => {
+    const call = vi.fn().mockResolvedValue({ ok: true })
+    const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
+    let current = specialist({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['custom-server-uuid'],
+        connectorTools: []
+      }
+    })
+    const svc = new ConnectorService({
+      mcpClientManager: { call, listTools },
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        customMcpServers: [
+          {
+            id: 'custom-server-uuid',
+            slug: 'public-route',
+            name: 'Public Route',
+            transport: 'stdio',
+            command: 'npx',
+            enabled: true
+          }
+        ]
+      }),
+      resolveApiKey: () => undefined,
+      resolveSpecialistProfile: async () => current
+    })
+    const context = {
+      origin: 'agent' as const,
+      sessionId: 'legacy-specialist-session',
+      specialistId: current.id
+    }
+
+    await expect(svc.call('public-route', 'do_thing', {}, context)).resolves.toEqual({ ok: true })
+
+    current = specialist({
+      capabilityMode: 'full',
+      fullAccess: {
+        excludedSkillIds: [],
+        excludedConnectorIds: ['custom-server-uuid'],
+        connectorTools: []
+      }
+    })
+    await expect(svc.call('public-route', 'do_thing', {}, context)).rejects.toThrow(
+      'specialist_capability_denied'
+    )
+    expect(call).toHaveBeenCalledOnce()
   })
 
   it('fails closed for missing agent session/profile/connector without exposing call data', async () => {

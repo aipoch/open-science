@@ -12,6 +12,7 @@ vi.mock('electron', () => ({
 }))
 
 const { registerGithubIpcHandlers } = await import('./github-ipc')
+type GithubCommandOwner = import('./github-ipc').GithubCommandOwner
 
 const invoke = (channel: string): unknown => handlers.get(channel)!(undefined, undefined)
 
@@ -19,6 +20,14 @@ const jsonResponse = (body: unknown, ok = true): Response =>
   ({ ok, json: () => Promise.resolve(body) }) as unknown as Response
 
 describe('github IPC handler', () => {
+  it('delegates to an injected owner instance', async () => {
+    handlers.clear()
+    const owner: GithubCommandOwner = { getStars: vi.fn().mockResolvedValue(99) }
+
+    expect(registerGithubIpcHandlers({}, owner)).toBe(owner)
+    await expect(invoke('github:get-stars')).resolves.toBe(99)
+  })
+
   it('registers the get-stars channel', () => {
     handlers.clear()
     registerGithubIpcHandlers({ fetch: vi.fn() })

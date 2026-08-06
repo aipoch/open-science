@@ -8,7 +8,7 @@ import {
   type UpsertProviderRequest
 } from '../../../shared/settings'
 import type { ResolvedReasoningEffort } from '../../../shared/reasoning-effort'
-import type { AgentFrameworkId } from '../../agent-framework'
+import type { AgentFrameworkId, AgentModelChangeTarget } from '../../agent-framework'
 import type { SettingsService } from '../service'
 
 type RuntimeSettingsWorkflowStore = Pick<
@@ -23,6 +23,7 @@ type RuntimeSettingsWorkflowStore = Pick<
   | 'setAgentFramework'
   | 'setReasoningEffort'
   | 'resolveActiveReasoningEffort'
+  | 'resolveActiveModelChangeTarget'
   | 'loginClaudeShared'
   | 'logoutClaudeShared'
   | 'loginIsolatedClaude'
@@ -36,6 +37,7 @@ type RuntimeSettingsWorkflowEffects = {
   requestProviderReconnect: () => void
   requestAgentFrameworkSwitch: () => void
   applyReasoningEffort: (effort: ResolvedReasoningEffort) => Promise<boolean>
+  applyModelChange: (target: AgentModelChangeTarget) => Promise<boolean>
 }
 
 type RuntimeUninstallMethod = 'uninstallClaude' | 'uninstallOpencode' | 'uninstallCodex'
@@ -97,8 +99,18 @@ class RuntimeSettingsWorkflows {
   async setActiveProvider(
     request: SetActiveProviderRequest
   ): Promise<Awaited<ReturnType<RuntimeSettingsWorkflowStore['setActiveProvider']>>> {
+    const before = await this.settings.getSettingsView()
     const snapshot = await this.settings.setActiveProvider(request.id, request.model)
-    this.effects.requestProviderReconnect()
+    if (
+      before.activeProviderId === snapshot.activeProviderId &&
+      before.activeModel === snapshot.activeModel
+    ) {
+      return snapshot
+    }
+
+    const target = await this.settings.resolveActiveModelChangeTarget()
+    const appliedLive = target ? await this.effects.applyModelChange(target) : false
+    if (!appliedLive) this.effects.requestProviderReconnect()
     return snapshot
   }
 

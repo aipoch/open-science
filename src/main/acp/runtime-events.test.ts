@@ -29,6 +29,37 @@ describe('ACP runtime event normalization', () => {
     })
   })
 
+  it('rewrites Claude Code policy attribution only for assistant messages', () => {
+    const text =
+      'API Error: Claude Code is unable to respond to this request, which appears to violate our Usage Policy (https://www.anthropic.com/legal/aup). Try rephrasing the request in a new session or change your model.'
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text }
+      }
+    }
+
+    expect(toAcpRuntimeEvent(notification, 'event-refusal', 1710000000000, true).text).toBe(
+      'The selected model declined to complete this response under its safety policy. Try rephrasing the request in a new session or change your model.'
+    )
+    expect(toAcpRuntimeEvent(notification, 'event-other-agent', 1710000000000).text).toBe(text)
+    expect(
+      toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'user_message_chunk',
+            content: { type: 'text', text }
+          }
+        },
+        'event-user-refusal',
+        1710000000000,
+        true
+      ).text
+    ).toBe(text)
+  })
+
   it('preserves bounded assistant image chunks through the runtime fallback transport', () => {
     const notification: SessionNotification = {
       sessionId: 'session-1',

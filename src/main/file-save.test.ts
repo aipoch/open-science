@@ -299,6 +299,40 @@ describe('file save IPC handlers', () => {
     })
   })
 
+  it('accepts a local source and saves through the same managed pipeline', async () => {
+    const resolveManagedFilePath = vi.fn().mockResolvedValue('/Users/example/logs/proxy.log')
+    const copyTo = vi.fn().mockResolvedValue(undefined)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFile = vi.fn().mockResolvedValue({ copyTo, close })
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: join(downloadsPath, 'proxy.log')
+    })
+    registerFileSaveHandlers({
+      resolveManagedFilePath,
+      openManagedFile
+    })
+
+    const result = await handlers.get('file:save-managed')!(
+      { sender: {} },
+      {
+        source: 'local',
+        path: '/Users/example/logs/proxy.log',
+        suggestedName: 'proxy.log'
+      }
+    )
+
+    expect(resolveManagedFilePath).toHaveBeenCalledWith('local', {
+      path: '/Users/example/logs/proxy.log'
+    })
+    expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'proxy.log'))
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({
+      saved: true,
+      filePath: join(downloadsPath, 'proxy.log')
+    })
+  })
+
   it('copies the original pending file identity after it is finalized during Save As', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/.pending/report.csv')
     const copyTo = vi.fn().mockResolvedValue(undefined)

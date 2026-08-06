@@ -77,6 +77,7 @@ export type WritePendingArtifactFileRequest = {
   runId: string
   filename: string
   mimeType?: string
+  kind?: 'plan'
   source: ArtifactWriteSource
 }
 
@@ -154,6 +155,19 @@ export type ListMessageArtifactsRequest = {
 // can surface files whose owning session was deleted (the project name matches the durable project id).
 export type ListProjectArtifactsRequest = {
   projectName: string
+}
+
+// A copied conversation stores native generated-file Version ids in its messages, not paths or a
+// second file-library entry. Keep this query small because it is issued while historical messages
+// mount in the renderer.
+export const MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS = 100
+
+// Renderer input for resolving immutable native Artifact Versions referenced by one visible Session.
+// Main validates the Session's persisted project ownership before applying this project scope.
+export type ResolveArtifactVersionDescriptorsRequest = {
+  projectId: string
+  appSessionId: string
+  versionIds: string[]
 }
 
 // Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still

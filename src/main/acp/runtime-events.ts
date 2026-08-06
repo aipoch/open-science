@@ -2,6 +2,7 @@ import type { ContentBlock, SessionNotification, ToolCallContent } from '@agentc
 
 import {
   ACP_MESSAGE_IMAGE_EVENT_TEXT,
+  normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpRuntimeEvent
 } from '../../shared/acp'
@@ -119,9 +120,15 @@ const contentToText = (content: ContentBlock): string => {
 // Image notifications can carry megabytes of base64. Keep only bounded display data on the event;
 // the internal text sentinel lets the existing runtime projection forward image-only messages.
 const normalizeMessageContent = (
-  content: ContentBlock
+  content: ContentBlock,
+  normalizeClaudeCodeRefusal = false
 ): Pick<AcpRuntimeEvent, 'text' | 'image'> => {
-  if (content.type !== 'image') return { text: contentToText(content) }
+  if (content.type !== 'image') {
+    const text = contentToText(content)
+    return {
+      text: normalizeClaudeCodeRefusal ? normalizeClaudeCodeRefusalText(text) : text
+    }
+  }
 
   const image = sanitizeAcpMessageImage(content)
 
@@ -230,7 +237,8 @@ const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEve
 const toAcpRuntimeEvent = (
   notification: SessionNotification,
   id: string,
-  timestamp = Date.now()
+  timestamp = Date.now(),
+  normalizeClaudeCodeRefusal = false
 ): AcpRuntimeEvent => {
   const { sessionId, update } = notification
   const base = {
@@ -244,7 +252,7 @@ const toAcpRuntimeEvent = (
   // Group protocol update variants into the small set of event kinds the UI renders.
   switch (update.sessionUpdate) {
     case 'agent_message_chunk': {
-      const messageContent = normalizeMessageContent(update.content)
+      const messageContent = normalizeMessageContent(update.content, normalizeClaudeCodeRefusal)
 
       return {
         ...base,

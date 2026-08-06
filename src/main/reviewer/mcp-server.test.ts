@@ -5,6 +5,8 @@
 // v2 (issue 12): submit_findings accepts checks[] (status pass|warn|fail) not findings[]+severity.
 // summary is no longer accepted (strict schema). Pass checks may omit their locator.
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, it, expect, vi } from 'vitest'
 
 import {
@@ -13,6 +15,7 @@ import {
   validateReviewerEvidenceAccess,
   ReviewerMcpServer
 } from './mcp-server'
+import { createReviewerMcpStdioProxy } from './mcp-stdio-proxy'
 import type { TurnScope } from '../../shared/reviewer'
 import type { ArtifactContent, ExecRecord, OrderedBlock, ReviewerHostServer } from './host-sdk'
 
@@ -896,6 +899,60 @@ describe('ReviewerMcpServer HTTP transport', () => {
     expect(parsed.success).toBe(false)
     if (!parsed.success) {
       expect(parsed.error.message).toMatch(/unrecognized_keys|Unrecognized key/i)
+    }
+  })
+})
+
+describe('ReviewerMcpServer named-pipe proxy', () => {
+  it('lists and calls the existing scoped tools through stdio without loopback TCP', async () => {
+    const evidence = createReviewerEvidence()
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence, [], {
+      command: 'C:\\Open Science.exe',
+      entryPath: 'C:\\app\\main.js',
+      transport: 'pipe'
+    })
+    await server.start()
+
+    const config = server.toAcpMcpServerConfig()
+    if ('type' in config) throw new Error('Expected Reviewer stdio proxy config.')
+    const environment = Object.fromEntries(
+      (config.env ?? []).map((entry) => [entry.name, entry.value])
+    )
+    expect(config.args).toEqual(['C:\\app\\main.js', '--open-science-reviewer-mcp-proxy'])
+
+    const proxy = await createReviewerMcpStdioProxy({
+      socketPath: environment.OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH!,
+      token: environment.OPEN_SCIENCE_REVIEWER_MCP_TOKEN!
+    })
+    const client = new Client({ name: 'reviewer-proxy-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+
+    try {
+      await Promise.all([proxy.connect(serverTransport), client.connect(clientTransport)])
+      const tools = await client.listTools()
+      expect(tools.tools.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining([
+          'read_turn',
+          'query_execution_log',
+          'read_artifact',
+          'submit_findings'
+        ])
+      )
+
+      const turn = await client.callTool({ name: 'read_turn', arguments: {} })
+      expect(turn.content).toEqual([
+        expect.objectContaining({ type: 'text', text: expect.stringContaining('42 results') })
+      ])
+      await client.callTool({
+        name: 'submit_findings',
+        arguments: { checks: [passingCheck] }
+      })
+      expect(onSubmit).toHaveBeenCalledOnce()
+    } finally {
+      await client.close()
+      await proxy.close()
+      await server.stop()
     }
   })
 })

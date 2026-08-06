@@ -7,9 +7,11 @@ import type {
 } from '@agentclientprotocol/sdk'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
+  normalizeClaudeCodeRefusalText,
   sanitizeAcpMessageImage,
   type AcpContextUsage,
   type AcpMessageImage,
@@ -23,6 +25,7 @@ import {
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
   sanitizeMessageImages,
+  sanitizePlanHistoryProjections,
   sanitizeToolActivity,
   sanitizeActivityGroup,
   type MessagePart,
@@ -87,6 +90,8 @@ export type ChatSession = Omit<
   permissionProfile?: PermissionProfileId
   messages: ChatMessage[]
   activities?: ToolActivity[]
+  activePlanProjection?: ActivePlanProjection
+  planHistoryProjections?: ActivePlanProjection[]
   isPending?: boolean
   // Transient: set at hydration when a session was interrupted by an app restart, so the UI can
   // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
@@ -121,6 +126,9 @@ export type ChatSession = Omit<
   // Transient: terminal graph synchronization failed, so the in-memory run is settled as an explicit
   // error while persistence keeps the last valid durable graph. Restarting restores that safe copy.
   conversationGraphSyncBlocked?: boolean
+  // Transient: identifies the unsent current prompt of a branched pending Session. A creation retry
+  // replaces this prompt and rebuilds its copied history replay instead of appending a duplicate turn.
+  pendingContextReplayMessageId?: string
 }
 
 type SessionStoreData = {
@@ -156,6 +164,21 @@ type AppendPendingUserMessageInput = {
   agentModel?: string
   // Immutable Specialist UUID forwarded from the new-conversation draft picker.
   specialistId?: string
+}
+
+// Starts a fresh pending Session from the selected source's visible active path. Runtime settings
+// may be supplied by the normal-send path; omitted values retain the source Session's setting.
+export type BranchInNewSessionInput = {
+  sourceSessionId: string
+  content: string
+  attachments?: PersistedUploadedAttachment[]
+  parts?: MessagePart[]
+  permissionProfile?: PermissionProfileId
+  agentFrameworkId?: PersistedChatSession['agentFrameworkId']
+  agentBackendId?: PersistedChatSession['agentBackendId']
+  agentModel?: string
+  // `undefined` inherits the source binding; `null` deliberately chooses the Main Agent.
+  specialistId?: string | null
 }
 
 type BindPendingSessionInput = {
@@ -225,6 +248,15 @@ type AppendMessageResult = {
   messageId: string
 }
 
+type AppendRoutedUserMessageInput = {
+  sessionId: string
+  messageId: string
+  eventId: string
+  content: string
+  createdAt: number
+  responseToMessageId?: string
+}
+
 export type SessionHydrationSelection = {
   sessionId: string | undefined
 }
@@ -233,10 +265,13 @@ type SessionStore = SessionStoreData & {
   selectSession: (sessionId: string) => void
   clearSelection: () => void
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
+  appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
   appendPendingUserMessage: (
     input: AppendPendingUserMessageInput
   ) => AppendMessageResult | undefined
+  branchInNewSession: (input: BranchInNewSessionInput) => AppendMessageResult | undefined
   bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
+  clearPendingContextReplay: (sessionId: string, messageId: string) => void
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
   setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
@@ -280,6 +315,7 @@ type SessionStore = SessionStoreData & {
   markSpecialistSwitchResetRequired: (sessionId: string) => void
   clearSpecialistSwitchResetRequired: (sessionId: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
+  setActivePlanProjection: (sessionId: string, projection: ActivePlanProjection) => void
   beginActivityGroup: (
     sessionId: string,
     groupId: string,
@@ -354,6 +390,10 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     specialistSwitchResetRequired,
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
+    pendingContextReplayMessageId,
+    activePlanProjection,
+    planHistoryProjections,
+    runtimeContext,
     messages,
     ...persistedSession
   } = session
@@ -369,6 +409,11 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void specialistSwitchResetRequired
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
+  void pendingContextReplayMessageId
+  void activePlanProjection
+  void runtimeContext
+
+  const persistedPlanHistory = sanitizePlanHistoryProjections(planHistoryProjections)
 
   // Persist a bounded projection of tool activities so the transcript survives restarts.
   const persistedActivities = activities
@@ -381,6 +426,7 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   return materializeSessionConversationGraph({
     ...persistedSession,
     messages: messages.map(stripTransientMessageState),
+    ...(persistedPlanHistory ? { planHistoryProjections: persistedPlanHistory } : {}),
     ...(persistedActivities && persistedActivities.length > 0
       ? { activities: persistedActivities }
       : {}),
@@ -408,6 +454,27 @@ const hydrateSession = (session: PersistedChatSession): ChatSession => ({
   interrupted: session.error === INTERRUPTED_SESSION_ERROR ? true : undefined
 })
 
+// The main process owns Plan authority while the renderer keeps a read-only projection for the UI.
+// A lifecycle save can arrive after the ACP Plan event that populated this projection, so retain it
+// only when the durable authority identifies the exact same Plan revision. A newer or missing Plan
+// must invalidate the old projection and let the workspace read the authoritative state again.
+const matchesPersistedPlanProjection = (
+  projection: ActivePlanProjection | undefined,
+  session: PersistedChatSession
+): projection is ActivePlanProjection => {
+  const runtimeContext = session.runtimeContext
+  const plan = runtimeContext?.plan
+  return Boolean(
+    projection &&
+    plan &&
+    projection.revision === runtimeContext.revision &&
+    projection.artifactId === plan.artifactId &&
+    projection.artifactVersionId === plan.artifactVersionId &&
+    projection.artifactChecksum === plan.artifactChecksum &&
+    projection.approval === plan.approval
+  )
+}
+
 const withTransientSessionState = (
   session: PersistedChatSession,
   source: ChatSession
@@ -430,7 +497,8 @@ const withTransientSessionState = (
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,
-    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked
+    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
+    pendingContextReplayMessageId: source.pendingContextReplayMessageId
   }
 }
 
@@ -617,6 +685,11 @@ const createTitleFromMessage = (content: string): string => {
   return normalizedTitle.length > 48 ? `${normalizedTitle.slice(0, 48)}...` : normalizedTitle
 }
 
+// A branch's title identifies the new request, so unlike the sidebar's first-message default it
+// keeps the complete normalized prompt. Sidebar truncation remains a presentation concern.
+const createBranchTitleFromMessage = (content: string): string =>
+  content.replace(/\s+/g, ' ').trim()
+
 // Provides a readable conversation title when the first prompt contains only attachments.
 const createTitleFromUploads = (uploads: PersistedUploadedAttachment[]): string => {
   if (uploads.length === 1) return `Attached ${uploads[0].originalName || uploads[0].name}`
@@ -644,6 +717,16 @@ const createPersistedUpload = (
   ...(!attachment.versionId && attachment.sessionId === PENDING_UPLOAD_SESSION_ID && attachment.path
     ? { path: attachment.path }
     : {})
+})
+
+// A path-only legacy Upload still needs its source-owned capability long enough for the branch send
+// path to publish it as an immutable Version. The child remains pending until that reconciliation
+// finishes, so this path is transient and never reaches a newly written Session JSON.
+const copySnapshotUpload = (
+  attachment: PersistedUploadedAttachment
+): PersistedUploadedAttachment => ({
+  ...createPersistedUpload(attachment),
+  ...(!attachment.versionId && attachment.path ? { path: attachment.path } : {})
 })
 
 // Normalizes message timestamps, ids, stream linkage, and status.
@@ -675,6 +758,54 @@ const createMessage = (
     updatedAt: now
   }
 }
+
+// Copies the visible transcript without carrying event/stream correlations into the fresh runtime.
+const copySnapshotMessage = (message: PersistedChatMessage, sortIndex: number): ChatMessage => ({
+  ...message,
+  streamId: undefined,
+  eventIds: [],
+  artifactIds: message.artifactIds ? [...message.artifactIds] : undefined,
+  uploads: message.uploads?.map(copySnapshotUpload),
+  images: message.images?.map((image) => ({ ...image })),
+  parts: message.parts?.map((part) => ({ ...part })),
+  turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
+  sortIndex
+})
+
+// Tool rows are rendered as historical transcript only; provider event ids must not be reused by a
+// new Session's runtime. The bounded payload is otherwise preserved for the existing detail views.
+const createSnapshotActivityId = (sessionId: string, id: string): string =>
+  `history:${sessionId}:${id}`
+
+const copySnapshotActivity = (activity: PersistedToolActivity, sessionId: string): ToolActivity =>
+  hydrateToolActivity({
+    ...activity,
+    id: createSnapshotActivityId(sessionId, activity.id),
+    activityGroupId: activity.activityGroupId
+      ? createSnapshotActivityId(sessionId, activity.activityGroupId)
+      : undefined,
+    eventIds: [],
+    toolContent: activity.toolContent ? [...activity.toolContent] : undefined,
+    toolLocations: activity.toolLocations?.map((location) => ({ ...location }))
+  })
+
+const copySnapshotActivityGroup = (
+  group: PersistedActivityGroup,
+  sessionId: string
+): PersistedActivityGroup => ({
+  ...group,
+  id: createSnapshotActivityId(sessionId, group.id),
+  activityIds: group.activityIds.map((id) => createSnapshotActivityId(sessionId, id))
+})
+
+const canBranchInNewSession = (session: ChatSession): boolean =>
+  !session.activeRun &&
+  session.status !== 'running' &&
+  session.status !== 'waiting-permission' &&
+  !session.fixLoopActive &&
+  !session.compacting &&
+  !session.branchSwitchBlocked &&
+  !session.conversationGraphSyncBlocked
 
 // Converts main-process artifact metadata into the compact persisted renderer reference shape.
 const createPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => {
@@ -896,9 +1027,13 @@ const failOpenActivities = (activities: ToolActivity[] | undefined): ToolActivit
       : activity
   )
 
-// Keeps permission waits sticky while tool updates continue to stream in.
+// Keeps human-decision waits sticky while tool updates continue to stream in. In particular, the
+// terminal generate_plan activity arrives after the Plan projection and must not overwrite the
+// composer card's waiting state with `running`.
 const getToolActivitySessionStatus = (session: ChatSession): SessionStatus => {
-  if (session.status === 'waiting-permission') return 'waiting-permission'
+  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+    return session.status
+  }
 
   return session.activeRun ? 'running' : session.status
 }
@@ -917,6 +1052,73 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   // Clears visible conversation selection without deleting session history.
   clearSelection: () => {
     set({ selectedSessionId: undefined })
+  },
+
+  // Projects a routed, already-durable user Message into the visible transcript. Unlike a new
+  // prompt this continues the current interaction and must not create another active run.
+  appendRoutedUserMessage: ({
+    sessionId,
+    messageId,
+    eventId,
+    content,
+    createdAt,
+    responseToMessageId
+  }) => {
+    const trimmedContent = content.trim()
+    const session = get().sessions.find((candidate) => candidate.id === sessionId)
+    if (!session || !trimmedContent) return undefined
+    if (session.messages.some((message) => message.id === messageId)) {
+      return { sessionId, messageId }
+    }
+
+    const matchingFeedbackIndex = session.messages.findIndex(
+      (message) =>
+        message.role === 'user' &&
+        message.content.trim() === trimmedContent &&
+        (message.id.startsWith('local-user-message-') ||
+          messageId.startsWith('local-user-message-'))
+    )
+    const matchingFeedback = session.messages[matchingFeedbackIndex]
+    const isLocalMessage = messageId.startsWith('local-user-message-')
+    if (
+      matchingFeedback &&
+      (!matchingFeedback.id.startsWith('local-user-message-') || isLocalMessage)
+    ) {
+      return { sessionId, messageId: matchingFeedback.id }
+    }
+
+    const message: ChatMessage = {
+      id: messageId,
+      role: 'user',
+      content: trimmedContent,
+      status: 'complete',
+      eventIds: [eventId],
+      sortIndex: createSortIndex(),
+      createdAt,
+      updatedAt: createdAt,
+      ...(responseToMessageId ? { responseToMessageId } : {})
+    }
+    const messages = matchingFeedback
+      ? session.messages.map((existing, index) =>
+          index === matchingFeedbackIndex
+            ? { ...message, sortIndex: matchingFeedback.sortIndex }
+            : existing
+        )
+      : [...session.messages, message]
+    set({
+      sessions: get().sessions.map((candidate) =>
+        candidate.id === sessionId
+          ? {
+              ...candidate,
+              status: candidate.activeRun ? 'running' : candidate.status,
+              messages,
+              conversationGraph: synchronizeSessionGraph(candidate, messages, createdAt),
+              updatedAt: Math.max(candidate.updatedAt, createdAt)
+            }
+          : candidate
+      )
+    })
+    return { sessionId, messageId }
   },
 
   // Appends a user prompt, creating the session if this is its first message.
@@ -960,7 +1162,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     // Existing sessions keep their message history and restart their active run.
     if (existingSession) {
-      const nextMessages = [...existingSession.messages, userMessage]
+      const replayPromptIndex = existingSession.pendingContextReplayMessageId
+        ? existingSession.messages.findIndex(
+            (message) => message.id === existingSession.pendingContextReplayMessageId
+          )
+        : -1
+      const nextMessages =
+        replayPromptIndex >= 0
+          ? existingSession.messages.map((message, index) =>
+              index === replayPromptIndex ? userMessage : message
+            )
+          : [...existingSession.messages, userMessage]
       set({
         selectedSessionId: sessionId,
         sessions: state.sessions.map((session) =>
@@ -983,8 +1195,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 errorReportable: undefined,
                 compacting: undefined,
                 messages: nextMessages,
+                pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
                 conversationGraph: synchronizeSessionGraph(
-                  session,
+                  replayPromptIndex >= 0
+                    ? { ...session, messages: nextMessages, conversationGraph: undefined }
+                    : session,
                   nextMessages,
                   now,
                   agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',
@@ -1063,6 +1278,110 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
+  // Creates/selects a fresh pending Session from only the source's current visible Branch. The
+  // runtime binds this local id before replaying the bounded history into a new ACP Session.
+  branchInNewSession: ({
+    sourceSessionId,
+    content,
+    attachments = [],
+    parts,
+    permissionProfile,
+    agentFrameworkId,
+    agentBackendId,
+    agentModel,
+    specialistId
+  }) => {
+    const trimmedContent = content.trim()
+    const uploads = attachments.map(createPersistedUpload)
+    if (!sourceSessionId || (!trimmedContent && uploads.length === 0)) return undefined
+
+    const state = get()
+    const source = state.sessions.find((session) => session.id === sourceSessionId)
+    if (!source || !canBranchInNewSession(source)) return undefined
+
+    // `messages`/activities are the store's active-Branch compatibility projection. Reading this
+    // single source snapshot keeps message and activity relationships aligned without traversing
+    // inactive Graph siblings.
+    const sourceMessages = source.messages.map((message, index) => ({
+      message: stripTransientMessageState(message),
+      // Match the timeline projection fallback so exact-timestamp tool rows keep their position.
+      sortIndex: message.sortIndex ?? index
+    }))
+    const sourceActivities = (source.activities ?? [])
+      .map(sanitizeToolActivity)
+      .filter((activity): activity is PersistedToolActivity => Boolean(activity))
+    const sourceActivityGroups = (source.activityGroups ?? [])
+      .map(sanitizeActivityGroup)
+      .filter((group): group is PersistedActivityGroup => Boolean(group))
+
+    const now = Date.now()
+    const sessionId = createPendingSessionId()
+    const userMessage = createMessage(
+      'user',
+      trimmedContent,
+      'complete',
+      undefined,
+      [],
+      uploads,
+      parts
+    )
+    const messages = [
+      ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),
+      userMessage
+    ]
+    const normalizedAgentBackendId = agentBackendId?.trim() || source.agentBackendId
+    const normalizedAgentModel = agentModel?.trim() || source.agentModel
+    const normalizedFrameworkId = agentFrameworkId ?? source.agentFrameworkId
+    const nextSpecialistId =
+      specialistId === undefined ? source.specialistId : specialistId || undefined
+    const newSession: ChatSession = {
+      id: sessionId,
+      projectId: source.projectId,
+      isPending: true,
+      title: trimmedContent
+        ? createBranchTitleFromMessage(trimmedContent)
+        : createTitleFromUploads(uploads),
+      cwd: source.cwd,
+      status: 'running',
+      permissionProfile:
+        permissionProfile ?? source.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      agentFrameworkId: normalizedFrameworkId,
+      agentBackendId: normalizedAgentBackendId,
+      agentModel: normalizedAgentModel,
+      ...(source.autoReviewEnabled !== undefined
+        ? { autoReviewEnabled: source.autoReviewEnabled }
+        : {}),
+      ...(source.enabledComputeHosts
+        ? { enabledComputeHosts: [...source.enabledComputeHosts] }
+        : {}),
+      ...(nextSpecialistId ? { specialistId: nextSpecialistId } : {}),
+      messages,
+      activities: sourceActivities.map((activity) => copySnapshotActivity(activity, sessionId)),
+      activityGroups: sourceActivityGroups.map((group) =>
+        copySnapshotActivityGroup(group, sessionId)
+      ),
+      pendingContextReplayMessageId: userMessage.id,
+      activeRun: { promptMessageId: userMessage.id, startedAt: now },
+      createdAt: now,
+      updatedAt: now
+    }
+    newSession.conversationGraph = synchronizeSessionGraph(
+      newSession,
+      messages,
+      now,
+      normalizedFrameworkId ?? 'claude-code',
+      normalizedAgentBackendId,
+      normalizedAgentModel
+    )
+
+    set({
+      selectedSessionId: sessionId,
+      sessions: [newSession, ...state.sessions]
+    })
+
+    return { sessionId, messageId: userMessage.id }
+  },
+
   // Replaces the temporary renderer id once ACP returns the real protocol session id.
   bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
     if (!pendingSessionId || !sessionId) return undefined
@@ -1098,6 +1417,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessionId,
       messageId: pendingSession.activeRun.promptMessageId
     }
+  },
+
+  clearPendingContextReplay: (sessionId, messageId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.pendingContextReplayMessageId === messageId
+          ? { ...session, pendingContextReplayMessageId: undefined }
+          : session
+      )
+    }))
   },
 
   // Replaces renderer state with the per-session files loaded by the main process. Sessions arrive in
@@ -1162,9 +1491,24 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       }
 
       const hydratedSession = hydrateSession(session)
-      externallyHydratedSessions.add(hydratedSession)
+      const currentPlanProjection = matchesPersistedPlanProjection(
+        existing?.activePlanProjection,
+        session
+      )
+        ? { activePlanProjection: existing.activePlanProjection }
+        : {}
+      const retainedPlanHistory =
+        !hydratedSession.planHistoryProjections && existing?.planHistoryProjections
+          ? { planHistoryProjections: existing.planHistoryProjections }
+          : {}
+      const hydratedWithTransientState = {
+        ...hydratedSession,
+        ...retainedPlanHistory,
+        ...currentPlanProjection
+      }
+      externallyHydratedSessions.add(hydratedWithTransientState)
       const sessions = [
-        hydratedSession,
+        hydratedWithTransientState,
         ...state.sessions.filter((candidate) => candidate.id !== session.id)
       ].sort((left, right) => right.updatedAt - left.updatedAt)
 
@@ -1254,6 +1598,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const session = state.sessions.find((item) => item.id === sessionId)
 
     if (!session) return undefined
+    const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
+    const replayedGraphMessage = session.conversationGraph?.messages.find(
+      (message) =>
+        message.role === 'agent' &&
+        message.responseToMessageId === responseToMessageId &&
+        message.eventIds.includes(eventId)
+    )
+
+    // Branch switches remove downstream messages only from the flat projection. Ignore a bounded
+    // runtime event already owned by another Branch instead of appending it to the active Branch.
+    if (replayedGraphMessage) return { sessionId, messageId: replayedGraphMessage.id }
     const sessionImageBytes = session.messages.reduce(
       (total, message) =>
         total + (message.images ?? []).reduce((sum, candidate) => sum + candidate.byteLength, 0),
@@ -1271,8 +1626,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const existingMessage = session.messages.find(
       (message) => message.role === 'agent' && message.streamId === streamId
     )
+    const mergedContent = (current = ''): string => {
+      const text = `${current}${content}`
+      return session.agentFrameworkId === 'claude-code'
+        ? normalizeClaudeCodeRefusalText(text)
+        : text
+    }
     const messageId = existingMessage?.id ?? createMessageId()
-    const responseToMessageId = promptMessageId ?? session.activeRun?.promptMessageId
     const now = Date.now()
 
     set({
@@ -1295,7 +1655,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               message.id === existingMessage.id
                 ? {
                     ...message,
-                    content: `${message.content}${content}`,
+                    content: mergedContent(message.content),
                     images: sanitizedImage
                       ? sanitizeMessageImages([
                           ...(message.images ?? []),
@@ -1315,7 +1675,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         const agentMessage: ChatMessage = {
           id: messageId,
           role: 'agent',
-          content,
+          content: mergedContent(),
           status: 'streaming',
           streamId,
           responseToMessageId,
@@ -1713,6 +2073,56 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           updatedAt: Date.now()
         }
       })
+    }))
+  },
+
+  setActivePlanProjection: (sessionId, projection) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? (() => {
+              const previous = session.activePlanProjection
+              const replaced =
+                previous && previous.artifactVersionId !== projection.artifactVersionId
+                  ? [
+                      ...(session.planHistoryProjections ?? []).filter(
+                        (item) => item.artifactVersionId !== previous.artifactVersionId
+                      ),
+                      previous
+                    ]
+                  : session.planHistoryProjections
+              return {
+                ...session,
+                ...(replaced ? { planHistoryProjections: replaced } : {}),
+                activePlanProjection: projection,
+                // Restart recovery preserves waiting-plan-approval after clearing activeRun. A Plan
+                // whose Agent ended without a decision has already settled to idle and stays read-only.
+                status: session.compacting
+                  ? session.status
+                  : projection.lifecycle === 'awaiting_approval'
+                    ? session.activeRun || session.status === 'waiting-plan-approval'
+                      ? 'waiting-plan-approval'
+                      : 'idle'
+                    : projection.lifecycle === 'rejected'
+                      ? session.activeRun
+                        ? 'running'
+                        : 'idle'
+                      : projection.lifecycle === 'blocked'
+                        ? 'idle'
+                        : projection.lifecycle === 'completed'
+                          ? session.activeRun
+                            ? 'running'
+                            : 'idle'
+                          : projection.approval === 'approved'
+                            ? session.activeRun
+                              ? 'running'
+                              : 'idle'
+                            : session.status,
+                updatedAt: Date.now()
+              }
+            })()
+          : session
+      )
     }))
   },
 
@@ -2161,6 +2571,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           ...session,
           messages: session.messages.slice(0, cutIndex),
           conversationGraph,
+          pendingContextReplayMessageId: removedMessages.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: now
         }
@@ -2217,6 +2632,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           errorReportable: undefined,
           interrupted: undefined,
           branchContextResetRequired: true,
+          pendingContextReplayMessageId: removed.some(
+            (message) => message.id === session.pendingContextReplayMessageId
+          )
+            ? undefined
+            : session.pendingContextReplayMessageId,
           filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
           updatedAt: now
         }

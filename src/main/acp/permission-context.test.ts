@@ -5,13 +5,35 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
+import { opencodeFramework } from '../agent-framework'
 import {
   AcpPermissionContext,
   AGENT_PERMISSION_ACTION_ORIGIN,
   HUMAN_PERMISSION_ACTION_ORIGIN
 } from './permission-context'
+import type { AcpPermissionContextOptions } from './permission-context'
 
 const NOTEBOOK_SERVERS = ['open-science-notebook']
+
+const permissionRouting = (
+  overrides: Partial<NonNullable<AcpPermissionContextOptions['routing']>> = {}
+): NonNullable<AcpPermissionContextOptions['routing']> => ({
+  resolveAppSessionId: (sessionId) => sessionId,
+  sessionSnapshot: () => ({
+    cwd: '/workspace',
+    frameworkId: 'opencode',
+    permissionProfile: { selectedProfile: 'ask' }
+  }),
+  hasActivePrimarySession: () => true,
+  capturePrompt: () => undefined,
+  currentInteractionSequence: () => undefined,
+  mcpServerNamesFor: () => NOTEBOOK_SERVERS,
+  reviewerContextFor: () => undefined,
+  resolveReviewerPermission: () => undefined,
+  currentFramework: () => opencodeFramework,
+  resolveProjectId: () => 'default-project',
+  ...overrides
+})
 
 const permissionRequest = (
   sessionId: string,
@@ -46,8 +68,88 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  it('cancels a late OpenCode primary request when no prompt owns the active Session', async () => {
+    const emitPermissionRequest = vi.fn()
+    const resolveReviewerPermission = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest,
+      routing: permissionRouting({ resolveReviewerPermission })
+    })
+
+    await expect(
+      context.handleProviderRequest(
+        permissionRequest('primary-session', 'late-call', { title: 'Bash', kind: 'execute' })
+      )
+    ).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(resolveReviewerPermission).not.toHaveBeenCalled()
+    expect(emitPermissionRequest).not.toHaveBeenCalled()
+  })
+
+  it('routes an isolated OpenCode reviewer request without a primary attachment', async () => {
+    const reviewerResponse = {
+      outcome: { outcome: 'selected' as const, optionId: 'reject-once' }
+    }
+    const resolveReviewerPermission = vi.fn(() => reviewerResponse)
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting({
+        hasActivePrimarySession: () => false,
+        reviewerContextFor: () => ({
+          frameworkId: 'opencode',
+          mcpServerNames: ['open-science-reviewer']
+        }),
+        resolveReviewerPermission
+      })
+    })
+    const request = permissionRequest('reviewer-session', 'reviewer-call', {
+      title: 'Bash',
+      kind: 'execute'
+    })
+
+    await expect(context.handleProviderRequest(request)).resolves.toEqual(reviewerResponse)
+    expect(resolveReviewerPermission).toHaveBeenCalledWith(request)
+  })
+
+  it('correlates provider updates under the stable adopted Session identity', () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting({
+        resolveAppSessionId: () => 'stable-session',
+        sessionSnapshot: () => ({
+          frameworkId: 'codex',
+          permissionProfile: { selectedProfile: 'ask' }
+        })
+      })
+    })
+
+    context.observeProviderUpdate({
+      sessionId: 'provider-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call-1',
+        title: 'mcp.open-science-notebook.notebook_execute',
+        kind: 'execute',
+        status: 'pending',
+        rawInput: {
+          server: 'open-science-notebook',
+          tool: 'notebook_execute',
+          arguments: { language: 'python', code: 'print(1)' }
+        },
+        _meta: { is_mcp_tool_call: true }
+      }
+    })
+
+    expect(context.snapshot().sessions).toMatchObject({
+      'stable-session': { codexMcpIdentities: 1 }
+    })
+    expect(context.snapshot().sessions).not.toHaveProperty('provider-session')
+  })
+
   it('correlates sparse Codex approvals and bounds retained provider aliases', async () => {
-    const context = new AcpPermissionContext({ emitPermissionRequest: vi.fn() })
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
 
     for (let index = 0; index < 40; index += 1) {
       observe(
@@ -111,7 +213,10 @@ describe('ACP permission context', () => {
   })
 
   it('rendezvouses an OpenCode request with a bounded late preview and removes its waiter', async () => {
-    const context = new AcpPermissionContext({ emitPermissionRequest: vi.fn() })
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
     const code = 'x <- 1\n'.repeat(2_000)
 
     observe(
@@ -165,7 +270,8 @@ describe('ACP permission context', () => {
   it('keeps a human-only decision parked when an agent-origin action tries to resolve it', async () => {
     const emitted: Array<{ requestId: string }> = []
     const context = new AcpPermissionContext({
-      emitPermissionRequest: (request) => emitted.push(request)
+      emitPermissionRequest: (request) => emitted.push(request),
+      routing: permissionRouting()
     })
     const pending = context.requestPermission(permissionRequest('session-1', 'call-1'))
 
@@ -201,6 +307,7 @@ describe('ACP permission context', () => {
       const onOpenCodeWaitTimeout = vi.fn()
       const context = new AcpPermissionContext({
         emitPermissionRequest: vi.fn(),
+        routing: permissionRouting(),
         onOpenCodeWaitTimeout
       })
       observe(
@@ -244,7 +351,8 @@ describe('ACP permission context', () => {
   it('cancels pending correlation waiters and decisions on session cleanup', async () => {
     const emitted: Array<{ requestId: string }> = []
     const context = new AcpPermissionContext({
-      emitPermissionRequest: (request) => emitted.push(request)
+      emitPermissionRequest: (request) => emitted.push(request),
+      routing: permissionRouting()
     })
 
     observe(
@@ -279,7 +387,10 @@ describe('ACP permission context', () => {
   })
 
   it('disposes every session without retaining preview or waiter metadata', async () => {
-    const context = new AcpPermissionContext({ emitPermissionRequest: vi.fn() })
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
     observe(
       context,
       {

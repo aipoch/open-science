@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
@@ -142,6 +141,33 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const sessionRoot = join(root, 'notebooks', 'default-project', 'session-1')
+
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+    expect(existsSync(sessionRoot)).toBe(false)
+
+    const begin = await service.beginCodeCell({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const handoff = service.peekHandoffContext('session-1')
+
+    expect(handoff).toMatchObject({
+      executionCount: 0,
+      activeWriteCellId: begin.cellId,
+      cells: [{ id: begin.cellId, language: 'python', status: 'receiving-code' }]
+    })
+    expect(JSON.stringify(handoff)).not.toContain('notebookSessionRoot')
+    expect(JSON.stringify(handoff)).not.toContain('runtimeRoot')
+
+    await service.shutdownSession('session-1')
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
@@ -489,6 +515,64 @@ describe('notebook runtime service', () => {
     expect(state.activeRunId).toBe(document.runs[0]?.runId)
   })
 
+  it('persists a fail-closed default-runtime admission without dispatching or capturing evidence', async () => {
+    const root = await createStorageRoot()
+    const defaultInterpreter = pythonBin(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))
+    const execute = vi.fn(
+      async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      })
+    )
+    const environmentStateTracker = verifiedPackageMutationTracker()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: {
+            enabled: { [defaultInterpreter]: false },
+            installAuthorized: {}
+          },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
+      environmentStateTracker,
+      executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+    })
+
+    const summary = await service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      language: 'python',
+      code: 'print(1)'
+    })
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+
+    expect(summary).toMatchObject({
+      status: 'failed',
+      environment: DEFAULT_PY_ENV,
+      text: { traceback: expect.stringMatching(/No enabled python runtime/i) }
+    })
+    expect(state.runs).toHaveLength(1)
+    expect(state.runs[0]).toMatchObject({
+      runId: summary.runId,
+      status: 'failed',
+      environment: DEFAULT_PY_ENV
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(environmentStateTracker.prepareRun).not.toHaveBeenCalled()
+    expect(environmentStateTracker.captureCompletedRun).not.toHaveBeenCalled()
+  })
+
   it('rejects install.packages in an R cell before the managed kernel executes it', async () => {
     const root = await createStorageRoot()
     const execute = vi.fn(async () => ({
@@ -824,6 +908,7 @@ describe('notebook runtime service', () => {
 
     service.setMcpRpcConnectionResolver(async () => ({
       endpoint: 'http://127.0.0.1:1/x',
+      socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'tok'
     }))
 
@@ -836,6 +921,7 @@ describe('notebook runtime service', () => {
 
     // Data kernels (python/r) have no host.mcp; the RPC connection stays with the control-plane repl.
     expect(executions[0].mcpRpcEndpoint).toBeUndefined()
+    expect(executions[0].mcpRpcSocketPath).toBeUndefined()
     expect(executions[0].mcpRpcToken).toBeUndefined()
   })
 
@@ -865,6 +951,7 @@ describe('notebook runtime service', () => {
 
     service.setMcpRpcConnectionResolver(async () => ({
       endpoint: 'http://127.0.0.1:1/x',
+      socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'tok'
     }))
 
@@ -883,6 +970,7 @@ describe('notebook runtime service', () => {
     expect(executions[0]).toMatchObject({
       code: 'return 1',
       mcpRpcEndpoint: 'http://127.0.0.1:1/x',
+      mcpRpcSocketPath: '\\\\.\\pipe\\open-science-notebook',
       mcpRpcToken: 'tok'
     })
 
@@ -1741,51 +1829,88 @@ describe('notebook runtime service', () => {
       expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
     })
 
-    // POSIX-only: relies on `trap '' TERM` (a SIGTERM-ignoring shell) and pgrep to inspect the real
-    // process table — neither exists on Windows, where signal semantics differ entirely.
+    // POSIX-only: relies on `trap '' TERM` and signal-0 process probes. Windows signal semantics
+    // differ entirely and use taskkill-backed tree termination instead.
     it.skipIf(process.platform === 'win32')(
       'SIGKILLs a timed-out command that ignores SIGTERM instead of leaving it running',
       async () => {
         const root = await createStorageRoot()
         const service = createShellService(root)
-        // A marker unique to this test run, embedded as a harmless shell comment so it shows up in the
-        // spawned process's command line (visible to pgrep -f) without affecting what the shell runs.
+        // A marker unique to this test run. It appears on both the shell and its real Node descendant,
+        // so the observable contract requires the whole timed-out command tree to disappear.
         const marker = `os-notebook-shell-test-${randomUUID()}`
+        const descendantPidPath = join(root, `${marker}.pid`)
+        const quoteForShell = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`
 
-        const result = await service.executeShell({
+        const execution = service.executeShell({
           sessionId: 'session-1',
           workspaceCwd: root,
-          // Ignores SIGTERM; only SIGKILL can end it before its own 30s sleep completes.
-          command: `trap '' TERM; sleep 30 # ${marker}`,
-          timeoutMs: 100
+          // The shell records its real descendant's PID before waiting. Both ignore SIGTERM, so the
+          // timeout cleanup must escalate and reap the whole tree rather than only the direct shell.
+          command: `trap '' TERM; ${quoteForShell(process.execPath)} -e ${quoteForShell(
+            "process.on('SIGTERM', () => {}); setTimeout(() => {}, 30_000)"
+          )} ${quoteForShell(marker)} & descendant_pid=$!; printf '%s' "$descendant_pid" > ${quoteForShell(
+            descendantPidPath
+          )}; wait "$descendant_pid" # ${marker}`,
+          timeoutMs: 2_000
         })
+
+        // Start the execution first, then require the descendant to be observable well before the
+        // timeout. This prevents a loaded runner from taking the process-tree snapshot before the
+        // fixture has spawned the process that the cleanup contract is meant to cover.
+        const readinessDeadline = Date.now() + 1_500
+        let descendantPid: number | undefined
+        while (descendantPid === undefined && Date.now() < readinessDeadline) {
+          try {
+            const candidate = Number((await readFile(descendantPidPath, 'utf8')).trim())
+            if (Number.isInteger(candidate) && candidate > 0) descendantPid = candidate
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          }
+          if (descendantPid === undefined) await new Promise((r) => setTimeout(r, 20))
+        }
+        if (descendantPid === undefined) {
+          throw new Error(
+            'timed-out shell descendant did not become ready before the fixture deadline'
+          )
+        }
+
+        const result = await execution
 
         // The RPC promise settles at the timeout, well before either the grace period or the sleep.
         expect(result.exitCode).toBeNull()
 
-        // Poll the real process table until the marked process is gone -- not child.killed, which Node
-        // sets as soon as SIGTERM is delivered regardless of whether the (SIGTERM-ignoring) process
-        // actually died. Polling (rather than a single fixed sleep) absorbs SIGKILL-escalation +
-        // process-teardown latency on a loaded CI runner, so the test isn't timing-flaky; if SIGKILL
-        // never worked, it stays non-empty until the deadline and the assertion fails.
-        const pgrepMarker = async (): Promise<string> =>
-          new Promise<string>((resolve) => {
-            const check = spawn('sh', ['-c', `pgrep -f '${marker}' || true`])
-            let out = ''
-            check.stdout.on('data', (chunk: Buffer) => {
-              out += chunk.toString('utf8')
-            })
-            check.once('exit', () => resolve(out.trim()))
-          })
-
-        let stillRunning = await pgrepMarker()
-        const deadline = Date.now() + 10_000
-        while (stillRunning !== '' && Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 500))
-          stillRunning = await pgrepMarker()
+        // Probe the exact descendant instead of searching the process table. The former pgrep fixture
+        // wrapped the query in `sh -c`, whose own argv contained the marker and self-matched on Linux.
+        const descendantIsRunning = (): boolean => {
+          try {
+            process.kill(descendantPid, 0)
+            return true
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+            throw error
+          }
         }
 
-        expect(stillRunning).toBe('')
+        let stillRunning = descendantIsRunning()
+        const deadline = Date.now() + 10_000
+        while (stillRunning && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 500))
+          stillRunning = descendantIsRunning()
+        }
+
+        try {
+          expect(stillRunning).toBe(false)
+        } finally {
+          // A RED run must not leak the process whose survival it proves.
+          if (stillRunning) {
+            try {
+              process.kill(descendantPid, 'SIGKILL')
+            } catch {
+              // It exited between the final probe and cleanup.
+            }
+          }
+        }
       },
       15_000
     )
@@ -3435,10 +3560,17 @@ describe('notebook runtime service', () => {
                 }
               ]
             : [],
-        getRuntimeEnablement: async () => ({
-          enabled: { [runtimeId]: true },
-          installAuthorized: {}
-        }),
+        notebookRuntimeSettings: {
+          getSnapshot: async (language) => ({
+            language,
+            runtimeEnablement: {
+              enabled: { [runtimeId]: true },
+              installAuthorized: {}
+            },
+            manualInterpreters: [],
+            packageMirror: {}
+          })
+        },
         environmentStateTracker: {
           prepareRun: vi.fn(),
           captureCompletedRun: vi.fn(),
@@ -7280,21 +7412,32 @@ describe('v4 runtime bindings & agent tools', () => {
     const root = await createStorageRoot()
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).
     let rejectRun: ((error: unknown) => void) | undefined
+    let executionCount = 0
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
       repository: new NotebookRunRepository(root),
-      discoverRuntimes: async (language) => (language === 'python' ? [userPyA] : []),
-      getRuntimeEnablement: async () => ({
-        enabled: { [userPyA.envId]: true },
-        installAuthorized: {}
-      }),
+      discoverRuntimes: async (language) => (language === 'python' ? [userPyA, userPyB] : []),
+      notebookRuntimeSettings: {
+        getSnapshot: async (language) => ({
+          language,
+          runtimeEnablement: {
+            enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
+            installAuthorized: {}
+          },
+          manualInterpreters: [],
+          packageMirror: {}
+        })
+      },
       executorFactory: () => ({
-        execute: () =>
-          new Promise<NotebookExecutionResult>((_resolve, reject) => {
+        execute: () => {
+          executionCount += 1
+          if (executionCount > 1) return Promise.reject(new Error('ordinary kernel failure'))
+          return new Promise<NotebookExecutionResult>((_resolve, reject) => {
             rejectRun = reject
-          }),
+          })
+        },
         shutdown: async () => ({ reaped: true }),
         terminate: async () => {
           rejectRun?.(new Error('kernel killed'))
@@ -7321,6 +7464,25 @@ describe('v4 runtime bindings & agent tools', () => {
     await service.revokeRuntime('python', userPyA.envId, { force: true })
     const summary = await runPromise
     expect(summary.status).toBe('cancelled')
+
+    // The force-stop marker is one-shot even though external runtimes share the default-python key.
+    // A later ordinary executor rejection must not inherit the earlier cancellation classification.
+    await service.switchRuntime({
+      sessionId: 's',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyB.envId
+    })
+    const laterSummary = await service.execute({
+      sessionId: 's',
+      workspaceCwd: root,
+      code: 'fail_later()',
+      language: 'python'
+    })
+    expect(laterSummary).toMatchObject({
+      status: 'failed',
+      text: { traceback: 'ordinary kernel failure' }
+    })
   })
 
   it('persists a binding and restores it active on a fresh service (WS1-rest/WS12 boot revalidation)', async () => {
@@ -7626,6 +7788,6 @@ describe('v4 runtime bindings & agent tools', () => {
 
       await rm(manualDir, { recursive: true, force: true })
     },
-    30_000
+    60_000
   )
 })

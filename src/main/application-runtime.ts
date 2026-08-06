@@ -1,3 +1,6 @@
+import { diagnosticErrorFields, type Logger } from './logger'
+import { BackendShutdownOutcomeError, type ShutdownStepOutcome } from './lifecycle-shutdown'
+
 type Awaitable<T> = T | Promise<T>
 
 export const APPLICATION_MODULE_DISPOSAL_BUDGET_MS = 1000
@@ -42,51 +45,74 @@ export type ApplicationRuntime<Interfaces> = {
 export type ApplicationSurfaceShutdown = {
   disposeApplicationRuntime(): Awaitable<void>
   shutdownRemoteAccess(): Awaitable<void>
-  closeWebController(): Awaitable<void>
-  disposeWebRpc(): Awaitable<void>
-  log?: { error(message: string, error: unknown): void }
+  disposeWebController(): Awaitable<void>
+  disposeIpcHandlers(): Awaitable<void>
+  log?: Pick<Logger, 'error'>
 }
 
 export type ApplicationLifecycleShutdownDependencies = {
   disposeApplicationRuntime: ApplicationSurfaceShutdown['disposeApplicationRuntime']
   remoteAccess: { shutdown(): Awaitable<void> }
-  webController: { close(): Awaitable<void> }
-  webRpc: { dispose(): Awaitable<void> }
+  webController: { dispose(): Awaitable<void> }
+  disposeIpcHandlers: ApplicationSurfaceShutdown['disposeIpcHandlers']
   log?: ApplicationSurfaceShutdown['log']
 }
 
-// Preserves the desktop quit order while guaranteeing that a failed surface cannot strand a later
-// one. Backend shutdown is owned by the application runtime and remains bounded by its coordinator.
+// Direct Web/Task adapters close before the application command router, which in turn closes before
+// its underlying RemoteAccess owner. Closing Web first can publish RemoteAccess's stopped state, but
+// this path runs only while the app is quitting. A failed surface still cannot strand a later one.
 export const shutdownApplicationSurfaces = async ({
   disposeApplicationRuntime,
   shutdownRemoteAccess,
-  closeWebController,
-  disposeWebRpc,
+  disposeWebController,
+  disposeIpcHandlers,
   log
-}: ApplicationSurfaceShutdown): Promise<void> => {
+}: ApplicationSurfaceShutdown): Promise<ShutdownStepOutcome> => {
   const flattenErrors = (error: unknown): unknown[] =>
     error instanceof AggregateError ? error.errors.flatMap(flattenErrors) : [error]
-  const describeError = (error: unknown): string =>
-    error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-  const dispose = async (name: string, operation: () => Awaitable<void>): Promise<void> => {
+  const classifyError = (error: unknown): Exclude<ShutdownStepOutcome, 'completed'> => {
+    if (error instanceof BackendShutdownOutcomeError) return error.outcome
+    if (error instanceof ApplicationModuleDisposalTimeoutError) return 'timeout'
+    return 'failed'
+  }
+  const combineOutcomes = (
+    current: ShutdownStepOutcome,
+    next: ShutdownStepOutcome
+  ): ShutdownStepOutcome => {
+    const priority: Record<ShutdownStepOutcome, number> = {
+      completed: 0,
+      degraded: 1,
+      timeout: 2,
+      failed: 3
+    }
+    return priority[next] > priority[current] ? next : current
+  }
+  let overallOutcome: ShutdownStepOutcome = 'completed'
+  const dispose = async (surface: string, operation: () => Awaitable<void>): Promise<void> => {
     try {
       await operation()
     } catch (error) {
       for (const cause of flattenErrors(error)) {
-        // Put the cause summary in the top-level message: the production logger intentionally serializes
-        // an Error as name/message/stack and does not retain AggregateError.errors or custom properties.
-        log?.error(
-          `${name} disposal failed during application shutdown: ${describeError(cause)}`,
-          cause
-        )
+        const result = classifyError(cause)
+        overallOutcome = combineOutcomes(overallOutcome, result)
+        try {
+          log?.error('application surface shutdown failed', {
+            surface,
+            result,
+            ...diagnosticErrorFields(cause)
+          })
+        } catch {
+          // A diagnostic sink failure must not prevent the remaining surfaces from closing.
+        }
       }
     }
   }
 
-  await dispose('application runtime', disposeApplicationRuntime)
-  await dispose('remote access', shutdownRemoteAccess)
-  await dispose('web controller', closeWebController)
-  await dispose('web RPC', disposeWebRpc)
+  await dispose('web-controller', disposeWebController)
+  await dispose('application-runtime', disposeApplicationRuntime)
+  await dispose('remote-access', shutdownRemoteAccess)
+  await dispose('ipc-handlers', disposeIpcHandlers)
+  return overallOutcome
 }
 
 // Builds the exact callback passed to the Electron lifecycle. Requiring the application disposer here
@@ -95,15 +121,15 @@ export const createApplicationLifecycleShutdown = ({
   disposeApplicationRuntime,
   remoteAccess,
   webController,
-  webRpc,
+  disposeIpcHandlers,
   log
-}: ApplicationLifecycleShutdownDependencies): (() => Promise<void>) => {
+}: ApplicationLifecycleShutdownDependencies): (() => Promise<ShutdownStepOutcome>) => {
   return () =>
     shutdownApplicationSurfaces({
       disposeApplicationRuntime,
       shutdownRemoteAccess: () => remoteAccess.shutdown(),
-      closeWebController: () => webController.close(),
-      disposeWebRpc: () => webRpc.dispose(),
+      disposeWebController: () => webController.dispose(),
+      disposeIpcHandlers,
       log
     })
 }
@@ -111,7 +137,7 @@ export const createApplicationLifecycleShutdown = ({
 export const withApplicationRuntimeShutdown = <Options extends object>(
   options: Options,
   dependencies: ApplicationLifecycleShutdownDependencies
-): NoInfer<Options> & { shutdownBackends: () => Promise<void> } => ({
+): NoInfer<Options> & { shutdownBackends: () => Promise<ShutdownStepOutcome> } => ({
   ...options,
   shutdownBackends: createApplicationLifecycleShutdown(dependencies)
 })

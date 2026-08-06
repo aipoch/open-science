@@ -41,13 +41,21 @@ const renderHook = (hook: () => void): { unmount: () => void } => {
 }
 
 // Minimal previewable file tab; only identity fields matter for the close ladder.
-const fileTab = (id: string): PreviewItem => ({
+const fileTab = (id: string): Extract<PreviewItem, { type: 'file' }> => ({
   id,
   sessionId: 'session',
   type: 'file',
   path: `/tmp/${id}`,
   format: 'text',
   name: id,
+  title: id
+})
+
+const toolTab = (id: string): Extract<PreviewItem, { type: 'tool' }> => ({
+  id,
+  sessionId: 'session',
+  type: 'tool',
+  toolKind: 'files',
   title: id
 })
 
@@ -151,6 +159,73 @@ describe('useCloseActivePaneShortcut', () => {
 
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
     expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('lets an active modal handle the shortcut before preview panes or the window', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileTab('kept-open'))
+    const closeActiveModal = vi.fn(() => true)
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut(closeActiveModal))
+    act(() => closeActivePane?.())
+
+    expect(closeActiveModal).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('closes transient preview modals before preview tabs or the window', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.upsertAndActivateItem(fileTab('kept-open'))
+    preview.upsertAndActivateItem(toolTab('expanded-tool'))
+    preview.setToolItemExpanded('expanded-tool')
+    preview.openFileDialog(fileTab('dialog'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+
+    act(() => closeActivePane?.())
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(2)
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('ignores a stale expansion after another preview becomes active', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.upsertAndActivateItem(toolTab('expanded-tool'))
+    preview.setToolItemExpanded('expanded-tool')
+    preview.upsertAndActivateItem(fileTab('active-file'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+    expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).toEqual([
+      'expanded-tool'
+    ])
+    expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('closes the window without consuming stale preview modals on Home', () => {
+    useNavigationStore.setState({ view: 'home' })
+    const preview = usePreviewWorkbenchStore.getState()
+    preview.setToolItemExpanded('expanded-tool')
+    preview.openFileDialog(fileTab('dialog'))
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem?.id).toBe('dialog')
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')
+    expect(close).toHaveBeenCalledOnce()
     unmount()
   })
 

@@ -4,10 +4,16 @@ import type { SessionModeState } from '@agentclientprotocol/sdk'
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { AgentFrameworkId, ChatApiEndpoint } from '../../shared/settings'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type {
+  CustomReasoningEffortTransport,
+  ModelReasoningEffort,
+  ResolvedReasoningEffort
+} from '../../shared/reasoning-effort'
+import type { OfficialVendorId } from '../../shared/provider-registry'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
+  ResponsesBridgeModelTarget,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge'
@@ -59,6 +65,46 @@ export type AgentModelConfig = {
   persistentSystemPrompt?: string
 }
 
+export type AgentModelRoute =
+  | 'claude-anthropic'
+  | 'opencode-anthropic'
+  | 'opencode-openai'
+  | 'codex-responses'
+  | 'codex-responses-compatibility'
+  | 'codex-bridge'
+
+export type AgentModelCatalogEntry = Readonly<{
+  provider: ResolvedProvider
+  reasoningEffort?: ModelReasoningEffort
+  reasoningEfforts?: readonly ModelReasoningEffort[]
+}>
+
+// Secret-free, side-effect-free projection of one persisted model selection onto the live runtime.
+// Settings owns provider/vendor/route resolution; AcpRuntime only compares this identity with its
+// current generation and applies the already-resolved session or bridge values.
+export type AgentModelChangeTarget = Readonly<{
+  frameworkId: AgentFrameworkId
+  backendId: string
+  route: AgentModelRoute
+  model: string
+  sessionModel: string
+  sessionModelRequired: boolean
+  reasoningEffort: ResolvedReasoningEffort
+  supportsImageInput: boolean
+  contextWindow?: number
+  // Opaque, secret-free id for one provider/model already registered in the current Claude
+  // generation's loopback Anthropic bridge. Absent means this target cannot cross a provider env.
+  anthropicBridgeTargetId?: string
+  // Opaque, secret-free id for a provider/model route pre-registered in the generation transport.
+  // The lease decides whether selecting it is validation-only (OpenCode) or retargets a route.
+  providerTransportTargetId?: string
+  bridge?: Readonly<{
+    model: string
+    vendorId?: OfficialVendorId
+    reasoningEffortTransport?: CustomReasoningEffortTransport
+  }>
+}>
+
 // Inputs for translating a provider; paths differ per framework (Claude wants its executable + config
 // dir root, opencode wants a location to write its generated config into).
 export type ModelConfigContext = {
@@ -83,6 +129,9 @@ export type ModelConfigContext = {
   // register custom model metadata use this to keep their capability catalog consistent with the
   // selected effort above.
   reasoningEfforts?: readonly ModelReasoningEffort[]
+  // Same-provider models that keep the active backend route. Frameworks may pre-register these in
+  // their native catalog so a later session configOption switch does not require a process respawn.
+  providerModelCatalog?: readonly AgentModelCatalogEntry[]
 }
 
 // System-prompt guidance the runtime wants appended for a session (artifact routing, notebook, skill
@@ -139,11 +188,17 @@ export type ContextCompactionStrategy =
     }
   | { kind: 'framework-managed' }
 
+export type CommandShellDialect = 'posix' | 'powershell'
+
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
 export interface AgentFramework {
   readonly id: AgentFrameworkId
   readonly displayName: string
+
+  // The shell grammar used for provider-native command tools. The permission Broker consumes this
+  // fact when validating remembered command groups; the framework does not make permission decisions.
+  readonly commandShellDialect?: CommandShellDialect
 
   // Keeps slash-command details at the framework seam so the generic runtime only asks for native
   // compaction and never branches on framework ids.
@@ -191,6 +246,7 @@ export type ResolvedAgentBackend = {
   // Stable identity of the framework/provider storage boundary. Two providers can use the same
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string
+  modelRoute?: AgentModelRoute
   executablePath: string
   env: Record<string, string>
   args?: string[]
@@ -215,6 +271,9 @@ export type ResolvedAgentBackend = {
   // Exact context-window limit for the selected upstream provider model. Framework adapters may
   // report a fallback or bridge transport model instead, so the runtime treats this as authoritative.
   contextWindow?: number
+  // Whether the selected upstream model accepts image input. Kept on the generation so a model-only
+  // switch can fail closed when an adapter cannot remove images already retained in native history.
+  supportsImageInput?: boolean
   // Upstream provider model used for local context tokenization. This is deliberately separate from
   // `sessionModel`: a framework may select its model through env rather than ACP, or use a bridge
   // transport model whose id differs from the provider model that ultimately tokenizes the request.
@@ -240,6 +299,18 @@ export type ResolvedAgentBackend = {
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void
+    setModelTarget?: (target: ResponsesBridgeModelTarget) => void
+    release: () => Promise<void>
+  }
+  // API-key Claude generations keep their process environment stable by talking to an app-owned
+  // loopback Anthropic bridge. The bridge owns endpoint/token/model routing in memory; live model
+  // targets carry only an opaque id into this lease.
+  anthropicBridgeLease?: {
+    setTarget: (targetId: string) => boolean
+    release: () => Promise<void>
+  }
+  providerTransportLease?: {
+    setTarget: (targetId: string) => boolean
     release: () => Promise<void>
   }
 }

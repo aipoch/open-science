@@ -91,12 +91,13 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 }
 
 // How the main window resolves a close: classifyClose decides synchronously at close time
-// ('close' = let it close, 'hide' = minimize to tray, 'confirm' = ask via resolveCloseAction).
+// ('close' = let it close, 'hide' = minimize to tray, 'quit' = retain the renderer while app quit
+// flushes it, 'confirm' = ask via resolveCloseAction).
 // resolveCloseAction is awaited only for 'confirm'; requestQuit is called when the choice is quit.
 type MainWindowCloseOptions = {
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
-  requestQuit: () => void
+  requestQuit: (confirmed?: boolean) => void
 }
 
 const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
@@ -334,8 +335,9 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     }
   })
 
-  // Close handling. classifyClose decides synchronously so darwin / no-tray / mid-quit still close
-  // instantly; 'hide' minimizes to tray (Linux); 'confirm' (Windows X) asks the user. The
+  // Close handling. classifyClose decides synchronously: darwin and mid-quit close instantly; 'hide'
+  // minimizes to tray (Linux); 'quit' retains a no-tray renderer through app teardown; 'confirm'
+  // (Windows X) asks the user. The
   // Cmd/Ctrl+W fallback window.close() routes through here unchanged.
   let awaitingChoice = false
   window.on('close', (event) => {
@@ -344,6 +346,10 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     event.preventDefault()
     if (action === 'hide') {
       window.hide()
+      return
+    }
+    if (action === 'quit') {
+      opts!.requestQuit(false)
       return
     }
     if (awaitingChoice) return

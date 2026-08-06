@@ -312,7 +312,7 @@ export const synchronizeActiveConversationMessages = (
   if (!frame) throw new Error('Active Agent Frame not found.')
   const branch = next.branches.find((candidate) => candidate.id === frame.activeBranchId)
   if (!branch) throw new Error('Active Message Branch not found.')
-  const runtimeSegmentId = next.runtimeSegments
+  const activeRuntimeSegmentId = next.runtimeSegments
     .filter((segment) => segment.agentFrameId === frame.id)
     .at(-1)?.id
   const existing = indexById(next.messages)
@@ -333,6 +333,10 @@ export const synchronizeActiveConversationMessages = (
       if (message.updatedAt > known.updatedAt) Object.assign(known, message)
       continue
     }
+    const runtimeSegmentId =
+      message.role === 'agent' && message.responseToMessageId
+        ? (existing.get(message.responseToMessageId)?.runtimeSegmentId ?? activeRuntimeSegmentId)
+        : activeRuntimeSegmentId
     const node: PersistedMessageNode = {
       ...message,
       agentFrameId: frame.id,
@@ -560,10 +564,15 @@ export const getActiveConversationContext = (
   const frame = graph.frames.find((candidate) => candidate.id === graph.activeFrameId)
   if (!frame) throw new Error('Active Agent Frame not found.')
   const branch = graph.branches.find((candidate) => candidate.id === frame.activeBranchId)
-  const runtimeSegment = graph.runtimeSegments
-    .filter((segment) => segment.agentFrameId === frame.id)
-    .at(-1)
-  if (!branch || !runtimeSegment) throw new Error('Conversation execution context is incomplete.')
+  if (!branch) throw new Error('Conversation execution context is incomplete.')
+  const path = resolveMessageBranchPath(graph, branch.id)
+  const prompt = path.find((message) => message.id === promptMessageId)
+  // A later runtime switch may already have opened a Segment; durable provenance still follows the
+  // Segment that owns this prompt rather than whichever Segment happens to be newest.
+  const runtimeSegment = prompt?.runtimeSegmentId
+    ? graph.runtimeSegments.find((segment) => segment.id === prompt.runtimeSegmentId)
+    : graph.runtimeSegments.filter((segment) => segment.agentFrameId === frame.id).at(-1)
+  if (!runtimeSegment) throw new Error('Conversation execution context is incomplete.')
   const branchesById = indexById(graph.branches)
   const messageBranchAncestry: string[] = []
   let cursor: PersistedMessageBranch | undefined = branch
@@ -571,7 +580,7 @@ export const getActiveConversationContext = (
     messageBranchAncestry.unshift(cursor.id)
     cursor = cursor.parentBranchId ? branchesById.get(cursor.parentBranchId) : undefined
   }
-  const messageAncestry = resolveMessageBranchPath(graph, branch.id).map((message) => message.id)
+  const messageAncestry = path.map((message) => message.id)
   // The renderer normally synchronizes the just-appended prompt into the graph before asking for
   // context. Keep direct/legacy callers safe when they bind the prompt one step earlier.
   if (!messageAncestry.includes(promptMessageId)) messageAncestry.push(promptMessageId)

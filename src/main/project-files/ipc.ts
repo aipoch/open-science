@@ -6,13 +6,16 @@ import type {
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesOverview,
-  ProjectFilesPage
+  ProjectFilesPage,
+  SearchArtifactsRequest,
+  SearchArtifactsResult
 } from '../../shared/project-files'
 
 type ProjectFilesQueryRepository = {
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+  searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
 }
 
 type ProjectFilesRepairBackend = {
@@ -27,6 +30,7 @@ type ProjectFilesHandlers = {
   getOverview(request: GetProjectFilesOverviewRequest): Promise<ProjectFilesOverview>
   listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage>
   listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage>
+  searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult>
   repairIndex(request: { projectId: string }): Promise<void>
 }
 
@@ -49,6 +53,10 @@ const createProjectFilesHandlers = (
     await recoveryBackend.recoverPendingDeletions()
     return repository.listArtifactGroups(request)
   },
+  searchArtifacts: async (request) => {
+    await recoveryBackend.recoverPendingDeletions()
+    return repository.searchArtifacts(request)
+  },
   repairIndex: async ({ projectId }) => {
     await recoveryBackend.recoverPendingDeletions()
     return repairBackend.repairProjectFiles(projectId)
@@ -60,10 +68,13 @@ const createProjectFilesHandlers = (
 const registerProjectFilesIpcHandlers = (
   repository: ProjectFilesQueryRepository,
   repairBackend: ProjectFilesRepairBackend,
-  recoveryBackend: ProjectFilesRecoveryBackend
+  recoveryBackend: ProjectFilesRecoveryBackend,
+  handlers: ProjectFilesHandlers = createProjectFilesHandlers(
+    repository,
+    repairBackend,
+    recoveryBackend
+  )
 ): void => {
-  const handlers = createProjectFilesHandlers(repository, repairBackend, recoveryBackend)
-
   ipcMainHandle('project-files:get-overview', (_event, request: GetProjectFilesOverviewRequest) =>
     handlers.getOverview(request)
   )
@@ -73,6 +84,9 @@ const registerProjectFilesIpcHandlers = (
   ipcMainHandle(
     'project-files:list-artifact-groups',
     (_event, request: ListArtifactGroupsRequest) => handlers.listArtifactGroups(request)
+  )
+  ipcMainHandle('project-files:search-artifacts', (_event, request: SearchArtifactsRequest) =>
+    handlers.searchArtifacts(request)
   )
   ipcMainHandle('project-files:repair-index', (_event, request: { projectId: string }) =>
     handlers.repairIndex(request)

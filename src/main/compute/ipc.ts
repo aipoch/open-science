@@ -624,39 +624,12 @@ const installComputeIpcHandlers = (module: ComputeIpcAdapter): IpcHandlerInstall
   }
 }
 
-// Compatibility wrapper for isolated callers; application composition uses the two-phase seam above.
-const registerComputeIpcHandlers = (
-  repository = createDefaultComputeHostRepository(),
-  jobRepository = createDefaultComputeJobRepository(),
-  artifactResolver?: ArtifactResolver,
-  injectedService?: ComputeService,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
-  permissionGrantRegistry?: PermissionGrantRegistry
-): Omit<ComputeIpcModule, 'handlers'> => {
-  const module = createComputeIpcModule(
-    repository,
-    jobRepository,
-    artifactResolver,
-    injectedService,
-    taskNotifications,
-    permissionGrantRegistry
-  )
-  installComputeIpcHandlers(module)
-  return {
-    computeService: module.computeService,
-    jobRepository: module.jobRepository,
-    hostRepository: module.hostRepository,
-    enabledComputeHostsRegistry: module.enabledComputeHostsRegistry
-  }
-}
-
 export {
   createComputeHandlers,
   createComputeIpcModule,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
   installComputeIpcHandlers,
-  registerComputeIpcHandlers,
   enabledComputeHostsRegistry
 }
 export type { ComputeHandlers, ComputeIpcModule }

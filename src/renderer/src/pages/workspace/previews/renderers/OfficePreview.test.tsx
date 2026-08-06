@@ -138,6 +138,16 @@ describe('OfficePreviewRenderer', () => {
     document.querySelectorAll('[data-test-overlay]').forEach((element) => element.remove())
   })
 
+  it('falls back to download when the Web renderer has no native Office preview API', async () => {
+    Object.defineProperty(window, 'api', { configurable: true, value: {} })
+
+    await renderPreview()
+
+    expect(container.textContent).toContain('Preview unavailable')
+    expect(container.textContent).toContain('Office preview is only available in the desktop app')
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('shows the authoritative file-check stage while opening', async () => {
     open.mockReturnValue(new Promise(() => undefined))
 

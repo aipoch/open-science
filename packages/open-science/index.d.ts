@@ -22,11 +22,14 @@ export type Run = {
   artifacts: Artifact[]
 }
 
+export type SessionStatus =
+  'idle' | 'running' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
+
 export type Session = {
   id: string
   projectId: string
   title: string
-  status: 'idle' | 'running' | 'waiting-permission' | 'error'
+  status: SessionStatus
   permissionProfile?: PermissionProfile
   createdAt: number
   updatedAt: number

@@ -23,7 +23,15 @@ const SkillImportApprovalRequestDialog = ({
   respond
 }: SkillImportApprovalRequestDialogProps): React.JSX.Element => {
   const [selected, setSelected] = useState<Set<string>>(() =>
-    request.previews.length === 1 ? new Set([request.previews[0].subPath]) : new Set()
+    request.source.kind === 'github'
+      ? new Set(
+          request.previews
+            .filter((candidate) => !candidate.alreadyImported)
+            .map((candidate) => candidate.subPath)
+        )
+      : request.previews.length === 1
+        ? new Set([request.previews[0].subPath])
+        : new Set()
   )
   const candidatePreview = useSkillImportCandidatePreview()
 
@@ -59,7 +67,11 @@ const SkillImportApprovalRequestDialog = ({
   }
   const count = selected.size
   const importLabel =
-    count > 0 ? `Import ${count} Skill${count === 1 ? '' : 's'}` : 'Import selected'
+    request.source.kind === 'github'
+      ? `Import selected (${count})`
+      : count > 0
+        ? `Import ${count} Skill${count === 1 ? '' : 's'}`
+        : 'Import selected'
 
   return (
     <>
@@ -77,12 +89,14 @@ const SkillImportApprovalRequestDialog = ({
               <PackagePlus className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
               <div className="min-w-0">
                 <Dialog.Title className="text-base font-semibold text-foreground">
-                  Import Skill package?
+                  {request.source.kind === 'github'
+                    ? 'Import Skills from GitHub?'
+                    : 'Import Skill package?'}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-xs leading-5 text-muted-foreground">
                   The agent requested an import from{' '}
                   <span className="break-all font-medium text-foreground">
-                    {request.attachmentName}
+                    {request.source.label}
                   </span>
                   . Review and choose exactly what Open Science may install.
                 </Dialog.Description>
@@ -129,7 +143,7 @@ const SkillImportApprovalRequestDialog = ({
                     </div>
                     {candidate.alreadyImported ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        Already imported
+                        {request.source.kind === 'github' ? 'Imported' : 'Already imported'}
                       </span>
                     ) : candidate.replaceableId ? (
                       <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600">
@@ -142,11 +156,16 @@ const SkillImportApprovalRequestDialog = ({
                       size="sm"
                       onClick={() =>
                         candidatePreview.openPreview(() => {
+                          if (candidate.githubUrl) {
+                            return window.api.settings.previewGitHubSkill({
+                              url: candidate.githubUrl
+                            })
+                          }
                           if (candidate.previewError) throw new Error(candidate.previewError)
                           return {
                             name: candidate.name,
                             description: candidate.description,
-                            sourceLabel: `${request.attachmentName} · ${candidate.subPath}`,
+                            sourceLabel: `${request.source.label} · ${candidate.subPath}`,
                             metadata: candidate.metadata,
                             body: candidate.body,
                             files: candidate.files
@@ -182,7 +201,12 @@ const SkillImportApprovalRequestDialog = ({
               >
                 Cancel
               </Button>
-              <Button type="button" disabled={count === 0} onClick={confirm}>
+              <Button
+                type="button"
+                variant={request.source.kind === 'github' ? 'outline' : 'default'}
+                disabled={count === 0}
+                onClick={confirm}
+              >
                 {importLabel}
               </Button>
             </div>

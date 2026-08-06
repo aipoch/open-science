@@ -1,0 +1,634 @@
+import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
+import { describe, expect, it, vi, type Mock } from 'vitest'
+
+import type { AcpPromptRequest } from '../../shared/acp'
+import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import { opencodeFramework } from '../agent-framework'
+import type { ArtifactTurnHandle } from './artifact-turn-owner'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
+import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
+import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
+import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import { AcpSessionAggregate } from './session-aggregate'
+import { AcpSessionInteractionOwner } from './session-interaction-owner'
+import type { TurnSkillHandle } from './turn-skill-owner'
+
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
+type Harness = {
+  admitPlan: Mock<AcpPromptTurnWorkflowOptions['admitPlan']>
+  artifacts: {
+    open: Mock<AcpPromptTurnWorkflowOptions['artifacts']['open']>
+    promptMessageIdFor: Mock<AcpPromptTurnWorkflowOptions['artifacts']['promptMessageIdFor']>
+    publish: Mock<AcpPromptTurnWorkflowOptions['artifacts']['publish']>
+    dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
+  }
+  authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
+  context: ContextUsageTurnHandle
+  contextUsage: { reconcileUsed: Mock<(sessionId: string, used: number) => boolean> }
+  emitSkillActivities: Mock<AcpPromptTurnWorkflowOptions['environment']['emitSkillActivities']>
+  executor: Mock<AcpPromptTurnWorkflowOptions['executor']['execute']>
+  finalization: {
+    errorMessage: AcpPromptTurnWorkflowOptions['finalization']['errorMessage']
+    errorKind: AcpPromptTurnWorkflowOptions['finalization']['errorKind']
+    pushEvent: Mock<AcpPromptTurnWorkflowOptions['finalization']['pushEvent']>
+    onPromptEnded: Mock<AcpPromptTurnWorkflowOptions['finalization']['onPromptEnded']>
+    generationActivityChanged: Mock<
+      AcpPromptTurnWorkflowOptions['finalization']['generationActivityChanged']
+    >
+    autoCompact: Mock<AcpPromptTurnWorkflowOptions['finalization']['autoCompact']>
+  }
+  finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
+  interactions: {
+    current: Mock<AcpSessionInteractionOwner['current']>
+    reservePrompt: Mock<AcpSessionInteractionOwner['reservePrompt']>
+    activatePrompt: Mock<AcpSessionInteractionOwner['activatePrompt']>
+    cancellationCheckpoint: Mock<AcpSessionInteractionOwner['cancellationCheckpoint']>
+    captureTerminal: Mock<AcpSessionInteractionOwner['captureTerminal']>
+    settle: Mock<AcpSessionInteractionOwner['settle']>
+    release: Mock<AcpSessionInteractionOwner['release']>
+  }
+  journal: string[]
+  onProviderPromptAccepted: Mock<
+    NonNullable<AcpPromptTurnWorkflowOptions['environment']['onProviderPromptAccepted']>
+  >
+  owner: AcpSessionInteractionOwner
+  planLifecycle: {
+    beforeStop: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeStop']>
+    beforeRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['beforeRelease']>
+    afterRelease: Mock<AcpPromptTurnWorkflowOptions['planLifecycle']['afterRelease']>
+  }
+  permission: AcpPromptTurnWorkflowOptions['permission']
+  preparation: Mock<AcpPromptTurnWorkflowOptions['preparation']['prepare']>
+  preflightPlan: Mock<AcpPromptTurnWorkflowOptions['preflightPlan']>
+  prepared: ReadyPreparedPromptHandle
+  pushUserMessage: Mock<AcpPromptTurnWorkflowOptions['environment']['pushUserMessage']>
+  resumeAfterReload: Mock<AcpPromptTurnWorkflowOptions['resumeAfterReload']>
+  setSession: (replacement: ActiveSession) => void
+  skill: TurnSkillHandle
+  workflow: AcpPromptTurnWorkflow
+}
+
+const deferred = <T>(): Deferred<T> => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => (resolve = done))
+  return { promise, resolve }
+}
+
+const skillHandle = (kind: 'continue' | 'reload' = 'continue'): TurnSkillHandle => ({
+  reloadDecision: { kind },
+  prepareProvider: vi.fn(async ({ promptText }) => ({ text: promptText, codexSkillInputs: [] })),
+  close: vi.fn()
+})
+
+const backend: AcpBackendGenerationView = {
+  framework: opencodeFramework,
+  session: { model: 'test-model', modelRequired: false },
+  prompt: { systemPromptAppends: [] },
+  context: { supportsImageInput: false },
+  adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+}
+
+const planProjection = (): ActivePlanProjection => ({
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision: 2,
+  approval: 'approved',
+  lifecycle: 'approved',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Analyze the result',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Primary',
+            steps: [{ title: 'Analyze', description: 'Analyze the result.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Result'],
+    feasibility: { confidence: 'high', rationale: 'Inputs are available.' }
+  },
+  stepStatuses: {},
+  stepStates: { Analyze: { status: 'not_started' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+})
+
+const createHarness = (
+  input: {
+    admitPlan?: AcpPromptTurnWorkflowOptions['admitPlan']
+    authorize?: () => TurnSkillHandle | Promise<TurnSkillHandle>
+    cancellationCheckpoint?: AcpPromptTurnWorkflowOptions['interactions']['cancellationCheckpoint']
+    execute?: AcpPromptTurnWorkflowOptions['executor']['execute']
+    finalize?: AcpPromptOutcomeFinalizer['finalize']
+    onPromptStarted?: () => void
+    preflightPlan?: AcpPromptTurnWorkflowOptions['preflightPlan']
+    prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
+    providerReconnectPending?: () => boolean
+  } = {}
+): Harness => {
+  const journal: string[] = []
+  const owner = new AcpSessionInteractionOwner()
+  let session = { sessionId: 'provider-1' } as ActiveSession
+  const aggregate = new AcpSessionAggregate('app-1')
+  aggregate.attach({
+    session,
+    cwd: '/session',
+    projectName: 'project-1',
+    frameworkId: 'opencode',
+    permissionProfile: {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      currentModeId: 'default',
+      availableModeIds: ['default'],
+      fullAccessAvailable: false
+    }
+  })
+  aggregate.setSpecialistId('specialist-1')
+  aggregate.setSpecialistPrefix('[Analyst]')
+  const lookup = vi.fn(() => ({
+    appSessionId: 'app-1',
+    generation: 1,
+    aggregate,
+    attachment: {
+      appSessionId: 'app-1',
+      providerSessionId: session.sessionId,
+      generation: 1,
+      session
+    }
+  }))
+  const interactions: Harness['interactions'] = {
+    current: vi.fn((sessionId: string) => owner.current(sessionId)),
+    reservePrompt: vi.fn((request: Parameters<typeof owner.reservePrompt>[0]) => {
+      journal.push('reserve')
+      return owner.reservePrompt(request)
+    }),
+    activatePrompt: vi.fn((scope: Parameters<typeof owner.activatePrompt>[0]) => {
+      journal.push('activate')
+      return owner.activatePrompt(scope)
+    }),
+    cancellationCheckpoint: vi.fn(
+      async (scope: Parameters<typeof owner.cancellationCheckpoint>[0]) => {
+        journal.push('checkpoint')
+        return input.cancellationCheckpoint?.(scope) ?? owner.cancellationCheckpoint(scope)
+      }
+    ),
+    captureTerminal: vi.fn((...args: Parameters<typeof owner.captureTerminal>) =>
+      owner.captureTerminal(...args)
+    ),
+    settle: vi.fn((...args: Parameters<typeof owner.settle>) => owner.settle(...args)),
+    release: vi.fn((scope: Parameters<typeof owner.release>[0]) => owner.release(scope))
+  }
+  const skill = skillHandle()
+  const authorize: Harness['authorize'] = vi.fn(() => {
+    journal.push('authorize')
+    return input.authorize?.() ?? skill
+  })
+  const preflightPlan: Harness['preflightPlan'] = vi.fn((request: AcpPromptRequest) => {
+    journal.push('preflight')
+    return input.preflightPlan?.(request) ?? {}
+  })
+  const admitPlan: Harness['admitPlan'] = vi.fn(
+    (...args: Parameters<AcpPromptTurnWorkflowOptions['admitPlan']>) => {
+      journal.push('admit')
+      return input.admitPlan?.(...args) ?? {}
+    }
+  )
+  const context = {
+    complete: vi.fn(() => true),
+    fail: vi.fn(),
+    supersede: vi.fn()
+  } as unknown as ContextUsageTurnHandle
+  const prepared = {
+    status: 'ready',
+    content: 'provider content',
+    skillActivityInputs: [{ name: 'Research', path: '/skills/research/SKILL.md' }],
+    transferContextTurn: vi.fn(() => context),
+    close: vi.fn()
+  } satisfies ReadyPreparedPromptHandle
+  const preparation: Harness['preparation'] = vi.fn(async (request) => {
+    journal.push('prepare')
+    return input.prepare?.(request) ?? prepared
+  })
+  const planLifecycle: Harness['planLifecycle'] = {
+    beforeStop: vi.fn(async () => {
+      journal.push('plan:before-stop')
+    }),
+    beforeRelease: vi.fn(() => {
+      journal.push('plan:before-release')
+    }),
+    afterRelease: vi.fn(async () => {
+      journal.push('plan:after-release')
+    })
+  }
+  const onProviderPromptAccepted: Harness['onProviderPromptAccepted'] = vi.fn(() => {
+    journal.push('accepted')
+  })
+  const executor: Harness['executor'] = vi.fn(async (request) => {
+    journal.push('execute')
+    if (input.execute) return input.execute(request)
+    request.onAccepted()
+    const response: PromptResponse = { stopReason: 'end_turn' }
+    await request.beforeStop?.(response)
+    request.captureStop()
+    return { kind: 'stopped' as const, response, facts: {} }
+  })
+  const finalizer: Harness['finalizer'] = vi.fn(async (handles, outcome) => {
+    journal.push('finalize')
+    if (input.finalize) return input.finalize(handles, outcome)
+    if (outcome.kind === 'failed') throw outcome.error
+    if (outcome.kind === 'not-dispatched') return { stopReason: 'cancelled' }
+    return outcome.response
+  })
+  const artifact = {} as ArtifactTurnHandle
+  const artifacts: Harness['artifacts'] = {
+    open: vi.fn(async () => {
+      journal.push('artifact:open')
+      return artifact
+    }),
+    promptMessageIdFor: vi.fn(() => 'fallback-message-1'),
+    publish: vi.fn(async (_sessionId, _artifact, onPublished) => {
+      journal.push('artifact:publish')
+      onPublished()
+    }),
+    dispose: vi.fn(async () => {
+      journal.push('artifact:dispose')
+    })
+  }
+  const permission = { clearCorrelationsForSession: vi.fn() }
+  const contextUsage = { reconcileUsed: vi.fn(() => true) }
+  const finalization: Harness['finalization'] = {
+    errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
+    errorKind: (error) => (error as { data?: { errorKind?: string } } | undefined)?.data?.errorKind,
+    pushEvent: vi.fn(),
+    onPromptEnded: vi.fn(),
+    generationActivityChanged: vi.fn(),
+    autoCompact: vi.fn(async () => undefined)
+  }
+  const pushUserMessage: Harness['pushUserMessage'] = vi.fn(() => {
+    journal.push('event:message')
+  })
+  const emitSkillActivities: Harness['emitSkillActivities'] = vi.fn(
+    (_sessionId, _turn, _skills, status) => {
+      journal.push(`skills:${status}`)
+    }
+  )
+  const resumeAfterReload: Harness['resumeAfterReload'] = vi.fn(async () => ({
+    contextReset: false
+  }))
+  const workflowOptions = {
+    registry: {
+      lookup,
+      select: vi.fn(() => journal.push('select'))
+    },
+    interactions,
+    skills: { authorize },
+    preparation: { prepare: preparation },
+    executor: { execute: executor },
+    contextUsage,
+    providerReconnectPending: input.providerReconnectPending ?? (() => false),
+    environment: {
+      backend: () => backend,
+      tooling: () => ({ artifacts: true, notebook: true, skillImport: true }),
+      bridgeSkillsAvailable: () => true,
+      skillImportEnabled: () => true,
+      contextEstimateInput: () => ({ frameworkId: 'opencode' }),
+      selectedContextWindow: () => 128_000,
+      emitSkillActivities,
+      onProviderPromptAccepted,
+      routeNotification: vi.fn(),
+      diagnosticContext: () => ({}),
+      pushUserMessage
+    },
+    artifacts,
+    planLifecycle,
+    finalizer: { finalize: finalizer },
+    permission,
+    finalization,
+    currentCwd: () => '/default',
+    resolveProjectName: () => 'project-1',
+    preflightPlan,
+    admitPlan,
+    disconnectForReload: vi.fn(async () => journal.push('disconnect')),
+    resumeAfterReload,
+    recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
+    onPromptStarted: vi.fn(() => {
+      journal.push('start')
+      input.onPromptStarted?.()
+    }),
+    emitState: vi.fn(() => journal.push('state'))
+  } satisfies AcpPromptTurnWorkflowOptions
+  const workflow = new AcpPromptTurnWorkflow(workflowOptions)
+  return {
+    admitPlan,
+    artifacts,
+    authorize,
+    context,
+    contextUsage,
+    emitSkillActivities,
+    executor,
+    finalization,
+    finalizer,
+    interactions,
+    journal,
+    onProviderPromptAccepted,
+    owner,
+    planLifecycle,
+    permission,
+    preparation,
+    preflightPlan,
+    prepared,
+    pushUserMessage,
+    resumeAfterReload,
+    setSession: (replacement: ActiveSession) => (session = replacement),
+    skill,
+    workflow
+  }
+}
+
+const request = (): AcpPromptRequest => ({
+  sessionId: 's1',
+  text: 'analyze',
+  forcedSkillIds: ['research'],
+  provenanceContext: { promptMessageId: 'message-1' }
+})
+
+describe('AcpPromptTurnWorkflow', () => {
+  it('admits and executes one user turn in owner order with its opaque handles', async () => {
+    const harness = createHarness()
+
+    const turn = harness.workflow.run(request(), {
+      kind: 'user',
+      promptAttemptId: 'attempt-1'
+    })
+
+    expect(harness.journal.slice(0, 9)).toEqual([
+      'preflight',
+      'reserve',
+      'authorize',
+      'activate',
+      'admit',
+      'select',
+      'handoff',
+      'start',
+      'state'
+    ])
+    await expect(turn).resolves.toEqual({ stopReason: 'end_turn' })
+    expect(harness.journal).toEqual([
+      'preflight',
+      'reserve',
+      'authorize',
+      'activate',
+      'admit',
+      'select',
+      'handoff',
+      'start',
+      'state',
+      'artifact:open',
+      'checkpoint',
+      'prepare',
+      'event:message',
+      'skills:in_progress',
+      'execute',
+      'accepted',
+      'skills:completed',
+      'plan:before-stop',
+      'finalize'
+    ])
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(handles).toMatchObject({
+      sessionId: 's1',
+      promptMessageId: 'message-1',
+      interaction: expect.objectContaining({ promptMessageId: 'message-1' }),
+      interactions: harness.interactions,
+      permission: harness.permission,
+      context: harness.context,
+      prepared: harness.prepared,
+      skill: harness.skill,
+      model: 'test-model'
+    })
+    expect(outcome).toMatchObject({
+      kind: 'stopped',
+      response: { stopReason: 'end_turn' }
+    })
+
+    const onPublished = vi.fn()
+    await handles.emitArtifact(onPublished)
+    await handles.disposeArtifact()
+    handles.recordContextUsed(42)
+    handles.onPromptEnded()
+    handles.generationActivityChanged()
+    await handles.autoCompactIfNeeded()
+    handles.failPendingSkillActivities()
+
+    expect(harness.artifacts.publish).toHaveBeenCalledWith('s1', expect.any(Object), onPublished)
+    expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
+    expect(harness.contextUsage.reconcileUsed).toHaveBeenCalledWith('s1', 42)
+    expect(harness.finalization.onPromptEnded).toHaveBeenCalledWith(
+      's1',
+      handles.interaction.turnToken
+    )
+    expect(harness.finalization.generationActivityChanged).toHaveBeenCalledOnce()
+    expect(harness.finalization.autoCompact).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ sessionId: 'provider-1' }),
+      handles.interaction
+    )
+    expect(harness.emitSkillActivities.mock.calls.map((call) => call[3])).toEqual([
+      'in_progress',
+      'completed'
+    ])
+  })
+
+  it('rejects delayed context usage after a successor or provider reconnect takes ownership', async () => {
+    const successor = createHarness()
+    await successor.workflow.run(request(), { kind: 'user' })
+    const successorHandles = successor.finalizer.mock.calls[0][0]
+    successor.interactions.current.mockReturnValue({} as never)
+
+    successorHandles.recordContextUsed(41)
+
+    expect(successor.contextUsage.reconcileUsed).not.toHaveBeenCalled()
+
+    const reconnect = createHarness({ providerReconnectPending: () => true })
+    await reconnect.workflow.run(request(), { kind: 'user' })
+    reconnect.finalizer.mock.calls[0][0].recordContextUsed(42)
+
+    expect(reconnect.contextUsage.reconcileUsed).not.toHaveBeenCalled()
+  })
+
+  it('propagates app-continuation identity without publishing its synthetic text', async () => {
+    const harness = createHarness()
+    const continuation = request()
+    continuation.continuation = {
+      kind: 'specialist-handoff',
+      originatingTurnToken: 'origin-turn',
+      targetName: 'Reviewer',
+      completion: { kind: 'returned', value: 'done' }
+    }
+
+    await harness.workflow.run(continuation, {
+      kind: 'app-continuation',
+      promptAttemptId: 'attempt-2'
+    })
+
+    const handles = harness.finalizer.mock.calls[0][0]
+    handles.emitUserMessage()
+    expect(handles.interaction.turnToken).toBe('origin-turn')
+    expect(harness.pushUserMessage).not.toHaveBeenCalled()
+    expect(harness.onProviderPromptAccepted).toHaveBeenCalledWith('s1', 'attempt-2')
+  })
+
+  it('cannot let delayed admission clear a newer active interaction', async () => {
+    const authorization = deferred<TurnSkillHandle>()
+    const staleSkill = skillHandle()
+    const harness = createHarness({ authorize: () => authorization.promise })
+    const stale = harness.workflow.run(request(), { kind: 'user' })
+    await vi.waitFor(() => expect(harness.authorize).toHaveBeenCalledOnce())
+    const staleReservation = harness.interactions.reservePrompt.mock.results[0].value
+    const replacement = harness.owner.activatePrompt(
+      harness.owner.reservePrompt({ sessionId: 's1', kind: 'prompt' })
+    )
+
+    authorization.resolve(staleSkill)
+
+    await expect(stale).rejects.toThrow('already running')
+    expect(staleSkill.close).toHaveBeenCalledWith('failed')
+    expect(harness.interactions.release).toHaveBeenCalledWith(staleReservation)
+    expect(harness.owner.current('s1')).toBe(replacement)
+    expect(harness.preparation).not.toHaveBeenCalled()
+    expect(harness.finalizer).not.toHaveBeenCalled()
+  })
+
+  it('refreshes reservation, session, and replay context after a Skill reload', async () => {
+    const reloadedSkill = skillHandle('reload')
+    const harness = createHarness({ authorize: () => reloadedSkill })
+    const reloaded = { sessionId: 'provider-2' } as ActiveSession
+    harness.resumeAfterReload.mockImplementation(async () => {
+      harness.setSession(reloaded)
+      return { contextReset: true }
+    })
+    const turn = request()
+    turn.resumeFallback = { historyPreamble: 'restored transcript' }
+
+    await harness.workflow.run(turn, { kind: 'user' })
+
+    expect(harness.interactions.reservePrompt).toHaveBeenCalledTimes(2)
+    expect(harness.resumeAfterReload).toHaveBeenCalledWith({
+      sessionId: 's1',
+      cwd: '/session',
+      projectName: 'project-1',
+      permissionProfile: 'ask'
+    })
+    expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })
+    expect(harness.executor.mock.calls[0][0].session).toBe(reloaded)
+  })
+
+  it('finishes Plan preflight before reserving and admits only an activated interaction', async () => {
+    const harness = createHarness()
+
+    await harness.workflow.run(request(), { kind: 'user' })
+
+    expect(harness.journal.indexOf('preflight')).toBeLessThan(harness.journal.indexOf('reserve'))
+    expect(harness.journal.indexOf('activate')).toBeLessThan(harness.journal.indexOf('admit'))
+    expect(harness.admitPlan.mock.calls[0][1]).toBe(
+      harness.interactions.activatePrompt.mock.results[0].value
+    )
+
+    const rejected = createHarness({
+      preflightPlan: async () => {
+        throw new Error('stale Plan')
+      }
+    })
+    await expect(rejected.workflow.run(request(), { kind: 'user' })).rejects.toThrow('stale Plan')
+    expect(rejected.interactions.reservePrompt).not.toHaveBeenCalled()
+  })
+
+  it('keeps an admitted turn running when the prompt-start callback throws', async () => {
+    const harness = createHarness({
+      onPromptStarted: () => {
+        throw new Error('renderer unavailable')
+      }
+    })
+
+    await expect(harness.workflow.run(request(), { kind: 'user' })).resolves.toEqual({
+      stopReason: 'end_turn'
+    })
+    expect(harness.finalizer).toHaveBeenCalledOnce()
+    expect(harness.journal.slice(6, 10)).toEqual(['handoff', 'start', 'state', 'artifact:open'])
+  })
+
+  it('finalizes a cancellation after Artifact activation without preparing or dispatching', async () => {
+    const harness = createHarness({ cancellationCheckpoint: async () => 'cancelled' })
+
+    await expect(harness.workflow.run(request(), { kind: 'user' })).resolves.toEqual({
+      stopReason: 'cancelled'
+    })
+
+    expect(harness.artifacts.open).toHaveBeenCalledWith('s1', {
+      promptMessageId: 'message-1'
+    })
+    expect(harness.preparation).not.toHaveBeenCalled()
+    expect(harness.executor).not.toHaveBeenCalled()
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(outcome).toEqual({ kind: 'not-dispatched' })
+    expect(handles).not.toHaveProperty('prepared')
+    expect(handles).not.toHaveProperty('context')
+    await handles.disposeArtifact()
+    expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
+  })
+
+  it('turns execution failure into one finalization outcome with pending Skill state', async () => {
+    const failure = new Error('provider failed')
+    const harness = createHarness({
+      execute: async () => {
+        throw failure
+      }
+    })
+
+    await expect(harness.workflow.run(request(), { kind: 'user' })).rejects.toBe(failure)
+
+    expect(harness.finalizer).toHaveBeenCalledOnce()
+    const [handles, outcome] = harness.finalizer.mock.calls[0]
+    expect(outcome).toEqual({ kind: 'failed', error: failure })
+    handles.emitUserMessage()
+    handles.failPendingSkillActivities()
+    handles.failPendingSkillActivities()
+    expect(harness.pushUserMessage).toHaveBeenCalledOnce()
+    expect(harness.emitSkillActivities.mock.calls.map((call) => call[3])).toEqual([
+      'in_progress',
+      'failed'
+    ])
+    expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
+  it('passes protected Plan guidance through the interaction-scoped completion gate', async () => {
+    const projection = planProjection()
+    const harness = createHarness({ admitPlan: () => ({ authorized: projection }) })
+    const prompt = request()
+    prompt.turnIntent = 'plan-first'
+
+    await harness.workflow.run(prompt, { kind: 'user' })
+
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protectedContext: expect.stringContaining('artifact_version_id=plan-version-1'),
+        turnPromptReminders: [expect.stringContaining('Plan mode (ACTIVE')]
+      })
+    )
+    const handles = harness.finalizer.mock.calls[0][0]
+    const interaction = handles.interaction
+    expect(harness.planLifecycle.beforeStop).toHaveBeenCalledWith('s1', interaction, {
+      stopReason: 'end_turn'
+    })
+    handles.beforeInteractionRelease()
+    await handles.afterInteractionRelease()
+    expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)
+    expect(harness.planLifecycle.afterRelease).toHaveBeenCalledWith('s1')
+  })
+})

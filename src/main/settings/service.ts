@@ -8,6 +8,8 @@ import type {
   ClaudeInstallEvent,
   ClaudeInstallResult,
   ConnectorDetailView,
+  ConnectorTemplateExportPreview,
+  ConnectorTemplatePreview,
   ConnectorsSnapshot,
   AddCustomServerRequest,
   RemoveCustomServerRequest,
@@ -62,6 +64,7 @@ import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   listAgentFrameworks,
+  type AgentModelChangeTarget,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
@@ -83,13 +86,12 @@ import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-ma
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
-  type AgentBackendSelection,
-  type AgentSpawnConfig
+  type AgentBackendSelection
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
-import type { StoredConnectors, StoredSettings } from './types'
+import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
 
@@ -167,6 +169,9 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly storageRoot: string
   private readonly userClaudeDir: string
+  private customServerAuthenticator?: (serverId: string) => Promise<void>
+  private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
+  private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
@@ -384,6 +389,10 @@ class SettingsService {
     return this.backendResolver.resolveActiveReasoningEffort(intent)
   }
 
+  async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
+    return this.backendResolver.resolveActiveModelChangeTarget()
+  }
+
   // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the
   // notification path sees a toggle change immediately (no restart, no cached copy to go stale).
   async getNotificationsEnabled(): Promise<boolean> {
@@ -460,6 +469,7 @@ class SettingsService {
       source: SkillSource
       mainEnabled: boolean
       available: boolean
+      compatibility?: string
     }>
   > {
     return this.skills.listSpecialistSkillCatalog()
@@ -536,7 +546,11 @@ class SettingsService {
 
   // Deletes a personal or imported skill, returning the refreshed list.
   async deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]> {
-    return this.skills.deleteSkill(request)
+    return this.skills.deleteSkill(request, this.skillDeletionGuard)
+  }
+
+  setSkillDeletionGuard(guard: (skillId: string) => Promise<void>): void {
+    this.skillDeletionGuard = guard
   }
 
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
@@ -753,14 +767,6 @@ class SettingsService {
     return this.providers.logoutClaudeShared()
   }
 
-  async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
-    return this.providers.getClaudeSharedStatus()
-  }
-
-  async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
-    return this.providers.getClaudeIsolatedStatus()
-  }
-
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
     await this.providers.setActiveProvider(id, model)
     return this.getSettingsView()
@@ -790,6 +796,21 @@ class SettingsService {
   // Lists every bundled connector with enabled / auto-allow state, plus shared NCBI credential state.
   async listConnectors(): Promise<ConnectorsSnapshot> {
     return this.connectors.listConnectors()
+  }
+
+  async previewCustomServerTemplateExport(id: string): Promise<ConnectorTemplateExportPreview> {
+    return (await this.connectors.buildCustomServerTemplateExport(id)).preview
+  }
+
+  async buildCustomServerTemplateExport(id: string): Promise<{
+    preview: ConnectorTemplateExportPreview
+    contents?: string
+  }> {
+    return this.connectors.buildCustomServerTemplateExport(id)
+  }
+
+  async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
+    return this.connectors.previewCustomServerTemplateImport(contents)
   }
 
   // Returns one connector's view plus its tools (with per-tool permission) and metadata.
@@ -850,6 +871,35 @@ class SettingsService {
     return this.connectors.updateCustomServer(request, beforeSecuritySensitiveUpdate)
   }
 
+  // Persists OAuth state through the connector module's encrypted safeStorage projection. This is
+  // intentionally main-process-only; renderer settings never receive the token-bearing state.
+  async saveCustomServerOAuthState(
+    serverId: string,
+    state: StoredCustomMcpOAuthState | undefined
+  ): Promise<void> {
+    return this.connectors.saveCustomServerOAuthState(serverId, state)
+  }
+
+  setCustomServerAuthenticator(
+    authenticator: (serverId: string) => Promise<void>,
+    cancel: (serverId: string) => Promise<void>
+  ): void {
+    this.customServerAuthenticator = authenticator
+    this.customServerAuthenticationCanceller = cancel
+  }
+
+  async authenticateCustomServer(serverId: string): Promise<ConnectorsSnapshot> {
+    if (!this.customServerAuthenticator) {
+      throw new Error('Custom MCP OAuth is not available yet')
+    }
+    await this.customServerAuthenticator(serverId)
+    return this.connectors.setCustomServerEnabled({ id: serverId, enabled: true })
+  }
+
+  async cancelCustomServerAuthentication(serverId: string): Promise<void> {
+    await this.customServerAuthenticationCanceller?.(serverId)
+  }
+
   // Reports whether npm is on PATH so the installer UI can default to/enable the npm source.
   async isNpmAvailable(): Promise<boolean> {
     return this.runtimeManager.isNpmAvailable()
@@ -866,24 +916,6 @@ class SettingsService {
   // Sets the bookmark folders for a provider. Replaces the full array for that provider.
   async setComputeBookmarks(providerId: string, folders: string[]): Promise<void> {
     await this.repository.setComputeBookmarks(providerId, folders)
-  }
-
-  // Builds the spawn env for the active provider, read fresh so switching takes effect on reconnect.
-  async resolveActiveSpawnConfig(
-    context: AgentBackendResolutionContext = {}
-  ): Promise<AgentSpawnConfig> {
-    return this.backendResolver.resolveActiveSpawnConfig(context)
-  }
-
-  // Resolves the active agent backend for one connect: the selected framework plus its spawn inputs.
-  // Claude reuses the existing provider-env path unchanged; other frameworks (opencode) map the active
-  // provider to their own native config (a generated opencode.json) via the framework adapter and get
-  // it written to disk before spawn. The framework can be forced with OPEN_SCIENCE_AGENT_FRAMEWORK for
-  // the spike until the settings selector lands.
-  async resolveActiveAgentBackend(
-    context: AgentBackendResolutionContext = {}
-  ): Promise<ResolvedAgentBackend> {
-    return this.backendResolver.resolveActiveBackend(context)
   }
 
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
@@ -905,8 +937,4 @@ const createDefaultSettingsService = (): SettingsService => new SettingsService(
 
 export { SettingsService, createDefaultSettingsService }
 export type { CustomServerSecurityChangeGuard }
-export type {
-  AgentBackendResolutionContext,
-  AgentBackendSelection,
-  AgentSpawnConfig
-} from './backend-resolver'
+export type { AgentBackendResolutionContext, AgentBackendSelection } from './backend-resolver'

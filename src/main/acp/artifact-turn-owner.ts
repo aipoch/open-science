@@ -37,6 +37,7 @@ type ArtifactTurnWriteInput = {
   filename: string
   content: string
   mimeType?: string
+  kind?: 'plan'
 }
 
 type ArtifactTurnPublication = {
@@ -78,6 +79,7 @@ type ArtifactTurnProvenance = {
     filename: string
     content: string
     contentType?: string
+    kind?: 'plan'
   }) => Promise<ArtifactFile>
 }
 
@@ -249,7 +251,8 @@ class ArtifactTurnOwner {
           agentName: turn.agentName,
           filename: input.filename,
           content: input.content,
-          contentType: input.mimeType
+          contentType: input.mimeType,
+          kind: input.kind
         })
       : this.options.repository.writePendingFile({
           projectName: turn.projectId,
@@ -257,6 +260,7 @@ class ArtifactTurnOwner {
           runId: turn.runId,
           filename: input.filename,
           mimeType: input.mimeType,
+          kind: input.kind,
           source: { kind: 'inline', content: input.content, encoding: 'utf8' }
         })
 

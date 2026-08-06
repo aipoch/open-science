@@ -32,12 +32,12 @@ const createPreviewRequestScope = ({
 }
 
 // Selects the managed IPC reader once so callers remain source-neutral.
-const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFileReader =>
-  source === 'upload'
-    ? window.api.uploads.readPreview
-    : source === 'notebook-input'
-      ? window.api.notebook.readInputPreview
-      : window.api.artifacts.readPreview
+const getPreviewFileReader = (source: PreviewFileSource = 'artifact'): PreviewFileReader => {
+  if (source === 'upload') return window.api.uploads.readPreview
+  if (source === 'notebook-input') return window.api.notebook.readInputPreview
+  if (source === 'local') return window.api.localFs.readPreview
+  return window.api.artifacts.readPreview
+}
 
 export { createPreviewRequestScope, getPreviewFileReader }
 export type { PreviewFileReader }

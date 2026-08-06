@@ -22,6 +22,7 @@ type TrayCall = {
   clickHandler?: () => void
   doubleClickHandler?: () => void
   rightClickHandler?: () => void
+  setImages: FakeImage[]
   poppedMenu?: {
     menu: { template: MenuTemplateItem[] }
     position?: { x: number; y: number }
@@ -32,12 +33,16 @@ let lastTray: TrayCall | undefined
 let lastTemplate: MenuTemplateItem[] | undefined
 // When true the fake Tray constructor throws, simulating a platform without a tray host.
 let trayShouldThrow = false
+// Drives Tray.isDestroyed() on the fake, for the destroyed-tray guard in setTrayIconVariant.
+let trayDestroyed = false
 // Toggles for the nativeImage doubles, driving the macOS template branch and its fallbacks.
 let sourceEmpty = false
 let bitmapThrows = false
 let sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
 let templateBitmap: Buffer | undefined
 let createdFromPaths: string[] = []
+// Paths whose fake image reports isEmpty(), to exercise the variant-icon fallback per path.
+let emptyPaths: string[] = []
 
 const makeImage = (kind: 'path' | 'bitmap'): FakeImage => {
   const image: FakeImage = {
@@ -61,11 +66,19 @@ class FakeTray {
   constructor(icon: FakeImage) {
     if (trayShouldThrow) throw new Error('no tray host')
 
-    lastTray = { icon }
+    lastTray = { icon, setImages: [] }
   }
 
   setToolTip(tooltip: string): void {
     if (lastTray) lastTray.tooltip = tooltip
+  }
+
+  setImage(image: FakeImage): void {
+    if (lastTray) lastTray.setImages.push(image)
+  }
+
+  isDestroyed(): boolean {
+    return trayDestroyed
   }
 
   setContextMenu(menu: { template: MenuTemplateItem[] }): void {
@@ -102,7 +115,9 @@ vi.mock('electron', () => ({
   nativeImage: {
     createFromPath: (path: string) => {
       createdFromPaths.push(path)
-      return makeImage('path')
+      const image = makeImage('path')
+      if (emptyPaths.includes(path)) image.isEmpty = () => true
+      return image
     },
     createFromBitmap: (bitmap: Buffer) => {
       templateBitmap = Buffer.from(bitmap)
@@ -123,7 +138,7 @@ vi.mock('./logger', () => ({
   })
 }))
 
-const { createAppTray } = await import('./tray')
+const { createAppTray, setTrayIconVariant } = await import('./tray')
 
 const originalPlatform = process.platform
 const setPlatform = (value: string): void => {
@@ -146,6 +161,8 @@ describe('createAppTray', () => {
     sourceBitmap = Buffer.alloc(4 * 4 * 4, 200)
     templateBitmap = undefined
     createdFromPaths = []
+    trayDestroyed = false
+    emptyPaths = []
     // Default the shared cases to a non-darwin platform (full-color icon path).
     setPlatform('linux')
   })
@@ -270,6 +287,89 @@ describe('createAppTray', () => {
       lastTray?.doubleClickHandler?.()
       expect(onOpenWeb).toHaveBeenCalledTimes(2)
     })
+
+    describe('variant-following icon', () => {
+      const variantArgs = (): Parameters<typeof createAppTray>[0] => ({
+        iconPath: '/icons/tray-dark.ico',
+        variantIconPaths: { light: '/icons/tray-light.ico', dark: '/icons/tray-dark.ico' },
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      it('starts with the tile matching the persisted variant', () => {
+        createAppTray({ ...variantArgs(), initialVariant: 'light' })
+        expect(createdFromPaths).toEqual(['/icons/tray-light.ico'])
+
+        createdFromPaths = []
+        createAppTray({ ...variantArgs(), initialVariant: 'dark' })
+        expect(createdFromPaths).toEqual(['/icons/tray-dark.ico'])
+      })
+
+      it('starts on the default variant when initialVariant is unset', () => {
+        createAppTray(variantArgs())
+        expect(createdFromPaths).toEqual(['/icons/tray-light.ico'])
+      })
+
+      it('falls back to iconPath when the startup variant asset is unreadable', () => {
+        emptyPaths = ['/icons/tray-light.ico']
+        createAppTray({ ...variantArgs(), initialVariant: 'light' })
+
+        expect(createdFromPaths).toEqual(['/icons/tray-light.ico', '/icons/tray-dark.ico'])
+      })
+
+      it('falls back to iconPath when the variant key is missing from variantIconPaths', () => {
+        createAppTray({
+          ...variantArgs(),
+          variantIconPaths: { dark: '/icons/tray-dark.ico' },
+          initialVariant: 'light'
+        })
+
+        expect(createdFromPaths).toEqual(['/icons/tray-dark.ico'])
+        expect(lastTray?.icon.isEmpty()).toBe(false)
+      })
+
+      it('setTrayIconVariant swaps the tile when the settings variant changes', () => {
+        const tray = createAppTray({ ...variantArgs(), initialVariant: 'light' })
+
+        setTrayIconVariant(
+          tray!,
+          { light: '/icons/tray-light.ico', dark: '/icons/tray-dark.ico' },
+          'dark'
+        )
+
+        expect(createdFromPaths).toEqual(['/icons/tray-light.ico', '/icons/tray-dark.ico'])
+        expect(lastTray?.setImages).toHaveLength(1)
+        expect(lastTray?.setImages[0]?.isEmpty()).toBe(false)
+      })
+
+      it('setTrayIconVariant keeps the current image when the variant asset is unreadable', () => {
+        const tray = createAppTray({ ...variantArgs(), initialVariant: 'light' })
+
+        emptyPaths = ['/icons/tray-dark.ico']
+        setTrayIconVariant(
+          tray!,
+          { light: '/icons/tray-light.ico', dark: '/icons/tray-dark.ico' },
+          'dark'
+        )
+
+        expect(lastTray?.setImages).toHaveLength(0)
+      })
+
+      it('setTrayIconVariant is a no-op on a destroyed tray', () => {
+        const tray = createAppTray({ ...variantArgs(), initialVariant: 'light' })
+
+        trayDestroyed = true
+        setTrayIconVariant(
+          tray!,
+          { light: '/icons/tray-light.ico', dark: '/icons/tray-dark.ico' },
+          'dark'
+        )
+
+        expect(createdFromPaths).toEqual(['/icons/tray-light.ico'])
+        expect(lastTray?.setImages).toHaveLength(0)
+      })
+    })
   })
 
   it('uses the full-color icon (not a template) on non-darwin platforms', () => {
@@ -386,6 +486,22 @@ describe('createAppTray', () => {
 
       expect(lastTray?.icon.kind).toBe('path')
       expect(lastTray?.icon.isTemplate).toBe(false)
+    })
+
+    it('ignores variantIconPaths and keeps the monochrome template', () => {
+      createAppTray({
+        iconPath: '/icons/app.png',
+        templateIconPath: '/icons/trayTemplate.png',
+        variantIconPaths: { light: '/icons/tray-light.ico', dark: '/icons/tray-dark.ico' },
+        initialVariant: 'dark',
+        onShow: vi.fn(),
+        onHide: vi.fn(),
+        onQuit: vi.fn()
+      })
+
+      // macOS renders the prepared template, never a variant tile.
+      expect(lastTray?.icon.isTemplate).toBe(true)
+      expect(createdFromPaths).toEqual(['/icons/trayTemplate.png'])
     })
   })
 })

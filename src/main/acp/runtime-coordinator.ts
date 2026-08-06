@@ -23,8 +23,11 @@ import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
+import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import type { AgentModelChangeTarget } from '../agent-framework'
 
 const MAX_EVENTS = 500
+const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 
 const isOwnershipScopedControlEvent = (event: AcpRuntimeEvent): boolean =>
   event.kind === 'compaction' || event.recoverable === 'context-overflow'
@@ -106,6 +109,7 @@ class AcpRuntimeCoordinator {
   private readonly activePromptCounts = new Map<string, number>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
+  private promptAdmissionClosedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
@@ -218,6 +222,29 @@ class AcpRuntimeCoordinator {
     }
   }
 
+  callSessionPlan(input: Parameters<AcpRuntime['callSessionPlan']>[0]): Promise<unknown> {
+    const runtime = this.sessionRuntimes.get(input.sessionId) ?? this.activeRuntime
+    if (!runtime) return Promise.reject(new Error('No active runtime owns the Session Plan call.'))
+    return runtime.callSessionPlan(input)
+  }
+
+  getSessionPlanProjection(
+    projectId: string,
+    sessionId: string
+  ): ReturnType<AcpRuntime['getSessionPlanProjection']> {
+    const runtime = this.sessionRuntimes.get(sessionId) ?? this.activeRuntime
+    return runtime?.getSessionPlanProjection(projectId, sessionId) ?? Promise.resolve(null)
+  }
+
+  respondSessionPlan(
+    input: Parameters<AcpRuntime['respondSessionPlan']>[0]
+  ): ReturnType<AcpRuntime['respondSessionPlan']> {
+    const runtime = this.sessionRuntimes.get(input.sessionId) ?? this.activeRuntime
+    if (!runtime)
+      return Promise.reject(new Error('No active runtime owns the Session Plan response.'))
+    return runtime.respondSessionPlan(input)
+  }
+
   getActivePromptSessions(): { projectName: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
   }
@@ -284,6 +311,47 @@ class AcpRuntimeCoordinator {
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForQuit())
+  }
+
+  // Gives active agents a bounded chance to return their terminal stop response before process-tree
+  // teardown. Those responses carry the final usage available from Claude Code/OpenCode/managed Codex;
+  // an unresponsive agent cannot hold app quit indefinitely.
+  async prepareForQuit(
+    timeoutMs = QUIT_PREPARATION_TIMEOUT_MS
+  ): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>> {
+    this.promptAdmissionClosedForQuit = true
+    const sessionIds = Array.from(
+      new Set([
+        ...this.activePromptRequests.keys(),
+        ...this.pendingPromptStarts.keys(),
+        ...this.getSnapshot().promptInFlightSessionIds
+      ])
+    )
+    if (sessionIds.length === 0) return 'completed'
+
+    const cancelAndDrain = async (): Promise<void> => {
+      await Promise.allSettled(
+        sessionIds.map((sessionId) => this.cancelPrompt({ sessionId }).then(() => undefined))
+      )
+      await Promise.all(
+        sessionIds.map((sessionId) => this.waitForSessionInteractionRelease(sessionId))
+      )
+    }
+
+    return new Promise<'completed' | 'timeout' | 'failed'>((resolve) => {
+      let settled = false
+      const finish = (outcome: 'completed' | 'timeout' | 'failed'): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(outcome)
+      }
+      const timer = setTimeout(() => finish('timeout'), Math.max(0, timeoutMs))
+      void cancelAndDrain().then(
+        () => finish('completed'),
+        () => finish('failed')
+      )
+    })
   }
 
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
@@ -468,7 +536,9 @@ class AcpRuntimeCoordinator {
   }
 
   async compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot> {
+    this.assertPromptAdmissionOpen()
     await this.waitForInitialization()
+    this.assertPromptAdmissionOpen()
     await this.runtimeForSession(request.sessionId).compactSession(request)
     return this.getSnapshot()
   }
@@ -478,6 +548,7 @@ class AcpRuntimeCoordinator {
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
+    if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     if (!this.promptAdmissionGuard) return this.dispatchPrompt(request, undefined, 'sendPrompt')
     return this.promptAdmissionGuard(request.sessionId).then(() =>
       this.dispatchPrompt(request, undefined, 'sendPrompt')
@@ -485,10 +556,6 @@ class AcpRuntimeCoordinator {
   }
 
   sendAppContinuation(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.dispatchPrompt(request, undefined, 'sendAppContinuation')
-  }
-
-  sendPromptForHandoff(request: AcpPromptRequest): ReturnType<AcpRuntime['sendAppContinuation']> {
     return this.dispatchPrompt(request, undefined, 'sendAppContinuation')
   }
 
@@ -526,10 +593,13 @@ class AcpRuntimeCoordinator {
   private dispatchPrompt(
     request: AcpPromptRequest,
     acceptance: PromptAcceptance | undefined,
-    operation: 'sendPrompt' | 'sendAppContinuation'
+    operation: 'sendPrompt' | 'sendAppContinuation',
+    pinnedRuntime?: AcpRuntime,
+    retainAsLatestUserPrompt = operation === 'sendPrompt'
   ): ReturnType<AcpRuntime['sendPrompt']> {
-    const owner = this.findRuntimeForSession(request.sessionId)
-    if (owner && this.retiredRuntimes.has(owner)) {
+    if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
+    const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
+    if (!pinnedRuntime && owner && this.retiredRuntimes.has(owner)) {
       return Promise.reject(new Error('ACP session must resume before sending a prompt'))
     }
 
@@ -560,7 +630,7 @@ class AcpRuntimeCoordinator {
       acceptance
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
-    if (operation === 'sendPrompt') this.latestPromptRequests.set(request.sessionId, taskRequest)
+    if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
     return runtime[operation](taskRequest, attempt.id).finally(() => {
       this.removePendingPromptStart(request.sessionId, attempt)
       if (this.activePromptRequests.get(request.sessionId) === activePrompt) {
@@ -696,6 +766,10 @@ class AcpRuntimeCoordinator {
     return this.getActiveRuntime().applyReasoningEffortChange(effort)
   }
 
+  async applyModelChange(target: AgentModelChangeTarget): Promise<boolean> {
+    return this.getActiveRuntime().applyModelChange(target)
+  }
+
   writeArtifactForCurrentRun(
     sessionId: string,
     input: Parameters<AcpRuntime['writeArtifactForCurrentRun']>[1]
@@ -707,32 +781,26 @@ class AcpRuntimeCoordinator {
     options: AcpRuntimeActivityOptions,
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
+    this.assertPromptAdmissionOpen()
     const runtime = this.getActiveRuntime()
     const scopedRuntime = this.createScopedActivityRuntime(runtime, options)
 
-    return runtime.withActivity(options, () => work(scopedRuntime))
+    return runtime.withActivity(options, () => {
+      this.assertPromptAdmissionOpen()
+      return work(scopedRuntime)
+    })
   }
 
   async buildReviewerSession(
     request: Parameters<AcpRuntime['buildReviewerSession']>[0]
   ): ReturnType<AcpRuntime['buildReviewerSession']> {
-    const runtime = this.getActiveRuntime()
-    const built = await runtime.buildReviewerSession(request)
-    this.reviewerRuntimes.set(built.session, runtime)
-    return built
+    return this.buildReviewerSessionOnRuntime(this.getActiveRuntime(), request)
   }
 
   disposeReviewerSession(session: ActiveSession): ReturnType<AcpRuntime['disposeReviewerSession']> {
     const runtime = this.reviewerRuntimes.get(session) ?? this.getActiveRuntime()
     this.reviewerRuntimes.delete(session)
     return runtime.disposeReviewerSession(session)
-  }
-
-  reviewerRejectedToolCallCount(sessionId: string): number {
-    return Array.from(this.runtimes).reduce(
-      (count, runtime) => count + runtime.reviewerRejectedToolCallCount(sessionId),
-      0
-    )
   }
 
   private createScopedActivityRuntime(
@@ -768,25 +836,47 @@ class AcpRuntimeCoordinator {
     }
 
     return {
-      buildReviewerSession: async (request) => {
-        const built = await runtime.buildReviewerSession(request)
-        this.reviewerRuntimes.set(built.session, runtime)
-        return built
-      },
+      buildReviewerSession: (request) => this.buildReviewerSessionOnRuntime(runtime, request),
       disposeReviewerSession: (session) => {
         this.reviewerRuntimes.delete(session)
         return runtime.disposeReviewerSession(session)
       },
       sendPrompt: async (request) => {
+        this.assertPromptAdmissionOpen()
         const contextReset = await ensureActivitySession(request.sessionId)
         const historyPreamble = options.session?.historyPreamble
-        return runtime.sendPrompt(
-          contextReset && historyPreamble && !request.historyPreamble
-            ? { ...request, historyPreamble }
-            : request
+        return this.dispatchPrompt(
+          contextReset
+            ? {
+                ...request,
+                contextReset: true,
+                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+              }
+            : request,
+          undefined,
+          'sendPrompt',
+          runtime,
+          false
         )
       }
     }
+  }
+
+  private async buildReviewerSessionOnRuntime(
+    runtime: AcpRuntime,
+    request: Parameters<AcpRuntime['buildReviewerSession']>[0]
+  ): ReturnType<AcpRuntime['buildReviewerSession']> {
+    this.assertPromptAdmissionOpen()
+    const built = await runtime.buildReviewerSession(request)
+    if (this.promptAdmissionClosedForQuit) {
+      try {
+        runtime.disposeReviewerSession(built.session)
+      } finally {
+        this.assertPromptAdmissionOpen()
+      }
+    }
+    this.reviewerRuntimes.set(built.session, runtime)
+    return built
   }
 
   private async waitForInitialization(): Promise<void> {
@@ -799,6 +889,16 @@ class AcpRuntimeCoordinator {
 
   private supersedeInitializationRequests(): void {
     this.initializationGeneration += 1
+  }
+
+  private assertPromptAdmissionOpen(): void {
+    if (this.promptAdmissionClosedForQuit) {
+      throw new Error('ACP prompt admission is closed because the app is quitting.')
+    }
+  }
+
+  private rejectPromptForQuit(): Promise<never> {
+    return Promise.reject(new Error('ACP prompt admission is closed because the app is quitting.'))
   }
 
   private invalidateSessionTurn(sessionId: string, notifyCancellation = true): void {

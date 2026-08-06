@@ -11,6 +11,7 @@ import {
   type SettingsWorkflowEffects,
   type SettingsWorkflowStore
 } from './workflows'
+import type { AgentModelChangeTarget } from '../agent-framework'
 
 type TestSettingsWorkflowEffects = Partial<
   SettingsWorkflowEffects['runtime'] &
@@ -25,7 +26,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
   runtime: {
     requestProviderReconnect: effects.requestProviderReconnect ?? (() => undefined),
     requestAgentFrameworkSwitch: effects.requestAgentFrameworkSwitch ?? (() => undefined),
-    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false)
+    applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false),
+    applyModelChange: effects.applyModelChange ?? (async () => false)
   },
   skills: { requestSkillsReload: effects.requestSkillsReload ?? (() => undefined) },
   connectors: {
@@ -33,7 +35,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     refreshConnectorSkillDocs: effects.refreshConnectorSkillDocs ?? (async () => undefined),
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
-    beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined)
+    beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
+    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined)
   },
   appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
 })
@@ -70,6 +73,7 @@ const fakeStore = () => {
     setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
     setReasoningEffort: vi.fn().mockResolvedValue(snapshot()),
     resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
+    resolveActiveModelChangeTarget: vi.fn().mockResolvedValue(undefined),
     setConversationSkillImportEnabled: vi.fn().mockResolvedValue(snapshot()),
     setAppIconVariant: vi.fn().mockResolvedValue(snapshot()),
     loginClaudeShared: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -94,7 +98,9 @@ const fakeStore = () => {
     addCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     setCustomServerEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
     removeCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
-    updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] })
+    updateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
+    authenticateCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
+    cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined)
   }
   return { store, capability: store as unknown as SettingsWorkflowStore }
 }
@@ -185,12 +191,139 @@ describe('SettingsWorkflows runtime effects', () => {
       'read',
       'upsert',
       'reconnect',
+      'read',
       'select',
       'reconnect',
       'read',
       'delete',
       'reconnect'
     ])
+  })
+
+  it('persists a same-provider model selection before applying it live', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    const target: AgentModelChangeTarget = {
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:active',
+      route: 'claude-anthropic',
+      model: 'model-b',
+      sessionModel: 'model-b',
+      sessionModelRequired: false,
+      supportsImageInput: true,
+      reasoningEffort: 'high'
+    }
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    )
+    store.setActiveProvider.mockImplementation(async () => {
+      calls.push('persist')
+      return snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
+    })
+    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
+      calls.push('resolve')
+      return target
+    })
+    const applyModelChange = vi.fn(async () => {
+      calls.push('apply')
+      return true
+    })
+    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+
+    expect(calls).toEqual(['persist', 'resolve', 'apply'])
+    expect(applyModelChange).toHaveBeenCalledWith(target)
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+  })
+
+  it('attempts a live model switch before reconnecting across providers', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    const target: AgentModelChangeTarget = {
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:kimi',
+      route: 'claude-anthropic',
+      model: 'kimi-k3',
+      sessionModel: 'kimi-k3',
+      sessionModelRequired: false,
+      supportsImageInput: true,
+      reasoningEffort: 'default'
+    }
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'deepseek', activeModel: 'deepseek-v4-pro' })
+    )
+    store.setActiveProvider.mockImplementation(async () => {
+      calls.push('persist')
+      return snapshot({ activeProviderId: 'kimi', activeModel: 'kimi-k3' })
+    })
+    store.resolveActiveModelChangeTarget.mockImplementation(async () => {
+      calls.push('resolve')
+      return target
+    })
+    const applyModelChange = vi.fn(async () => {
+      calls.push('apply')
+      return true
+    })
+    const requestProviderReconnect = vi.fn(() => calls.push('reconnect'))
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'kimi', model: 'kimi-k3' })
+
+    expect(calls).toEqual(['persist', 'resolve', 'apply'])
+    expect(applyModelChange).toHaveBeenCalledWith(target)
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
+  })
+
+  it('falls back to reconnect when the active generation cannot switch models live', async () => {
+    const { store, capability } = fakeStore()
+    store.getSettingsView.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    )
+    store.setActiveProvider.mockResolvedValue(
+      snapshot({ activeProviderId: 'active', activeModel: 'model-b' })
+    )
+    store.resolveActiveModelChangeTarget.mockResolvedValue({
+      frameworkId: 'opencode',
+      backendId: 'opencode:active',
+      route: 'opencode-openai',
+      model: 'model-b',
+      sessionModel: 'model-b',
+      sessionModelRequired: false,
+      supportsImageInput: false,
+      reasoningEffort: 'default'
+    })
+    const requestProviderReconnect = vi.fn()
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange: async () => false, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-b' })
+
+    expect(requestProviderReconnect).toHaveBeenCalledOnce()
+  })
+
+  it('does not resolve or reconnect when the persisted effective model is unchanged', async () => {
+    const { store, capability } = fakeStore()
+    const unchanged = snapshot({ activeProviderId: 'active', activeModel: 'model-a' })
+    store.getSettingsView.mockResolvedValue(unchanged)
+    store.setActiveProvider.mockResolvedValue(unchanged)
+    const applyModelChange = vi.fn(async () => true)
+    const requestProviderReconnect = vi.fn()
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ applyModelChange, requestProviderReconnect })
+    ).runtime.setActiveProvider({ id: 'active', model: 'model-a' })
+
+    expect(store.resolveActiveModelChangeTarget).not.toHaveBeenCalled()
+    expect(applyModelChange).not.toHaveBeenCalled()
+    expect(requestProviderReconnect).not.toHaveBeenCalled()
   })
 
   it('does not reconnect for a new or inactive provider edit or a failed mutation', async () => {
@@ -407,6 +540,40 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     await vi.waitFor(() => expect(calls).toEqual(['persist', 'invalidate', 'refresh', 'reload']))
   })
 
+  it('refreshes Connector projections after OAuth authentication', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.authenticateCustomServer.mockImplementation(async () => {
+      calls.push('authenticate')
+      return { connectors: [] }
+    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        clearCustomServerFailure: (serverId) => calls.push(`clear:${serverId}`),
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+        }
+      })
+    ).connectors
+
+    await workflows.authenticateCustomServer({ id: 'server-1' })
+    expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
+  })
+
+  it('cancels OAuth authentication without refreshing Connector projections', async () => {
+    const { store, capability } = fakeStore()
+    const refreshConnectorSkillDocs = vi.fn(async () => undefined)
+    const effects = testEffects({ refreshConnectorSkillDocs })
+    const workflows = createSettingsWorkflows(capability, effects).connectors
+
+    await workflows.cancelCustomServerAuthentication({ id: 'server-1' })
+
+    expect(store.cancelCustomServerAuthentication).toHaveBeenCalledWith('server-1')
+    expect(refreshConnectorSkillDocs).not.toHaveBeenCalled()
+  })
+
   it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()
@@ -460,6 +627,9 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const pruneCustomServerPermissions = vi.fn(async () => {
       calls.push('prune')
     })
+    store.cancelCustomServerAuthentication.mockImplementation(async () => {
+      calls.push('cancel')
+    })
     const workflows = createSettingsWorkflows(
       capability,
       testEffects({
@@ -477,12 +647,20 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const request = { id: 'server', transport: 'stdio' as const, command: 'new-mcp' }
 
     await workflows.updateCustomServer(request)
-    expect(calls).toEqual(['begin', 'prune', 'persist', 'commit', 'invalidate', 'refresh'])
+    expect(calls).toEqual([
+      'begin',
+      'cancel',
+      'prune',
+      'persist',
+      'commit',
+      'invalidate',
+      'refresh'
+    ])
 
     calls.length = 0
     pruneCustomServerPermissions.mockRejectedValue(new Error('prune failed'))
     await expect(workflows.updateCustomServer(request)).rejects.toThrow('prune failed')
-    expect(calls).toEqual(['begin', 'rollback'])
+    expect(calls).toEqual(['begin', 'cancel', 'rollback'])
   })
 
   it('applies an icon only after persistence succeeds', async () => {

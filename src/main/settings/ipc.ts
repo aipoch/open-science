@@ -1,8 +1,6 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import {
-  isAppIconVariant,
-  isReasoningEffort,
   type AppIconPreview,
   type SetAppIconVariantRequest,
   type CreateSkillRequest,
@@ -24,7 +22,12 @@ import {
   type SetActiveProviderRequest,
   type SetAgentFrameworkRequest,
   type AddCustomServerRequest,
+  type AuthenticateCustomServerRequest,
+  type ConnectorTemplateSelectionResult,
+  type ExportCustomServerTemplateRequest,
+  type ExportCustomServerTemplateResult,
   type RemoveCustomServerRequest,
+  type SelectCustomServerTemplateRequest,
   type SetCustomServerEnabledRequest,
   type UpdateCustomServerRequest,
   type SetConnectorAutoAllowRequest,
@@ -45,6 +48,14 @@ import { SettingsService } from './service'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import {
+  readAppIconVariant,
+  readClosePreference,
+  readConversationSkillImportEnabled,
+  readIsolatedClaudeToken,
+  readNotificationsEnabled,
+  readReasoningEffort
+} from './transport-validation'
 
 const log = createLogger('settings-ipc')
 
@@ -58,6 +69,12 @@ export type SettingsIpcOptions = {
   // Renders the built-in icon variants to preview data URLs for the Appearance picker. Absent means
   // the picker gets an empty list (no bundled assets available, e.g. an environment without them).
   listAppIconPreviews?: () => AppIconPreview[]
+  connectorTemplateFiles?: {
+    select(): Promise<
+      { cancelled: true } | { cancelled: false; fileName: string; contents: string }
+    >
+    save(suggestedFileName: string, contents: string): Promise<boolean>
+  }
 }
 
 // Streams one install event (log line or progress tick) to every open renderer window.
@@ -70,7 +87,8 @@ const broadcastInstallEvent = (event: ClaudeInstallEvent): void => {
 const registerSettingsIpcHandlers = ({
   service,
   workflows,
-  listAppIconPreviews
+  listAppIconPreviews,
+  connectorTemplateFiles
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => service.getSettingsView())
@@ -122,49 +140,31 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:set-reasoning-effort',
     async (_event, request: SetReasoningEffortRequest) => {
-      // Renderer payloads are untyped at runtime: reject anything outside the known levels instead
-      // of persisting a value the agent-mapping layers can't interpret.
-      if (!isReasoningEffort(request?.effort)) {
-        throw new Error(`Unknown reasoning effort: ${String(request?.effort)}`)
-      }
-
-      log.info('set reasoning effort requested', { effort: request.effort })
-      return workflows.runtime.setReasoningEffort(request)
+      const effort = readReasoningEffort(request)
+      log.info('set reasoning effort requested', { effort })
+      return workflows.runtime.setReasoningEffort({ effort })
     }
   )
   ipcMainHandle(
     'settings:set-notifications-enabled',
     async (_event, request: SetNotificationsEnabledRequest) => {
-      // Renderer payloads are untyped at runtime: only a real boolean may persist.
-      if (typeof request?.enabled !== 'boolean') {
-        throw new Error(`Invalid notifications-enabled flag: ${String(request?.enabled)}`)
-      }
-
-      log.info('set notifications enabled requested', { enabled: request.enabled })
-      return service.setNotificationsEnabled(request.enabled)
+      const enabled = readNotificationsEnabled(request)
+      log.info('set notifications enabled requested', { enabled })
+      return service.setNotificationsEnabled(enabled)
     }
   )
   ipcMainHandle(
     'settings:set-conversation-skill-import-enabled',
     async (_event, request: SetConversationSkillImportEnabledRequest) => {
-      if (typeof request?.enabled !== 'boolean') {
-        throw new Error(
-          `Invalid conversation-skill-import-enabled flag: ${String(request?.enabled)}`
-        )
-      }
-
-      log.info('set conversation Skill import enabled requested', { enabled: request.enabled })
-      return workflows.skills.setConversationSkillImportEnabled(request)
+      const enabled = readConversationSkillImportEnabled(request)
+      log.info('set conversation Skill import enabled requested', { enabled })
+      return workflows.skills.setConversationSkillImportEnabled({ enabled })
     }
   )
   ipcMainHandle(
     'settings:set-close-preference',
     async (_event, request: SetClosePreferenceRequest) => {
-      const preference = request?.preference
-      if (preference !== undefined && preference !== 'minimize' && preference !== 'quit') {
-        throw new Error(`Invalid close preference: ${String(preference)}`)
-      }
-
+      const preference = readClosePreference(request)
       log.info('set close preference requested', { preference: preference ?? 'ask' })
       return service.setClosePreference(preference)
     }
@@ -173,13 +173,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:set-app-icon-variant',
     async (_event, request: SetAppIconVariantRequest) => {
-      // Renderer payloads are untyped at runtime: only a known variant may persist.
-      if (!isAppIconVariant(request?.variant)) {
-        throw new Error(`Unknown app icon variant: ${String(request?.variant)}`)
-      }
-
-      log.info('set app icon variant requested', { variant: request.variant })
-      return workflows.appearance.setAppIconVariant(request.variant)
+      const variant = readAppIconVariant(request)
+      log.info('set app icon variant requested', { variant })
+      return workflows.appearance.setAppIconVariant(variant)
     }
   )
   ipcMainHandle('settings:validate-provider', (_event, request: ValidateProviderRequest) =>
@@ -189,15 +185,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:cancel-claude-login', () => service.cancelClaudeLogin())
   ipcMainHandle('settings:login-shared-claude', () => workflows.runtime.loginClaudeShared())
   ipcMainHandle('settings:logout-shared-claude', () => workflows.runtime.logoutClaudeShared())
-  ipcMainHandle('settings:login-isolated-claude', async (_event, token: string) => {
-    // Renderer payloads are untyped at runtime: reject anything that isn't a string before it
-    // reaches the controller, so a malicious or corrupt payload can never be coerced into a save.
-    if (typeof token !== 'string') {
-      throw new Error('Claude sign-in token must be a string.')
-    }
-
-    return workflows.runtime.loginIsolatedClaude(token)
-  })
+  ipcMainHandle('settings:login-isolated-claude', (_event, token: string) =>
+    workflows.runtime.loginIsolatedClaude(readIsolatedClaudeToken(token))
+  )
   ipcMainHandle('settings:login-isolated-claude-browser', () =>
     workflows.runtime.loginIsolatedClaudeBrowser()
   )
@@ -264,6 +254,56 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
+  ipcMainHandle('settings:preview-custom-server-template-export', (_event, id: string) =>
+    service.previewCustomServerTemplateExport(id)
+  )
+  ipcMainHandle(
+    'settings:select-custom-server-template',
+    async (
+      _event,
+      request?: SelectCustomServerTemplateRequest
+    ): Promise<ConnectorTemplateSelectionResult> => {
+      if (request) {
+        return {
+          cancelled: false,
+          fileName: request.fileName,
+          preview: await service.previewCustomServerTemplateImport(request.contents)
+        }
+      }
+      if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
+      const selected = await connectorTemplateFiles.select()
+      if (selected.cancelled) return selected
+      return {
+        cancelled: false,
+        fileName: selected.fileName,
+        preview: await service.previewCustomServerTemplateImport(selected.contents)
+      }
+    }
+  )
+  ipcMainHandle(
+    'settings:export-custom-server-template',
+    async (
+      _event,
+      request: ExportCustomServerTemplateRequest
+    ): Promise<ExportCustomServerTemplateResult> => {
+      if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
+      const result = await service.buildCustomServerTemplateExport(request.id)
+      if (
+        !result.preview.ready ||
+        !result.preview.digest ||
+        !result.preview.suggestedFileName ||
+        !result.contents
+      ) {
+        throw new Error('Connector configuration is not safe to export')
+      }
+      if (result.preview.digest !== request.expectedDigest) {
+        throw new Error('Connector configuration changed after preview; review it again')
+      }
+      return {
+        saved: await connectorTemplateFiles.save(result.preview.suggestedFileName, result.contents)
+      }
+    }
+  )
   ipcMainHandle('settings:get-connector-detail', (_event, id: string) =>
     service.getConnectorDetail(id)
   )
@@ -294,6 +334,16 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:update-custom-server', (_event, request: UpdateCustomServerRequest) =>
     workflows.connectors.updateCustomServer(request)
+  )
+  ipcMainHandle(
+    'settings:authenticate-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.authenticateCustomServer(request)
+  )
+  ipcMainHandle(
+    'settings:cancel-custom-server-authentication',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.cancelCustomServerAuthentication(request)
   )
   // Compute file browser bookmarks: keyed by provider_id in settings.computeBookmarks.
   ipcMainHandle('compute:bookmarks:get', (_event, providerId: string) =>

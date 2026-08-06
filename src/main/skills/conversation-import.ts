@@ -8,6 +8,8 @@ import type {
   ConversationSkillImportApprovalResponse,
   ConversationSkillImportResult,
   ConversationSkillImportSelection,
+  ImportSkillResult,
+  ScannedSkillView,
   SkillBundlePreviewResult
 } from '../../shared/settings'
 import type { UploadRepository } from '../uploads/repository'
@@ -92,6 +94,13 @@ class SkillImportApprovalBroker {
     }
   }
 
+  createSessionCancellationGuard(sessionId: string): SkillImportCancellationGuard {
+    const turn = this.activeSessionTurns.get(sessionId)
+    return {
+      isCancelled: () => !turn || this.activeSessionTurns.get(sessionId) !== turn
+    }
+  }
+
   request(
     info: SkillImportApprovalInfo,
     cancellation?: SkillImportCancellationGuard
@@ -163,6 +172,9 @@ type ConversationSkillImporterOptions = {
       error?: string
     }>
   >
+  scanGitHub?: (url: string) => Promise<ScannedSkillView[]>
+  importGitHub?: (url: string) => Promise<ImportSkillResult>
+  createSessionCancellationGuard?: (sessionId: string) => SkillImportCancellationGuard
   requestApproval: (
     request: SkillImportApprovalInfo,
     cancellation: SkillImportCancellationGuard
@@ -170,11 +182,19 @@ type ConversationSkillImporterOptions = {
   onSkillsChanged?: () => void
 }
 
-type ConversationSkillImportRequest = {
+type ConversationSkillAttachmentImportRequest = {
   sessionId: string
   turnToken: string
   attachmentUri: string
 }
+
+type ConversationSkillGitHubImportRequest = {
+  sessionId: string
+  githubUrl: string
+}
+
+type ConversationSkillImportRequest =
+  ConversationSkillAttachmentImportRequest | ConversationSkillGitHubImportRequest
 
 const attachmentPathFromUri = (uri: string): string => {
   let parsed: URL
@@ -256,6 +276,8 @@ class ConversationSkillImporter {
   }
 
   async request(request: ConversationSkillImportRequest): Promise<ConversationSkillImportResult> {
+    if ('githubUrl' in request) return this.requestGitHub(request)
+
     const cancellation = this.options.createCancellationGuard(
       request.sessionId,
       request.turnToken,
@@ -298,7 +320,7 @@ class ConversationSkillImporter {
     const approval = await this.options.requestApproval(
       {
         sessionId: request.sessionId,
-        attachmentName,
+        source: { kind: 'attachment', label: attachmentName },
         ...preview
       },
       cancellation
@@ -347,11 +369,84 @@ class ConversationSkillImporter {
       ...(errors.length > 0 ? { errors } : {})
     }
   }
+
+  private async requestGitHub(
+    request: ConversationSkillGitHubImportRequest
+  ): Promise<ConversationSkillImportResult> {
+    const createCancellation = this.options.createSessionCancellationGuard
+    const scanGitHub = this.options.scanGitHub
+    const importGitHub = this.options.importGitHub
+    if (!createCancellation || !scanGitHub || !importGitHub) {
+      throw new Error('Conversation GitHub Skill import is not configured.')
+    }
+
+    const cancellation = createCancellation(request.sessionId)
+    if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
+    const scanned = await scanGitHub(request.githubUrl)
+    if (scanned.length === 0) {
+      throw new Error('No importable Skills were found in that GitHub repo.')
+    }
+    const preview: SkillBundlePreviewResult = {
+      previews: scanned.map((candidate) => ({
+        subPath: candidate.path || '.',
+        name: candidate.name,
+        description: candidate.path || 'Repository root',
+        metadata: {},
+        body: '',
+        files: [],
+        alreadyImported: candidate.alreadyImported,
+        githubUrl: candidate.url
+      })),
+      skipped: []
+    }
+    const approval = await this.options.requestApproval(
+      {
+        sessionId: request.sessionId,
+        source: { kind: 'github', label: request.githubUrl },
+        ...preview
+      },
+      cancellation
+    )
+    if (cancellation.isCancelled() || approval.cancelled || approval.items.length === 0) {
+      return { status: 'cancelled', skills: [] }
+    }
+    const items = validateSelections(preview, approval.items)
+    if (cancellation.isCancelled()) return { status: 'cancelled', skills: [] }
+
+    const candidates = new Map(scanned.map((candidate) => [candidate.path || '.', candidate]))
+    const skills: ConversationSkillImportResult['skills'] = []
+    const errors: NonNullable<ConversationSkillImportResult['errors']> = []
+    for (const item of items) {
+      if (cancellation.isCancelled()) break
+      const candidate = candidates.get(item.subPath)!
+      try {
+        const outcome = await importGitHub(candidate.url)
+        skills.push({ id: outcome.id, name: candidate.name, status: outcome.status })
+      } catch (error) {
+        errors.push({
+          name: candidate.name,
+          error: error instanceof Error ? error.message : 'Import failed.'
+        })
+      }
+    }
+
+    const changed = skills.some(
+      (skill) => skill.status === 'imported' || skill.status === 'updated'
+    )
+    if (changed) this.options.onSkillsChanged?.()
+    return {
+      status: errors.length > 0 ? 'partial' : changed ? 'imported' : 'unchanged',
+      skills,
+      ...(errors.length > 0 ? { errors } : {})
+    }
+  }
 }
 
 export { ConversationSkillImporter, SkillImportApprovalBroker }
 export type {
   ConversationSkillImporterOptions,
+  ConversationSkillAttachmentImportRequest,
+  ConversationSkillGitHubImportRequest,
   ConversationSkillImportRequest,
   SkillImportCancellationGuard,
   SkillImportApprovalBrokerOptions,

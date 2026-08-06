@@ -8,6 +8,7 @@ import { getUploadedAttachmentPath } from '../../../shared/uploads'
 
 export type PreviewPanelState = 'open' | 'collapsed'
 export type PreviewFileFormat =
+  | 'code'
   | 'markdown'
   | 'text'
   | 'json'
@@ -23,8 +24,10 @@ export type PreviewFileFormat =
   | 'spreadsheet'
   | 'presentation'
   | 'unknown'
-// Distinguishes generated artifacts from user uploads when preview readers and actions differ.
-export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input'
+// Distinguishes generated artifacts from user uploads, notebook inputs, and local ("This computer")
+// files when preview readers and header actions differ. 'local' files live outside app storage:
+// their path is an absolute filesystem path read via window.api.localFs.
+export type PreviewFileSource = 'artifact' | 'upload' | 'notebook-input' | 'local'
 export const PROJECT_FILES_PREVIEW_ID = 'tool:project:files'
 
 type PreviewItemBase = {
@@ -52,13 +55,14 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files' | 'reviewer'
+  toolKind?: 'notebook' | 'files' | 'reviewer' | 'plan'
   notebook?: NotebookSessionReference
   // Reviewer-specific: which session's reviews to show, which review to select, and the active
   // finding to scroll to.
   reviewerSessionId?: string
   reviewerReviewId?: string
   reviewerActiveFindingId?: string
+  planArtifactVersionId?: string
 }
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem
@@ -89,6 +93,9 @@ type PreviewWorkbenchStoreData = PreviewSlice & {
   byProject: Record<string, PreviewSlice>
   // Tool tab currently shown as a large modal instead of inline panel content (files tab only).
   expandedToolItemId: string | null
+  // A one-off file preview stays outside the tab list so Files and Global Search can open the same
+  // dialog without creating a durable workbench tab.
+  fileDialogItem: PreviewFileItem | undefined
 }
 
 type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
@@ -100,6 +107,8 @@ type PreviewWorkbenchStore = PreviewWorkbenchStoreData & {
   removeItem: (itemId: string) => void
   removeSessionItems: (sessionId: string) => void
   setToolItemExpanded: (itemId: string | null) => void
+  openFileDialog: (item: PreviewFileItem) => void
+  closeFileDialog: () => void
   openPanel: () => void
   collapsePanel: () => void
   togglePanel: () => void
@@ -114,7 +123,8 @@ export const createInitialPreviewWorkbenchState = (): PreviewWorkbenchStoreData 
   openRequestVersion: 0,
   activeProjectId: undefined,
   byProject: {},
-  expandedToolItemId: null
+  expandedToolItemId: null,
+  fileDialogItem: undefined
 })
 
 // The empty slice a project starts from before any preview tabs are opened.
@@ -169,6 +179,20 @@ const createNotebookPreviewItem = (notebook: NotebookSessionReference): PreviewT
   toolKind: 'notebook',
   title: 'Notebook',
   notebook
+})
+
+const createSessionPlanPreviewItem = (
+  sessionId: string,
+  projectId: string,
+  artifactVersionId?: string
+): PreviewToolItem => ({
+  id: `tool:${sessionId}:plan${artifactVersionId ? `:${artifactVersionId}` : ''}`,
+  projectId,
+  sessionId,
+  type: 'tool',
+  toolKind: 'plan',
+  title: 'Session Plan',
+  ...(artifactVersionId ? { planArtifactVersionId: artifactVersionId } : {})
 })
 
 // Builds the stable project-level preview tab that owns the file library surface.
@@ -267,7 +291,9 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         panelState: targetSlice.items.length > 0 ? targetSlice.panelState : 'collapsed',
         activeProjectId: projectId,
         byProject,
-        expandedToolItemId: null
+        expandedToolItemId: null,
+        fileDialogItem:
+          state.fileDialogItem?.projectId === projectId ? state.fileDialogItem : undefined
       }
     })
   },
@@ -364,7 +390,8 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
         items,
         activeItemId,
         panelState: items.length > 0 ? state.panelState : 'collapsed',
-        expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId
+        expandedToolItemId: state.expandedToolItemId === itemId ? null : state.expandedToolItemId,
+        fileDialogItem: itemId === PROJECT_FILES_PREVIEW_ID ? undefined : state.fileDialogItem
       }
     })
   },
@@ -397,6 +424,10 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
   setToolItemExpanded: (itemId) => {
     set({ expandedToolItemId: itemId })
   },
+
+  openFileDialog: (item) => set({ fileDialogItem: item }),
+
+  closeFileDialog: () => set({ fileDialogItem: undefined }),
 
   // Records an explicit open request so the resizable panel can expand even if it is already open.
   openPanel: () => {
@@ -434,5 +465,6 @@ export const usePreviewWorkbenchStore = create<PreviewWorkbenchStore>((set, get)
 export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
+  createSessionPlanPreviewItem,
   createSessionReviewerPreviewItem
 }

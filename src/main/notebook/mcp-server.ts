@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
+import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
@@ -14,17 +15,16 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Notebook tool instructions (only applies when using open-science-notebook tools).',
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
-  'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun a cell. Python/R data kernels cannot call connectors. Use `repl_execute` for `host.mcp`/`host.compute`, and exchange large data through `$OPEN_SCIENCE_HANDOFF_DIR` (`./handoff/`).',
+  'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun a cell. Python/R data kernels cannot call connectors. Use `repl_execute` for `host.mcp`/`host.compute`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read the same `OPEN_SCIENCE_HANDOFF_DIR` path from Python/R.',
   'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
-  'The notebook already runs inside a writable session workspace. Use plain relative paths: inputs in `./data/`, intermediate results in `./outputs/`, and connector handoff in `./handoff/`. The cwd is already the session data dir; never copy a saved file onto the same path. Do not modify original user files.',
+  'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
-  'MCP execution replies are bounded summaries; full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
+  'MCP execution replies include bounded output for the next step; use it directly when sufficient. Full output remains in the notebook preview. Inspect stdout, stderr, traceback, outputs, and workingFiles, then revise and rerun if needed. The notebook runtime does not classify files for you.',
   'For a final user-facing file, call `write_artifact_file` from the `open-science-artifacts` server before announcing it. Use `source: { "kind": "localPath", "path": "plot.png" }` with the SAME relative filename you saved with and `producerRunId` set to the exact `runId` returned by the execution that last wrote it. Use inline content only for small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
-type NotebookRpcConnection = {
-  endpoint: string
+type NotebookRpcConnection = LocalRpcTransport & {
   token: string
   // Optional owner-scoped cleanup for provisional startup connections. Releasing an older connection
   // must not revoke a newer token issued under the same stable app Session id.
@@ -115,7 +115,7 @@ const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
   `action:"create" needs language and name (optional initial packages); action:"list" reports provisioned environments in pages of at most ${MAX_ENVIRONMENT_RESULTS} using optional offset/limit and nextOffset; action:"remove" accepts a name.`,
   'Create before bind/switch. Removal is limited to agent-created, idle named environments; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
-  'Named data kernels cannot call connectors; use repl_execute and ./handoff/.'
+  'Named data kernels cannot call connectors; use repl_execute and the OPEN_SCIENCE_HANDOFF_DIR environment path.'
 ].join('\n')
 
 const LIST_NOTEBOOK_RUNTIMES_DOC = [
@@ -137,7 +137,7 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   'Only this kernel can call connectors (`await host.mcp(server, method, args)`) and remote compute (`host.compute`; load its skill for the API).',
-  'Globals persist and a trailing expression is returned. Do not echo large data; write it to ./handoff/ for Python/R. Use notebook_execute for analysis code.'
+  'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -161,7 +161,7 @@ const buildShellExecuteDoc = (platform: NodeJS.Platform = process.platform): str
   return [
     shellDescription,
     ...(platformContract ? [platformContract] : []),
-    `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares ./handoff/ (${handoffVariable}).`,
+    `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
     exitCodeContract,
     'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
     'Use only for one-off command inspection. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
@@ -199,6 +199,7 @@ const createNotebookMcpServerConfig = ({
   command,
   entryPath,
   endpoint,
+  socketPath,
   token,
   projectName,
   sessionId,
@@ -210,6 +211,7 @@ const createNotebookMcpServerConfig = ({
   env: [
     { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
     { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: endpoint },
+    ...(socketPath ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: socketPath }] : []),
     { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: token },
     { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectName },
     { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: sessionId },
@@ -236,6 +238,7 @@ const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): NotebookMcpEnvironment => ({
   endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
+  socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
   token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
   projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME'),
   sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
@@ -248,22 +251,26 @@ const callNotebookRpc = async (
   method: string,
   params: unknown = {}
 ): Promise<unknown> => {
-  const response = await fetch(environment.endpoint, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${environment.token}`,
-      'content-type': 'application/json'
+  const response = await fetchLocalRpc(
+    environment,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${environment.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method,
+        params: {
+          sessionId: environment.sessionId,
+          workspaceCwd: environment.workspaceCwd,
+          projectName: environment.projectName,
+          ...((params ?? {}) as Record<string, unknown>)
+        }
+      } satisfies RpcRequest)
     },
-    body: JSON.stringify({
-      method,
-      params: {
-        sessionId: environment.sessionId,
-        workspaceCwd: environment.workspaceCwd,
-        projectName: environment.projectName,
-        ...((params ?? {}) as Record<string, unknown>)
-      }
-    } satisfies RpcRequest)
-  })
+    'Notebook RPC'
+  )
 
   const payload = (await response.json()) as RpcResponse
 
@@ -274,14 +281,14 @@ const callNotebookRpc = async (
   return payload.result
 }
 
-// Approximate 4k/2k-token budgets for ordinary English/JSON. The final serialized character caps are
-// deliberately conservative; full values stay in run.json and the notebook preview.
-const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 12_000
+// These character caps apply only to serialized MCP replies; full values stay in run.json and the
+// notebook preview.
+const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STATE_RESULT_LIMIT = 6_000
 const NOTEBOOK_MCP_CONTROL_RESULT_LIMIT = 8_000
-const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 2_500
+const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 8_000
 const NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT = 600
-const MIME_INLINE_LIMIT = 768
+const MIME_INLINE_LIMIT = 8_000
 const MAX_EXECUTION_OUTPUTS = 6
 const MAX_EXECUTION_FILES = 10
 const MAX_STATE_CELLS = 20

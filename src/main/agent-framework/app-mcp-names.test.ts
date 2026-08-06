@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from '../permission-grants/identity-catalog'
-import { appMcpServerAliases, resolveCanonicalMcpToolIdentity } from './app-mcp-names'
+import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
+import {
+  appMcpServerAliases,
+  renderAppMcpToolReferences,
+  resolveCanonicalMcpToolIdentity
+} from './app-mcp-names'
 
 const APP_MCP_CODEC_CASES = PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.flatMap((key) => {
   const identity = key.slice('mcp:'.length)
@@ -17,6 +22,41 @@ const APP_MCP_CODEC_CASES = PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.flatMa
 })
 
 describe('resolveCanonicalMcpToolIdentity', () => {
+  it('documents complete generation and approval call shapes', () => {
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'generation supplies all four Plan fields (`task_summary`, `phases`, `desired_outputs`, and `feasibility`) in one call'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'call `generate_plan` again with only `decision: "approved"` or `decision: "rejected"`'
+    )
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'Never call `update_step_status` while approval is pending'
+    )
+  })
+
+  it.each([
+    [
+      'claude-code',
+      'mcp__open-science-plan__generate_plan',
+      'mcp__open-science-plan__update_step_status'
+    ],
+    ['codex', 'generate_plan', 'update_step_status'],
+    ['opencode', 'open_science_plan_generate_plan', 'open_science_plan_update_step_status']
+  ] as const)(
+    'renders the same planning policy with callable names for %s',
+    (frameworkId, generateTool, updateTool) => {
+      const guidance = renderAppMcpToolReferences(frameworkId, SESSION_PLAN_SYSTEM_PROMPT_APPEND)
+
+      expect(guidance).toContain('genuinely multi-stage')
+      expect(guidance).toContain('discover applicable skills before generating')
+      expect(guidance).toContain(generateTool)
+      expect(guidance).toContain(updateTool)
+      expect(guidance).toContain('Do not generate a Plan for simple')
+      expect(guidance).not.toContain('get_active_plan')
+      expect(guidance).not.toContain('Plan mode')
+    }
+  )
+
   it.each([
     'mcp__open-science-notebook__notebook_execute',
     'mcp.open-science-notebook.notebook_execute',

@@ -314,7 +314,7 @@ export class SwitchOperation {
     if (targetName === null) return { kind: 'main' }
     let profile: SpecialistProfileView
     try {
-      profile = await this.deps.profileService.getByName(targetName)
+      profile = await this.deps.profileService.resolveRunnableByName(targetName)
     } catch (error) {
       throw new SwitchError(error)
     }
@@ -362,7 +362,7 @@ export class SwitchOperation {
     const specialistId = this.deps.sessionBinding.getBinding(sessionId)
     if (!specialistId) return undefined
     try {
-      const current = await this.deps.profileService.getById(specialistId)
+      const current = await this.deps.profileService.resolveRunnableById(specialistId)
       return current.name
     } catch {
       return undefined
@@ -384,7 +384,7 @@ export class SwitchOperation {
     const name = preResolved.profile.name
     let profile: SpecialistProfileView
     try {
-      profile = await this.deps.profileService.getByName(name)
+      profile = await this.deps.profileService.resolveRunnableByName(name)
     } catch (error) {
       // Renamed or deleted between approval and commit.
       throw new SwitchError(error)

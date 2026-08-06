@@ -10,6 +10,7 @@ import {
   createFromPackagesArgv,
   installFromLockArgv,
   installArgv,
+  listArgv,
   micromambaSpawnEnv,
   normalizeExplicitLock,
   resolveMicromamba
@@ -97,6 +98,22 @@ describe('micromamba argv builders', () => {
       'conda-forge',
       'openpyxl'
     ])
+  })
+
+  it('listArgv is the read-only JSON inventory form (no channels, no -y)', () => {
+    const argv = listArgv('/mm', '/root', '/root/envs/default-python')
+    expect(argv).toEqual([
+      '/mm',
+      '--no-rc',
+      'list',
+      '--root-prefix',
+      '/root',
+      '--prefix',
+      '/root/envs/default-python',
+      '--json'
+    ])
+    expect(argv).not.toContain('-y')
+    expect(argv).not.toContain('-c')
   })
 
   it('installFromLockArgv applies an exact lock additively without a channel solve', () => {

@@ -370,6 +370,102 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(fileConfig.provider.anthropic.models).toEqual({ m: {} })
     expect(content.provider.anthropic.models).toEqual({ m: {} })
   })
+
+  it('registers every same-route provider model so ACP can switch without a respawn', () => {
+    const activeProvider = {
+      type: 'official' as const,
+      vendorId: 'deepseek' as const,
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiEndpoints: ['anthropic' as const],
+      model: 'deepseek-v4-pro',
+      contextWindow: 128_000,
+      key: 'k'
+    }
+    const config = opencodeFramework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      reasoningEffort: 'high',
+      providerModelCatalog: [
+        { provider: activeProvider, reasoningEffort: 'high' },
+        {
+          provider: {
+            ...activeProvider,
+            model: 'deepseek-v3.2',
+            contextWindow: 64_000,
+            supportsImageInput: true
+          },
+          reasoningEffort: 'low'
+        }
+      ]
+    })
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+    const expectedModels = {
+      'deepseek-v4-pro': {
+        options: { reasoningEffort: 'high', thinking: { type: 'enabled' } },
+        limit: { context: 128_000, output: 32_000 }
+      },
+      'deepseek-v3.2': {
+        attachment: true,
+        modalities: { input: ['text', 'image'] },
+        options: { reasoningEffort: 'low', thinking: { type: 'enabled' } },
+        limit: { context: 64_000, output: 32_000 }
+      }
+    }
+
+    expect(fileConfig.model).toBe('anthropic/deepseek-v4-pro')
+    expect(fileConfig.provider.anthropic.models).toEqual(expectedModels)
+    expect(pinnedConfig.provider.anthropic.models).toEqual(expectedModels)
+  })
+
+  it('registers immutable provider/model routes with separate local credentials', () => {
+    const activeProvider = {
+      type: 'custom' as const,
+      agentProviderId: 'open-science-a',
+      baseUrl: 'http://127.0.0.1:41001/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'model-a',
+      key: 'local-token-a'
+    }
+    const secondProvider = {
+      type: 'custom' as const,
+      agentProviderId: 'open-science-b',
+      baseUrl: 'http://127.0.0.1:41002/v1',
+      apiEndpoints: ['openai' as const],
+      model: 'model-b',
+      key: 'local-token-b'
+    }
+    const config = opencodeFramework.prepareModelConfig(activeProvider, {
+      storageRoot: '/data',
+      executablePath: '/bin/opencode',
+      providerModelCatalog: [{ provider: activeProvider }, { provider: secondProvider }]
+    })
+
+    const fileConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(config.sessionModel).toBe('open-science-a/model-a')
+    expect(fileConfig.model).toBe('open-science-a/model-a')
+    expect(Object.keys(fileConfig.provider)).toEqual(['open-science-a', 'open-science-b'])
+    expect(fileConfig.provider['open-science-a'].options).toEqual({
+      baseURL: 'http://127.0.0.1:41001/v1',
+      apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_A}'
+    })
+    expect(fileConfig.provider['open-science-b'].options).toEqual({
+      baseURL: 'http://127.0.0.1:41002/v1',
+      apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_B}'
+    })
+    expect(fileConfig.provider['open-science-a'].models).toEqual({ 'model-a': {} })
+    expect(fileConfig.provider['open-science-b'].models).toEqual({ 'model-b': {} })
+    expect(pinnedConfig.provider).toEqual(fileConfig.provider)
+    expect(config.env?.OPENCODE_APP_API_KEY_OPEN_SCIENCE_A).toBe('local-token-a')
+    expect(config.env?.OPENCODE_APP_API_KEY_OPEN_SCIENCE_B).toBe('local-token-b')
+  })
 })
 
 describe('buildOpencodeConfig', () => {

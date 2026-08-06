@@ -14,6 +14,7 @@ const FAKE_TOOLS = [
 function makeServer(overrides: Partial<StoredCustomMcpServer> = {}): StoredCustomMcpServer {
   return {
     id: 'srv-1',
+    slug: 'myserver',
     name: 'myserver',
     transport: 'stdio',
     command: 'npx',
@@ -23,26 +24,27 @@ function makeServer(overrides: Partial<StoredCustomMcpServer> = {}): StoredCusto
 }
 
 describe('renderCustomSkillDoc', () => {
-  it('renders frontmatter keyed on the server id, a composed "Use when" description, and each tool', () => {
-    const md = renderCustomSkillDoc({ id: 'srv-1', name: 'myserver' }, FAKE_TOOLS)
-    // The skill name is the immutable id, not the user-facing display name.
-    expect(md).toContain('name: mcp-srv-1')
-    expect(md).not.toContain('name: mcp-myserver')
+  it('uses the immutable slug for skill identity and routing while keeping the display name in prose', () => {
+    const md = renderCustomSkillDoc(
+      { slug: 'example-oauth-e2e', name: 'Example OAuth E2E' },
+      FAKE_TOOLS
+    )
+    expect(md).toContain('name: mcp-example-oauth-e2e')
+    expect(md).toContain('Example OAuth E2E MCP server')
     expect(md).toContain('source: connector')
     expect(md).toMatch(/description: ".*Use when.*"/)
     expect(md.match(/Use when/g)).toHaveLength(1)
     expect(md).toContain('search')
     expect(md).toContain('fetch')
     expect(md).toContain('"type":"object"')
-    // Runtime routing still uses the display name (the key McpClientManager registers under).
     // No-arg tools render without a third argument (a literal ... would reach the bridge as Ellipsis).
-    expect(md).toContain('host.mcp("myserver", "search")')
-    expect(md).toContain('host.mcp("myserver", "fetch")')
+    expect(md).toContain('host.mcp("example-oauth-e2e", "search")')
+    expect(md).toContain('host.mcp("example-oauth-e2e", "fetch")')
   })
 
   it('uses the server-provided description verbatim when present', () => {
     const md = renderCustomSkillDoc(
-      { id: 'srv-1', name: 'myserver', description: 'Use when the user asks about widgets.' },
+      { slug: 'myserver', name: 'myserver', description: 'Use when the user asks about widgets.' },
       FAKE_TOOLS
     )
     const frontmatter = md.slice(0, md.indexOf('---', 3))
@@ -50,7 +52,7 @@ describe('renderCustomSkillDoc', () => {
   })
 
   it('renders a concrete dict example from a custom tool inputSchema', () => {
-    const md = renderCustomSkillDoc({ id: 'srv-1', name: 'myserver' }, [
+    const md = renderCustomSkillDoc({ slug: 'myserver', name: 'myserver' }, [
       {
         name: 'lookup',
         description: 'Look up a record',
@@ -68,7 +70,7 @@ describe('renderCustomSkillDoc', () => {
 })
 
 describe('syncCustomServerSkillDocs', () => {
-  it('writes mcp-<id>/SKILL.md for an enabled server and removes it once disabled', async () => {
+  it('writes mcp-<slug>/SKILL.md for an enabled server and removes it once disabled', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-'))
     const server = makeServer()
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
@@ -76,10 +78,10 @@ describe('syncCustomServerSkillDocs', () => {
     await syncCustomServerSkillDocs(dir, [server], listTools)
 
     let entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-srv-1'])
-    expect((await stat(join(dir, 'mcp-srv-1'))).isDirectory()).toBe(true)
-    const doc = await readFile(join(dir, 'mcp-srv-1', 'SKILL.md'), 'utf8')
-    expect(doc).toContain('name: mcp-srv-1')
+    expect(entries).toEqual(['mcp-myserver'])
+    expect((await stat(join(dir, 'mcp-myserver'))).isDirectory()).toBe(true)
+    const doc = await readFile(join(dir, 'mcp-myserver', 'SKILL.md'), 'utf8')
+    expect(doc).toContain('name: mcp-myserver')
 
     // Server no longer enabled -> its skill dir is removed.
     await syncCustomServerSkillDocs(dir, [], listTools)
@@ -92,47 +94,45 @@ describe('syncCustomServerSkillDocs', () => {
     const dir = join(root, 'skills')
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
 
-    // A name with path separators and one equal to a bundled connector id: both must be neutralized
-    // because the directory is keyed on the immutable UUID id, not the name.
-    const traversal = makeServer({ id: 'srv-escape', name: '../escape' })
-    const collision = makeServer({ id: 'srv-chem', name: 'chemistry' })
+    // Display names never become paths. Explicit safe slugs remain the only directory identities.
+    const traversal = makeServer({ slug: 'safe-escape', name: '../escape' })
+    const collision = makeServer({ slug: 'custom-chemistry', name: 'chemistry' })
 
     await syncCustomServerSkillDocs(dir, [traversal, collision], listTools)
 
     // Nothing was written outside the skills dir.
     expect((await readdir(root)).sort()).toEqual(['skills'])
-    // Both servers materialized under their id, and no `mcp-chemistry` directory was produced.
+    // Both servers materialized under their slug, and no `mcp-chemistry` directory was produced.
     const entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-srv-chem', 'mcp-srv-escape'])
+    expect(entries).toEqual(['mcp-custom-chemistry', 'mcp-safe-escape'])
   })
 
-  it('skips a server whose id is not a safe path segment (tampered settings)', async () => {
+  it('normalizes an unsafe legacy slug and skips a built-in collision', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-tampered-'))
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
 
-    // A hand-crafted id with separators or equal to a bundled id must be dropped entirely.
-    const badPath = makeServer({ id: '../../evil', name: 'evil' })
-    const bundledId = makeServer({ id: 'chemistry', name: 'evil2' })
+    const badPath = makeServer({ slug: '../../evil', name: 'Evil server' })
+    const bundledId = makeServer({ slug: 'chemistry', name: 'Other server' })
 
     await syncCustomServerSkillDocs(dir, [badPath, bundledId], listTools)
 
-    expect((await readdir(dir)).sort()).toEqual([])
+    expect((await readdir(dir)).sort()).toEqual(['mcp-evil-server'])
   })
 
-  it('does not overwrite a built-in connector with a case-variant id', async () => {
+  it('does not overwrite a built-in connector with a case-variant slug', async () => {
     // On a case-insensitive filesystem `mcp-Chemistry` and `mcp-chemistry` are the same directory, so
-    // a tampered mixed-case id must be rejected (the safe id alphabet is lowercase-only).
+    // a tampered mixed-case slug must be normalized away from the built-in identity.
     const dir = await mkdtemp(join(tmpdir(), 'connector-case-'))
     await syncConnectorSkillDocs(dir, ['chemistry'])
     const builtinDoc = join(dir, 'mcp-chemistry', 'SKILL.md')
     const before = await readFile(builtinDoc, 'utf8')
 
-    const tampered = makeServer({ id: 'Chemistry', name: 'tampered' })
+    const tampered = makeServer({ slug: 'Chemistry', name: 'tampered' })
     await syncCustomServerSkillDocs(dir, [tampered], async () => [])
 
     // The built-in doc is untouched, and no case-variant directory was created.
     expect(await readFile(builtinDoc, 'utf8')).toBe(before)
-    expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry'])
+    expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry', 'mcp-tampered'])
   })
 
   it('does not delete the built-in doc when an upgrade left a case-variant directory', async () => {
@@ -170,22 +170,22 @@ describe('bundled and custom skill-doc sync coexist', () => {
     await syncCustomServerSkillDocs(dir, [server], listTools)
 
     let entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-chemistry', 'mcp-srv-1'])
+    expect(entries).toEqual(['mcp-chemistry', 'mcp-myserver'])
 
     // Re-running the bundled sync must not remove the custom server's directory...
     await syncConnectorSkillDocs(dir, ['chemistry'])
     entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-chemistry', 'mcp-srv-1'])
+    expect(entries).toEqual(['mcp-chemistry', 'mcp-myserver'])
 
     // ...and re-running the custom sync must not remove the bundled connector's directory.
     await syncCustomServerSkillDocs(dir, [server], listTools)
     entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-chemistry', 'mcp-srv-1'])
+    expect(entries).toEqual(['mcp-chemistry', 'mcp-myserver'])
 
     // Disabling the bundled connector only removes the bundled dir, leaving the custom one intact.
     await syncConnectorSkillDocs(dir, [])
     entries = (await readdir(dir)).sort()
-    expect(entries).toEqual(['mcp-srv-1'])
+    expect(entries).toEqual(['mcp-myserver'])
 
     // And disabling the custom server only removes the custom dir.
     await syncConnectorSkillDocs(dir, ['chemistry'])

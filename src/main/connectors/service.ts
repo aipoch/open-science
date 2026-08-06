@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
-import { toCustomMcpConfig } from './custom-mcp-bootstrap'
+import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './custom-mcp-bootstrap'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
@@ -12,6 +12,7 @@ import type { ConnectorPermissionRequest } from '../permission-grants/connector-
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import type { SpecialistProfileView } from '../../shared/specialist'
+import { customConnectorSlug } from '../../shared/custom-connector'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig): Promise<Array<{ name: string }>>
@@ -85,10 +86,13 @@ type CustomServerSecurityChangeGuard = {
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
 
-// Excludes display-only fields and hashes both encrypted references and legacy resolved values. The
-// barrier can therefore identify a configuration generation without retaining another plaintext copy.
-const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
-  createHash('sha256')
+const customServerSecurityFingerprintKey = randomBytes(32)
+
+// Authenticates fields that can contain credentials. The process-local key lets the barrier compare
+// a configuration generation without retaining another plaintext copy or exposing an enumerable
+// digest. OAuth configuration contains only public metadata, so it remains outside the keyed digest.
+const customServerCredentialFingerprint = (server: StoredCustomMcpServer): string =>
+  createHmac('sha256', customServerSecurityFingerprintKey)
     .update(
       JSON.stringify([
         server.transport,
@@ -100,6 +104,9 @@ const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string 
       ])
     )
     .digest('hex')
+
+const customServerSecurityFingerprint = (server: StoredCustomMcpServer): string =>
+  JSON.stringify([server.oauth ?? null, customServerCredentialFingerprint(server)])
 
 // Deliberately contains only a stable category. In particular it must not interpolate connector
 // arguments, custom-server headers, credentials, or a Specialist's system prompt into an error that
@@ -125,6 +132,7 @@ export class ConnectorService {
     string,
     'connector_unavailable' | 'connector_unauthenticated'
   >()
+  private readonly customServerFailureEpochs = new Map<string, number>()
   private readonly permissionBroker: ConnectorPermissionBroker
   private readonly customServerGenerations = new Map<string, number>()
   private readonly customServerBarriers = new Map<
@@ -172,19 +180,35 @@ export class ConnectorService {
     }
   }
 
+  clearCustomServerFailure(serverId: string): void {
+    this.customServerFailureEpochs.set(
+      serverId,
+      (this.customServerFailureEpochs.get(serverId) ?? 0) + 1
+    )
+    this.unavailableCustomConnectors.delete(serverId)
+  }
+
   async call(
     connector: string,
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext = {}
   ): Promise<unknown> {
-    const access = await this.resolveAccess(connector, context)
     const descriptor = getDescriptor(connector, method)
     const isBundled = descriptor !== undefined || ALL_CONNECTOR_IDS.includes(connector)
-    if (isBundled) return this.callBundled(connector, method, args, descriptor, context, access)
+    if (isBundled) {
+      const access = await this.resolveAccess(connector, context)
+      return this.callBundled(connector, method, args, descriptor, context, access)
+    }
 
-    const custom = ((await this.currentConnectors())?.customMcpServers ?? []).find(
-      (s) => s.name === connector
+    const customServers = (await this.currentConnectors())?.customMcpServers ?? []
+    const custom =
+      customServers.find((server) => customConnectorSlug(server) === connector) ??
+      customServers.find((server) => server.name === connector)
+    const access = await this.resolveAccess(
+      connector,
+      context,
+      custom ? [customConnectorSlug(custom), custom.name, custom.id] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -192,12 +216,13 @@ export class ConnectorService {
         access.specialistScoped ? undefined : `connector not enabled: ${connector}`
       )
     }
-    return this.callCustom(custom, method, args, context, access)
+    return this.callCustom(custom, customServers, method, args, context, access)
   }
 
   private async resolveAccess(
     connector: string,
-    context: ConnectorCallContext
+    context: ConnectorCallContext,
+    aliases: readonly string[] = [connector]
   ): Promise<ConnectorAccess> {
     if (context.origin === 'internal') {
       return { bypassMainEnablement: false, bypassMainPolicy: false, specialistScoped: false }
@@ -215,8 +240,8 @@ export class ConnectorService {
 
     const allowed =
       profile.capabilityMode === 'full'
-        ? !profile.fullAccess.excludedConnectorIds.includes(connector)
-        : profile.selectedCapabilities.connectorIds.includes(connector)
+        ? !aliases.some((alias) => profile.fullAccess.excludedConnectorIds.includes(alias))
+        : aliases.some((alias) => profile.selectedCapabilities.connectorIds.includes(alias))
     if (!allowed) throw new ConnectorGateError('specialist_capability_denied')
 
     // A Specialist's configuration is independent from Main's enabled and Allow/Ask/Block settings.
@@ -249,18 +274,25 @@ export class ConnectorService {
 
   private async callCustom(
     custom: NonNullable<StoredConnectors['customMcpServers']>[number],
+    customServers: readonly StoredCustomMcpServer[],
     method: string,
     args: Record<string, unknown>,
     context: ConnectorCallContext,
     access: ConnectorAccess
   ): Promise<unknown> {
     const generation = this.assertCustomServerCurrent(custom)
-    const physicalFailure = this.unavailableCustomConnectors.get(custom.name)
+    const failureEpoch = this.customServerFailureEpochs.get(custom.id) ?? 0
+    const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
     if (physicalFailure) throw new ConnectorGateError(physicalFailure)
     if (!access.bypassMainEnablement && !custom.enabled) {
       throw new ConnectorGateError('connector_disabled', `connector not enabled: ${custom.name}`)
     }
-    if (!this.isCustomConfigRunnable(custom)) throw new ConnectorGateError('connector_unavailable')
+    if (!this.isCustomConfigRunnable(custom, customServers)) {
+      throw new ConnectorGateError('connector_unavailable')
+    }
+    if (custom.oauth && !custom.oauthState?.tokens?.access_token) {
+      throw new ConnectorGateError('connector_unauthenticated')
+    }
     if (!this.deps.mcpClientManager) throw new ConnectorGateError('connector_runtime_unavailable')
 
     // Approval must precede tools/list because even discovery connects the external server. The
@@ -288,7 +320,7 @@ export class ConnectorService {
         /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
           ? 'connector_unauthenticated'
           : 'connector_unavailable'
-      this.unavailableCustomConnectors.set(custom.name, category)
+      this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
     }
 
@@ -323,7 +355,9 @@ export class ConnectorService {
 
     try {
       const result = await this.deps.mcpClientManager.call(config, method, args)
-      this.unavailableCustomConnectors.delete(custom.name)
+      if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
+        this.unavailableCustomConnectors.delete(custom.id)
+      }
       return result
     } catch (error) {
       const category =
@@ -331,8 +365,18 @@ export class ConnectorService {
         /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
           ? 'connector_unauthenticated'
           : 'connector_unavailable'
-      this.unavailableCustomConnectors.set(custom.name, category)
+      this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
+    }
+  }
+
+  private recordCustomServerFailure(
+    serverId: string,
+    expectedEpoch: number,
+    category: 'connector_unavailable' | 'connector_unauthenticated'
+  ): void {
+    if ((this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch) {
+      this.unavailableCustomConnectors.set(serverId, category)
     }
   }
 
@@ -359,8 +403,10 @@ export class ConnectorService {
   }
 
   private isCustomConfigRunnable(
-    custom: NonNullable<StoredConnectors['customMcpServers']>[number]
+    custom: NonNullable<StoredConnectors['customMcpServers']>[number],
+    customServers: readonly StoredCustomMcpServer[]
   ): boolean {
+    if (!isCustomMcpServerRouteSafe(custom, customServers)) return false
     if (custom.transport === 'stdio') return Boolean(custom.command)
     return Boolean(custom.url)
   }
@@ -423,20 +469,21 @@ export class ConnectorService {
 
     for (;;) {
       const connectors = await this.currentConnectors()
-      const current = (connectors?.customMcpServers ?? []).find((server) => server.id === custom.id)
+      const customServers = connectors?.customMcpServers ?? []
+      const current = customServers.find((server) => server.id === custom.id)
       if (!current) throw new ConnectorGateError('connector_unavailable')
       this.assertCustomServerCurrent(current, generation)
       if (!access.bypassMainEnablement && !current.enabled) {
         throw new ConnectorGateError('connector_disabled', `connector not enabled: ${current.name}`)
       }
-      if (!this.isCustomConfigRunnable(current)) {
+      if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
       }
 
       const request = this.authorizationRequest(
         current.name,
         current.id,
-        [current.id, current.name],
+        [current.id, customConnectorSlug(current), current.name],
         method,
         args,
         context,

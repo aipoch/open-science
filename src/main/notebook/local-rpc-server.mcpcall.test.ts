@@ -20,6 +20,7 @@ afterEach(async () => {
 describe('mcpCall RPC', () => {
   it('rejects privileged calls made with the server-wide bootstrap token', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       connectorService: fakeConnector as never
     })
     const { endpoint, token } = await server.ensureStarted()
@@ -40,6 +41,7 @@ describe('mcpCall RPC', () => {
 
   it('issues a scoped control connection without invalidating the Agent session connection', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       connectorService: fakeConnector as never
     })
     const agentConnection = await sessionConnection(server)
@@ -78,6 +80,7 @@ describe('mcpCall RPC', () => {
 
   it('routes mcpCall to the connector service', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       connectorService: fakeConnector as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -108,6 +111,7 @@ describe('mcpCall RPC', () => {
       }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       connectorService: capturing as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -158,6 +162,7 @@ describe('mcpCall RPC', () => {
       }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       connectorService: capturing
     })
     server.registerSessionSpecialist('real-session', 'specialist-1')
@@ -203,6 +208,7 @@ describe('computeCall RPC', () => {
       })
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -240,6 +246,7 @@ describe('computeCall RPC', () => {
 
   it('returns 401 without Bearer token', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: {} as never
     })
     const { endpoint } = await sessionConnection(server)
@@ -252,7 +259,9 @@ describe('computeCall RPC', () => {
   })
 
   it('returns 500 when compute service is not configured', async () => {
-    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never)
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp'
+    })
     const { endpoint, token } = await sessionConnection(server)
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -277,6 +286,7 @@ describe('computeCall RPC', () => {
       }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -297,6 +307,7 @@ describe('computeCall RPC', () => {
   it('returns 500 for unknown op', async () => {
     const fakeCompute = { callCommand: async () => ({}) }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -330,6 +341,7 @@ describe('computeCall RPC', () => {
       })
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -371,6 +383,7 @@ describe('computeCall RPC', () => {
       }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -399,6 +412,7 @@ describe('computeCall RPC', () => {
       replaceDetails: async () => {}
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -424,6 +438,7 @@ describe('computeCall RPC', () => {
       replaceDetails: async () => {}
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -453,6 +468,7 @@ describe('computeCall RPC', () => {
       replaceDetails: async () => {}
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -484,6 +500,7 @@ describe('computeCall RPC', () => {
       }
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -519,6 +536,7 @@ describe('computeCall RPC', () => {
       replaceDetails: async () => {}
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -560,6 +578,7 @@ describe('computeCall RPC', () => {
       getEnabledComputeHosts: () => []
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)
@@ -593,6 +612,7 @@ describe('computeCall RPC', () => {
       getEnabledComputeHosts: () => []
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
       computeService: fakeCompute as never
     })
     const { endpoint, token } = await sessionConnection(server)

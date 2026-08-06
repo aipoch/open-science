@@ -84,6 +84,25 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
 export const docArtifactCount = (doc: ComposerDoc): number =>
   doc.nodes.reduce((total, node) => (node.type === 'artifact' ? total + 1 : total), 0)
 
+// Adds a complete immutable Artifact reference from a global action without routing it through the
+// contenteditable's caret-based mention trigger. Keep the operation pure so Workspace can preserve
+// its existing per-draft ownership and tests can cover the spacing/cap behavior directly.
+export const appendArtifactMention = (doc: ComposerDoc, reference: FileReference): ComposerDoc => {
+  if (docArtifactCount(doc) >= MAX_COMPOSER_ARTIFACT_MENTIONS) return doc
+
+  const previous = doc.nodes.at(-1)
+  const needsSpace =
+    previous !== undefined && (previous.type !== 'text' || !/\s$/.test(previous.text))
+
+  return {
+    nodes: [
+      ...doc.nodes,
+      ...(needsSpace ? [{ type: 'text' as const, text: ' ' }] : []),
+      { type: 'artifact', ...reference }
+    ]
+  }
+}
+
 // Hydrate a plain-text draft into a single text node; empty text yields the empty doc.
 export const docFromText = (text: string): ComposerDoc =>
   text === '' ? emptyDoc : { nodes: [{ type: 'text', text }] }

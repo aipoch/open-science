@@ -1,0 +1,9 @@
+{
+  "id": "duplicate-authority",
+  "version": "8.8.8",
+  "name": false,
+  "description": [],
+  "systemPrompt": { "secret": "must-not-leak" },
+  "enabled": "yes",
+  "capabilityMode": "all"
+}

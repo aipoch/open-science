@@ -1,5 +1,8 @@
 import { type Event as ElectronEvent, type IpcMainInvokeEvent } from 'electron'
 
+import type { ApplicationCallerLease, ApplicationInvocation } from '../application-command-router'
+import { callerContextForEvent } from '../caller-context'
+import { callerLeaseForEvent } from '../caller-lifecycle'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type { ReadArtifactPreviewRequest } from '../../shared/artifacts'
@@ -8,14 +11,14 @@ import type {
   BeginUploadTransferRequest,
   DeleteUploadRequest,
   FinalizeUploadSessionRequest,
+  StageLocalPathUploadRequest,
   StageLocalUploadRequest,
-  UploadTransferRequest,
-  UploadTransferStatus,
-  UploadedAttachment
+  UploadTransferRequest
 } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_NAME, STANDALONE_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
-import { acquireDataRootWriter, withDataRootWrite } from '../storage/migration-state'
+import type { UploadCommandOwner } from './command-owner'
 import { UploadRepository } from './repository'
 
 // Uploads are data-class: they follow the configurable data root (defaults to the config root).
@@ -26,105 +29,23 @@ const createDefaultUploadRepository = (): UploadRepository =>
 
 // Registers the small upload IPC surface used by the renderer composer and preview panel.
 const registerUploadIpcHandlers = (
-  repository = createDefaultUploadRepository(),
+  owner: UploadCommandOwner,
   options: {
-    withSessionMutation?: <Result>(
-      projectId: string,
-      sessionId: string,
-      mutation: () => Promise<Result>
-    ) => Promise<Result>
+    // Called after a standalone "Save as artifact" upload has been persisted to SQLite so
+    // the caller can broadcast a project-files:changed event to the renderer.
+    onStandaloneUploadSaved?: (projectId: string, sessionId: string) => void
   } = {}
 ): void => {
-  // A chunk transfer spans several IPC calls but is one logical write. Holding the writer lease from
-  // begin through finish/abort makes data-root migration wait across the gaps between chunks.
-  type UploadOwner = {
-    senderId: number
-    transferIds: Set<string>
-  }
-  type ChunkWriter = {
-    owner: UploadOwner
-    release: () => void
-    ready: Promise<UploadTransferStatus>
-    cancelled: boolean
-    settling: boolean
-    inFlight: Set<Promise<unknown>>
-    cleanup?: Promise<void>
-  }
-  type LocalWriter = {
-    owner: UploadOwner
-    release: () => void
-    cancelled: boolean
-    ready?: Promise<UploadedAttachment>
-    attachment?: UploadedAttachment
-    cleanup?: Promise<void>
-  }
-  const uploadOwners = new Map<number, UploadOwner>()
-  const chunkWriters = new Map<string, ChunkWriter>()
-  const localWriters = new Map<string, LocalWriter>()
-  const releaseChunkWriter = (transferId: string, writer: ChunkWriter): void => {
-    if (chunkWriters.get(transferId) !== writer) return
-    chunkWriters.delete(transferId)
-    writer.owner.transferIds.delete(transferId)
-    writer.release()
-  }
-  const abortChunkWriter = (transferId: string, writer: ChunkWriter): Promise<void> => {
-    if (writer.cleanup) return writer.cleanup
+  const navigationBindings = new WeakMap<ApplicationCallerLease, () => void>()
+  const bindElectronNavigationCleanup = (event: IpcMainInvokeEvent): void => {
+    const lease = callerLeaseForEvent(event)
+    if (callerContextForEvent(event).surface !== 'electron' || navigationBindings.has(lease)) return
 
-    writer.cancelled = true
-    writer.cleanup = (async () => {
-      try {
-        await writer.ready.catch(() => undefined)
-        await Promise.allSettled([...writer.inFlight])
-        await repository.abortTransfer({ transferId }).catch(() => undefined)
-      } finally {
-        releaseChunkWriter(transferId, writer)
-      }
-    })()
-    return writer.cleanup
-  }
-  const releaseLocalWriter = (transferId: string, writer: LocalWriter): void => {
-    if (localWriters.get(transferId) !== writer) return
-    localWriters.delete(transferId)
-    writer.owner.transferIds.delete(transferId)
-    writer.release()
-  }
-  const abortLocalWriter = (transferId: string, writer: LocalWriter): Promise<void> => {
-    if (writer.cleanup) return writer.cleanup
-
-    writer.cancelled = true
-    writer.cleanup = (async () => {
-      try {
-        await repository.abortTransfer({ transferId }).catch(() => undefined)
-        const attachment = writer.attachment ?? (await writer.ready?.catch(() => undefined))
-        if (attachment) {
-          await repository.deleteUpload({ path: attachment.path }).catch(() => undefined)
-        }
-      } finally {
-        releaseLocalWriter(transferId, writer)
-      }
-    })()
-    return writer.cleanup
-  }
-  const registerUploadOwner = (event: IpcMainInvokeEvent): UploadOwner => {
-    const existing = uploadOwners.get(event.sender.id)
-    if (existing) return existing
-
-    const owner: UploadOwner = { senderId: event.sender.id, transferIds: new Set() }
-    uploadOwners.set(owner.senderId, owner)
-    const releaseOwner = (): void => {
-      if (uploadOwners.get(owner.senderId) !== owner) return
-      uploadOwners.delete(owner.senderId)
-      event.sender.removeListener('destroyed', releaseOwner)
-      event.sender.removeListener('render-process-gone', releaseOwner)
+    const releaseBinding = (): void => {
+      if (navigationBindings.get(lease) !== releaseBinding) return
+      navigationBindings.delete(lease)
+      lease.signal.removeEventListener('abort', releaseBinding)
       event.sender.removeListener('did-start-navigation', releaseOnMainFrameNavigation)
-      for (const transferId of [...owner.transferIds]) {
-        const chunkWriter = chunkWriters.get(transferId)
-        if (chunkWriter?.owner === owner && !chunkWriter.settling) {
-          void abortChunkWriter(transferId, chunkWriter)
-        }
-        const localWriter = localWriters.get(transferId)
-        if (localWriter?.owner === owner) void abortLocalWriter(transferId, localWriter)
-      }
     }
     const releaseOnMainFrameNavigation = (
       _navigationEvent: ElectronEvent,
@@ -132,190 +53,73 @@ const registerUploadIpcHandlers = (
       _isInPlace: boolean,
       isMainFrame: boolean
     ): void => {
-      if (isMainFrame) releaseOwner()
+      if (!isMainFrame) return
+      releaseBinding()
+      owner.releaseCaller(lease)
     }
-    event.sender.once('destroyed', releaseOwner)
-    event.sender.once('render-process-gone', releaseOwner)
+    navigationBindings.set(lease, releaseBinding)
+    lease.signal.addEventListener('abort', releaseBinding, { once: true })
     event.sender.on('did-start-navigation', releaseOnMainFrameNavigation)
-    return owner
+    if (lease.signal.aborted || !lease.isCurrent()) {
+      releaseBinding()
+      throw new Error('Upload renderer is no longer available.')
+    }
   }
-  const getOwnedChunkWriter = (
+  const invocationFor = <const Args extends readonly unknown[]>(
     event: IpcMainInvokeEvent,
-    transferId: string
-  ): ChunkWriter | undefined => {
-    const owner = registerUploadOwner(event)
-    const writer = chunkWriters.get(transferId)
-    if (writer && writer.owner !== owner) {
-      throw new Error(`Upload transfer belongs to another renderer: ${transferId}`)
-    }
-    return writer
-  }
-  const getOwnedLocalWriter = (
+    args: Args
+  ): ApplicationInvocation<Args> => ({
+    callerContext: callerContextForEvent(event),
+    callerLease: callerLeaseForEvent(event),
+    args
+  })
+  const ownedInvocationFor = <const Args extends readonly unknown[]>(
     event: IpcMainInvokeEvent,
-    transferId: string
-  ): LocalWriter | undefined => {
-    const owner = registerUploadOwner(event)
-    const writer = localWriters.get(transferId)
-    if (writer && writer.owner !== owner) {
-      throw new Error(`Upload transfer belongs to another renderer: ${transferId}`)
-    }
-    return writer
+    args: Args
+  ): ApplicationInvocation<Args> => {
+    bindElectronNavigationCleanup(event)
+    return invocationFor(event, args)
   }
 
-  // Uploads write/mutate under the data root, so block them during the data-root copy→commit window.
-  ipcMainHandle('uploads:stage-local-file', async (event, request: StageLocalUploadRequest) => {
-    const owner = registerUploadOwner(event)
-    const existing = localWriters.get(request.transferId) ?? chunkWriters.get(request.transferId)
-    if (existing) {
-      if (existing.owner !== owner) {
-        throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
-      }
-      throw new Error(`Upload transfer already exists: ${request.transferId}`)
-    }
-
-    const writer: LocalWriter = {
-      owner,
-      release: acquireDataRootWriter(),
-      cancelled: false
-    }
-    localWriters.set(request.transferId, writer)
-    owner.transferIds.add(request.transferId)
-    try {
-      writer.ready = repository.stageLocalFile(request, (progress) => {
-        if (!writer.cancelled) event.sender.send('uploads:transfer-progress', progress)
-      })
-      const attachment = await writer.ready
-      writer.attachment = attachment
-      if (writer.cancelled) {
-        await writer.cleanup
-        throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-      }
-      return attachment
-    } catch (error) {
-      if (writer.cancelled) await writer.cleanup
-      else releaseLocalWriter(request.transferId, writer)
-      throw error
-    }
-  })
-  ipcMainHandle('uploads:claim-local-file', (event, request: UploadTransferRequest) => {
-    const writer = getOwnedLocalWriter(event, request.transferId)
-    // Chunk/Web transfers have no local ownership record, so claiming them is an idempotent no-op.
-    if (!writer) return
-    if (!writer.attachment) {
-      throw new Error(`Upload transfer is not ready to claim: ${request.transferId}`)
-    }
-    if (writer.cancelled) {
-      throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-    }
-    releaseLocalWriter(request.transferId, writer)
-  })
-  ipcMainHandle('uploads:begin-transfer', async (event, request: BeginUploadTransferRequest) => {
-    const owner = registerUploadOwner(event)
-    const localWriter = localWriters.get(request.transferId)
-    if (localWriter) {
-      if (localWriter.owner !== owner) {
-        throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
-      }
-      throw new Error(`Upload transfer already exists: ${request.transferId}`)
-    }
-    const existing = chunkWriters.get(request.transferId)
-    if (existing) {
-      if (existing.owner !== owner) {
-        throw new Error(`Upload transfer belongs to another renderer: ${request.transferId}`)
-      }
-      await existing.ready
-      return repository.beginTransfer(request)
-    }
-
-    const writer: ChunkWriter = {
-      owner,
-      release: acquireDataRootWriter(),
-      ready: repository.beginTransfer(request),
-      cancelled: false,
-      settling: false,
-      inFlight: new Set()
-    }
-    chunkWriters.set(request.transferId, writer)
-    owner.transferIds.add(request.transferId)
-    try {
-      const status = await writer.ready
-      if (writer.cancelled) {
-        await writer.cleanup
-        throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-      }
-      return status
-    } catch (error) {
-      releaseChunkWriter(request.transferId, writer)
-      throw error
-    }
-  })
-  ipcMainHandle('uploads:append-transfer', async (event, request: AppendUploadTransferRequest) => {
-    const writer = getOwnedChunkWriter(event, request.transferId)
-    if (!writer) return withDataRootWrite(() => repository.appendTransfer(request))
-
-    await writer.ready
-    if (writer.cancelled) {
-      throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-    }
-    const operation = repository.appendTransfer(request)
-    writer.inFlight.add(operation)
-    try {
-      return await operation
-    } finally {
-      writer.inFlight.delete(operation)
-    }
-  })
-  ipcMainHandle('uploads:transfer-status', (event, request: UploadTransferRequest) => {
-    getOwnedChunkWriter(event, request.transferId)
-    return repository.getTransferStatus(request)
-  })
-  ipcMainHandle('uploads:finish-transfer', async (event, request: UploadTransferRequest) => {
-    const writer = getOwnedChunkWriter(event, request.transferId)
-    if (!writer) return withDataRootWrite(() => repository.finishTransfer(request))
-
-    try {
-      await writer.ready
-      if (writer.cancelled) {
-        await writer.cleanup
-        throw new Error(`Upload renderer is no longer available: ${request.transferId}`)
-      }
-      writer.settling = true
-      await Promise.allSettled([...writer.inFlight])
-      return await repository.finishTransfer(request)
-    } catch (error) {
-      await repository.abortTransfer(request).catch(() => undefined)
-      throw error
-    } finally {
-      releaseChunkWriter(request.transferId, writer)
-    }
-  })
-  ipcMainHandle('uploads:abort-transfer', async (event, request: UploadTransferRequest) => {
-    const localWriter = getOwnedLocalWriter(event, request.transferId)
-    if (localWriter) return abortLocalWriter(request.transferId, localWriter)
-
-    const writer = getOwnedChunkWriter(event, request.transferId)
-    if (!writer) return withDataRootWrite(() => repository.abortTransfer(request))
-
-    await abortChunkWriter(request.transferId, writer)
-  })
-  ipcMainHandle('uploads:delete', (_event, request: DeleteUploadRequest) =>
-    withDataRootWrite(() => repository.deleteUpload(request))
-  )
-  ipcMainHandle('uploads:finalize-session', (_event, request: FinalizeUploadSessionRequest) =>
-    withDataRootWrite(() => {
-      const finalize = (): Promise<UploadedAttachment[]> =>
-        repository.finalizePendingSessionUploads(
-          request.sessionId,
-          request.attachments,
-          request.projectId
-        )
-      return options.withSessionMutation && request.projectId
-        ? options.withSessionMutation(request.projectId, request.sessionId, finalize)
-        : finalize()
+  ipcMainHandle('uploads:stage-local-file', (event, request: StageLocalUploadRequest) =>
+    owner.stageLocalFile(ownedInvocationFor(event, [request]), {
+      report: (progress) => event.sender.send('uploads:transfer-progress', progress)
     })
   )
-  ipcMainHandle('uploads:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
-    repository.readManagedUploadPreview(request)
+  ipcMainHandle('uploads:claim-local-file', (event, request: UploadTransferRequest) =>
+    owner.claimLocalFile(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:stage-local-path', async (event, request: StageLocalPathUploadRequest) => {
+    const attachment = await owner.stageLocalPath(ownedInvocationFor(event, [request]), {
+      report: (progress) => event.sender.send('uploads:transfer-progress', progress)
+    })
+    const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME
+    options.onStandaloneUploadSaved?.(projectId, STANDALONE_UPLOAD_SESSION_ID)
+    return attachment
+  })
+  ipcMainHandle('uploads:begin-transfer', (event, request: BeginUploadTransferRequest) =>
+    owner.beginTransfer(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:append-transfer', (event, request: AppendUploadTransferRequest) =>
+    owner.appendTransfer(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:transfer-status', (event, request: UploadTransferRequest) =>
+    owner.transferStatus(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:finish-transfer', (event, request: UploadTransferRequest) =>
+    owner.finishTransfer(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:abort-transfer', (event, request: UploadTransferRequest) =>
+    owner.abortTransfer(ownedInvocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:delete', (event, request: DeleteUploadRequest) =>
+    owner.deleteUpload(invocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:finalize-session', (event, request: FinalizeUploadSessionRequest) =>
+    owner.finalizeSession(invocationFor(event, [request]))
+  )
+  ipcMainHandle('uploads:read-preview', (event, request: ReadArtifactPreviewRequest) =>
+    owner.readPreview(invocationFor(event, [request]))
   )
 }
 

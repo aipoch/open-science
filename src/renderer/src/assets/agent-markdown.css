@@ -2,6 +2,9 @@
 @import 'streamdown/styles.css';
 @source '../../../../node_modules/streamdown/dist';
 
+/* Hallmark · macrostructure: inherited-agent-transcript · genre: editorial · tone: technical/readable · anchor: terracotta
+ * session-link component · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49–57) */
+
 @theme inline {
   /* Streamdown / agent markdown palette. Each utility resolves through a var() so the values below
      (defined per-theme in :root / .dark) can flip for dark mode instead of being inlined as literals. */
@@ -543,6 +546,58 @@
     @apply break-words;
   }
 
+  [data-session-message-link] {
+    @apply cursor-pointer appearance-none border-0 bg-transparent p-0 text-left font-medium text-primary underline underline-offset-2 transition-colors duration-150 ease-out;
+    display: inline;
+    font: inherit;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+
+    &:focus-visible,
+    &.is-focus {
+      @apply rounded-sm outline-2 outline-offset-2 outline-ring;
+    }
+
+    &:active,
+    &.is-active {
+      @apply text-sd-ink;
+      text-decoration-thickness: 0.14em;
+    }
+
+    &:disabled,
+    &.is-disabled {
+      @apply cursor-not-allowed opacity-50;
+    }
+  }
+
+  [data-session-link-favicon] {
+    @apply relative me-[0.3em] inline-grid size-[1em] place-items-center align-[-0.125em] text-sd-muted;
+
+    & > :is(img, svg) {
+      @apply absolute inset-0 m-0! size-full! max-w-none! rounded-none! border-0! bg-transparent! p-0!;
+    }
+
+    & > img {
+      @apply opacity-0 transition-opacity duration-150 ease-out;
+    }
+
+    &[data-state='loading'] > svg {
+      @apply opacity-50;
+    }
+
+    &[data-state='success'] > img {
+      @apply opacity-100;
+    }
+
+    &[data-state='success'] > svg {
+      @apply opacity-0;
+    }
+
+    &[data-state='error'] > svg {
+      @apply opacity-75;
+    }
+  }
+
   [data-streamdown='code-block'] {
     @apply relative my-[0.75em] min-w-0 max-w-full gap-2 rounded-xl border border-border-200 bg-bg-000! p-2.5 first:mt-0 last:mb-0;
   }
@@ -909,5 +964,20 @@
     &:where(input[type='checkbox']) {
       @apply me-1.5 align-middle;
     }
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-markdown [data-session-message-link]:hover,
+  .agent-markdown [data-session-message-link].is-hover {
+    @apply text-sd-ink;
+    text-decoration-thickness: 0.12em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-markdown [data-session-message-link],
+  .agent-markdown [data-session-link-favicon] > img {
+    transition: none;
   }
 }

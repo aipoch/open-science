@@ -323,9 +323,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms)
-// and the macOS Dock (the static installed icon in Finder/Explorer/taskbar is baked into the build and
-// never changes).
+// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
+// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
+// baked into the build and never changes).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -916,6 +916,9 @@ export type SkillBundlePreview = {
   files: string[]
   alreadyImported: boolean
   replaceableId?: string
+  // Present only for candidates discovered from a public GitHub repo. The approval dialog uses it
+  // to load the same lazy candidate preview as Settings; the main process still owns import URLs.
+  githubUrl?: string
 }
 
 // One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
@@ -939,7 +942,10 @@ export type SkillBundlePreviewResult = {
 export type ConversationSkillImportApprovalRequest = SkillBundlePreviewResult & {
   id: string
   sessionId: string
-  attachmentName: string
+  source: {
+    kind: 'attachment' | 'github'
+    label: string
+  }
 }
 
 export type ConversationSkillImportSelection = {
@@ -961,7 +967,7 @@ export type ConversationSkillImportResult = {
   errors?: Array<{ name: string; error: string }>
 }
 
-// Scan a GitHub repo (owner/repo, owner/repo@ref, or a URL) for skill directories.
+// Search GitHub by keyword, or scan a direct repo reference for skill directories.
 export type ScanRepoRequest = {
   repo: string
 }
@@ -1025,9 +1031,22 @@ export type ScannedSkillView = {
   alreadyImported: boolean
 }
 
-export type ScanRepoResult = {
-  skills: ScannedSkillView[]
+// Compact public-repository metadata returned when scanRepoSkills receives a keyword query.
+export type GitHubRepositorySearchView = {
+  fullName: string
+  description: string | null
+  url: string
+  stars: number
 }
+
+export const GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE =
+  'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
+
+// The existing scan seam also handles keyword discovery. Presence of `repositories` identifies a
+// search result, including the empty-results case; direct repo scans retain their original shape.
+export type ScanRepoResult =
+  | { skills: ScannedSkillView[]; repositories?: never }
+  | { skills: []; repositories: GitHubRepositorySearchView[] }
 
 // Outcome of an import: newly imported, refreshed from upstream, or an already-imported no-op. The
 // refreshed skill list is included so the renderer can update in one round-trip.
@@ -1081,6 +1100,9 @@ export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 // Renderer-safe view of one user-added custom MCP server (no secret env/header values).
 export type CustomServerView = {
   id: string
+  // Immutable agent-facing route used by host.mcp, Specialists, and generated MCP skills.
+  slug: string
+  // User-facing label; spaces and punctuation are allowed.
   name: string
   description?: string
   transport: CustomServerTransport
@@ -1093,6 +1115,13 @@ export type CustomServerView = {
   command?: string
   args?: string[]
   url?: string
+  hasHeaders?: boolean
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+    hasTokens: boolean
+  }
 }
 
 // The connectors list plus custom servers and shared credential state, returned by list/mutation calls.
@@ -1110,6 +1139,7 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   name: string
+  slug?: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1117,9 +1147,70 @@ export type AddCustomServerRequest = {
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+  } | null
 }
 export type SetCustomServerEnabledRequest = { id: string; enabled: boolean }
 export type RemoveCustomServerRequest = { id: string }
+export type AuthenticateCustomServerRequest = { id: string }
+
+export const CONNECTOR_TEMPLATE_MAX_BYTES = 256 * 1024
+
+// Versioned, credential-free exchange format for sharing one custom Connector. Secret fields list
+// names only; values are always supplied locally through the trusted Add Connector form.
+export type ConnectorTemplateDefinition = {
+  schemaVersion: 1
+  kind: 'open-science.connector'
+  name: string
+  slug: string
+  description?: string
+  transport: CustomServerTransport
+  command?: string
+  args?: string[]
+  url?: string
+  requiredSecrets?: {
+    environment?: string[]
+    headers?: string[]
+  }
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+  }
+}
+
+export type ConnectorTemplateDiagnostic = {
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+  path?: string
+}
+
+export type ConnectorTemplatePreview = {
+  definition?: ConnectorTemplateDefinition
+  diagnostics: ConnectorTemplateDiagnostic[]
+  ready: boolean
+}
+
+export type ConnectorTemplateExportPreview = ConnectorTemplatePreview & {
+  connectorId: string
+  digest?: string
+  suggestedFileName?: string
+}
+
+export type ConnectorTemplateSelectionResult =
+  { cancelled: true } | { cancelled: false; fileName: string; preview: ConnectorTemplatePreview }
+
+export type SelectCustomServerTemplateRequest = {
+  fileName: string
+  contents: string
+}
+
+export type ExportCustomServerTemplateRequest = { id: string; expectedDigest: string }
+export type ExportCustomServerTemplateResult = { saved: boolean }
 
 // Edit an existing custom MCP server. The name is immutable (it is the server's identity — host.mcp
 // routing, skill-doc name, and per-tool policy keys all depend on it). Omitted env/headers keep the
@@ -1133,6 +1224,11 @@ export type UpdateCustomServerRequest = {
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  oauth?: {
+    clientMetadataUrl?: string
+    authorizationServerUrl?: string
+    scopes?: string[]
+  } | null
 }
 
 // A per-call approval request for a connector tool invocation (external data-egress gate). Sent from

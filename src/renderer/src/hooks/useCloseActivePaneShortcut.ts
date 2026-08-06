@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore, type PreviewPanelState } from '@/stores/preview-workbench-store'
@@ -23,15 +23,33 @@ export const decideCloseActivePaneAction = (input: {
 
 // Wires the main-process close chord to the tab-vs-pane-vs-window decision. Store state is read
 // imperatively so the subscription is installed once yet always sees the current view and panel state.
-export const useCloseActivePaneShortcut = (): void => {
+export const useCloseActivePaneShortcut = (closeActiveModal?: () => boolean): void => {
+  const closeActiveModalRef = useRef(closeActiveModal)
+  useEffect(() => {
+    closeActiveModalRef.current = closeActiveModal
+  }, [closeActiveModal])
+
   useEffect(
     () =>
       window.api.window.onCloseActivePane(() => {
+        if (closeActiveModalRef.current?.()) return
+
         const preview = usePreviewWorkbenchStore.getState()
+        const view = useNavigationStore.getState().view
         const activeItem = preview.items.find((item) => item.id === preview.activeItemId)
+        if (view === 'workspace') {
+          if (preview.fileDialogItem) {
+            preview.closeFileDialog()
+            return
+          }
+          if (preview.panelState === 'open' && preview.expandedToolItemId === activeItem?.id) {
+            preview.setToolItemExpanded(null)
+            return
+          }
+        }
 
         const action = decideCloseActivePaneAction({
-          view: useNavigationStore.getState().view,
+          view,
           panelState: preview.panelState,
           hasActiveTab: activeItem !== undefined
         })

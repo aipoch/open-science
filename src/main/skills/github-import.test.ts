@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { SKILL_IMPORT_LIMITS } from './import-limits'
 import {
@@ -6,6 +6,7 @@ import {
   parseGitHubRepo,
   fetchSkillPreview,
   fetchSkillFiles,
+  searchGitHubSkillRepositories,
   scanRepoForSkills,
   type FetchLike
 } from './github-import'
@@ -50,8 +51,13 @@ describe('parseGitHubSkillUrl', () => {
     ).toBe('scientific-skills/Academic Writing/citation-formatter')
   })
 
-  it('returns null for non-GitHub input', () => {
+  it('returns null unless the URL is an HTTPS github.com repository', () => {
     expect(parseGitHubSkillUrl('https://example.com/foo')).toBeNull()
+    expect(parseGitHubSkillUrl('http://github.com/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://example.invalid/github.com/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com.evil/acme/skills')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com/acme')).toBeNull()
+    expect(parseGitHubSkillUrl('https://github.com/acme/skills/issues')).toBeNull()
   })
 })
 
@@ -672,14 +678,136 @@ describe('parseGitHubRepo', () => {
   })
 })
 
+describe('searchGitHubSkillRepositories', () => {
+  it('returns compact repository results for Skill keyword searches', async () => {
+    const requests: string[] = []
+    const fetcher: FetchLike = async (url) => {
+      requests.push(url)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          items: [
+            {
+              full_name: 'hugohe3/ppt-master',
+              description: 'Presentation generation skills',
+              html_url: 'https://github.com/hugohe3/ppt-master',
+              stargazers_count: 42
+            }
+          ]
+        }),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+
+    await expect(searchGitHubSkillRepositories('ppt master', fetcher)).resolves.toEqual([
+      {
+        fullName: 'hugohe3/ppt-master',
+        description: 'Presentation generation skills',
+        url: 'https://github.com/hugohe3/ppt-master',
+        stars: 42
+      }
+    ])
+    expect(requests).toEqual([
+      'https://api.github.com/search/repositories?q=ppt%20master%20SKILL.md%20in%3Aname%2Cdescription%2Ctopics%2Creadme&per_page=10'
+    ])
+  })
+
+  it('rejects keywords longer than GitHub search accepts before fetching', async () => {
+    const fetcher = vi.fn<FetchLike>()
+
+    await expect(searchGitHubSkillRepositories('x'.repeat(248), fetcher)).rejects.toThrow(
+      'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
+    )
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each([403, 429])(
+    'turns GitHub status %s into an actionable rate-limit error',
+    async (status) => {
+      const fetcher: FetchLike = async () => ({
+        ok: false,
+        status,
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      })
+
+      await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
+        'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+      )
+    }
+  )
+
+  it('ignores malformed repository items instead of exposing unchecked data', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        items: [
+          { full_name: 'missing-fields' },
+          {
+            full_name: 'acme/valid',
+            description: null,
+            html_url: 'https://github.com/acme/valid',
+            stargazers_count: 7
+          }
+        ]
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('acme', fetcher)).resolves.toEqual([
+      {
+        fullName: 'acme/valid',
+        description: null,
+        url: 'https://github.com/acme/valid',
+        stars: 7
+      }
+    ])
+  })
+
+  it('reports a malformed repository-search response explicitly', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ unexpected: true }),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('acme', fetcher)).rejects.toThrow(
+      'GitHub returned an invalid repository search response.'
+    )
+  })
+
+  it('does not expose JSON parser details from a malformed GitHub response', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token from private response body')
+      },
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('acme', fetcher)).rejects.toThrow(
+      'GitHub returned an invalid repository search response.'
+    )
+  })
+})
+
 describe('scanRepoForSkills', () => {
   // Fakes the repo-meta + recursive git-tree API responses.
+  const commitSha = '0123456789abcdef0123456789abcdef01234567'
   const treeFetch = (
     paths: { path: string; type: string }[],
     defaultBranch = 'main'
   ): FetchLike => {
     return async (url: string) => {
-      const body = url.includes('/git/trees/') ? { tree: paths } : { default_branch: defaultBranch }
+      const body = url.includes('/git/trees/')
+        ? { tree: paths }
+        : url.includes('/commits/')
+          ? { sha: commitSha }
+          : { default_branch: defaultBranch }
       return {
         ok: true,
         status: 200,
@@ -704,9 +832,34 @@ describe('scanRepoForSkills', () => {
       {
         name: 'foo',
         path: 'pack/foo',
-        url: 'https://github.com/acme/skills/tree/main/pack/foo'
+        url: `https://github.com/acme/skills/tree/${commitSha}/pack/foo`
       },
-      { name: 'bar', path: 'bar', url: 'https://github.com/acme/skills/tree/main/bar' }
+      {
+        name: 'bar',
+        path: 'bar',
+        url: `https://github.com/acme/skills/tree/${commitSha}/bar`
+      }
     ])
+  })
+
+  it('rejects a truncated recursive tree instead of returning partial scan results', async () => {
+    const fetcher: FetchLike = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.includes('/git/trees/')
+          ? {
+              truncated: true,
+              tree: [{ path: 'pack/foo/SKILL.md', type: 'blob' }]
+            }
+          : url.includes('/commits/')
+            ? { sha: commitSha }
+            : { default_branch: 'main' },
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(scanRepoForSkills({ owner: 'acme', repo: 'very-large' }, fetcher)).rejects.toThrow(
+      'This repository is too large to scan completely. Paste a link to the Skill folder instead.'
+    )
   })
 })

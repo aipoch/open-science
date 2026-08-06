@@ -51,15 +51,22 @@ describe('claude-agent-acp MCP readiness patch', () => {
     expect(query.close).not.toHaveBeenCalled()
   })
 
-  it('reports a configured MCP server startup failure', async () => {
+  it.each([
+    ['failed', 'process exited'],
+    ['needs-auth', 'login required']
+  ] as const)('logs a configured MCP server %s state', async (state, detail) => {
     const mcpServerStatus = vi
       .fn<McpStatusQuery['mcpServerStatus']>()
-      .mockResolvedValue([status('open-science-notebook', 'failed', 'process exited')])
+      .mockResolvedValue([status('open-science-notebook', state, detail)])
 
     const query = queryWithStatus(mcpServerStatus)
+    const logger = { error: vi.fn() }
 
-    await expect(waitForMcpServers(query, ['open-science-notebook'], 100)).rejects.toThrow(
-      'MCP server open-science-notebook is failed: process exited'
+    await expect(waitForMcpServers(query, ['open-science-notebook'], 100, logger)).rejects.toThrow(
+      `MCP server open-science-notebook is ${state}: ${detail}`
+    )
+    expect(logger.error).toHaveBeenCalledWith(
+      `[mcp-readiness] MCP server open-science-notebook is ${state}: ${detail}`
     )
     expect(query.close).toHaveBeenCalledOnce()
   })
@@ -70,9 +77,13 @@ describe('claude-agent-acp MCP readiness patch', () => {
       .mockReturnValue(new Promise<McpServerStatus[]>(() => undefined))
 
     const query = queryWithStatus(mcpServerStatus)
+    const logger = { error: vi.fn() }
 
-    await expect(waitForMcpServers(query, ['open-science-notebook'], 5)).rejects.toThrow(
+    await expect(waitForMcpServers(query, ['open-science-notebook'], 5, logger)).rejects.toThrow(
       'Timed out waiting for MCP servers: open-science-notebook'
+    )
+    expect(logger.error).toHaveBeenCalledWith(
+      '[mcp-readiness] Timed out waiting for MCP servers: open-science-notebook'
     )
     expect(query.close).toHaveBeenCalledOnce()
   })

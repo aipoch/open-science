@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef } from 'react'
 
 import type { SkillView } from '../../../../../shared/settings'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,9 @@ type ComposerEditorProps = {
   ariaLabel: string
   // Undefined preserves Main Agent behavior; an empty array intentionally hides every Skill.
   allowedSkillIds?: readonly string[]
+  isHistoryBrowsing?: boolean
+  historyStatus?: string
+  onNavigateHistory?: (direction: 'previous' | 'next') => boolean
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -113,6 +116,35 @@ const chipBesideCaret = (root: HTMLElement, side: 'before' | 'after'): HTMLEleme
   return null
 }
 
+const hasCollapsedSelection = (root: HTMLElement): boolean => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return false
+  const range = selection.getRangeAt(0)
+  return range.collapsed && root.contains(range.startContainer)
+}
+
+// A range from the editor start to the caret has no rendered text only at the logical start.
+const caretIsAtStart = (root: HTMLElement): boolean => {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0) return false
+  const caret = selection.getRangeAt(0)
+  if (!caret.collapsed || !root.contains(caret.startContainer)) return false
+  const beforeCaret = document.createRange()
+  beforeCaret.selectNodeContents(root)
+  beforeCaret.setEnd(caret.startContainer, caret.startOffset)
+  return beforeCaret.toString() === ''
+}
+
+const moveCaretToEnd = (root: HTMLElement): void => {
+  root.focus()
+  const range = document.createRange()
+  range.selectNodeContents(root)
+  range.collapse(false)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+}
+
 // A contenteditable composer driven by a pure ComposerDoc model. External doc changes flow into the
 // DOM via applyDocToDom; user edits flow out via domToDoc. A `/` mention trigger mounts a skill popup.
 export const ComposerEditor = ({
@@ -124,9 +156,15 @@ export const ComposerEditor = ({
   placeholder,
   className,
   ariaLabel,
-  allowedSkillIds
+  allowedSkillIds,
+  isHistoryBrowsing = false,
+  historyStatus = '',
+  onNavigateHistory
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
+  const historyDescriptionId = useId()
+  const historyStatusId = useId()
+  const restoreHistoryCaretRef = useRef(false)
   // Tracks IME composition so Enter never submits mid-composition.
   const composingRef = useRef(false)
 
@@ -159,6 +197,10 @@ export const ComposerEditor = ({
     const root = editorRef.current
     if (!root) return
     if (!nodesEqual(domToDoc(root).nodes, doc.nodes)) applyDocToDom(root, doc)
+    if (restoreHistoryCaretRef.current) {
+      restoreHistoryCaretRef.current = false
+      moveCaretToEnd(root)
+    }
   }, [doc])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
@@ -167,6 +209,30 @@ export const ComposerEditor = ({
     if (disabled) return
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
     if (mention.active || artifactMention.active) return
+    if (
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+      onNavigateHistory &&
+      !composingRef.current &&
+      !event.nativeEvent.isComposing &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      const root = editorRef.current
+      const selectionEligible = root ? hasCollapsedSelection(root) : false
+      const direction = event.key === 'ArrowUp' ? 'previous' : 'next'
+      const canStartBrowsing = direction === 'previous' && root ? caretIsAtStart(root) : false
+      if (
+        selectionEligible &&
+        (isHistoryBrowsing || canStartBrowsing) &&
+        onNavigateHistory(direction)
+      ) {
+        restoreHistoryCaretRef.current = true
+        event.preventDefault()
+        return
+      }
+    }
     // Backspace/Delete next to a chip removes the whole chip atomically (never edits its label).
     if (event.key === 'Backspace' || event.key === 'Delete') {
       const root = editorRef.current
@@ -225,6 +291,7 @@ export const ComposerEditor = ({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
+        aria-describedby={`${historyDescriptionId} ${historyStatusId}`}
         aria-disabled={disabled || undefined}
         aria-haspopup="listbox"
         contentEditable={!disabled}
@@ -241,6 +308,12 @@ export const ComposerEditor = ({
           composingRef.current = false
         }}
       />
+      <span id={historyDescriptionId} className="sr-only">
+        At the start of the input, use Up and Down Arrow to browse prompt history.
+      </span>
+      <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
+        {historyStatus}
+      </span>
       {/* Show the placeholder whenever the doc is empty, regardless of focus. */}
       {docIsEmpty(doc) ? (
         <div aria-hidden="true" className={composerPlaceholderClassName}>

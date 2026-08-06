@@ -10,7 +10,7 @@ const runtimeEventConsumerPaths = [
   'src/main/acp/ipc.ts',
   'src/main/acp/runtime.ts',
   'src/preload/index.ts',
-  'src/preload/index.d.ts',
+  'src/preload/renderer-api.d.ts',
   'src/renderer/src/lib/acp/chat-events.ts',
   'src/renderer/src/lib/acp/workspace-events.ts',
   'src/renderer/src/lib/acp/workspace-events.test.ts'
@@ -20,7 +20,7 @@ const debugEntryPointPaths = [
   'src/main/ipc.ts',
   'src/main/windows.ts',
   'src/preload/index.ts',
-  'src/preload/index.d.ts'
+  'src/preload/renderer-api.d.ts'
 ]
 
 describe('ACP runtime event naming', () => {

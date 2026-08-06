@@ -23,11 +23,15 @@ import {
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
+  type AgentModelCatalogEntry,
+  type AgentModelChangeTarget,
+  type AgentModelRoute,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { opencodeConfigDir } from '../agent-framework/opencode'
+import { opencodeConfigDir, opencodeTransportProviderId } from '../agent-framework/opencode'
 import {
+  CODEX_BRIDGE_MODEL,
   codexStorageDir,
   codexSubscriptionStorageDir,
   normalizeResponsesBaseUrl
@@ -42,15 +46,27 @@ import {
   REQUEST_SKILL_IMPORT_TOOL_NAME,
   SKILL_IMPORT_MCP_SERVER_NAME
 } from '../../shared/skill-import'
-import { openAiCompletionsBase } from './base-url'
+import {
+  normalizeAnthropicBaseUrl,
+  openAiChatCompletionsUrl,
+  openAiCompletionsBase
+} from './base-url'
 import { buildProviderEnv } from './provider-env'
+import {
+  AnthropicProviderBridge,
+  type AnthropicProviderBridgeTarget
+} from './anthropic-provider-bridge'
+import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
 import {
   ResponsesBridge,
   type ResponsesBridgeConnection,
   type ResponsesBridgeNamespacedTool,
   type ResponsesBridgeTarget
 } from './responses-bridge'
-import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
+import {
+  NativeResponsesCompatibilityProxy,
+  type NativeResponsesCompatibilityTarget
+} from './native-responses-compatibility'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
 import type { ConnectorSettingsModule } from './connector-settings'
 import {
@@ -62,6 +78,7 @@ import {
 import { ensureCodexAuthHome } from './codex-auth'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import type { StoredSettings } from './types'
+import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 
 export type AgentBackendSelection = Readonly<{
   frameworkId: AgentFrameworkId
@@ -101,7 +118,7 @@ export type AgentBackendRuntimePort = Pick<
 
 export type AgentBackendProviderPort = Pick<
   ProviderAccountsModule,
-  'resolveRuntimeTarget' | 'resolveRuntimeReasoningEffortProfile'
+  'resolveRuntimeTarget' | 'resolveRuntimeModelCatalog' | 'resolveRuntimeReasoningEffortProfile'
 >
 
 export type AgentBackendConnectorPort = Pick<ConnectorSettingsModule, 'enabledConnectorIds'>
@@ -111,13 +128,14 @@ type BridgeBasePort = Pick<
   'start' | 'close' | 'selectSkills' | 'registerReviewerSession' | 'unregisterReviewerSession'
 >
 
-type ResponsesBridgePort = BridgeBasePort & Pick<ResponsesBridge, 'setReasoningEffort'>
-type NativeResponsesProxyPort = BridgeBasePort
+type ResponsesBridgePort = BridgeBasePort &
+  Pick<ResponsesBridge, 'setReasoningEffort' | 'setModelTarget' | 'setTarget'>
+type NativeResponsesProxyPort = BridgeBasePort &
+  Pick<NativeResponsesCompatibilityProxy, 'setModelTarget' | 'setTarget'>
+type AnthropicProviderBridgePort = Pick<AnthropicProviderBridge, 'start' | 'close' | 'setTarget'>
+type OpenAiProviderBridgePort = Pick<OpenAiProviderBridge, 'start' | 'close' | 'setTarget'>
 
-type NativeResponsesProxyTarget = {
-  baseUrl: string
-  key?: string
-  model?: string
+type NativeResponsesProxyTarget = NativeResponsesCompatibilityTarget & {
   reviewerScope: { namespacedTools: ResponsesBridgeNamespacedTool[] }
 }
 
@@ -133,7 +151,54 @@ type NativeResponsesCompatibilityEntry = {
 
 type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
   lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  providerTransportLease?: NonNullable<ResolvedAgentBackend['providerTransportLease']>
 }
+
+type OpenCodeProviderTransport = Readonly<{
+  provider: ProviderRuntimeTarget['provider']
+  providerModelCatalog: readonly AgentModelCatalogEntry[]
+  lease: NonNullable<ResolvedAgentBackend['providerTransportLease']>
+}>
+
+type NativeCodexProviderTransport = Readonly<{
+  provider: ProviderRuntimeTarget['provider']
+  lease: NonNullable<ResolvedAgentBackend['providerTransportLease']>
+}>
+
+const modelRouteFor = (
+  frameworkId: AgentFrameworkId,
+  target: ProviderRuntimeTarget
+): AgentModelRoute => {
+  if (frameworkId === 'claude-code') return 'claude-anthropic'
+  if (frameworkId === 'opencode') {
+    return target.apiEndpoints.includes('openai') ? 'opencode-openai' : 'opencode-anthropic'
+  }
+  if (target.needsChatResponsesBridge) return 'codex-bridge'
+  if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
+  return 'codex-responses'
+}
+
+const resolvedModelEffort = (
+  intent: ReasoningEffort,
+  target: ProviderRuntimeTarget
+): ResolvedReasoningEffort =>
+  intent === DEFAULT_REASONING_EFFORT
+    ? DEFAULT_REASONING_EFFORT
+    : resolveReasoningEffortValue(intent, target.reasoningEffortProfile)
+
+const claudeBridgeTargetId = (providerId: string, model: string): string =>
+  JSON.stringify([providerId, model])
+
+const providerTransportTargetId = (
+  frameworkId: AgentFrameworkId,
+  providerId: string,
+  model: string
+): string => JSON.stringify([frameworkId, providerId, model])
+
+type ClaudeBridgeCatalog = Readonly<{
+  targets: readonly AnthropicProviderBridgeTarget[]
+  initialTargetId: string
+}>
 
 export type AgentBackendResolverOptions = {
   readSettings: () => Promise<StoredSettings>
@@ -145,6 +210,14 @@ export type AgentBackendResolverOptions = {
   readFrameworkOverride?: () => string | undefined
   createResponsesBridge?: (target: ResponsesBridgeTarget) => ResponsesBridgePort
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
+  createAnthropicProviderBridge?: (
+    targets: readonly AnthropicProviderBridgeTarget[],
+    initialTargetId: string
+  ) => AnthropicProviderBridgePort
+  createOpenAiProviderBridge?: (
+    targets: readonly OpenAiProviderBridgeTarget[],
+    initialTargetId: string
+  ) => OpenAiProviderBridgePort
   ensureCodexSubscriptionHome?: () => Promise<void>
   nextGenerationId?: () => string
 }
@@ -212,6 +285,14 @@ export class AgentBackendResolver {
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
   ) => NativeResponsesProxyPort
+  private readonly createAnthropicProviderBridge: (
+    targets: readonly AnthropicProviderBridgeTarget[],
+    initialTargetId: string
+  ) => AnthropicProviderBridgePort
+  private readonly createOpenAiProviderBridge: (
+    targets: readonly OpenAiProviderBridgeTarget[],
+    initialTargetId: string
+  ) => OpenAiProviderBridgePort
   private readonly ensureCodexSubscriptionHome: () => Promise<void>
   private readonly nextGenerationId: () => string
   private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
@@ -234,6 +315,12 @@ export class AgentBackendResolver {
     this.createNativeResponsesProxy =
       options.createNativeResponsesProxy ??
       ((target) => new NativeResponsesCompatibilityProxy(target))
+    this.createAnthropicProviderBridge =
+      options.createAnthropicProviderBridge ??
+      ((targets, initialTargetId) => new AnthropicProviderBridge(targets, initialTargetId))
+    this.createOpenAiProviderBridge =
+      options.createOpenAiProviderBridge ??
+      ((targets, initialTargetId) => new OpenAiProviderBridge(targets, initialTargetId))
     this.ensureCodexSubscriptionHome =
       options.ensureCodexSubscriptionHome ??
       (() => ensureCodexAuthHome('isolated', this.storageRoot))
@@ -267,6 +354,88 @@ export class AgentBackendResolver {
       settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       context
     )
+  }
+
+  async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
+    const settings = await this.readSettings()
+    const frameworkId = this.resolveConfiguredFrameworkId(settings)
+    const framework = getAgentFramework(frameworkId)
+    const storedProvider = settings.activeProviderId
+      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
+      : undefined
+    if (!storedProvider) return undefined
+
+    const target = this.providers.resolveRuntimeTarget(
+      storedProvider,
+      { kind: 'configured', requestedModel: settings.activeModel },
+      framework
+    )
+    if (!target.frameworkCompatible || (frameworkId === 'codex' && !target.modelBridgeSupported)) {
+      return undefined
+    }
+
+    const model = target.effectiveModel ?? target.provider.model
+    if (!model) return undefined
+    const route = modelRouteFor(frameworkId, target)
+    const openCodeTransportTargets =
+      frameworkId === 'opencode' ? this.resolveOpenCodeApiTargets(settings, target, route) : []
+    const hasOpenCodeProviderTransport =
+      new Set(openCodeTransportTargets.map((candidate) => candidate.providerId)).size >= 2
+    const codexTransportTargets =
+      frameworkId === 'codex' ? this.resolveCodexApiTargets(settings, target, route) : []
+    const hasCodexProviderTransport =
+      new Set(codexTransportTargets.map((candidate) => candidate.providerId)).size >= 2
+    const hasClaudeProviderTransport =
+      frameworkId === 'claude-code' &&
+      this.resolveClaudeBridgeCatalog(settings, target) !== undefined
+    const backendProviderId =
+      frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type)
+        ? CODEX_ISOLATED_PROVIDER_ID
+        : target.providerId
+
+    return Object.freeze({
+      frameworkId,
+      backendId: `${frameworkId}:${backendProviderId}`,
+      route,
+      model,
+      sessionModel:
+        route === 'codex-bridge'
+          ? CODEX_BRIDGE_MODEL
+          : hasOpenCodeProviderTransport
+            ? `${opencodeTransportProviderId(target.providerId, model)}/${model}`
+            : model,
+      sessionModelRequired:
+        frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type),
+      supportsImageInput: target.provider.supportsImageInput === true,
+      reasoningEffort: resolvedModelEffort(
+        settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+        target
+      ),
+      ...(hasClaudeProviderTransport
+        ? { anthropicBridgeTargetId: claudeBridgeTargetId(target.providerId, model) }
+        : {}),
+      ...(hasOpenCodeProviderTransport || hasCodexProviderTransport
+        ? {
+            providerTransportTargetId: providerTransportTargetId(
+              frameworkId,
+              target.providerId,
+              model
+            )
+          }
+        : {}),
+      ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
+      ...(route === 'codex-bridge' || route === 'codex-responses-compatibility'
+        ? {
+            bridge: Object.freeze({
+              model,
+              ...(target.provider.vendorId ? { vendorId: target.provider.vendorId } : {}),
+              ...(target.provider.reasoningEffortTransport
+                ? { reasoningEffortTransport: target.provider.reasoningEffortTransport }
+                : {})
+            })
+          }
+        : {})
+    })
   }
 
   async captureConfiguredSelection(): Promise<AgentBackendSelection> {
@@ -367,10 +536,8 @@ export class AgentBackendResolver {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
 
-    const resolvedEffort =
-      effortIntent === DEFAULT_REASONING_EFFORT
-        ? DEFAULT_REASONING_EFFORT
-        : resolveReasoningEffortValue(effortIntent, target.reasoningEffortProfile)
+    const modelRoute = modelRouteFor(frameworkId, target)
+    const resolvedEffort = resolvedModelEffort(effortIntent, target)
     const sessionEffort: ModelReasoningEffort | undefined =
       resolvedEffort === 'default' ? undefined : resolvedEffort
     const supportedReasoningEfforts = target.reasoningEffortProfile.supported
@@ -384,16 +551,49 @@ export class AgentBackendResolver {
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
         await this.resolveClaudeSpawnConfig(settings, target, forcedSkillIds)
-      return {
-        framework,
-        backendId: `${framework.id}:${target.providerId}`,
-        executablePath,
-        env: envOverrides,
-        sessionOptions,
-        sessionEffort,
-        contextWindow,
-        contextUsageModel: target.effectiveModel,
-        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {})
+      const bridgeCatalog = this.resolveClaudeBridgeCatalog(settings, target)
+      let bridge: AnthropicProviderBridgePort | undefined
+      try {
+        const bridgeConnection = bridgeCatalog
+          ? await (bridge = this.createAnthropicProviderBridge(
+              bridgeCatalog.targets,
+              bridgeCatalog.initialTargetId
+            )).start()
+          : undefined
+        const startedBridge = bridge
+        const bridgeLease = startedBridge
+          ? {
+              setTarget: (targetId: string) => startedBridge.setTarget(targetId),
+              release: () => startedBridge.close()
+            }
+          : undefined
+        return {
+          framework,
+          backendId: `${framework.id}:${target.providerId}`,
+          modelRoute,
+          executablePath,
+          env: {
+            ...envOverrides,
+            ...(bridgeConnection
+              ? {
+                  ANTHROPIC_BASE_URL: bridgeConnection.baseUrl,
+                  ANTHROPIC_AUTH_TOKEN: bridgeConnection.token,
+                  ANTHROPIC_API_KEY: bridgeConnection.token,
+                  ...loopbackProxyBypassEnvironment(process.env)
+                }
+              : {})
+          },
+          sessionOptions,
+          sessionEffort,
+          contextWindow,
+          ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
+          contextUsageModel: target.effectiveModel,
+          ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
+          ...(bridgeLease ? { anthropicBridgeLease: bridgeLease } : {})
+        }
+      } catch (error) {
+        await bridge?.close().catch(() => undefined)
+        throw error
       }
     }
 
@@ -408,7 +608,31 @@ export class AgentBackendResolver {
       framework.id === 'codex'
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
-    const provider = target.provider
+    let provider = target.provider
+    const codexProviderTargets =
+      framework.id === 'codex' ? this.resolveCodexApiTargets(settings, target, modelRoute) : []
+    const hasCodexProviderTransport =
+      new Set(codexProviderTargets.map((candidate) => candidate.providerId)).size >= 2
+    const catalogTargets = hasCodexProviderTransport
+      ? codexProviderTargets
+      : this.providers.resolveRuntimeModelCatalog(storedProvider, framework)
+    let providerModelCatalog: readonly AgentModelCatalogEntry[] = catalogTargets
+      .filter(
+        (candidate) =>
+          candidate.frameworkCompatible &&
+          (framework.id !== 'codex' || candidate.modelBridgeSupported) &&
+          modelRouteFor(framework.id, candidate) === modelRoute
+      )
+      .map((candidate) => {
+        const candidateEffort = resolvedModelEffort(effortIntent, candidate)
+        return Object.freeze({
+          provider: candidate.provider,
+          ...(candidateEffort === 'default' ? {} : { reasoningEffort: candidateEffort }),
+          ...(candidate.reasoningEffortProfile.supported
+            ? { reasoningEfforts: [...new Set(candidate.reasoningEffortProfile.slots)] }
+            : {})
+        })
+      })
     if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
       await this.ensureCodexSubscriptionHome()
     }
@@ -424,14 +648,33 @@ export class AgentBackendResolver {
         : opencodeConfigDir(this.storageRoot)
     await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
 
+    const openCodeProviderTransport =
+      framework.id === 'opencode'
+        ? await this.ensureOpenCodeProviderTransports(settings, target, modelRoute, effortIntent)
+        : undefined
+    if (openCodeProviderTransport) {
+      provider = openCodeProviderTransport.provider
+      providerModelCatalog = openCodeProviderTransport.providerModelCatalog
+    }
+    const nativeCodexProviderTransport =
+      framework.id === 'codex' && modelRoute === 'codex-responses' && hasCodexProviderTransport
+        ? await this.ensureNativeCodexProviderTransport(target, codexProviderTargets)
+        : undefined
+    if (nativeCodexProviderTransport) provider = nativeCodexProviderTransport.provider
+
     const responsesBridge = target.needsChatResponsesBridge
       ? await this.ensureResponsesBridge(
-          provider,
+          target,
           sessionEffort,
-          settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED
+          settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+          hasCodexProviderTransport ? codexProviderTargets : undefined,
+          effortIntent
         )
       : target.needsNativeResponsesCompatibility
-        ? await this.ensureNativeResponsesCompatibility(provider)
+        ? await this.ensureNativeResponsesCompatibility(
+            target,
+            hasCodexProviderTransport ? codexProviderTargets : undefined
+          )
         : undefined
     const persistentSystemPromptAppends = [
       ...(context.systemPromptAppends ?? []),
@@ -446,6 +689,7 @@ export class AgentBackendResolver {
         responsesBridge,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
+        providerModelCatalog,
         instructions: connectorInstructions,
         ...(persistentSystemPromptAppends.length > 0
           ? { systemPromptAppends: persistentSystemPromptAppends }
@@ -463,14 +707,16 @@ export class AgentBackendResolver {
       // Only the Codex child talks to the app-owned bridge at loopback. Add a bypass override for
       // that local hop without copying or clearing proxy variables. This leaves the main-process
       // bridge's upstream network route untouched.
-      const loopbackProxyBypass = responsesBridge
-        ? loopbackProxyBypassEnvironment(process.env)
-        : undefined
+      const loopbackProxyBypass =
+        responsesBridge || openCodeProviderTransport || nativeCodexProviderTransport
+          ? loopbackProxyBypassEnvironment(process.env)
+          : undefined
       const sessionModel = modelConfig.sessionModel ?? provider.model
 
       return {
         framework,
         backendId: `${framework.id}:${backendProviderId}`,
+        modelRoute,
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),
@@ -500,6 +746,7 @@ export class AgentBackendResolver {
           : {}),
         sessionEffort,
         contextWindow: provider.contextWindow,
+        ...(provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: provider.model,
         authentication: modelConfig.authentication,
         providerConfiguration: modelConfig.providerConfiguration,
@@ -512,10 +759,16 @@ export class AgentBackendResolver {
                 authorization: `Basic ${Buffer.from(`opencode:${opencodeUsagePassword}`).toString('base64')}`
               }
             }),
-        responsesBridgeLease: responsesBridge?.lease
+        responsesBridgeLease: responsesBridge?.lease,
+        providerTransportLease:
+          openCodeProviderTransport?.lease ??
+          nativeCodexProviderTransport?.lease ??
+          responsesBridge?.providerTransportLease
       }
     } catch (error) {
       await responsesBridge?.lease.release()
+      await openCodeProviderTransport?.lease.release()
+      await nativeCodexProviderTransport?.lease.release()
       throw error
     }
   }
@@ -532,8 +785,13 @@ export class AgentBackendResolver {
     if (target.providerType === 'claude-shared' && target.disconnectedAt !== undefined) {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
-    const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(settings, forcedSkillIds)
     const provider = target.provider
+    const modelConfig = this.resolveClaudeModelConfig(settings, target)
+    const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(
+      settings,
+      forcedSkillIds,
+      modelConfig ?? null
+    )
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath,
@@ -549,7 +807,8 @@ export class AgentBackendResolver {
           ? {
               settings: {
                 skipWebFetchPreflight: true,
-                permissions: { ask: ['WebFetch'] }
+                permissions: { ask: ['WebFetch'] },
+                ...(modelConfig ?? {})
               }
             }
           : undefined
@@ -562,27 +821,407 @@ export class AgentBackendResolver {
     }
   }
 
-  private async ensureResponsesBridge(
-    provider: ProviderRuntimeTarget['provider'],
-    reasoningEffort: ModelReasoningEffort | undefined,
-    conversationSkillImportEnabled: boolean
-  ): Promise<LeasedResponsesBridgeConnection> {
-    const targetBaseUrl = openAiCompletionsBase(provider)
-    if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
-    const target: ResponsesBridgeTarget = {
-      baseUrl: targetBaseUrl,
-      key: provider.key,
-      vendorId: provider.vendorId,
-      reasoningEffortTransport: provider.reasoningEffortTransport,
-      model: provider.model,
-      reasoningEffort,
-      namespacedTools: [
-        ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
-        ...CODEX_BRIDGE_ARTIFACT_TOOLS,
-        ...(conversationSkillImportEnabled ? CODEX_BRIDGE_SKILL_IMPORT_TOOLS : [])
-      ],
-      reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
+  private resolveClaudeModelConfig(
+    settings: StoredSettings,
+    target: ProviderRuntimeTarget
+  ): ClaudeRuntimeModelConfig | undefined {
+    if (target.provider.type !== 'custom') return undefined
+    const registered = [
+      ...new Set(
+        this.resolveClaudeApiTargets(settings, target).map(
+          (candidate) => candidate.effectiveModel ?? candidate.provider.model
+        )
+      )
+    ].filter((model): model is string => Boolean(model))
+    if (registered.length < 2) return undefined
+
+    return Object.freeze({
+      availableModels: Object.freeze([...registered]),
+      modelOverrides: Object.freeze(
+        // Identity overrides deliberately register opaque third-party ids with Claude's SDK. A real
+        // adapter spike verifies that this has no three-alias ceiling and setModel accepts every row.
+        Object.fromEntries(registered.map((model) => [model, model]))
+      )
+    })
+  }
+
+  private resolveClaudeBridgeCatalog(
+    settings: StoredSettings,
+    target: ProviderRuntimeTarget
+  ): ClaudeBridgeCatalog | undefined {
+    if (target.provider.type !== 'custom') return undefined
+    const apiTargets = this.resolveClaudeApiTargets(settings, target)
+    if (new Set(apiTargets.map((candidate) => candidate.providerId)).size < 2) return undefined
+    const targets = apiTargets.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+      if (!model || !baseUrl) return []
+      return [
+        Object.freeze({
+          id: claudeBridgeTargetId(candidate.providerId, model),
+          baseUrl,
+          ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+          model
+        })
+      ]
+    })
+    const initialModel = target.effectiveModel ?? target.provider.model
+    if (!initialModel) return undefined
+    const initialTargetId = claudeBridgeTargetId(target.providerId, initialModel)
+    if (!targets.some((candidate) => candidate.id === initialTargetId)) return undefined
+
+    return Object.freeze({ targets: Object.freeze(targets), initialTargetId })
+  }
+
+  private resolveClaudeApiTargets(
+    settings: StoredSettings,
+    activeTarget: ProviderRuntimeTarget
+  ): ProviderRuntimeTarget[] {
+    const framework = getAgentFramework('claude-code')
+    const candidates: ProviderRuntimeTarget[] = [activeTarget]
+
+    for (const storedProvider of settings.providers) {
+      try {
+        const configured =
+          storedProvider.id === activeTarget.providerId
+            ? activeTarget
+            : this.providers.resolveRuntimeTarget(
+                storedProvider,
+                { kind: 'configured', requestedModel: storedProvider.model },
+                framework
+              )
+        candidates.push(configured)
+        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
+      } catch {
+        // Another configured provider may have stale/missing credentials. It must not prevent the
+        // active backend from starting; selecting it later falls back to reconnect and validation.
+      }
     }
+
+    const seen = new Set<string>()
+    return candidates.filter((candidate) => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      if (
+        !candidate.frameworkCompatible ||
+        candidate.provider.type !== 'custom' ||
+        !candidate.apiEndpoints.includes('anthropic') ||
+        !model ||
+        !candidate.provider.baseUrl ||
+        !candidate.provider.key
+      ) {
+        return false
+      }
+      const id = claudeBridgeTargetId(candidate.providerId, model)
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+  }
+
+  private resolveOpenCodeApiTargets(
+    settings: StoredSettings,
+    activeTarget: ProviderRuntimeTarget,
+    route: AgentModelRoute
+  ): ProviderRuntimeTarget[] {
+    if (route !== 'opencode-anthropic' && route !== 'opencode-openai') return []
+    const framework = getAgentFramework('opencode')
+    const candidates: ProviderRuntimeTarget[] = [activeTarget]
+
+    for (const storedProvider of settings.providers) {
+      try {
+        const configured =
+          storedProvider.id === activeTarget.providerId
+            ? activeTarget
+            : this.providers.resolveRuntimeTarget(
+                storedProvider,
+                { kind: 'configured', requestedModel: storedProvider.model },
+                framework
+              )
+        candidates.push(configured)
+        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
+      } catch {
+        // A stale provider must not stop the active generation. If selected later it reconnects.
+      }
+    }
+
+    const seen = new Set<string>()
+    return candidates.filter((candidate) => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      const endpoint =
+        route === 'opencode-openai'
+          ? openAiChatCompletionsUrl(candidate.provider)
+          : normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+      const id = model
+        ? providerTransportTargetId('opencode', candidate.providerId, model)
+        : undefined
+      if (
+        !candidate.frameworkCompatible ||
+        modelRouteFor('opencode', candidate) !== route ||
+        !model ||
+        !endpoint ||
+        !id ||
+        seen.has(id)
+      ) {
+        return false
+      }
+      seen.add(id)
+      return true
+    })
+  }
+
+  private resolveCodexApiTargets(
+    settings: StoredSettings,
+    activeTarget: ProviderRuntimeTarget,
+    route: AgentModelRoute
+  ): ProviderRuntimeTarget[] {
+    if (
+      route !== 'codex-bridge' &&
+      route !== 'codex-responses-compatibility' &&
+      route !== 'codex-responses'
+    ) {
+      return []
+    }
+    const framework = getAgentFramework('codex')
+    const candidates: ProviderRuntimeTarget[] = [activeTarget]
+
+    for (const storedProvider of settings.providers) {
+      try {
+        const configured =
+          storedProvider.id === activeTarget.providerId
+            ? activeTarget
+            : this.providers.resolveRuntimeTarget(
+                storedProvider,
+                { kind: 'configured', requestedModel: storedProvider.model },
+                framework
+              )
+        candidates.push(configured)
+        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
+      } catch {
+        // A stale provider remains a reconnect-only target until it resolves successfully.
+      }
+    }
+
+    const seen = new Set<string>()
+    return candidates.filter((candidate) => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      const baseUrl =
+        route === 'codex-bridge'
+          ? openAiCompletionsBase(candidate.provider)
+          : normalizeResponsesBaseUrl(
+              candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
+            )
+      const id = model ? providerTransportTargetId('codex', candidate.providerId, model) : undefined
+      if (
+        !candidate.frameworkCompatible ||
+        !candidate.modelBridgeSupported ||
+        modelRouteFor('codex', candidate) !== route ||
+        !model ||
+        !baseUrl ||
+        !id ||
+        seen.has(id)
+      ) {
+        return false
+      }
+      seen.add(id)
+      return true
+    })
+  }
+
+  private async ensureOpenCodeProviderTransports(
+    settings: StoredSettings,
+    activeTarget: ProviderRuntimeTarget,
+    route: AgentModelRoute,
+    effortIntent: ReasoningEffort
+  ): Promise<OpenCodeProviderTransport | undefined> {
+    const candidates = this.resolveOpenCodeApiTargets(settings, activeTarget, route)
+    if (new Set(candidates.map((candidate) => candidate.providerId)).size < 2) return undefined
+
+    const bridges: Array<AnthropicProviderBridgePort | OpenAiProviderBridgePort> = []
+    const targetIds = new Set<string>()
+    const catalog: AgentModelCatalogEntry[] = []
+    let activeProvider: ProviderRuntimeTarget['provider'] | undefined
+
+    try {
+      for (const candidate of candidates) {
+        const model = candidate.effectiveModel ?? candidate.provider.model
+        if (!model) continue
+        const targetId = providerTransportTargetId('opencode', candidate.providerId, model)
+        const bridge =
+          route === 'opencode-openai'
+            ? this.createOpenAiProviderBridge(
+                [
+                  {
+                    id: targetId,
+                    wire: 'chat-completions',
+                    endpoint: openAiChatCompletionsUrl(candidate.provider)!,
+                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                    model
+                  }
+                ],
+                targetId
+              )
+            : this.createAnthropicProviderBridge(
+                [
+                  {
+                    id: targetId,
+                    baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
+                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                    model
+                  }
+                ],
+                targetId
+              )
+        bridges.push(bridge)
+        const connection = await bridge.start()
+        const apiEndpoints = [
+          route === 'opencode-openai' ? ('openai' as const) : ('anthropic' as const)
+        ]
+        const localProvider = Object.freeze({
+          ...candidate.provider,
+          agentProviderId: opencodeTransportProviderId(candidate.providerId, model),
+          baseUrl: connection.baseUrl,
+          ...(route === 'opencode-openai'
+            ? { openaiBaseUrl: `${connection.baseUrl}/v1` }
+            : { openaiBaseUrl: undefined }),
+          model,
+          key: connection.token,
+          apiEndpoints
+        })
+        const effort = resolvedModelEffort(effortIntent, candidate)
+        catalog.push(
+          Object.freeze({
+            provider: localProvider,
+            ...(effort === 'default' ? {} : { reasoningEffort: effort }),
+            ...(candidate.reasoningEffortProfile.supported
+              ? { reasoningEfforts: [...new Set(candidate.reasoningEffortProfile.slots)] }
+              : {})
+          })
+        )
+        targetIds.add(targetId)
+        if (
+          candidate.providerId === activeTarget.providerId &&
+          model === (activeTarget.effectiveModel ?? activeTarget.provider.model)
+        ) {
+          activeProvider = localProvider
+        }
+      }
+
+      if (!activeProvider)
+        throw new Error('The active OpenCode transport target was not registered.')
+      let released = false
+      return Object.freeze({
+        provider: activeProvider,
+        providerModelCatalog: Object.freeze(catalog),
+        lease: {
+          setTarget: (targetId: string) => targetIds.has(targetId),
+          release: async () => {
+            if (released) return
+            released = true
+            await Promise.all(bridges.map((bridge) => bridge.close()))
+          }
+        }
+      })
+    } catch (error) {
+      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
+      throw error
+    }
+  }
+
+  private async ensureNativeCodexProviderTransport(
+    activeTarget: ProviderRuntimeTarget,
+    candidates: readonly ProviderRuntimeTarget[]
+  ): Promise<NativeCodexProviderTransport> {
+    const targets = candidates.map((candidate): OpenAiProviderBridgeTarget => {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      const baseUrl = normalizeResponsesBaseUrl(
+        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
+      )
+      if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
+      return Object.freeze({
+        id: providerTransportTargetId('codex', candidate.providerId, model),
+        wire: 'responses',
+        endpoint: `${baseUrl}/responses`,
+        ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+        model
+      })
+    })
+    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
+    if (!activeModel) throw new Error('The active native Responses model is unavailable.')
+    const initialTargetId = providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+    const bridge = this.createOpenAiProviderBridge(targets, initialTargetId)
+
+    try {
+      const connection = await bridge.start()
+      let released = false
+      return Object.freeze({
+        provider: Object.freeze({
+          ...activeTarget.provider,
+          baseUrl: connection.baseUrl,
+          openaiBaseUrl: `${connection.baseUrl}/v1`,
+          model: activeModel,
+          key: connection.token,
+          apiEndpoints: ['responses'] as const
+        }),
+        lease: {
+          setTarget: (targetId: string) => bridge.setTarget(targetId),
+          release: async () => {
+            if (released) return
+            released = true
+            await bridge.close()
+          }
+        }
+      })
+    } catch (error) {
+      await bridge.close().catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async ensureResponsesBridge(
+    activeTarget: ProviderRuntimeTarget,
+    reasoningEffort: ModelReasoningEffort | undefined,
+    conversationSkillImportEnabled: boolean,
+    providerTargets?: readonly ProviderRuntimeTarget[],
+    effortIntent: ReasoningEffort = DEFAULT_REASONING_EFFORT
+  ): Promise<LeasedResponsesBridgeConnection> {
+    const createTarget = (
+      candidate: ProviderRuntimeTarget,
+      effort: ModelReasoningEffort | undefined
+    ): ResponsesBridgeTarget => {
+      const targetBaseUrl = openAiCompletionsBase(candidate.provider)
+      if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
+      return {
+        baseUrl: targetBaseUrl,
+        key: candidate.provider.key,
+        vendorId: candidate.provider.vendorId,
+        reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
+        model: candidate.effectiveModel ?? candidate.provider.model,
+        reasoningEffort: effort,
+        namespacedTools: [
+          ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
+          ...CODEX_BRIDGE_ARTIFACT_TOOLS,
+          ...(conversationSkillImportEnabled ? CODEX_BRIDGE_SKILL_IMPORT_TOOLS : [])
+        ],
+        reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
+      }
+    }
+    const targets = new Map<string, ResponsesBridgeTarget>()
+    for (const candidate of providerTargets ?? []) {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      if (!model) continue
+      const resolvedEffort = resolvedModelEffort(effortIntent, candidate)
+      targets.set(
+        providerTransportTargetId('codex', candidate.providerId, model),
+        createTarget(candidate, resolvedEffort === 'default' ? undefined : resolvedEffort)
+      )
+    }
+    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
+    const initialTargetId = activeModel
+      ? providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+      : undefined
+    const target =
+      (initialTargetId ? targets.get(initialTargetId) : undefined) ??
+      createTarget(activeTarget, reasoningEffort)
     const bridgeId = this.nextGenerationId()
     const bridge = this.createResponsesBridge(target)
     const entry = { bridge, connection: bridge.start() }
@@ -599,6 +1238,13 @@ export class AgentBackendResolver {
 
     let released = false
     const leasedEntry = entry
+    const release = async (): Promise<void> => {
+      if (released) return
+      released = true
+      if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
+      this.responsesBridges.delete(bridgeId)
+      await leasedEntry.bridge.close()
+    }
     return {
       ...connection,
       lease: {
@@ -609,29 +1255,58 @@ export class AgentBackendResolver {
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
         setReasoningEffort: (effort) => leasedEntry.bridge.setReasoningEffort(effort),
-        release: async () => {
-          if (released) return
-          released = true
-          if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
-          this.responsesBridges.delete(bridgeId)
-          await leasedEntry.bridge.close()
-        }
-      }
+        setModelTarget: (target) => leasedEntry.bridge.setModelTarget(target),
+        release
+      },
+      ...(targets.size > 0
+        ? {
+            providerTransportLease: {
+              setTarget: (targetId: string) => {
+                const providerTarget = targets.get(targetId)
+                if (!providerTarget) return false
+                leasedEntry.bridge.setTarget(providerTarget)
+                return true
+              },
+              release
+            }
+          }
+        : {})
     }
   }
 
   private async ensureNativeResponsesCompatibility(
-    provider: ProviderRuntimeTarget['provider']
+    activeTarget: ProviderRuntimeTarget,
+    providerTargets?: readonly ProviderRuntimeTarget[]
   ): Promise<LeasedResponsesBridgeConnection> {
-    const targetBaseUrl = normalizeResponsesBaseUrl(provider.openaiBaseUrl ?? provider.baseUrl)
-    if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
+    const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
+      const targetBaseUrl = normalizeResponsesBaseUrl(
+        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
+      )
+      if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
+      return {
+        baseUrl: targetBaseUrl,
+        key: candidate.provider.key,
+        model: candidate.effectiveModel ?? candidate.provider.model,
+        reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
+      }
+    }
+    const targets = new Map<string, NativeResponsesProxyTarget>()
+    for (const candidate of providerTargets ?? []) {
+      const model = candidate.effectiveModel ?? candidate.provider.model
+      if (!model) continue
+      targets.set(
+        providerTransportTargetId('codex', candidate.providerId, model),
+        createTarget(candidate)
+      )
+    }
+    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
+    const initialTargetId = activeModel
+      ? providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+      : undefined
     const proxyId = this.nextGenerationId()
-    const proxy = this.createNativeResponsesProxy({
-      baseUrl: targetBaseUrl,
-      key: provider.key,
-      model: provider.model,
-      reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
-    })
+    const proxy = this.createNativeResponsesProxy(
+      (initialTargetId ? targets.get(initialTargetId) : undefined) ?? createTarget(activeTarget)
+    )
     const entry = { proxy, connection: proxy.start() }
     this.nativeResponsesCompatibilityProxies.set(proxyId, entry)
 
@@ -648,6 +1323,13 @@ export class AgentBackendResolver {
 
     let released = false
     const leasedEntry = entry
+    const release = async (): Promise<void> => {
+      if (released) return
+      released = true
+      if (this.nativeResponsesCompatibilityProxies.get(proxyId) !== leasedEntry) return
+      this.nativeResponsesCompatibilityProxies.delete(proxyId)
+      await leasedEntry.proxy.close()
+    }
     return {
       ...connection,
       lease: {
@@ -657,14 +1339,22 @@ export class AgentBackendResolver {
           leasedEntry.proxy.registerReviewerSession(promptCacheKey),
         unregisterReviewerSession: (promptCacheKey) =>
           leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
-        release: async () => {
-          if (released) return
-          released = true
-          if (this.nativeResponsesCompatibilityProxies.get(proxyId) !== leasedEntry) return
-          this.nativeResponsesCompatibilityProxies.delete(proxyId)
-          await leasedEntry.proxy.close()
-        }
-      }
+        setModelTarget: (target) => leasedEntry.proxy.setModelTarget(target),
+        release
+      },
+      ...(targets.size > 0
+        ? {
+            providerTransportLease: {
+              setTarget: (targetId: string) => {
+                const providerTarget = targets.get(targetId)
+                if (!providerTarget) return false
+                leasedEntry.proxy.setTarget(providerTarget)
+                return true
+              },
+              release
+            }
+          }
+        : {})
     }
   }
 }

@@ -5,6 +5,8 @@ import { createLogger } from '../logger'
 import {
   createEmptySpecialists,
   SPECIALISTS_FILE_VERSION,
+  type SpecialistImportBaseline,
+  type SpecialistOrigin,
   type StoredSpecialist,
   type StoredSpecialists
 } from './types'
@@ -35,6 +37,23 @@ const asNumber = (v: unknown): number | undefined =>
 
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+
+const sanitizeImportBaseline = (v: unknown): SpecialistImportBaseline | undefined => {
+  if (!isRecord(v)) return undefined
+  const importedAt = asString(v.importedAt)
+  const archiveDigest = asString(v.archiveDigest)
+  const contentDigest = asString(v.contentDigest)
+  if (!importedAt || !archiveDigest || !contentDigest) return undefined
+  const packageVersion = asString(v.packageVersion)
+  const packageContentDigest = asString(v.packageContentDigest)
+  return {
+    importedAt,
+    archiveDigest,
+    contentDigest,
+    ...(packageContentDigest ? { packageContentDigest } : {}),
+    ...(packageVersion ? { packageVersion } : {})
+  }
+}
 
 const CAPABILITY_MODES = new Set<SpecialistCapabilityMode>(['full', 'selected'])
 
@@ -92,6 +111,7 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
   const description = asString(v.description)
   const systemPrompt = asString(v.systemPrompt)
   const enabled = asBoolean(v.enabled)
+  const setupPending = asBoolean(v.setupPending) ?? false
   const capabilityModeRaw = asString(v.capabilityMode) as SpecialistCapabilityMode | undefined
 
   if (
@@ -115,11 +135,17 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
     description,
     systemPrompt,
     enabled,
+    setupPending,
     capabilityMode: capabilityModeRaw,
     fullAccess: sanitizeFullAccessConfig(v.fullAccess),
     selectedCapabilities: sanitizeSelectedConfig(v.selectedCapabilities),
-    revision
+    revision,
+    packageVersion: asString(v.packageVersion) ?? '0.1.0',
+    origin: (v.origin === 'imported' ? 'imported' : 'local') satisfies SpecialistOrigin,
+    ownedSkillIds: asStringArray(v.ownedSkillIds)
   }
+  const importBaseline = sanitizeImportBaseline(v.importBaseline)
+  if (specialist.origin === 'imported' && importBaseline) specialist.importBaseline = importBaseline
   const iconKey = asString(v.iconKey)
   const colorKey = asString(v.colorKey)
   if (iconKey) specialist.iconKey = iconKey
@@ -180,7 +206,6 @@ export class SpecialistRepository {
         return createEmptySpecialists()
       }
       log.error('failed to read specialists file — aborting to prevent data loss', {
-        path: this.filePath,
         code: (err as NodeJS.ErrnoException).code
         // intentionally omitting file contents — systemPrompt must not reach the log
       })
@@ -195,7 +220,7 @@ export class SpecialistRepository {
       parsed = JSON.parse(raw) as unknown
     } catch (err) {
       log.error('failed to parse specialists file — aborting to prevent data loss', {
-        path: this.filePath
+        code: 'specialists-json-invalid'
         // intentionally omitting raw content — systemPrompt must not reach the log
       })
       throw err
@@ -256,6 +281,9 @@ export class SpecialistRepository {
     return this.mutate((doc) => {
       const index = doc.specialists.findIndex((s) => s.id === id)
       if (index < 0) throw new Error(`Specialist ${id} not found.`)
+      if (enabled && doc.specialists[index].setupPending) {
+        throw new Error('Complete Specialist setup before enabling it.')
+      }
       const specialists = [...doc.specialists]
       specialists[index] = {
         ...specialists[index],
@@ -278,6 +306,38 @@ export class SpecialistRepository {
       }
       return { ...doc, specialists: doc.specialists.filter((s) => s.id !== id) }
     })
+  }
+
+  // Package transactions use this narrow document swap after journaling their before/after state.
+  async replaceAll(doc: StoredSpecialists): Promise<void> {
+    const run = this.saveQueue.then(() => this.write(doc))
+    this.saveQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  // Atomically replaces the document only when no owner mutation has changed it
+  // since the caller took its snapshot. Package transactions use this after their
+  // asynchronous preparation work so a successful ProfileService mutation can
+  // never be overwritten by a stale whole-document snapshot.
+  async replaceAllIfUnchanged(
+    expected: StoredSpecialists,
+    replacement: StoredSpecialists
+  ): Promise<void> {
+    const run = this.saveQueue.then(async () => {
+      const current = await this.getAll()
+      if (JSON.stringify(current) !== JSON.stringify(expected)) {
+        throw new Error('Specialist document changed during package transaction.')
+      }
+      await this.write(replacement)
+    })
+    this.saveQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 
   // Serializes mutations so concurrent callers cannot clobber each other.

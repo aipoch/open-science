@@ -51,6 +51,7 @@ type ArtifactMetadata = {
   versionNumber?: number
   artifactRunId?: string
   checksum?: string
+  kind?: 'plan'
 }
 
 export type PendingArtifactVersionRouting = Required<
@@ -434,7 +435,8 @@ class ArtifactRepository {
       versionNumber: request.routing.versionNumber,
       artifactRunId,
       checksum: request.routing.checksum,
-      mimeType: request.routing.mimeType ?? existing.mimeType
+      mimeType: request.routing.mimeType ?? existing.mimeType,
+      kind: existing.kind
     })
   }
 
@@ -598,7 +600,8 @@ class ArtifactRepository {
         await rename(temporaryPath, filePath)
         replacementPublished = true
         await this.writeArtifactMetadata(directory, filename, {
-          mimeType: request.mimeType
+          mimeType: request.mimeType,
+          kind: request.kind
         })
 
         const artifact = await this.createArtifactFile({
@@ -607,7 +610,8 @@ class ArtifactRepository {
           runId,
           filename,
           filePath,
-          mimeType: request.mimeType
+          mimeType: request.mimeType,
+          metadata: { kind: request.kind }
         })
         const bindVersionRouting: BindPendingArtifactVersionRouting = async (
           routing,
@@ -1450,7 +1454,8 @@ class ArtifactRepository {
           ? { versionNumber: value.versionNumber as number }
           : {}),
         ...(typeof value.artifactRunId === 'string' ? { artifactRunId: value.artifactRunId } : {}),
-        ...(typeof value.checksum === 'string' ? { checksum: value.checksum } : {})
+        ...(typeof value.checksum === 'string' ? { checksum: value.checksum } : {}),
+        ...(value.kind === 'plan' ? { kind: value.kind } : {})
       }
     } catch (error) {
       if (isMissingFileError(error)) return {}

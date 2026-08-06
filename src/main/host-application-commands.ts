@@ -1,0 +1,463 @@
+import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
+import type { CliLauncherStatus } from '../shared/cli'
+import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  ApproveRemotePairingRequest,
+  RemoteAccessSnapshot,
+  RemotePairingRequestId,
+  RevokeRemoteBrowserRequest,
+  SetRemoteAccessModeRequest
+} from '../shared/remote-access'
+import type {
+  ReviewRunRequest,
+  ReviewRunResult,
+  ReviewSessionRequest,
+  ReviewWithChecks
+} from '../shared/reviewer'
+import type {
+  ActiveSessionInfo,
+  DataRootInspection,
+  DataRootValidationResult,
+  MigrationOutcome,
+  RevealAppStorageResult,
+  StorageInfo
+} from '../shared/storage'
+import type { AppInfo, UpdateStatus } from '../shared/update'
+import {
+  defineApplicationCommand,
+  defineApplicationCommandGroup,
+  type ApplicationCommandInstallation,
+  type ApplicationCommandRegistrar
+} from './application-command-router'
+import type { CallerContext } from './caller-context'
+import type { CliCommandOwner } from './cli-install/ipc'
+import type { GithubCommandOwner } from './github-ipc'
+import type { LocalFsService } from './local-fs/service'
+import type { LogsCommandOwner } from './logs-ipc'
+import {
+  canManagePairing,
+  isDesktopCaller,
+  requireDesktopCaller,
+  requirePairingManager
+} from './remote-access/ipc'
+import type { RemoteAccessService } from './remote-access/service'
+import type { ReviewerCommandOwner } from './reviewer/ipc'
+import type { UpdateCommandOwner } from './update/ipc'
+
+type StorageParentRequest = Readonly<{ parent: string }>
+type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
+
+const cliCommands = Object.freeze({
+  getStatus: defineApplicationCommand<'cli:get-status', readonly [], CliLauncherStatus>(
+    'cli:get-status'
+  ),
+  install: defineApplicationCommand<'cli:install', readonly [], CliLauncherStatus>('cli:install'),
+  uninstall: defineApplicationCommand<'cli:uninstall', readonly [], CliLauncherStatus>(
+    'cli:uninstall'
+  )
+})
+
+const githubCommands = Object.freeze({
+  getStars: defineApplicationCommand<'github:get-stars', readonly [], number | null>(
+    'github:get-stars'
+  )
+})
+
+const localFsCommands = Object.freeze({
+  getRoots: defineApplicationCommand<'local-fs:get-roots', readonly [], LocalRoots>(
+    'local-fs:get-roots'
+  ),
+  listDir: defineApplicationCommand<'local-fs:list-dir', readonly [path: string], LocalDirListing>(
+    'local-fs:list-dir'
+  ),
+  openPath: defineApplicationCommand<'local-fs:open-path', readonly [path: string], string>(
+    'local-fs:open-path'
+  ),
+  readPreview: defineApplicationCommand<
+    'local-fs:read-preview',
+    readonly [request: ReadArtifactPreviewRequest],
+    ArtifactPreviewResult
+  >('local-fs:read-preview'),
+  reveal: defineApplicationCommand<'local-fs:reveal', readonly [path: string], void>(
+    'local-fs:reveal'
+  )
+})
+
+const logsCommands = Object.freeze({
+  getPath: defineApplicationCommand<'logs:get-path', readonly [], string | null>('logs:get-path'),
+  openFile: defineApplicationCommand<'logs:open-file', readonly [], OpenLogFileResult>(
+    'logs:open-file'
+  ),
+  revealInFolder: defineApplicationCommand<
+    'logs:reveal-in-folder',
+    readonly [],
+    RevealLogFileResult
+  >('logs:reveal-in-folder')
+})
+
+const notificationCommands = Object.freeze({
+  peekPendingOpenSession: defineApplicationCommand<
+    'notifications:peek-pending-open-session',
+    readonly [],
+    OpenSessionFromNotificationRequest | null
+  >('notifications:peek-pending-open-session'),
+  takePendingOpenSession: defineApplicationCommand<
+    'notifications:take-pending-open-session',
+    readonly [expectedToken: unknown],
+    OpenSessionFromNotificationRequest | null
+  >('notifications:take-pending-open-session')
+})
+
+const remoteAccessCommands = Object.freeze({
+  approve: defineApplicationCommand<
+    'remote-access:approve',
+    readonly [request: ApproveRemotePairingRequest],
+    RemoteAccessSnapshot
+  >('remote-access:approve'),
+  detect: defineApplicationCommand<'remote-access:detect', readonly [], RemoteAccessSnapshot>(
+    'remote-access:detect'
+  ),
+  disable: defineApplicationCommand<'remote-access:disable', readonly [], RemoteAccessSnapshot>(
+    'remote-access:disable'
+  ),
+  getSnapshot: defineApplicationCommand<
+    'remote-access:get-snapshot',
+    readonly [],
+    RemoteAccessSnapshot
+  >('remote-access:get-snapshot'),
+  reject: defineApplicationCommand<
+    'remote-access:reject',
+    readonly [request: RemotePairingRequestId],
+    RemoteAccessSnapshot
+  >('remote-access:reject'),
+  revokeBrowser: defineApplicationCommand<
+    'remote-access:revoke-browser',
+    readonly [request: RevokeRemoteBrowserRequest],
+    RemoteAccessSnapshot
+  >('remote-access:revoke-browser'),
+  setMode: defineApplicationCommand<
+    'remote-access:set-mode',
+    readonly [request: SetRemoteAccessModeRequest],
+    RemoteAccessSnapshot
+  >('remote-access:set-mode')
+})
+
+const reviewerCommands = Object.freeze({
+  abortFixLoop: defineApplicationCommand<
+    'reviewer:abort-fix-loop',
+    readonly [request: ReviewSessionRequest],
+    void
+  >('reviewer:abort-fix-loop'),
+  getForSession: defineApplicationCommand<
+    'reviewer:get-for-session',
+    readonly [request: ReviewSessionRequest],
+    ReviewWithChecks[]
+  >('reviewer:get-for-session'),
+  run: defineApplicationCommand<
+    'reviewer:run',
+    readonly [request: ReviewRunRequest],
+    ReviewRunResult
+  >('reviewer:run')
+})
+
+const storageCommands = Object.freeze({
+  cancelMigrate: defineApplicationCommand<'storage:cancel-migrate', readonly [], void>(
+    'storage:cancel-migrate'
+  ),
+  commitAndRelaunch: defineApplicationCommand<
+    'storage:commit-and-relaunch',
+    readonly [request: StorageParentRequest],
+    MigrationOutcome
+  >('storage:commit-and-relaunch'),
+  detectActive: defineApplicationCommand<'storage:detect-active', readonly [], ActiveSessionInfo[]>(
+    'storage:detect-active'
+  ),
+  discardMigratedCopy: defineApplicationCommand<
+    'storage:discard-migrated-copy',
+    readonly [request: StorageParentRequest],
+    void
+  >('storage:discard-migrated-copy'),
+  dismissLegacyMovePrompt: defineApplicationCommand<
+    'storage:dismiss-legacy-move-prompt',
+    readonly [],
+    void
+  >('storage:dismiss-legacy-move-prompt'),
+  getInfo: defineApplicationCommand<'storage:get-info', readonly [], StorageInfo>(
+    'storage:get-info'
+  ),
+  inspectDataRoot: defineApplicationCommand<
+    'storage:inspect-data-root',
+    readonly [request: StorageParentRequest],
+    DataRootInspection
+  >('storage:inspect-data-root'),
+  migrate: defineApplicationCommand<
+    'storage:migrate',
+    readonly [request: StorageParentRequest],
+    MigrationOutcome
+  >('storage:migrate'),
+  pickDirectory: defineApplicationCommand<'storage:pick-directory', readonly [], string | null>(
+    'storage:pick-directory'
+  ),
+  revealAppStorage: defineApplicationCommand<
+    'storage:reveal-app-storage',
+    readonly [],
+    RevealAppStorageResult
+  >('storage:reveal-app-storage'),
+  setDataRootAndRelaunch: defineApplicationCommand<
+    'storage:set-data-root-and-relaunch',
+    readonly [request: StorageRootRequest],
+    DataRootValidationResult
+  >('storage:set-data-root-and-relaunch'),
+  validateDataRoot: defineApplicationCommand<
+    'storage:validate-data-root',
+    readonly [request: StorageParentRequest],
+    DataRootValidationResult
+  >('storage:validate-data-root')
+})
+
+const updateCommands = Object.freeze({
+  apply: defineApplicationCommand<'update:apply', readonly [], UpdateStatus>('update:apply'),
+  cancel: defineApplicationCommand<'update:cancel', readonly [], UpdateStatus>('update:cancel'),
+  check: defineApplicationCommand<'update:check', readonly [], UpdateStatus>('update:check'),
+  download: defineApplicationCommand<'update:download', readonly [], UpdateStatus>(
+    'update:download'
+  ),
+  getAppInfo: defineApplicationCommand<'update:get-app-info', readonly [], AppInfo>(
+    'update:get-app-info'
+  ),
+  getStatus: defineApplicationCommand<'update:get-status', readonly [], UpdateStatus>(
+    'update:get-status'
+  )
+})
+
+const hostApplicationCommands = Object.freeze({
+  cli: cliCommands,
+  github: githubCommands,
+  localFs: localFsCommands,
+  logs: logsCommands,
+  notifications: notificationCommands,
+  remoteAccess: remoteAccessCommands,
+  reviewer: reviewerCommands,
+  storage: storageCommands,
+  update: updateCommands
+})
+
+const hostApplicationCommandGroups = Object.freeze([
+  defineApplicationCommandGroup('cli', Object.values(cliCommands)),
+  defineApplicationCommandGroup('github', Object.values(githubCommands)),
+  defineApplicationCommandGroup('local-fs', Object.values(localFsCommands)),
+  defineApplicationCommandGroup('logs', Object.values(logsCommands)),
+  defineApplicationCommandGroup('notifications', Object.values(notificationCommands)),
+  defineApplicationCommandGroup('remote-access', Object.values(remoteAccessCommands)),
+  defineApplicationCommandGroup('reviewer', Object.values(reviewerCommands)),
+  defineApplicationCommandGroup('storage', Object.values(storageCommands)),
+  defineApplicationCommandGroup('update', Object.values(updateCommands))
+] as const)
+
+type HostApplicationCommandDependencies = Readonly<{
+  cli: CliCommandOwner
+  github: GithubCommandOwner
+  localFs: Pick<
+    LocalFsService,
+    'getRoots' | 'listDir' | 'openPath' | 'readPreview' | 'revealInFolder'
+  >
+  logs: LogsCommandOwner
+  notifications: Readonly<{
+    peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
+    takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
+  }>
+  remoteAccess: Pick<
+    RemoteAccessService,
+    'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
+  >
+  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abortFixLoop'>
+  storage: Readonly<{
+    getInfo: () => Promise<StorageInfo>
+    revealAppStorage: () => Promise<RevealAppStorageResult>
+    detectActive: () => ActiveSessionInfo[]
+    pickDirectory: () => Promise<string | null>
+    validateDataRoot: (request: StorageParentRequest) => Promise<DataRootValidationResult>
+    inspectDataRoot: (request: StorageParentRequest) => Promise<DataRootInspection>
+    migrate: (request: StorageParentRequest) => Promise<MigrationOutcome>
+    setDataRootAndRelaunch: (request: StorageRootRequest) => Promise<DataRootValidationResult>
+    cancelMigrate: () => void
+    commitAndRelaunch: (request: StorageParentRequest) => Promise<MigrationOutcome>
+    discardMigratedCopy: (request: StorageParentRequest) => Promise<void>
+    dismissLegacyMovePrompt: () => Promise<void>
+  }>
+  update: UpdateCommandOwner
+}>
+
+const localCommand = <Result>(
+  context: CallerContext,
+  channel: string,
+  invoke: () => Result
+): Result => {
+  if (context.location !== 'local') {
+    throw new Error(`Channel only available from the local app: ${channel}`)
+  }
+  return invoke()
+}
+
+// Production composition registers all bounded command groups atomically; this group must not be
+// exposed through a live transport in isolation.
+const registerHostApplicationCommands = (
+  registrar: ApplicationCommandRegistrar,
+  dependencies: HostApplicationCommandDependencies
+): ApplicationCommandInstallation => {
+  const scope = registrar.createScope()
+  try {
+    scope.registerGroup(hostApplicationCommandGroups[0], {
+      'cli:get-status': () => dependencies.cli.getStatus(),
+      'cli:install': ({ callerContext }) =>
+        localCommand(callerContext, 'cli:install', () => dependencies.cli.install()),
+      'cli:uninstall': ({ callerContext }) =>
+        localCommand(callerContext, 'cli:uninstall', () => dependencies.cli.uninstall())
+    })
+    scope.registerGroup(hostApplicationCommandGroups[1], {
+      'github:get-stars': () => dependencies.github.getStars()
+    })
+    scope.registerGroup(hostApplicationCommandGroups[2], {
+      'local-fs:get-roots': ({ callerContext }) =>
+        localCommand(callerContext, 'local-fs:get-roots', () => dependencies.localFs.getRoots()),
+      'local-fs:list-dir': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:list-dir', () =>
+          dependencies.localFs.listDir(args[0])
+        ),
+      'local-fs:open-path': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:open-path', () =>
+          dependencies.localFs.openPath(args[0])
+        ),
+      'local-fs:read-preview': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:read-preview', () =>
+          dependencies.localFs.readPreview(args[0])
+        ),
+      'local-fs:reveal': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:reveal', () =>
+          dependencies.localFs.revealInFolder(args[0])
+        )
+    })
+    scope.registerGroup(hostApplicationCommandGroups[3], {
+      'logs:get-path': () => dependencies.logs.getPath(),
+      'logs:open-file': ({ callerContext }) =>
+        localCommand(callerContext, 'logs:open-file', () => dependencies.logs.openFile()),
+      'logs:reveal-in-folder': ({ callerContext }) =>
+        localCommand(callerContext, 'logs:reveal-in-folder', () =>
+          dependencies.logs.revealInFolder()
+        )
+    })
+    scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:peek-pending-open-session': () =>
+        dependencies.notifications.peekPendingOpenSession(),
+      'notifications:take-pending-open-session': ({ args }) =>
+        typeof args[0] === 'number' && Number.isSafeInteger(args[0]) && args[0] > 0
+          ? dependencies.notifications.takePendingOpenSession(args[0])
+          : null
+    })
+    scope.registerGroup(hostApplicationCommandGroups[5], {
+      'remote-access:approve': ({ args, callerContext }) => {
+        requirePairingManager(callerContext)
+        const desktop = isDesktopCaller(callerContext)
+        return dependencies.remoteAccess.approve(args[0], desktop, canManagePairing(callerContext))
+      },
+      'remote-access:detect': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.detect()
+      },
+      'remote-access:disable': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.disable()
+      },
+      'remote-access:get-snapshot': ({ callerContext }) => {
+        const desktop = isDesktopCaller(callerContext)
+        return dependencies.remoteAccess.snapshot(desktop, canManagePairing(callerContext))
+      },
+      'remote-access:reject': ({ args, callerContext }) => {
+        requirePairingManager(callerContext)
+        const desktop = isDesktopCaller(callerContext)
+        return dependencies.remoteAccess.reject(
+          args[0].requestId,
+          desktop,
+          canManagePairing(callerContext)
+        )
+      },
+      'remote-access:revoke-browser': ({ args, callerContext }) => {
+        requirePairingManager(callerContext)
+        const desktop = isDesktopCaller(callerContext)
+        return dependencies.remoteAccess.revoke(
+          args[0].browserId,
+          desktop,
+          canManagePairing(callerContext)
+        )
+      },
+      'remote-access:set-mode': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.setMode(args[0].mode)
+      }
+    })
+    scope.registerGroup(hostApplicationCommandGroups[6], {
+      'reviewer:abort-fix-loop': ({ args }) => dependencies.reviewer.abortFixLoop(args[0]),
+      'reviewer:get-for-session': ({ args }) => dependencies.reviewer.getForSession(args[0]),
+      'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
+    })
+    scope.registerGroup(hostApplicationCommandGroups[7], {
+      'storage:cancel-migrate': ({ callerContext }) =>
+        localCommand(callerContext, 'storage:cancel-migrate', () =>
+          dependencies.storage.cancelMigrate()
+        ),
+      'storage:commit-and-relaunch': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:commit-and-relaunch', () =>
+          dependencies.storage.commitAndRelaunch(args[0])
+        ),
+      'storage:detect-active': () => dependencies.storage.detectActive(),
+      'storage:discard-migrated-copy': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:discard-migrated-copy', () =>
+          dependencies.storage.discardMigratedCopy(args[0])
+        ),
+      'storage:dismiss-legacy-move-prompt': () => dependencies.storage.dismissLegacyMovePrompt(),
+      'storage:get-info': () => dependencies.storage.getInfo(),
+      'storage:inspect-data-root': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:inspect-data-root', () =>
+          dependencies.storage.inspectDataRoot(args[0])
+        ),
+      'storage:migrate': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:migrate', () => dependencies.storage.migrate(args[0])),
+      'storage:pick-directory': ({ callerContext }) =>
+        localCommand(callerContext, 'storage:pick-directory', () =>
+          dependencies.storage.pickDirectory()
+        ),
+      'storage:reveal-app-storage': ({ callerContext }) =>
+        localCommand(callerContext, 'storage:reveal-app-storage', () =>
+          dependencies.storage.revealAppStorage()
+        ),
+      'storage:set-data-root-and-relaunch': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:set-data-root-and-relaunch', () =>
+          dependencies.storage.setDataRootAndRelaunch(args[0])
+        ),
+      'storage:validate-data-root': ({ args, callerContext }) =>
+        localCommand(callerContext, 'storage:validate-data-root', () =>
+          dependencies.storage.validateDataRoot(args[0])
+        )
+    })
+    scope.registerGroup(hostApplicationCommandGroups[8], {
+      'update:apply': ({ callerContext }) =>
+        localCommand(callerContext, 'update:apply', () => dependencies.update.apply()),
+      'update:cancel': ({ callerContext }) =>
+        localCommand(callerContext, 'update:cancel', () => dependencies.update.cancel()),
+      'update:check': () => dependencies.update.check(),
+      'update:download': ({ callerContext }) =>
+        localCommand(callerContext, 'update:download', () => dependencies.update.download()),
+      'update:get-app-info': () => dependencies.update.getAppInfo(),
+      'update:get-status': () => dependencies.update.getStatus()
+    })
+    return scope.complete()
+  } catch (error) {
+    scope.rollback()
+    throw error
+  }
+}
+
+export { hostApplicationCommandGroups, hostApplicationCommands, registerHostApplicationCommands }
+export type { HostApplicationCommandDependencies }

@@ -1,7 +1,8 @@
 import { ipcMainHandle } from './ipc-handler-registry'
 
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
-import { callerContextForEvent, type CallerContext } from './caller-context'
+import { callerLeaseForEvent } from './caller-lifecycle'
+import { callerContextForEvent } from './caller-context'
 import { createLogger } from './logger'
 import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { broadcastToRenderers } from './renderer-broadcast'
@@ -24,9 +25,14 @@ const broadcastLifecycleEvent = <Channel extends ApplicationEventChannel>(
   }
 }
 
-const getLifecycleClientId = (event: {
-  sender: { id: number; callerContext?: CallerContext; lifecycleClientId?: string }
-}): string => callerContextForEvent(event).lifecycleClientId
+const getLifecycleClientId = (event: { sender: { id: number } }): string => {
+  const context = callerContextForEvent(event)
+  const lease = callerLeaseForEvent(event)
+  if (lease.leaseId !== context.leaseId || !lease.isCurrent()) {
+    throw new Error('Application caller lease is no longer current.')
+  }
+  return context.lifecycleClientId
+}
 
 const registerLifecycleIpcHandlers = (): void => {
   ipcMainHandle(LIFECYCLE_CHANNELS.clientId, (event) => getLifecycleClientId(event))

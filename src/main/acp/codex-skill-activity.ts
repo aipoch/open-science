@@ -68,7 +68,10 @@ const lifecycleKey = (event: AcpRuntimeEvent): string =>
 // Connector; it only replaces the exact app-owned SKILL.md read lifecycle with a name-only activity.
 class CodexSkillActivityProjector {
   private skillsRoot: string | undefined
-  private readonly activeSkills = new Map<string, CodexSkillFile>()
+  private readonly activeSkills = new Map<
+    string,
+    Readonly<{ sessionId: string; skillFile: CodexSkillFile }>
+  >()
 
   constructor(skillsRoot?: string) {
     this.skillsRoot = skillsRoot ? resolve(skillsRoot) : undefined
@@ -86,6 +89,12 @@ class CodexSkillActivityProjector {
     this.activeSkills.clear()
   }
 
+  clearSession(sessionId: string): void {
+    for (const [key, activity] of this.activeSkills) {
+      if (activity.sessionId === sessionId) this.activeSkills.delete(key)
+    }
+  }
+
   project(event: AcpRuntimeEvent): AcpRuntimeEvent {
     return this.projectWithContext(event).event
   }
@@ -95,9 +104,14 @@ class CodexSkillActivityProjector {
 
     const key = lifecycleKey(event)
     const detectedSkill = exactSkillFile(this.skillsRoot, event)
-    if (detectedSkill) this.activeSkills.set(key, detectedSkill)
+    if (detectedSkill) {
+      this.activeSkills.set(key, {
+        sessionId: event.sessionId ?? '',
+        skillFile: detectedSkill
+      })
+    }
 
-    const skillFile = detectedSkill ?? this.activeSkills.get(key)
+    const skillFile = detectedSkill ?? this.activeSkills.get(key)?.skillFile
     if (!skillFile) return { event }
 
     if (event.status === 'completed' || event.status === 'failed' || event.status === 'cancelled') {

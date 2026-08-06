@@ -61,6 +61,7 @@ import type {
   ToolPermission,
   SetNcbiCredentialsRequest,
   AddCustomServerRequest,
+  AuthenticateCustomServerRequest,
   UpdateCustomServerRequest,
   ConnectorApprovalRequest,
   ApprovalDecision
@@ -301,6 +302,8 @@ type SettingsStore = SettingsStoreData & {
   addCustomServer: (request: AddCustomServerRequest) => Promise<void>
   // Edits an existing custom MCP server (name is immutable), reconciling from main.
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
+  authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
+  cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
   // Enables/disables one custom MCP server; optimistic, then reconciled from main.
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   // Removes one custom MCP server, reconciling from main.
@@ -1510,6 +1513,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await window.api.settings.updateCustomServer(request)
     set({ connectors, customServers, ncbi })
   },
+
+  authenticateCustomServer: async (request) => {
+    try {
+      const { connectors, customServers, ncbi } =
+        await window.api.settings.authenticateCustomServer(request)
+      set({ connectors, customServers, ncbi })
+    } catch (error) {
+      // Authentication can invalidate stale tokens before failing. Refresh the projection so the
+      // connector does not remain visibly "Connected" after main has cleared its credentials.
+      await get()
+        .loadConnectors()
+        .catch(() => undefined)
+      throw error
+    }
+  },
+
+  cancelCustomServerAuthentication: (request) =>
+    window.api.settings.cancelCustomServerAuthentication(request),
 
   // Optimistically flips the server toggle, then reconciles from main.
   setCustomServerEnabled: async (id, enabled) => {

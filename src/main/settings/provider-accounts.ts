@@ -1108,6 +1108,15 @@ class ProviderAccountsModule {
     }
   }
 
+  resolveRuntimeModelCatalog(
+    storedProvider: StoredProvider,
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): ProviderRuntimeTarget[] {
+    return this.availableModels(storedProvider).map((model) =>
+      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+    )
+  }
+
   resolveRuntimeReasoningEffortProfile(
     storedProvider: StoredProvider,
     requestedModel?: string

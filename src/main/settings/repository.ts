@@ -36,6 +36,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import { customConnectorSlug, isCustomConnectorSlug } from '../../shared/custom-connector'
 import { createLogger } from '../logger'
 import {
   createEmptySettings,
@@ -301,7 +302,9 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   if (transport === 'stdio' && !command) return undefined
   if ((transport === 'streamable_http' || transport === 'sse') && !url) return undefined
 
+  const storedSlug = asString(value.slug)
   const server: StoredCustomMcpServer = { id, name, transport, enabled }
+  if (storedSlug && isCustomConnectorSlug(storedSlug)) server.slug = storedSlug
 
   if (command) server.command = command
   const args = asStringArray(value.args)
@@ -315,6 +318,24 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   if (headers) server.headers = headers
   const headerRefs = asStringRecord(value.headerRefs)
   if (headerRefs) server.headerRefs = headerRefs
+  if (transport !== 'stdio' && isRecord(value.oauth)) {
+    const oauth: NonNullable<StoredCustomMcpServer['oauth']> = {}
+    const clientMetadataUrl = asString(value.oauth.clientMetadataUrl)
+    const authorizationServerUrl = asString(value.oauth.authorizationServerUrl)
+    const scopes = asStringArray(value.oauth.scopes)
+      .map((scope) => scope.trim())
+      .filter(Boolean)
+    if (clientMetadataUrl) oauth.clientMetadataUrl = clientMetadataUrl
+    if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
+    if (scopes.length) oauth.scopes = [...new Set(scopes)]
+    server.oauth = oauth
+  }
+  const oauthRef = asString(value.oauthRef)
+  if (server.oauth) {
+    delete server.headers
+    delete server.headerRefs
+    if (oauthRef) server.oauthRef = oauthRef
+  }
   const trustedAt = asNumber(value.trustedAt)
   if (trustedAt !== undefined) server.trustedAt = trustedAt
   const description = asString(value.description)
@@ -1180,14 +1201,14 @@ class SettingsRepository {
     })
   }
 
-  // Removes a custom MCP server by id and every policy alias owned by its immutable id/editable name.
+  // Removes a custom MCP server by id and every policy alias owned by its local id/public identity.
   async removeCustomServer(id: string): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
       const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
       connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
       if (!removed) return
 
-      const aliases = new Set([removed.id, removed.name])
+      const aliases = new Set([removed.id, customConnectorSlug(removed), removed.name])
       connectors.autoAllowIds = connectors.autoAllowIds.filter((entry) => !aliases.has(entry))
       const withoutToolAliases = (entries: string[] | undefined): string[] | undefined => {
         const kept = (entries ?? []).filter(

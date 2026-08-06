@@ -1,8 +1,31 @@
-import { ChevronDown, Globe, Pencil, Plus, Search, Terminal, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  Download,
+  FileUp,
+  Globe,
+  Pencil,
+  Plus,
+  Search,
+  Terminal,
+  Trash2
+} from 'lucide-react'
+import { AlertDialog } from 'radix-ui'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ConnectorView, CustomServerView } from '../../../../shared/settings'
+import type { SpecialistListItem } from '../../../../shared/specialist'
+import type {
+  ConnectorTemplateDefinition,
+  ConnectorView,
+  CustomServerView
+} from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +35,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorGlyph } from './connector-icons'
 import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsLayout'
 
@@ -20,8 +44,14 @@ import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsL
 export type ConnectorsView =
   | { kind: 'list' }
   | { kind: 'detail'; id: string }
-  | { kind: 'add'; transport: 'local' | 'remote' }
+  | {
+      kind: 'add'
+      transport: 'local' | 'remote'
+      template?: ConnectorTemplateDefinition
+    }
   | { kind: 'edit'; id: string }
+  | { kind: 'import' }
+  | { kind: 'export'; id: string }
 
 type GroupFilter = 'all' | 'featured' | 'directory' | 'custom'
 
@@ -30,6 +60,27 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
   featured: 'Featured',
   directory: 'Directory',
   custom: 'Custom'
+}
+
+const specialistNamesUsingConnector = (
+  items: SpecialistListItem[],
+  server: Pick<CustomServerView, 'id' | 'name' | 'slug'>
+): string[] => {
+  const aliases = new Set([server.slug, server.name, server.id])
+  return items
+    .flatMap((item) => {
+      if (item.kind === 'reviewer') return []
+      const ids =
+        item.capabilityMode === 'full'
+          ? item.fullAccess.excludedConnectorIds
+          : item.selectedCapabilities.connectorIds
+      const usesConnector =
+        item.capabilityMode === 'full'
+          ? !ids.some((id) => aliases.has(id))
+          : ids.some((id) => aliases.has(id))
+      return usesConnector ? [item.displayName?.trim() || item.name] : []
+    })
+    .sort((a, b) => a.localeCompare(b))
 }
 
 type ConnectorsPanelProps = {
@@ -44,6 +95,10 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
+  const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
+  const cancelCustomServerAuthentication = useSettingsStore(
+    (state) => state.cancelCustomServerAuthentication
+  )
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
@@ -54,6 +109,15 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [editing, setEditing] = useState(false)
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
+  const [authenticatingIds, setAuthenticatingIds] = useState<Set<string>>(() => new Set())
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [removal, setRemoval] = useState<{
+    server: CustomServerView
+    specialistNames?: string[]
+  } | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [removalError, setRemovalError] = useState<string | null>(null)
+  const authenticationAttempts = useRef(new Map<string, number>())
 
   useEffect(() => {
     void loadConnectors()
@@ -96,6 +160,72 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const clearKey = async (): Promise<void> => {
     await setNcbiCredentials({ contactEmail: emailField, apiKey: '' })
     setKeyField('')
+  }
+
+  const signIn = async (id: string): Promise<void> => {
+    const attempt = (authenticationAttempts.current.get(id) ?? 0) + 1
+    authenticationAttempts.current.set(id, attempt)
+    setAuthenticatingIds((current) => new Set(current).add(id))
+    setAuthError(null)
+    try {
+      await authenticateCustomServer({ id })
+    } catch (error) {
+      await loadConnectors().catch(() => undefined)
+      if (attempt === authenticationAttempts.current.get(id)) {
+        setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
+      }
+    } finally {
+      if (attempt === authenticationAttempts.current.get(id)) {
+        setAuthenticatingIds((current) => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+      }
+    }
+  }
+
+  const cancelSignIn = async (id: string): Promise<void> => {
+    authenticationAttempts.current.set(id, (authenticationAttempts.current.get(id) ?? 0) + 1)
+    setAuthError(null)
+    try {
+      await cancelCustomServerAuthentication({ id })
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
+    } finally {
+      setAuthenticatingIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
+  const requestRemoval = async (server: CustomServerView): Promise<void> => {
+    setRemovalError(null)
+    try {
+      await useSpecialistStore.getState().load()
+      setRemoval({
+        server,
+        specialistNames: specialistNamesUsingConnector(useSpecialistStore.getState().items, server)
+      })
+    } catch {
+      setRemoval({ server })
+    }
+  }
+
+  const confirmRemoval = async (): Promise<void> => {
+    if (!removal || removing) return
+    setRemoving(true)
+    setRemovalError(null)
+    try {
+      await removeCustomServer(removal.server.id)
+      setRemoval(null)
+    } catch (error) {
+      setRemovalError(error instanceof Error ? error.message : 'Could not remove this Connector.')
+    } finally {
+      setRemoving(false)
+    }
   }
 
   const showFeatured = filter === 'all' || filter === 'featured'
@@ -298,11 +428,29 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 <span className="text-xs text-muted-foreground">Connect to an MCP server URL</span>
               </span>
             </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+              <FileUp className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>Import configuration</span>
+                <span className="text-xs text-muted-foreground">
+                  Validate a shared Connector file
+                </span>
+              </span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
       <div className="flex flex-col gap-4">
+        {authError ? (
+          <div
+            className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+            role="alert"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            <span>{authError}</span>
+          </div>
+        ) : null}
         {showFeatured
           ? connectorGroup(
               'featured',
@@ -362,6 +510,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         ) : null}
                       </div>
                       <SettingsIconAction
+                        label={`Export ${server.name}`}
+                        icon={Download}
+                        onClick={() => onNavigate({ kind: 'export', id: server.id })}
+                      />
+                      <SettingsIconAction
                         label={`Edit ${server.name}`}
                         icon={Pencil}
                         onClick={() => onNavigate({ kind: 'edit', id: server.id })}
@@ -369,12 +522,40 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <SettingsIconAction
                         label={`Remove ${server.name}`}
                         icon={Trash2}
-                        onClick={() => void removeCustomServer(server.id)}
+                        onClick={() => void requestRemoval(server)}
                         danger
                       />
+                      {server.oauth ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={
+                            authenticatingIds.has(server.id) || server.oauth.hasTokens
+                              ? 'outline'
+                              : 'default'
+                          }
+                          onClick={() =>
+                            void (authenticatingIds.has(server.id)
+                              ? cancelSignIn(server.id)
+                              : signIn(server.id))
+                          }
+                        >
+                          {authenticatingIds.has(server.id)
+                            ? 'Cancel'
+                            : server.oauth.hasTokens
+                              ? 'Connected'
+                              : 'Sign in'}
+                        </Button>
+                      ) : null}
                       <SettingsToggle
                         enabled={server.enabled}
                         aria-label={server.name}
+                        disabled={Boolean(server.oauth && !server.oauth.hasTokens)}
+                        title={
+                          server.oauth && !server.oauth.hasTokens
+                            ? 'Sign in before enabling this Connector'
+                            : undefined
+                        }
                         onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
                       />
                     </li>
@@ -389,6 +570,70 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           </div>
         ) : null}
       </div>
+
+      <AlertDialog.Root
+        open={removal !== null}
+        onOpenChange={(open) => {
+          if (!open && !removing) {
+            setRemoval(null)
+            setRemovalError(null)
+          }
+        }}
+      >
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className={dialogOverlayClassName} />
+          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              Remove “{removal?.server.name}”?
+            </AlertDialog.Title>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              This removes the Connector configuration and credentials from this app. Existing
+              conversation history is kept.
+            </AlertDialog.Description>
+            {removal?.specialistNames?.length ? (
+              <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                <p>
+                  This Connector is used by {removal.specialistNames.length}{' '}
+                  {removal.specialistNames.length === 1 ? 'Specialist' : 'Specialists'}.{' '}
+                  {removal.specialistNames.length === 1 ? 'Its' : 'Their'} saved references will
+                  become unavailable.
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {removal.specialistNames.join(', ')}
+                </p>
+              </div>
+            ) : removal?.specialistNames === undefined ? (
+              <p className="mt-4 text-xs text-muted-foreground">
+                Specialist references could not be checked. You can still remove this Connector.
+              </p>
+            ) : null}
+            {removalError ? (
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>{removalError}</span>
+              </div>
+            ) : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="outline" disabled={removing}>
+                  Cancel
+                </Button>
+              </AlertDialog.Cancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={removing}
+                onClick={() => void confirmRemoval()}
+              >
+                {removing ? 'Removing…' : 'Remove Connector'}
+              </Button>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   )
 }

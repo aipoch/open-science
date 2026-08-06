@@ -7,8 +7,10 @@ import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import {
   createInitialPreviewWorkbenchState,
+  type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 
 const workspacePageHarness = vi.hoisted(() => ({
@@ -69,6 +71,10 @@ const motionHarness = vi.hoisted(() => ({
       stop: vi.fn()
     })
   )
+}))
+
+const filePreviewDialogHarness = vi.hoisted(() => ({
+  item: undefined as PreviewFileItem | undefined
 }))
 
 vi.mock('motion', () => ({
@@ -136,6 +142,10 @@ vi.mock('@/lib/session-persistence/session-persistence', () => ({
   useSessionPersistence: () => true
 }))
 
+vi.mock('@/lib/preview-persistence/preview-persistence', () => ({
+  usePreviewPersistence: vi.fn()
+}))
+
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     actionError: null,
@@ -185,6 +195,13 @@ vi.mock('./MobilePreviewSheet', () => ({
   )
 }))
 
+vi.mock('./FilePreviewDialog', () => ({
+  FilePreviewDialog: ({ item }: { item: PreviewFileItem | undefined }): React.JSX.Element => {
+    filePreviewDialogHarness.item = item
+    return <div data-testid="file-preview-dialog" data-open={item ? 'true' : 'false'} />
+  }
+}))
+
 vi.mock('./PreviewPanel', () => ({
   PreviewPanel: ({
     panelRef,
@@ -230,6 +247,7 @@ describe('WorkspacePage preview panel resize sync', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.setState(createInitialSessionState())
     workspacePageHarness.sidebarSize = 16
     workspacePageHarness.sidebarPanelDefaultSize = undefined
@@ -242,6 +260,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     workspacePageHarness.previewPanelMinSize = undefined
     workspacePageHarness.previewOnResize = undefined
     workspacePageHarness.previewPanelRef = undefined
+    filePreviewDialogHarness.item = undefined
     vi.clearAllMocks()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callback(0)
@@ -458,6 +477,41 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(container.querySelector('[data-testid="workspace-preview-toggle"]')).toBeNull()
     expect(workspacePageHarness.previewPanelDefaultSize).toBe('0%')
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('collapsed')
+  })
+
+  it('hosts a cross-Project file dialog without creating or activating a Files tab', async () => {
+    const fileDialogItem = {
+      id: 'artifact-b',
+      projectId: 'project-b',
+      sessionId: 'session-b',
+      type: 'file' as const,
+      title: 'result.png',
+      path: 'artifact-version:project-b/session-b/artifact-b/version-1',
+      format: 'image' as const,
+      name: 'result.png'
+    }
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-b' })
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-a',
+      fileDialogItem
+    })
+
+    await renderPage(false)
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+    expect(filePreviewDialogHarness.item).toEqual(fileDialogItem)
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-b'))
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeProjectId: 'project-b',
+      activeItemId: undefined,
+      items: [],
+      fileDialogItem
+    })
+
+    act(() => usePreviewWorkbenchStore.getState().activateProject('project-c'))
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    expect(filePreviewDialogHarness.item).toBeUndefined()
   })
 
   it('uses only background treatment to show the expanded preview toggle state', async () => {

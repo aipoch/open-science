@@ -378,6 +378,25 @@ describe('artifact MCP server', () => {
     })
   })
 
+  it('passes the Windows named-pipe path to the artifact MCP process', () => {
+    const config = createArtifactMcpServerConfig({
+      command: 'C:\\Open Science.exe',
+      entryPath: 'C:\\app\\main.js',
+      storageRoot: 'C:\\OpenScience',
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      currentRunFile: 'C:\\OpenScience\\current-run.json',
+      allowedImportRoots: ['C:\\workspace'],
+      rpcEndpoint: 'http://localhost',
+      rpcSocketPath: '\\\\.\\pipe\\open-science-notebook'
+    })
+
+    expect(config.env).toContainEqual({
+      name: 'OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH',
+      value: '\\\\.\\pipe\\open-science-notebook'
+    })
+  })
+
   it('parses allowed import roots from the MCP process environment', () => {
     expect(
       createArtifactMcpEnvironmentFromProcess({

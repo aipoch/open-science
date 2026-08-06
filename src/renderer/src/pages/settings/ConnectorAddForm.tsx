@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import type {
   AddCustomServerRequest,
+  ConnectorTemplateDefinition,
   CustomServerTransport,
   CustomServerView,
   UpdateCustomServerRequest
@@ -11,19 +12,27 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import {
+  customConnectorAliasKey,
+  customConnectorAliases,
+  isCustomConnectorSlug,
+  toCustomConnectorSlug
+} from '../../../../shared/custom-connector'
+import { SettingsRow } from './SettingsLayout'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
 type ConnectorMode = 'local' | 'remote'
 
 // The two remote transports, kept out of the local (stdio) mode.
 type RemoteTransport = Extract<CustomServerTransport, 'streamable_http' | 'sse'>
+type RemoteAuth = 'none' | 'oauth' | 'headers'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
 // Splits an arguments textarea on any whitespace/newlines into a positional arg list, dropping empties.
-const parseArgs = (raw: string): string[] =>
+const parseArgs = (raw: string, onePerLine = false): string[] =>
   raw
-    .split(/\s+/)
+    .split(onePerLine ? /\n/ : /\s+/)
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
 
@@ -78,6 +87,7 @@ const COMMAND_OPTIONS: { value: string; label: string }[] = [
 
 type ConnectorAddFormProps = {
   initialTransport?: ConnectorMode
+  initialTemplate?: ConnectorTemplateDefinition
   // When set, the form edits this custom server instead of adding a new one. The name is immutable.
   editServer?: CustomServerView
   // Called after the custom server has been added/updated successfully.
@@ -93,49 +103,129 @@ const modeForTransport = (transport: CustomServerTransport): ConnectorMode =>
 // server, gated behind an explicit trust confirmation the way Claude Science's "Add connector" flow is.
 export function ConnectorAddForm({
   initialTransport,
+  initialTemplate,
   editServer,
   onDone,
   onCancel
 }: ConnectorAddFormProps): React.JSX.Element {
   const addCustomServer = useSettingsStore((s) => s.addCustomServer)
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
+  const connectors = useSettingsStore((s) => s.connectors)
+  const customServers = useSettingsStore((s) => s.customServers)
   const isEdit = editServer !== undefined
 
   const [mode, setMode] = useState<ConnectorMode>(
-    editServer ? modeForTransport(editServer.transport) : (initialTransport ?? 'local')
+    editServer
+      ? modeForTransport(editServer.transport)
+      : initialTemplate
+        ? modeForTransport(initialTemplate.transport)
+        : (initialTransport ?? 'local')
   )
-  const [name, setName] = useState(editServer?.name ?? '')
-  const [description, setDescription] = useState(editServer?.description ?? '')
+  const [name, setName] = useState(editServer?.name ?? initialTemplate?.name ?? '')
+  const [slug, setSlug] = useState(editServer?.slug ?? initialTemplate?.slug ?? '')
+  const [slugTouched, setSlugTouched] = useState(initialTemplate !== undefined)
+  const currentSlug = isEdit
+    ? (editServer?.slug ?? '')
+    : slugTouched
+      ? slug
+      : toCustomConnectorSlug(name)
+  const slugError = useMemo((): string | null => {
+    if (!currentSlug || !isCustomConnectorSlug(currentSlug)) {
+      return 'Use only lowercase letters, numbers, and hyphens.'
+    }
+    if (connectors.some((connector) => connector.id === currentSlug)) {
+      return 'This ID is reserved by a built-in Connector.'
+    }
+    if (
+      customServers.some(
+        (server) =>
+          server.id !== editServer?.id &&
+          customConnectorAliases(server)
+            .map(customConnectorAliasKey)
+            .includes(customConnectorAliasKey(currentSlug))
+      )
+    ) {
+      return 'A custom Connector with this ID already exists.'
+    }
+    return null
+  }, [connectors, currentSlug, customServers, editServer?.id])
+  const [description, setDescription] = useState(
+    editServer?.description ?? initialTemplate?.description ?? ''
+  )
   // Local (stdio) fields. The command is chosen from common runtimes, with an "other" escape hatch
   // for an absolute path or an uncommon binary.
-  const initialCommandIsPreset = editServer?.command
-    ? COMMAND_OPTIONS.some((o) => o.value === editServer.command)
+  const initialCommand = editServer?.command ?? initialTemplate?.command
+  const initialCommandIsPreset = initialCommand
+    ? COMMAND_OPTIONS.some((o) => o.value === initialCommand)
     : true
   const [commandChoice, setCommandChoice] = useState<string>(
-    editServer?.command ? (initialCommandIsPreset ? editServer.command : 'other') : 'npx'
+    initialCommand ? (initialCommandIsPreset ? initialCommand : 'other') : 'npx'
   )
   const [customCommand, setCustomCommand] = useState(
-    editServer?.command && !initialCommandIsPreset ? editServer.command : ''
+    initialCommand && !initialCommandIsPreset ? initialCommand : ''
   )
   const command = commandChoice === 'other' ? customCommand : commandChoice
-  const [argsText, setArgsText] = useState((editServer?.args ?? []).join(' '))
-  const [envText, setEnvText] = useState('')
-  // Remote fields.
-  const [url, setUrl] = useState(editServer?.url ?? '')
-  const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
-    editServer && editServer.transport !== 'stdio' ? editServer.transport : 'streamable_http'
+  const [argsText, setArgsText] = useState(
+    (editServer?.args ?? initialTemplate?.args ?? []).join(initialTemplate ? '\n' : ' ')
   )
-  const [headersText, setHeadersText] = useState('')
+  const [envText, setEnvText] = useState(
+    (initialTemplate?.requiredSecrets?.environment ?? []).map((key) => `${key}=`).join('\n')
+  )
+  // Remote fields.
+  const [url, setUrl] = useState(editServer?.url ?? initialTemplate?.url ?? '')
+  const [remoteTransport, setRemoteTransport] = useState<RemoteTransport>(
+    editServer && editServer.transport !== 'stdio'
+      ? editServer.transport
+      : initialTemplate && initialTemplate.transport !== 'stdio'
+        ? initialTemplate.transport
+        : 'streamable_http'
+  )
+  const [remoteAuth, setRemoteAuth] = useState<RemoteAuth>(
+    editServer?.oauth || initialTemplate?.oauth
+      ? 'oauth'
+      : editServer?.hasHeaders || initialTemplate?.requiredSecrets?.headers?.length
+        ? 'headers'
+        : 'none'
+  )
+  const [oauthScopesText, setOauthScopesText] = useState(
+    (editServer?.oauth?.scopes ?? initialTemplate?.oauth?.scopes ?? []).join(' ')
+  )
+  const [authorizationServerUrl, setAuthorizationServerUrl] = useState(
+    editServer?.oauth?.authorizationServerUrl ??
+      initialTemplate?.oauth?.authorizationServerUrl ??
+      ''
+  )
+  const [clientMetadataUrl, setClientMetadataUrl] = useState(
+    editServer?.oauth?.clientMetadataUrl ?? initialTemplate?.oauth?.clientMetadataUrl ?? ''
+  )
+  const [headersText, setHeadersText] = useState(
+    (initialTemplate?.requiredSecrets?.headers ?? []).map((header) => `${header}: `).join('\n')
+  )
   // Add-time trust confirmation and submission state. An existing (already-trusted) server starts trusted.
   const [trusted, setTrusted] = useState(isEdit)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const parsedArgs = parseArgs(argsText)
+  const parsedArgs = parseArgs(argsText, initialTemplate !== undefined)
+  const parsedEnv = parseEnv(envText)
+  const parsedHeaders = parseHeaders(headersText)
   const commandPreview = [command.trim(), ...parsedArgs].filter((part) => part.length > 0).join(' ')
+  const requiredEnvironment = initialTemplate?.requiredSecrets?.environment ?? []
+  const requiredHeaders = initialTemplate?.requiredSecrets?.headers ?? []
+  const requiredSecretValuesFilled =
+    (requiredEnvironment.length === 0 ||
+      (mode === 'local' &&
+        requiredEnvironment.every((key) => (parsedEnv[key] ?? '').trim().length > 0))) &&
+    (requiredHeaders.length === 0 ||
+      (mode === 'remote' &&
+        remoteAuth === 'headers' &&
+        requiredHeaders.every((header) => (parsedHeaders[header] ?? '').trim().length > 0)))
 
   const requiredFilled =
-    name.trim().length > 0 && (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0)
+    name.trim().length > 0 &&
+    !slugError &&
+    (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
+    requiredSecretValuesFilled
   const canSubmit = requiredFilled && trusted && !submitting
 
   const switchMode = (next: ConnectorMode): void => {
@@ -148,8 +238,12 @@ export function ConnectorAddForm({
     setSubmitting(true)
     setError(null)
     try {
-      const env = parseEnv(envText)
-      const headers = parseHeaders(headersText)
+      const env = parsedEnv
+      const headers = parsedHeaders
+      const oauthScopes = oauthScopesText
+        .split(/[\s,]+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean)
       // Omitted env/headers keep the stored (secret) values on edit; on add they are simply unset.
       const hasEnv = envText.trim().length > 0
       const hasHeaders = headersText.trim().length > 0
@@ -162,7 +256,21 @@ export function ConnectorAddForm({
               command: command.trim(),
               ...(parsedArgs.length > 0 ? { args: parsedArgs } : {})
             }
-          : { url: url.trim() })
+          : {
+              url: url.trim(),
+              oauth:
+                remoteAuth === 'oauth'
+                  ? {
+                      ...(authorizationServerUrl.trim()
+                        ? { authorizationServerUrl: authorizationServerUrl.trim() }
+                        : {}),
+                      ...(clientMetadataUrl.trim()
+                        ? { clientMetadataUrl: clientMetadataUrl.trim() }
+                        : {}),
+                      ...(oauthScopes.length ? { scopes: oauthScopes } : {})
+                    }
+                  : null
+            })
       }
 
       if (isEdit && editServer) {
@@ -170,15 +278,23 @@ export function ConnectorAddForm({
           id: editServer.id,
           ...shared,
           ...(mode === 'local' && hasEnv ? { env } : {}),
-          ...(mode === 'remote' && hasHeaders ? { headers } : {})
+          ...(mode === 'remote' && remoteAuth !== 'headers'
+            ? { headers: {} }
+            : hasHeaders
+              ? { headers }
+              : {}),
+          ...(mode === 'remote' && remoteAuth !== 'oauth' ? { oauth: null } : {})
         }
         await updateCustomServer(request)
       } else {
         const request: AddCustomServerRequest = {
           name: name.trim(),
+          slug: currentSlug,
           ...shared,
           ...(mode === 'local' && Object.keys(env).length > 0 ? { env } : {}),
-          ...(mode === 'remote' && Object.keys(headers).length > 0 ? { headers } : {})
+          ...(mode === 'remote' && remoteAuth === 'headers' && Object.keys(headers).length > 0
+            ? { headers }
+            : {})
         }
         await addCustomServer(request)
       }
@@ -199,7 +315,13 @@ export function ConnectorAddForm({
 
   return (
     <div className="p-5">
-      <div className="flex max-w-xl flex-col gap-4">
+      <div className="flex w-full flex-col gap-4">
+        {initialTemplate ? (
+          <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
+            Imported configuration is prefilled below. Enter required credentials locally, review
+            every field, then confirm that you trust the Connector.
+          </div>
+        ) : null}
         <div
           role="radiogroup"
           aria-label="Connector type"
@@ -227,12 +349,12 @@ export function ConnectorAddForm({
 
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-name">
-            Name
+            Display name
             {isEdit ? null : <RequiredMark />}
           </label>
           <Input
             id="connector-name"
-            aria-label="Name"
+            aria-label="Display name"
             value={name}
             disabled={isEdit}
             placeholder="e.g. Memory server"
@@ -240,10 +362,42 @@ export function ConnectorAddForm({
           />
           {isEdit ? (
             <p className="text-xs text-muted-foreground">
-              The name is the connector&apos;s identity and can&apos;t be changed.
+              The display name is fixed after creation.
             </p>
           ) : null}
         </div>
+
+        <SettingsRow
+          label={
+            <>
+              Connector ID
+              {isEdit ? null : <RequiredMark />}
+            </>
+          }
+          description={
+            <span className={slugError ? 'text-destructive' : undefined}>
+              {slugError ??
+                `Used by host.mcp("${currentSlug}", …), Specialists, and the generated MCP skill.`}
+            </span>
+          }
+        >
+          <Input
+            id="connector-slug"
+            aria-label="Connector ID"
+            value={currentSlug}
+            readOnly={isEdit}
+            aria-invalid={slugError ? true : undefined}
+            className="font-mono"
+            onChange={
+              isEdit
+                ? undefined
+                : (event) => {
+                    setSlugTouched(true)
+                    setSlug(event.target.value.toLowerCase())
+                  }
+            }
+          />
+        </SettingsRow>
 
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-description">
@@ -303,7 +457,9 @@ export function ConnectorAddForm({
                 className="resize-none font-mono text-[13px]"
                 onChange={(event) => setArgsText(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">Separated by spaces or newlines.</p>
+              <p className="text-xs text-muted-foreground">
+                {initialTemplate ? 'One argument per line.' : 'Separated by spaces or newlines.'}
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -321,6 +477,9 @@ export function ConnectorAddForm({
               />
               <p className="text-xs text-muted-foreground">
                 One KEY=VALUE per line.
+                {initialTemplate?.requiredSecrets?.environment?.length
+                  ? ` Required: ${initialTemplate.requiredSecrets.environment.join(', ')}.`
+                  : ''}
                 {isEdit ? ' Leave blank to keep the current values.' : ''}
               </p>
             </div>
@@ -363,24 +522,104 @@ export function ConnectorAddForm({
               </Select>
             </div>
 
-            <div className="space-y-1.5">
-              <label className={fieldLabelClassName} htmlFor="connector-headers">
-                Headers <span className="text-muted-foreground">(optional)</span>
-              </label>
-              <Textarea
-                id="connector-headers"
-                aria-label="Headers"
-                value={headersText}
-                rows={3}
-                placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
-                className="resize-none font-mono text-[13px]"
-                onChange={(event) => setHeadersText(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                One <span className="font-mono">Name: Value</span> per line (not JSON).
-                {isEdit ? ' Leave blank to keep the current values.' : ''}
-              </p>
-            </div>
+            <SettingsRow label="Authentication">
+              <Select
+                value={remoteAuth}
+                onValueChange={(value) => setRemoteAuth(value as RemoteAuth)}
+              >
+                <SelectTrigger aria-label="Authentication">
+                  <span>
+                    {remoteAuth === 'oauth'
+                      ? 'OAuth (browser sign-in)'
+                      : remoteAuth === 'headers'
+                        ? 'Static headers'
+                        : 'None'}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="oauth">OAuth (browser sign-in)</SelectItem>
+                  <SelectItem value="headers">Static headers</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingsRow>
+
+            {remoteAuth === 'oauth' ? (
+              <>
+                <SettingsRow
+                  label={
+                    <>
+                      OAuth scopes <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
+                  <Input
+                    id="connector-oauth-scopes"
+                    aria-label="OAuth scopes"
+                    value={oauthScopesText}
+                    placeholder="openid profile"
+                    onChange={(event) => setOauthScopesText(event.target.value)}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label={
+                    <>
+                      Authorization server URL{' '}
+                      <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
+                  <Input
+                    id="connector-oauth-server"
+                    aria-label="Authorization server URL"
+                    value={authorizationServerUrl}
+                    placeholder="Auto-discover from MCP server"
+                    className="font-mono"
+                    onChange={(event) => setAuthorizationServerUrl(event.target.value)}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  label={
+                    <>
+                      Client metadata URL <span className="text-muted-foreground">(optional)</span>
+                    </>
+                  }
+                >
+                  <Input
+                    id="connector-oauth-client-metadata"
+                    aria-label="Client metadata URL"
+                    value={clientMetadataUrl}
+                    placeholder="Use dynamic client registration by default"
+                    className="font-mono"
+                    onChange={(event) => setClientMetadataUrl(event.target.value)}
+                  />
+                </SettingsRow>
+              </>
+            ) : null}
+
+            {remoteAuth === 'headers' ? (
+              <div className="space-y-1.5">
+                <label className={fieldLabelClassName} htmlFor="connector-headers">
+                  Headers <span className="text-muted-foreground">(optional)</span>
+                </label>
+                <Textarea
+                  id="connector-headers"
+                  aria-label="Headers"
+                  value={headersText}
+                  rows={3}
+                  placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
+                  className="resize-none font-mono text-[13px]"
+                  onChange={(event) => setHeadersText(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  One <span className="font-mono">Name: Value</span> per line (not JSON).
+                  {initialTemplate?.requiredSecrets?.headers?.length
+                    ? ` Required: ${initialTemplate.requiredSecrets.headers.join(', ')}.`
+                    : ''}
+                  {isEdit ? ' Leave blank to keep the current values.' : ''}
+                </p>
+              </div>
+            ) : null}
           </>
         )}
 

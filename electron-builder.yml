@@ -73,9 +73,8 @@ extraResources:
       - '*.d.ts'
       - 'LICENSE'
       - 'package.json'
-# Windows: an NSIS installer. The build is unsigned (no Authenticode certificate), so SmartScreen
-# shows a bypassable "unknown publisher" prompt — the same trade-off as the unsigned macOS build. The
-# afterPack ad-hoc-sign hook is a no-op off macOS (it returns early), so it is safe on this target.
+# Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
+# The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
 win:
   executableName: open-science
   icon: build/icon.ico

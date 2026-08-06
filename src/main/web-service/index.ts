@@ -2,9 +2,10 @@ import { join } from 'node:path'
 
 import { app } from 'electron'
 
-import type { WebRpcRouter } from '../ipc-handler-registry'
+import type { ApplicationCommandComposition } from '../application-command-composition'
 import { createLogger } from '../logger'
 import type { ApplicationEventSource } from '../application-events'
+import type { TaskAgentPort } from '../tasks/task-runner'
 import { resolveConfigRoot } from '../storage-root'
 import { loadOrCreateWebToken } from './auth'
 import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
@@ -24,6 +25,8 @@ export type WebServiceController = {
   ) => Promise<{ port: number; url: string }>
   // Stops the web service and removes its state file. Idempotent; safe to call when not running.
   close: () => Promise<void>
+  // Permanently closes the service and its Task adapter. Used only by application shutdown.
+  dispose: () => Promise<void>
   // Closes remotely authenticated sockets without disturbing local Web clients.
   closeExternalConnections: (sessionId?: string) => void
   // Subscribes to actual server stops, including attached shutdown requests from the CLI.
@@ -56,20 +59,22 @@ const authUrl = (token: string, port: number): string =>
 const buildAuthenticatedWebUrl = async (port: number): Promise<string> =>
   authUrl(await loadOrCreateWebToken(resolveConfigRoot()), port)
 
-// Builds the controller. `rpc` is the always-installed capture layer (so handlers registered before any
-// serving are reachable over HTTP); `requestQuit` quits the whole app when a dedicated headless daemon
-// is asked to shut down. An attached service instead only tears itself down and leaves the app running.
+// Builds the controller over application-owned narrow command views. `requestQuit` quits the whole
+// app when a dedicated headless daemon is asked to shut down. An attached service instead only tears
+// itself down.
 const createWebServiceController = (
   {
-    rpc,
+    applicationCommands,
     requestQuit,
     externalAccess,
-    applicationEvents
+    applicationEvents,
+    taskAgent
   }: {
-    rpc: WebRpcRouter
+    applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
     applicationEvents: ApplicationEventSource
+    taskAgent: TaskAgentPort
   },
   deps: Partial<WebServiceControllerDeps> = {}
 ): WebServiceController => {
@@ -91,14 +96,16 @@ const createWebServiceController = (
       },
       pid: process.pid
     }))
-  const tasks = new HeadlessTaskApi(rpc, {
-    subscribeEvents: (listener) =>
-      applicationEvents.subscribe((event) => {
-        const runtimeEvent = projectTaskRuntimeEvent(event)
-        if (runtimeEvent) listener(runtimeEvent)
-      })
-  })
-
+  const tasks = new HeadlessTaskApi(
+    { commands: applicationCommands.task, agent: taskAgent },
+    {
+      subscribeEvents: (listener) =>
+        applicationEvents.subscribe((event) => {
+          const runtimeEvent = projectTaskRuntimeEvent(event)
+          if (runtimeEvent) listener(runtimeEvent)
+        })
+    }
+  )
   let running:
     | {
         close: () => Promise<void>
@@ -108,9 +115,11 @@ const createWebServiceController = (
       }
     | undefined
   let starting: Promise<{ port: number; url: string }> | undefined
+  let disposal: Promise<void> | undefined
+  let disposed = false
   const stoppedListeners = new Set<() => void>()
 
-  const close = async (): Promise<void> => {
+  const closeRunning = async (): Promise<void> => {
     const current = running
     running = undefined
     if (!current) return
@@ -119,6 +128,25 @@ const createWebServiceController = (
     } finally {
       for (const listener of stoppedListeners) listener()
     }
+  }
+
+  const close = async (): Promise<void> => {
+    const pending = starting
+    if (pending) await pending.catch(() => undefined)
+    await closeRunning()
+  }
+
+  const dispose = (): Promise<void> => {
+    if (disposal) return disposal
+    disposed = true
+    disposal = (async () => {
+      try {
+        await close()
+      } finally {
+        tasks.dispose()
+      }
+    })()
+    return disposal
   }
 
   const start = async (port: number, attached: boolean): Promise<{ port: number; url: string }> => {
@@ -130,7 +158,10 @@ const createWebServiceController = (
       port,
       token,
       staticRoot: join(info.appPath, 'out', 'web'),
-      rpc,
+      applicationCommands: {
+        localWeb: applicationCommands.localWeb,
+        remoteWeb: applicationCommands.remoteWeb
+      },
       applicationEvents,
       externalAccess,
       tasks,
@@ -168,7 +199,7 @@ const createWebServiceController = (
         attached
       })
     } catch (error) {
-      await close()
+      await closeRunning()
       throw error
     }
 
@@ -186,6 +217,7 @@ const createWebServiceController = (
     port: number,
     { attached }: { attached: boolean }
   ): Promise<{ port: number; url: string }> => {
+    if (disposed) throw new Error('Web service controller is disposed.')
     if (running) {
       const token = await loadWebToken(running.configRoot)
       return { port: running.port, url: authUrl(token, running.port) }
@@ -200,6 +232,7 @@ const createWebServiceController = (
   return {
     ensureStarted,
     close,
+    dispose,
     closeExternalConnections: (sessionId) => running?.closeExternalConnections(sessionId),
     onStopped: (listener) => {
       stoppedListeners.add(listener)

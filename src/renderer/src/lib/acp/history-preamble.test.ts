@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildHistoryPreamble, buildHistoryReplayMedia } from './history-preamble'
+import {
+  buildHistoryPreamble,
+  buildHistoryReplay,
+  buildWorkspaceHistoryReplay,
+  estimateHistoryTokens,
+  resolveHistoryReplayBudget,
+  resolveHistoryReplayTarget,
+  resolveSessionHistoryReplayDescriptor
+} from './history-preamble'
 import type { ChatMessage } from '../../stores/session-store'
+import type { AgentFrameworkView, ProviderView } from '../../../../shared/settings'
 
+let messageId = 0
 const message = (
   partial: Partial<ChatMessage> & Pick<ChatMessage, 'role' | 'content'>
 ): ChatMessage =>
   ({
-    id: Math.random().toString(36).slice(2),
+    id: `message-${messageId++}`,
     status: 'complete',
     eventIds: [],
     createdAt: 0,
@@ -15,7 +25,7 @@ const message = (
     ...partial
   }) as ChatMessage
 
-describe('buildHistoryPreamble', () => {
+describe('agent-aware history replay', () => {
   it('returns undefined when there is nothing meaningful to replay', () => {
     expect(buildHistoryPreamble([])).toBeUndefined()
     expect(
@@ -26,91 +36,322 @@ describe('buildHistoryPreamble', () => {
     ).toBeUndefined()
   })
 
-  it('renders labelled user/assistant turns in order', () => {
+  it('renders labelled user-led turns in order and skips failed content', () => {
     const preamble = buildHistoryPreamble([
+      message({ role: 'agent', content: 'orphaned leading reply' }),
       message({ role: 'user', content: 'plot the data' }),
+      message({ role: 'agent', content: 'failed draft', status: 'error' }),
       message({ role: 'agent', content: 'done, see chart.png' })
     ])
 
     expect(preamble).toContain('before you joined it')
+    expect(preamble).not.toContain('orphaned leading reply')
+    expect(preamble).not.toContain('failed draft')
     expect(preamble).toContain('**User:** plot the data')
     expect(preamble).toContain('**Assistant:** done, see chart.png')
-    const userIndex = preamble!.indexOf('**User:**')
-    const agentIndex = preamble!.indexOf('**Assistant:**')
-    expect(userIndex).toBeLessThan(agentIndex)
+    expect(preamble!.indexOf('**User:**')).toBeLessThan(preamble!.indexOf('**Assistant:**'))
   })
 
-  it('skips failed and empty turns', () => {
+  it('uses distinct budgets for all four target classes', () => {
+    expect(resolveHistoryReplayBudget({ target: 'claude-code' })).toBe(16_000)
+    expect(resolveHistoryReplayBudget({ target: 'opencode' })).toBe(12_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-response' })).toBe(16_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-bridge' })).toBe(8_000)
+
+    expect(resolveHistoryReplayBudget({ target: 'claude-code', contextWindow: 100_000 })).toBe(
+      10_000
+    )
+    expect(resolveHistoryReplayBudget({ target: 'opencode', contextWindow: 100_000 })).toBe(8_000)
+    expect(resolveHistoryReplayBudget({ target: 'codex-response', contextWindow: 100_000 })).toBe(
+      10_000
+    )
+    expect(resolveHistoryReplayBudget({ target: 'codex-bridge', contextWindow: 100_000 })).toBe(
+      5_000
+    )
+  })
+
+  it('uses the conservative bridge cap when a caller omits its runtime descriptor', () => {
     const preamble = buildHistoryPreamble([
-      message({ role: 'user', content: 'first' }),
-      message({ role: 'agent', content: 'half a reply', status: 'error' }),
-      message({ role: 'user', content: 'second' })
-    ])
+      message({ role: 'user', content: 'large history '.repeat(2_000) })
+    ])!
 
-    expect(preamble).not.toContain('half a reply')
-    expect(preamble).toContain('**User:** first')
-    expect(preamble).toContain('**User:** second')
+    expect(estimateHistoryTokens(preamble)).toBeLessThanOrEqual(8_000)
   })
 
-  it('keeps the most recent turns within budget and marks omissions', () => {
-    const messages = Array.from({ length: 10 }, (_, index) =>
-      message({
-        role: index % 2 === 0 ? 'user' : 'agent',
-        content: `turn-${index} ${'x'.repeat(50)}`
-      })
-    )
+  it('keeps the original task and a contiguous recent suffix without orphan replies', () => {
+    const messages = Array.from({ length: 20 }, (_, turn) => [
+      message({ role: 'user', content: `user-${turn} ${'u'.repeat(80)}` }),
+      message({ role: 'agent', content: `assistant-${turn} ${'a'.repeat(80)}` })
+    ]).flat()
+    const replay = buildHistoryReplay(messages, { target: 'codex-bridge', budget: 1_440 })!
 
-    const preamble = buildHistoryPreamble(messages, 200)
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(replay.budget)
+    expect(replay.preamble).toContain('user-0 ')
+    expect(replay.preamble).toContain('user-19 ')
+    expect(replay.preamble).toContain('assistant-19 ')
+    expect(replay.preamble).toContain('middle turns omitted')
+    expect(replay.preamble).not.toContain('assistant-10 ')
 
-    expect(preamble).toContain('earlier turns omitted')
-    // The newest turn survives; the oldest is dropped.
-    expect(preamble).toContain('turn-9')
-    expect(preamble).not.toContain('turn-0 ')
+    const selectedRoles = replay.selectedMessageIndexes.map((index) => messages[index].role)
+    expect(selectedRoles[0]).toBe('user')
+    for (let index = 0; index < selectedRoles.length; index += 1) {
+      if (selectedRoles[index] === 'agent') expect(selectedRoles.slice(0, index)).toContain('user')
+    }
   })
 
-  it('hard-bounds a single oversized latest turn', () => {
-    const budget = 80
-    const preamble = buildHistoryPreamble(
-      [message({ role: 'user', content: `start-${'a'.repeat(500)}-end` })],
-      budget
-    )
-    const transcript = preamble?.split('\n\n').slice(1).join('\n\n') ?? ''
+  it('preserves both ends of a physically oversized user request inside its role', () => {
+    const replay = buildHistoryReplay(
+      [message({ role: 'user', content: `BEGIN-CONSTRAINT ${'界'.repeat(500)} END-CONSTRAINT` })],
+      { target: 'codex-bridge', budget: 760 }
+    )!
 
-    expect(transcript.length).toBeLessThanOrEqual(budget)
-    expect(transcript).toContain('-end')
-    expect(transcript).not.toContain('start-')
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(760)
+    expect(replay.preamble).toContain('**User:** BEGIN-CONSTRAINT')
+    expect(replay.preamble).toContain('END-CONSTRAINT')
+    expect(replay.preamble).toContain('middle of this message omitted')
   })
 
-  it('collects bounded recent image uploads and inline assistant images for replay', () => {
-    const media = buildHistoryReplayMedia(
+  it('keeps a full latest user request plus a marked Assistant conclusion tail', () => {
+    const replay = buildHistoryReplay(
       [
+        message({ role: 'user', content: 'original task' }),
+        message({ role: 'agent', content: 'original response' }),
+        message({ role: 'user', content: 'please finish the analysis' }),
+        message({
+          role: 'agent',
+          content: `${'working '.repeat(300)}FINAL-CONCLUSION`
+        })
+      ],
+      { target: 'codex-bridge', budget: 920 }
+    )!
+
+    expect(replay.estimatedTokens).toBeLessThanOrEqual(920)
+    expect(replay.preamble).toContain('**User:** please finish the analysis')
+    expect(replay.preamble).toContain('earlier response omitted')
+    expect(replay.preamble).toContain('FINAL-CONCLUSION')
+  })
+
+  it('uses UTF-8 bytes as a conservative tokenizer-independent upper bound', () => {
+    expect(estimateHistoryTokens('a'.repeat(40))).toBe(40)
+    expect(estimateHistoryTokens('界'.repeat(40))).toBe(120)
+    expect(estimateHistoryTokens('😀'.repeat(10))).toBe(40)
+  })
+
+  it('replays media only from text-selected messages', () => {
+    const turns = Array.from({ length: 10 }, (_, turn) => [
+      message({
+        role: 'user',
+        content: `user-${turn} ${'x'.repeat(100)}`,
+        uploads:
+          turn === 4 || turn === 9
+            ? [
+                {
+                  id: `upload-${turn}`,
+                  versionId: `version-${turn}`,
+                  sessionId: 'session-1',
+                  name: `plot-${turn}.png`,
+                  originalName: `plot-${turn}.png`,
+                  path: `/uploads/plot-${turn}.png`,
+                  mimeType: 'image/png',
+                  size: 10
+                },
+                {
+                  id: `document-${turn}`,
+                  versionId: `document-version-${turn}`,
+                  sessionId: 'session-1',
+                  name: `notes-${turn}.pdf`,
+                  originalName: `notes-${turn}.pdf`,
+                  path: `/uploads/notes-${turn}.pdf`,
+                  mimeType: 'application/pdf',
+                  size: 20
+                }
+              ]
+            : undefined
+      }),
+      message({ role: 'agent', content: `assistant-${turn} ${'y'.repeat(100)}` })
+    ]).flat()
+    const replay = buildWorkspaceHistoryReplay(
+      turns,
+      { target: 'codex-bridge', budget: 1_120 },
+      'project-1'
+    )!
+
+    expect(replay.historyPreamble).toContain('user-9 ')
+    expect(replay.historyPreamble).not.toContain('user-4 ')
+    expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9', 'document-9'])
+  })
+
+  it('reserves capped upload replay for an older selected image before recent documents', () => {
+    const messages = [
+      message({
+        role: 'user',
+        content: 'original task with image',
+        uploads: [
+          {
+            id: 'original-image',
+            versionId: 'original-image-version',
+            sessionId: 'session-1',
+            name: 'original.png',
+            originalName: 'original.png',
+            path: '/uploads/original.png',
+            mimeType: 'image/png',
+            size: 10
+          }
+        ]
+      }),
+      ...Array.from({ length: 10 }, (_, index) =>
         message({
           role: 'user',
-          content: 'look',
+          content: `document turn ${index}`,
           uploads: [
             {
-              id: 'u1',
-              versionId: 'v1',
-              sessionId: 's1',
-              name: 'plot.png',
-              originalName: 'plot.png',
-              path: '/uploads/plot.png',
-              mimeType: 'image/png',
+              id: `document-${index}`,
+              versionId: `document-version-${index}`,
+              sessionId: 'session-1',
+              name: `document-${index}.txt`,
+              originalName: `document-${index}.txt`,
+              path: `/uploads/document-${index}.txt`,
+              mimeType: 'text/plain',
               size: 10
             }
           ]
-        }),
+        })
+      )
+    ]
+
+    const replay = buildWorkspaceHistoryReplay(messages, { target: 'claude-code' }, 'project-1')!
+    const attachmentIds = replay.historyAttachments.map((attachment) => attachment.id)
+
+    expect(attachmentIds).toHaveLength(10)
+    expect(attachmentIds).toContain('original-image')
+    expect(attachmentIds).not.toContain('document-0')
+    expect(attachmentIds).toContain('document-9')
+  })
+
+  it('fills the upload cap with documents after omitting images for a text-only model', () => {
+    const messages = [
+      ...Array.from({ length: 10 }, (_, index) =>
+        message({
+          role: 'user',
+          content: `image turn ${index}`,
+          uploads: [
+            {
+              id: `image-${index}`,
+              versionId: `image-version-${index}`,
+              sessionId: 'session-1',
+              name: `image-${index}.png`,
+              originalName: `image-${index}.png`,
+              path: `/uploads/image-${index}.png`,
+              mimeType: index === 0 ? 'application/octet-stream' : 'image/png',
+              size: 10
+            }
+          ]
+        })
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        message({
+          role: 'user',
+          content: `document turn ${index}`,
+          uploads: [
+            {
+              id: `document-${index}`,
+              versionId: `document-version-${index}`,
+              sessionId: 'session-1',
+              name: `document-${index}.txt`,
+              originalName: `document-${index}.txt`,
+              path: `/uploads/document-${index}.txt`,
+              mimeType: 'text/plain',
+              size: 10
+            }
+          ]
+        })
+      )
+    ]
+
+    const replay = buildWorkspaceHistoryReplay(
+      messages,
+      { target: 'claude-code' },
+      'project-1',
+      false
+    )!
+
+    expect(replay.historyAttachments.map((attachment) => attachment.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `document-${index}`)
+    )
+    expect(replay.historyImages).toEqual([])
+  })
+
+  it('keeps media-only Assistant output when an oversized turn is projected', () => {
+    const replay = buildWorkspaceHistoryReplay(
+      [
+        message({ role: 'user', content: 'original task' }),
+        message({ role: 'agent', content: 'original answer' }),
+        message({ role: 'user', content: 'keep the generated screenshot' }),
+        message({ role: 'agent', content: 'working '.repeat(300) }),
         message({
           role: 'agent',
           content: '',
-          images: [{ id: 'i1', mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }]
+          images: [{ id: 'result-image', mimeType: 'image/png', data: 'AQID', byteLength: 3 }]
         })
       ],
-      'project-1'
-    )
+      { target: 'codex-bridge', budget: 920 }
+    )!
 
-    expect(media.attachments.map((item) => item.id)).toEqual(['u1'])
-    expect(media.attachments[0].path).toBe('upload-version:project-1/s1/v1')
-    expect(media.images).toHaveLength(1)
+    expect(replay.historyPreamble).toContain('**Assistant:** [media attached]')
+    expect(replay.historyImages).toEqual([expect.objectContaining({ data: 'AQID' })])
+  })
+})
+
+describe('history replay target resolution', () => {
+  const provider = (apiEndpoints: ProviderView['apiEndpoints']): ProviderView =>
+    ({ apiEndpoints }) as ProviderView
+  const codex = {
+    id: 'codex',
+    displayName: 'Codex',
+    supportsSkills: true,
+    supportedApiTypes: ['responses']
+  } as AgentFrameworkView
+
+  it('uses the provider endpoint contract to distinguish direct Responses and bridge Codex', () => {
+    expect(resolveHistoryReplayTarget('claude-code')).toBe('claude-code')
+    expect(resolveHistoryReplayTarget('opencode')).toBe('opencode')
+    expect(resolveHistoryReplayTarget('codex', provider(['responses']), codex)).toBe(
+      'codex-response'
+    )
+    expect(resolveHistoryReplayTarget('codex', provider(['openai']), codex)).toBe('codex-bridge')
+  })
+
+  it('derives persisted session policy from its backend instead of active settings', () => {
+    const bridgeProvider = {
+      id: 'persisted-provider',
+      apiEndpoints: ['openai'],
+      contextWindow: 100_000
+    } as ProviderView
+
+    expect(
+      resolveSessionHistoryReplayDescriptor(
+        {
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:persisted-provider',
+          agentModel: 'persisted-model'
+        },
+        [bridgeProvider],
+        [codex]
+      )
+    ).toEqual({ target: 'codex-bridge', contextWindow: 100_000 })
+  })
+
+  it('falls back to the conservative bridge policy when a persisted Codex provider is gone', () => {
+    expect(
+      resolveSessionHistoryReplayDescriptor(
+        {
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:removed-provider',
+          agentModel: 'persisted-model'
+        },
+        [],
+        [codex]
+      )
+    ).toEqual({ target: 'codex-bridge', contextWindow: undefined })
   })
 })

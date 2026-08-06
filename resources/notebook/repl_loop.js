@@ -24,8 +24,10 @@ const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
 // directly — bypassing the connector approval/policy gate that host.mcp routes through. host.mcp uses
 // the captured values instead. (Broader filesystem/network egress isolation is a tracked follow-up.)
 const RPC_ENDPOINT = process.env.OPEN_SCIENCE_MCP_RPC_ENDPOINT
+const RPC_SOCKET_PATH = process.env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
 const RPC_TOKEN = process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 delete process.env.OPEN_SCIENCE_MCP_RPC_ENDPOINT
+delete process.env.OPEN_SCIENCE_MCP_RPC_SOCKET_PATH
 delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 
 // Notebook session/project identity for host.compute grant-scope approval memory (This conversation /
@@ -42,14 +44,45 @@ delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 // approved switch can capture only this invocation's outer completion.
 let ACTIVE_CONTROL_INVOCATION_ID
 
-// Private reference to the real fetch, captured before user code runs. host.mcp MUST use this, not the
-// global `fetch`: a vm sandbox is not a security boundary, so sandbox code can reach the outer realm
-// via `host.mcp.constructor('return globalThis')()` and reassign the outer `globalThis.fetch` to a
-// hook that would otherwise capture the connector Bearer token on the next host.mcp call. A module-
-// scoped const is not on any globalThis and cannot be reassigned from that escape, so the token only
-// ever flows to the real endpoint. (Sandbox code still has direct fetch/require/process — full FS +
-// network-egress isolation is the tracked follow-up, not solvable in-process.)
+// Private references to the RPC clients, captured before user code runs. host.mcp MUST use these, not
+// the global `fetch`: a vm sandbox is not a security boundary, so sandbox code can reach the outer
+// realm via `host.mcp.constructor('return globalThis')()` and reassign the outer fetch to a hook that
+// would otherwise capture the connector Bearer token on the next host.mcp call. Module-scoped consts
+// are not on globalThis and cannot be reassigned from that escape. (Sandbox code still has direct
+// fetch/require/process — full FS + network-egress isolation is the tracked follow-up.)
 const capturedFetch = fetch
+const capturedHttpRequest = require('node:http').request
+const capturedRpcFetch = (input, init = {}) => {
+  if (!RPC_SOCKET_PATH) return capturedFetch(input, init)
+
+  const url = new URL(input)
+  return new Promise((resolve, reject) => {
+    const request = capturedHttpRequest(
+      {
+        socketPath: RPC_SOCKET_PATH,
+        path: url.pathname + url.search,
+        method: init.method || 'GET',
+        headers: init.headers
+      },
+      (response) => {
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk) => (body += chunk))
+        response.once('end', () => {
+          const status = response.statusCode || 500
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            json: async () => JSON.parse(body)
+          })
+        })
+      }
+    )
+    request.once('error', reject)
+    if (init.body !== undefined) request.write(init.body)
+    request.end()
+  })
+}
 
 // The control REPL must not become a second package-manager entry point. Patch the shared built-in
 // child_process exports before user code is evaluated, so computed property access such as
@@ -915,13 +948,13 @@ fsPromises.open = function guardedPromiseOpen(target, flags, ...args) {
   return originalPromiseOpen.call(this, target, flags, ...args)
 }
 
-// host.mcp: async connector call over the loopback RPC endpoint (same protocol as the python bridge).
+// host.mcp: async connector call over the app-local RPC endpoint (same protocol as the MCP bridge).
 // Only injected here, in the trusted control plane. Accepts a single positional args object; keyword
 // arguments are not idiomatic in JS, so a second object is treated as a fallback args source.
 async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   const callArgs = args ?? kwargs ?? {}
   if (!RPC_ENDPOINT) throw new Error('host.mcp is unavailable: connector RPC endpoint not set')
-  const res = await capturedFetch(RPC_ENDPOINT, {
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     // Forward the notebook session id so the RPC server resolves the ACP session + specialist scope.
@@ -943,14 +976,14 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
-// host.compute: async remote-compute calls over the SAME loopback RPC endpoint as host.mcp, routed to
+// host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
-// happens outside the sandbox workspace. Uses the captured RPC_ENDPOINT/TOKEN + capturedFetch for the
-// same token-isolation reasons documented on host.mcp above.
+// happens outside the sandbox workspace. Uses the captured RPC endpoint/token + client for the same
+// token-isolation reasons documented on host.mcp above.
 async function computeRpc(params) {
   if (!RPC_ENDPOINT) throw new Error('host.compute is unavailable: connector RPC endpoint not set')
-  const res = await capturedFetch(RPC_ENDPOINT, {
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     body: JSON.stringify({ method: 'computeCall', params })
@@ -964,13 +997,13 @@ async function computeRpc(params) {
 
 // host.agents: control-plane Specialist management SDK (issue 02). Read-only in this slice
 // (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
-// loopback RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
-// host.mcp(). Uses the captured RPC_ENDPOINT/TOKEN + capturedFetch for the same token-isolation
-// reasons. The trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
+// app-local RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
+// host.mcp(). Uses the captured RPC endpoint/token + client for the same token-isolation reasons. The
+// trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
 // (above), forwarded on every call so switch() cannot be forged from sandbox user code.
 async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
   if (!RPC_ENDPOINT) throw new Error('host.agents is unavailable: connector RPC endpoint not set')
-  const res = await capturedFetch(RPC_ENDPOINT, {
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     body: JSON.stringify({

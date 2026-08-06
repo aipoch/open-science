@@ -93,6 +93,7 @@ describe('WorkspacePage notebook entry hydration', () => {
     vi.clearAllMocks()
     getReference = vi.fn(() => Promise.resolve(null))
     window.api = {
+      acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference

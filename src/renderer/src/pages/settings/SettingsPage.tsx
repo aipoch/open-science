@@ -19,7 +19,7 @@ import {
   Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 
 import {
   resolveCodexSubscriptionType,
@@ -47,6 +47,8 @@ import { ConnectorsPanel, type ConnectorsView } from './ConnectorsPanel'
 import { SpecialistsPanel, type SpecialistsView } from './SpecialistsPanel'
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { ConnectorAddForm } from './ConnectorAddForm'
+import { ConnectorExportView } from './ConnectorExportView'
+import { ConnectorImportView } from './ConnectorImportView'
 import { ConnectorsNavIcon } from './connector-icons'
 import { ComputePanel, type ComputeView } from './ComputePanel'
 import { ComputeAddForm } from './ComputeAddForm'
@@ -69,6 +71,10 @@ type SettingsPageProps = {
   open: boolean
   onClose: () => void
   onOpenSession?: (sessionId: string) => void
+}
+
+type SettingsPageHandle = {
+  closeActivePane: () => boolean
 }
 
 // The model panel sub-view, driven by the settings navigation history so add/edit is a breadcrumb page.
@@ -184,7 +190,10 @@ const INITIAL_LOCATION: NavLocation = {
 
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
-const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): React.JSX.Element => {
+const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
+  { open, onClose, onOpenSession },
+  ref
+): React.JSX.Element {
   const providers = useSettingsStore((state) => state.providers)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -459,9 +468,13 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
       const leaf =
         connectorsView.kind === 'add'
           ? 'Add connector'
-          : connectorsView.kind === 'edit'
-            ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
-            : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+          : connectorsView.kind === 'import'
+            ? 'Import configuration'
+            : connectorsView.kind === 'export'
+              ? `Export ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+              : connectorsView.kind === 'edit'
+                ? `Edit ${customServers.find((s) => s.id === connectorsView.id)?.name ?? 'connector'}`.trim()
+                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabel: 'Connectors',
         rootTo: {
@@ -526,6 +539,41 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
     if (!canGoForward) return
     setHistoryIndex((index) => index + 1)
   }
+
+  useImperativeHandle(ref, () => ({
+    closeActivePane: () => {
+      if (!open) return false
+      const activeDialog = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
+        )
+      )
+        .filter((dialog) => dialog.dataset.slot !== 'settings-surface')
+        .at(-1)
+      if (activeDialog) {
+        activeDialog.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        )
+        return true
+      }
+      if (isMobileNavOpen) {
+        setIsMobileNavOpen(false)
+        return true
+      }
+      if (breadcrumb) {
+        if (canGoBack) setHistoryIndex((index) => index - 1)
+        else {
+          setHistory((entries) =>
+            entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+          )
+        }
+      } else {
+        setIsMobileNavOpen(false)
+        onClose()
+      }
+      return true
+    }
+  }))
 
   // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
   const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
@@ -863,8 +911,26 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
                   ) : connectorsView.kind === 'add' ? (
                     <ConnectorAddForm
                       initialTransport={connectorsView.transport}
+                      initialTemplate={connectorsView.template}
                       onDone={() => navigateConnectors({ kind: 'list' })}
                       onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : connectorsView.kind === 'import' ? (
+                    <ConnectorImportView
+                      onUse={(template) =>
+                        navigateConnectors({
+                          kind: 'add',
+                          transport: template.transport === 'stdio' ? 'local' : 'remote',
+                          template
+                        })
+                      }
+                      onCancel={() => navigateConnectors({ kind: 'list' })}
+                    />
+                  ) : connectorsView.kind === 'export' ? (
+                    <ConnectorExportView
+                      key={connectorsView.id}
+                      id={connectorsView.id}
+                      onDone={() => navigateConnectors({ kind: 'list' })}
                     />
                   ) : connectorsView.kind === 'edit' ? (
                     <ConnectorAddForm
@@ -991,6 +1057,6 @@ const SettingsPage = ({ open, onClose, onOpenSession }: SettingsPageProps): Reac
       </Dialog.Portal>
     </Dialog.Root>
   )
-}
+})
 
-export { SettingsPage }
+export { SettingsPage, type SettingsPageHandle }

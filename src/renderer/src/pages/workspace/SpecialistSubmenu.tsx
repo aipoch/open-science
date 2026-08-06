@@ -17,7 +17,9 @@ import {
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import type { SpecialistProfileView } from '../../../../shared/specialist'
+import type { SpecialistListItem, SpecialistProfileView } from '../../../../shared/specialist'
+
+type RunnableSpecialistItem = Exclude<SpecialistListItem, { kind: 'reviewer' }>
 
 type SpecialistSubmenuProps = {
   // Undefined means None (no specialist selected).
@@ -68,8 +70,7 @@ const SpecialistSubmenu = ({
   }, [load])
 
   const enabledSpecialists = items.filter(
-    (item): item is { kind: 'custom' } & SpecialistProfileView =>
-      item.kind === 'custom' && item.enabled
+    (item): item is RunnableSpecialistItem => item.kind !== 'reviewer' && item.enabled
   )
 
   const selected = enabledSpecialists.find((s) => s.id === selectedId)
@@ -83,9 +84,9 @@ const SpecialistSubmenu = ({
   // profile; other disabled profiles stay out of the picker as normal.
   const unavailableItem =
     unavailable && selectedId
-      ? items.find((item) => item.kind === 'custom' && item.id === selectedId)
+      ? items.find((item) => item.kind !== 'reviewer' && item.id === selectedId)
       : undefined
-  const unavailableProfile = unavailableItem?.kind === 'custom' ? unavailableItem : undefined
+  const unavailableProfile = unavailableItem?.kind !== 'reviewer' ? unavailableItem : undefined
 
   return (
     <DropdownMenuSub>
@@ -116,9 +117,7 @@ const SpecialistSubmenu = ({
             'flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
             unavailable
               ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-              : showValue
-                ? 'bg-bg-200 text-text-100'
-                : 'text-text-300'
+              : 'bg-bg-200 text-text-100'
           )}
         >
           <span className="max-w-[120px] truncate">{label}</span>

@@ -42,8 +42,8 @@ const profile = (overrides: Partial<SpecialistProfileView> = {}): SpecialistProf
 const makeProfileService = (
   profiles: SpecialistProfileView[],
   overrides: Partial<ProfileService> = {}
-): ProfileService =>
-  ({
+): ProfileService => {
+  const service = {
     list: vi.fn(async () => profiles),
     getByName: vi.fn(async (name: string) => {
       const found = profiles.find((p) => p.name === name)
@@ -56,7 +56,13 @@ const makeProfileService = (
       return found
     }),
     ...overrides
-  }) as unknown as ProfileService
+  } as unknown as ProfileService
+  service.resolveRunnableByName =
+    overrides.resolveRunnableByName ?? vi.fn(async (name: string) => service.getByName(name))
+  service.resolveRunnableById =
+    overrides.resolveRunnableById ?? vi.fn(async (id: string) => service.getById(id))
+  return service
+}
 
 const makeSessionBinding = (initial: Map<string, string | undefined>): SessionBindingService => {
   const bindings = new Map(initial)
@@ -82,6 +88,35 @@ const approvingGateway = (): ApprovalGateway => ({
 })
 
 describe('SwitchOperation — target resolution', () => {
+  it('switches to a builtin through the runnable resolver without exposing it to custom queries', async () => {
+    const builtin = profile({ id: 'builtin-curator', name: 'BUILTIN_CURATOR', revision: 0 })
+    const ps = makeProfileService([builtin], {
+      getByName: vi.fn(async () => {
+        throw new Error('custom-only query must not be used')
+      }),
+      getById: vi.fn(async () => {
+        throw new Error('custom-only query must not be used')
+      }),
+      resolveRunnableByName: vi.fn(async () => builtin),
+      resolveRunnableById: vi.fn(async () => builtin)
+    })
+    const op = new SwitchOperation({
+      profileService: ps,
+      sessionBinding: makeSessionBinding(new Map()),
+      approvalGateway: approvingGateway(),
+      switchNotifier: { notify: vi.fn() },
+      persistBinding: vi.fn()
+    })
+
+    await expect(
+      op.run({ name: builtin.name }, { sessionId: 'session-trusted' })
+    ).resolves.toMatchObject({
+      status: 'approved',
+      binding: { specialistId: builtin.id, targetName: builtin.name }
+    })
+    expect(ps.getByName).not.toHaveBeenCalled()
+  })
+
   it('resolves an enabled custom Specialist by exact public name and returns persisted binding', async () => {
     const ps = makeProfileService([profile()])
     const binding = makeSessionBinding(new Map())

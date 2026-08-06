@@ -266,6 +266,116 @@ describe('artifact provenance repository', () => {
     ])
   })
 
+  it('selects the exact pending filename when multiple files share one normalized name', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-exact-filename-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const oldCandidate = await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'old-candidate.png',
+      mimeType: 'image/png',
+      source: createPngInlineSource('old bytes')
+    })
+    const exactCandidate = await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'exact-candidate.png',
+      mimeType: 'image/png',
+      source: createPngInlineSource('exact bytes')
+    })
+    vi.spyOn(compatibilityRepository, 'listPendingRunFiles').mockResolvedValue([
+      { ...oldCandidate, name: 'Sin.png' },
+      { ...exactCandidate, name: 'SIN.PNG' }
+    ])
+    vi.spyOn(compatibilityRepository, 'ensurePendingVersionRouting').mockResolvedValue()
+
+    const version = await repository.createVersion({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      filename: 'SIN.PNG',
+      contentType: 'image/png',
+      titleSnapshot: 'Sine analysis',
+      writeOperationId: 'write-1',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+
+    expect(await readFile(version.path)).toEqual(createPngBytes('exact bytes'))
+  })
+
+  it('rejects ambiguous normalized pending filenames when none exactly matches', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-ambiguous-filename-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const firstCandidate = await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'first-candidate.png',
+      mimeType: 'image/png',
+      source: createPngInlineSource('first bytes')
+    })
+    const secondCandidate = await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'second-candidate.png',
+      mimeType: 'image/png',
+      source: createPngInlineSource('second bytes')
+    })
+    vi.spyOn(compatibilityRepository, 'listPendingRunFiles').mockResolvedValue([
+      { ...firstCandidate, name: 'Sin.png' },
+      { ...secondCandidate, name: 'sin.PNG' }
+    ])
+
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        agentName: 'Codex',
+        filename: 'SIN.PNG',
+        contentType: 'image/png',
+        titleSnapshot: 'Sine analysis',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64)
+      })
+    ).rejects.toThrow('Pending artifact filename is ambiguous: SIN.PNG')
+    await expect(client.artifactVersion.count()).resolves.toBe(0)
+  })
+
   it('publishes app-generated compatibility bytes and an immutable Version together', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-app-generated-artifact-'))
     const client = createProjectDbClient(storageRoot)
@@ -309,6 +419,106 @@ describe('artifact provenance repository', () => {
       producer: { state: 'unavailable', reason: 'producer-not-supplied' },
       execution_status: { state: 'unavailable', reason: 'producer-not-supplied' }
     })
+  })
+
+  it('resolves finalized native Versions in first-occurrence request order without paths', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-version-descriptors-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository: new ArtifactRepository(storageRoot),
+      loadSession: async (projectId, appSessionId) =>
+        projectId === 'project-1' && appSessionId === 'branched-session'
+          ? {
+              id: appSessionId,
+              projectId,
+              title: 'Branched session',
+              cwd: '/workspace',
+              status: 'idle',
+              messages: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          : undefined
+    })
+    const createVersion = async (filename: string, content: string): Promise<ArtifactVersionFile> =>
+      repository.writeAppGeneratedVersion({
+        projectId: 'project-1',
+        appSessionId: 'source-session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: `run-${filename}`,
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        filename,
+        content,
+        contentType: 'text/plain'
+      })
+
+    const first = await createVersion('first.txt', 'first bytes')
+    const second = await createVersion('second.txt', 'second bytes')
+    await client.artifactVersion.updateMany({
+      where: { id: { in: [first.versionId, second.versionId] } },
+      data: { state: 'finalized' }
+    })
+
+    const resolved = await repository.resolveVersionDescriptors({
+      projectId: 'project-1',
+      appSessionId: 'branched-session',
+      versionIds: [second.versionId, 'missing-version', first.versionId, second.versionId]
+    })
+
+    expect(resolved).toEqual([
+      expect.objectContaining({
+        id: second.versionId,
+        versionId: second.versionId,
+        artifactId: second.artifactId,
+        versionNumber: 1,
+        projectName: 'project-1',
+        sessionId: 'source-session-1',
+        name: 'second.txt',
+        mimeType: 'text/plain',
+        size: Buffer.byteLength('second bytes')
+      }),
+      expect.objectContaining({
+        id: first.versionId,
+        versionId: first.versionId,
+        artifactId: first.artifactId,
+        name: 'first.txt'
+      })
+    ])
+    expect(
+      resolved.every((descriptor) => !('path' in descriptor) && !('fileUrl' in descriptor))
+    ).toBe(true)
+    await expect(
+      repository.resolveVersionDescriptors({
+        projectId: 'project-2',
+        appSessionId: 'branched-session',
+        versionIds: [first.versionId]
+      })
+    ).rejects.toThrow('Session does not belong to the requested Project.')
+  })
+
+  it('bounds Version descriptor requests before querying SQLite', async () => {
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot: '/unused',
+      getClient: () => {
+        throw new Error('SQLite should not be queried for an oversized request.')
+      }
+    })
+
+    await expect(
+      repository.resolveVersionDescriptors({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        versionIds: Array.from({ length: 101 }, (_, index) => `version-${index}`)
+      })
+    ).rejects.toThrow(/At most 100 Artifact Version ids/)
   })
 
   it('returns the original Version for an exact write-operation retry without rereading changed pending bytes', async () => {

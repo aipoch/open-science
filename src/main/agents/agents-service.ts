@@ -13,11 +13,13 @@
 //  - The ProfileService and catalog services remain authoritative; nothing is copied here.
 
 import { CONNECTOR_CATALOG, type ConnectorMeta } from '../connectors/catalog'
+import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import type { ProfileService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { StoredConnectors } from '../settings/types'
+import { customConnectorSlug } from '../../shared/custom-connector'
 import {
   isAgentsOpName,
   isAgentsParams,
@@ -30,6 +32,10 @@ import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-muta
 import { SwitchOperation, SwitchCommitSequencer, type SwitchParams } from './switch-operation'
 import { applyDelete } from './specialist-privileged-ops'
 import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
+import type {
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult
+} from '../../shared/specialist-package'
 
 // The minimal read surface this adapter needs from the settings/connectors catalog. Keeping it
 // narrow avoids pulling the whole SettingsService into the SDK contract and lets tests stub it.
@@ -76,6 +82,7 @@ export type AgentsServiceDeps = {
   // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
   // dedicated module that calls this only on success. Wired in issue 08.
   invalidateCatalog?: () => Promise<void> | void
+  deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +334,7 @@ export class AgentsService {
       currentName,
       reviewedRevision: revision,
       session: context,
+      ...(this.deps.deleteSpecialist ? { deleteSpecialist: this.deps.deleteSpecialist } : {}),
       ...(invalidateCatalog ? { invalidateCatalog } : {})
     })
   }
@@ -405,23 +413,32 @@ export const projectConnectorsFromStored = (
     }))
   }))
 
-  const custom: ConnectorReadModel[] = (stored?.customMcpServers ?? []).map((server) => {
-    const unreachable =
-      (server.transport === 'stdio' && !server.command) ||
-      (server.transport !== 'stdio' && !server.url)
-    return {
-      id: server.id,
-      displayName: server.name,
-      description: server.description ?? '',
-      mainEnabled: server.enabled,
-      // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
-      // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
-      // consistent without leaking transport/command details.
-      availability: unreachable ? 'unavailable' : 'available',
-      source: 'custom',
-      tools: []
-    }
-  })
+  const customServers = stored?.customMcpServers ?? []
+  const custom: ConnectorReadModel[] = customServers
+    .filter((server) => isCustomMcpServerRouteSafe(server, customServers))
+    .map((server) => {
+      const unreachable =
+        (server.transport === 'stdio' && !server.command) ||
+        (server.transport !== 'stdio' && !server.url)
+      const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
+      return {
+        // The slug is the immutable public route; the UUID remains local Settings/OAuth identity.
+        id: customConnectorSlug(server),
+        displayName: server.name,
+        description: server.description ?? '',
+        mainEnabled: server.enabled && !unauthenticated,
+        // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
+        // milestone decides whole-Connector inclusion only). An empty tools list keeps the shape
+        // consistent without leaking transport/command details.
+        availability: unreachable
+          ? 'unavailable'
+          : unauthenticated
+            ? 'unauthenticated'
+            : 'available',
+        source: 'custom',
+        tools: []
+      }
+    })
 
   return [...bundled, ...custom]
 }

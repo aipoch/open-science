@@ -23,6 +23,69 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('retargets endpoint, credential, and model without replacing the loopback connection', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ id: 'response', output: [], usage: { input_tokens: 1, output_tokens: 1 } })
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://a.example/v1', key: 'key-a', model: 'model-a' },
+      fetchImpl
+    )
+    const connection = await proxy.start()
+    const send = async (): Promise<void> => {
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'untrusted', input: 'hello', stream: false })
+      })
+      expect(response.status).toBe(200)
+    }
+
+    try {
+      await send()
+      proxy.setTarget({ baseUrl: 'https://b.example/custom', key: 'key-b', model: 'model-b' })
+      await send()
+
+      expect(fetchImpl).toHaveBeenNthCalledWith(
+        1,
+        'https://a.example/v1/responses',
+        expect.objectContaining({
+          headers: expect.objectContaining({ authorization: 'Bearer key-a' }),
+          body: expect.stringContaining('"model":"model-a"')
+        })
+      )
+      expect(fetchImpl).toHaveBeenNthCalledWith(
+        2,
+        'https://b.example/custom/responses',
+        expect.objectContaining({
+          headers: expect.objectContaining({ authorization: 'Bearer key-b' }),
+          body: expect.stringContaining('"model":"model-b"')
+        })
+      )
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('retargets the upstream model without replacing endpoint credentials', () => {
+    const proxy = new NativeResponsesCompatibilityProxy({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      key: 'secret',
+      model: 'MiniMax-M3'
+    })
+
+    proxy.setModelTarget({ model: 'MiniMax-M4' })
+
+    expect((proxy as unknown as { target: Record<string, unknown> }).target).toEqual({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      key: 'secret',
+      model: 'MiniMax-M4'
+    })
+  })
+
   it('flattens namespace tools and matching history without changing plain functions', () => {
     const { request, aliases } = flattenNativeResponsesRequest({
       model: 'MiniMax-M3',

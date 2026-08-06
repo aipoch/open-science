@@ -20,7 +20,7 @@ name: Notarize macOS
 # which would wrongly select the Release path and submit an unrelated published build.
 #
 # Time cap is enforced two ways: each dmg is submitted, then waited on for at most 15m
-# (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 20`.
+# (`notarytool wait --timeout 15m`), and the job as a whole is bounded by `timeout-minutes: 30`.
 # The submission id is captured before waiting, so on a timeout the log still shows it plus the
 # `notarytool info <id>` command to check the real status. A timeout is NOT a rejection — the Apple
 # submission keeps running; publish (which needs this job) is skipped, so nothing bad is published,
@@ -55,7 +55,7 @@ jobs:
     name: Notarize + staple ${{ matrix.arch }}
     runs-on: macos-14
     # Hard ceiling so a stuck notarization can never run forever (see also the wait --timeout below).
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
@@ -77,10 +77,20 @@ jobs:
             echo "::notice::APPLE_API_KEY_P8_BASE64 not set — skipping notarization; mac stays as built."
           fi
 
+      - name: Checkout certification tooling
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
       # Call path (from_run): pull this run's signed artifacts for the arch (uploaded by build.yml).
       - name: Download signed mac artifact (from this run)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: macos-${{ matrix.arch }}
           path: mac
@@ -176,6 +186,13 @@ jobs:
             ditto -c -k --keepParent "$app" "$zip"   # repackage the stapled .app over the zip
           done
 
+      # Stapling/repacking changes the shipped bytes. Mount/extract and launch both final artifacts,
+      # and require Gatekeeper assessment before their refreshed hashes can be certified.
+      - name: Smoke test final macOS packages
+        if: steps.gate.outputs.enabled == 'true'
+        timeout-minutes: 10
+        run: node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper
+
       # Stapling repackaged the zip (new bytes), so the build-time feed — written over the PRE-staple
       # zip — now carries a stale sha512/size that would fail the updater's signature check. The build
       # runs the default `latest` channel, so it emits `latest-mac.yml` per arch; drop that stale copy
@@ -216,13 +233,25 @@ jobs:
             process.stdout.write(yml);
           '
 
+      # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
+      # platform certification signal already established by the build job.
+      - name: Refresh macOS certification evidence
+        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs write
+          --platform "macos-${{ matrix.arch }}"
+          --artifact-dir mac
+          --output "mac/certification-macos-${{ matrix.arch }}.json"
+          --package-smoke passed
+          --authenticode not-applicable
+
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the
       # regenerated ${arch}-mac.yml feed, so the publish job's merge-multiple download picks them up.
       # overwrite deletes the prior artifacts of this name in the run. The stale mac blockmap is dropped
       # (v1 does full-zip mac updates), leaving the dmg, zip, and per-arch feed.
       - name: Re-emit stapled artifact (for publish)
         if: steps.gate.outputs.enabled == 'true' && inputs.from_run
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos-${{ matrix.arch }}
           overwrite: true
@@ -231,6 +260,7 @@ jobs:
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
             mac/*-mac.yml
+            mac/certification-*.json
           if-no-files-found: error
 
       # Standalone path: push the stapled dmg/zip + regenerated feed back onto the Release, replacing
@@ -254,7 +284,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for the mac-feed merge script)
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Recompute + upload SHA256SUMS.txt
         env:

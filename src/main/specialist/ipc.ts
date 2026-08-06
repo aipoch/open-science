@@ -4,7 +4,6 @@ import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
-  DeleteSpecialistRequest,
   DuplicateSpecialistRequest,
   CreateSpecialistInput,
   SpecialistListItem,
@@ -19,6 +18,21 @@ import { ProfileService } from './service'
 import { SessionBindingService } from './session-binding'
 import { createLogger } from '../logger'
 import { broadcastToRenderers } from '../renderer-broadcast'
+import type {
+  ContributionTemplateExportResult,
+  SpecialistPackageCandidatePreview,
+  SpecialistPackageInstallRequest,
+  SpecialistPackageInstallResult,
+  SpecialistPackageReport,
+  SpecialistPackageReportSaveResult,
+  SpecialistExportPreview,
+  SpecialistExportRequest,
+  SpecialistExportSaveResult,
+  SpecialistDeleteRequest,
+  SpecialistDeleteResult,
+  SpecialistDeletePreview
+} from '../../shared/specialist-package'
+import type { SpecialistPackageService } from './package/service'
 
 const log = createLogger('specialist:ipc')
 
@@ -26,6 +40,65 @@ type PersistSessionSpecialist = (
   sessionId: string,
   specialistId: string | undefined
 ) => Promise<void>
+
+type PackageImportIpc = {
+  service: Pick<
+    SpecialistPackageService,
+    | 'preview'
+    | 'previewOversizedArchive'
+    | 'install'
+    | 'cancel'
+    | 'dispose'
+    | 'report'
+    | 'previewExport'
+    | 'export'
+    | 'previewSpecialistDelete'
+    | 'deleteSpecialist'
+  >
+  selectArchive: () => Promise<
+    { cancelled: true } | { bytes: Uint8Array } | { tooLarge: true; compressedBytes: number }
+  >
+  saveReport: (report: SpecialistPackageReport) => Promise<SpecialistPackageReportSaveResult>
+  saveExport: (archive: {
+    fileName: string
+    archiveBytes: Uint8Array
+  }) => Promise<SpecialistExportSaveResult>
+}
+
+const isCandidateRequest = (request: unknown): request is SpecialistPackageInstallRequest =>
+  typeof request === 'object' &&
+  request !== null &&
+  Object.keys(request).every((key) => ['candidateToken', 'confirmOverwrite'].includes(key)) &&
+  typeof (request as { candidateToken?: unknown }).candidateToken === 'string' &&
+  Boolean((request as { candidateToken: string }).candidateToken) &&
+  ((request as { confirmOverwrite?: unknown }).confirmOverwrite === undefined ||
+    (request as { confirmOverwrite?: unknown }).confirmOverwrite === true)
+
+const isExportPreviewRequest = (request: unknown): request is { specialistId: string } =>
+  typeof request === 'object' &&
+  request !== null &&
+  Object.keys(request).length === 1 &&
+  typeof (request as { specialistId?: unknown }).specialistId === 'string' &&
+  Boolean((request as { specialistId: string }).specialistId)
+
+const isExportRequest = (request: unknown): request is SpecialistExportRequest =>
+  typeof request === 'object' &&
+  request !== null &&
+  Object.keys(request).every((key) =>
+    ['specialistId', 'expectedRevision', 'includedSkillIds'].includes(key)
+  ) &&
+  Object.keys(request).length === 3 &&
+  typeof (request as { specialistId?: unknown }).specialistId === 'string' &&
+  Number.isInteger((request as { expectedRevision?: unknown }).expectedRevision) &&
+  Array.isArray((request as { includedSkillIds?: unknown }).includedSkillIds) &&
+  (request as { includedSkillIds: unknown[] }).includedSkillIds.every(
+    (id) => typeof id === 'string'
+  )
+
+const rendererOwnerId = (event: unknown): number | undefined => {
+  const id = (event as { sender?: { id?: unknown } } | undefined)?.sender?.id
+  return typeof id === 'number' ? id : undefined
+}
 
 // Broadcasts a catalog-changed event to all renderer windows.
 const broadcastCatalogChanged = (): void => {
@@ -52,7 +125,9 @@ export const registerSpecialistIpcHandlers = (
   // Notifies the runtime that a specialist profile's capabilities changed (skills/connectors/enabled).
   // The runtime reconnects so live sessions re-provision skills and re-apply the updated whitelist on
   // the next turn. Optional so headless/tests can omit it.
-  onProfilesChanged?: () => void
+  onProfilesChanged?: () => void,
+  exportContributionTemplate?: () => Promise<ContributionTemplateExportResult>,
+  packageImport?: PackageImportIpc
 ): void => {
   // Subscribe once so every mutation (create, setEnabled) triggers a broadcast.
   service.subscribe(broadcastCatalogChanged)
@@ -78,6 +153,71 @@ export const registerSpecialistIpcHandlers = (
       }
     }
   )
+
+  if (packageImport) {
+    ipcMainHandle(
+      SPECIALIST_IPC.PREVIEW_EXPORT,
+      async (_event, request: unknown): Promise<SpecialistExportPreview> => {
+        if (!isExportPreviewRequest(request)) throw new Error('Invalid Specialist export preview.')
+        return packageImport.service.previewExport(request.specialistId)
+      }
+    )
+
+    ipcMainHandle(
+      SPECIALIST_IPC.EXPORT,
+      async (_event, request: unknown): Promise<SpecialistExportSaveResult> => {
+        if (!isExportRequest(request)) throw new Error('Invalid Specialist export request.')
+        const archive = await packageImport.service.export(request)
+        return packageImport.saveExport(archive)
+      }
+    )
+
+    ipcMainHandle(
+      SPECIALIST_IPC.SELECT_PACKAGE,
+      async (
+        event,
+        request: unknown
+      ): Promise<{ cancelled: true } | SpecialistPackageCandidatePreview> => {
+        if (request !== undefined)
+          throw new Error('Package selection does not accept renderer data.')
+        const ownerId = rendererOwnerId(event)
+        packageImport.service.dispose(ownerId)
+        const selected = await packageImport.selectArchive()
+        if ('cancelled' in selected) return selected
+        const sender = (
+          event as { sender?: { once?: (name: string, listener: () => void) => void } }
+        )?.sender
+        sender?.once?.('destroyed', () => packageImport.service.dispose(ownerId))
+        return 'tooLarge' in selected
+          ? packageImport.service.previewOversizedArchive(selected.compressedBytes, ownerId)
+          : packageImport.service.preview(selected.bytes, ownerId)
+      }
+    )
+
+    ipcMainHandle(
+      SPECIALIST_IPC.INSTALL_PACKAGE,
+      async (event, request: unknown): Promise<SpecialistPackageInstallResult> => {
+        if (!isCandidateRequest(request)) return { status: 'failed', code: 'candidate-invalid' }
+        return packageImport.service.install(request, rendererOwnerId(event))
+      }
+    )
+
+    ipcMainHandle(SPECIALIST_IPC.CANCEL_PACKAGE, async (event, request: unknown): Promise<void> => {
+      if (!isCandidateRequest(request)) throw new Error('Invalid Specialist package candidate.')
+      packageImport.service.cancel(request.candidateToken, rendererOwnerId(event))
+    })
+
+    ipcMainHandle(
+      SPECIALIST_IPC.SAVE_PACKAGE_REPORT,
+      async (event, request: unknown): Promise<SpecialistPackageReportSaveResult> => {
+        if (!isCandidateRequest(request)) return { saved: false }
+        const report = packageImport.service.report(request.candidateToken, rendererOwnerId(event))
+        if (!report) return { saved: false }
+        const result = await packageImport.saveReport(report)
+        return { saved: result.saved }
+      }
+    )
+  }
 
   ipcMainHandle(
     SPECIALIST_IPC.UPDATE,
@@ -111,11 +251,29 @@ export const registerSpecialistIpcHandlers = (
   )
 
   ipcMainHandle(
+    SPECIALIST_IPC.PREVIEW_DELETE,
+    async (_event, request: unknown): Promise<SpecialistDeletePreview> => {
+      if (
+        !packageImport ||
+        !request ||
+        typeof request !== 'object' ||
+        Object.keys(request).some((key) => key !== 'id') ||
+        typeof (request as { id?: unknown }).id !== 'string'
+      ) {
+        throw new Error('Invalid Specialist delete preview request.')
+      }
+      return packageImport.service.previewSpecialistDelete(request as { id: string })
+    }
+  )
+
+  ipcMainHandle(
     SPECIALIST_IPC.DELETE,
-    async (_event, request: DeleteSpecialistRequest): Promise<void> => {
+    async (_event, request: SpecialistDeleteRequest): Promise<SpecialistDeleteResult> => {
       try {
+        if (packageImport) return await packageImport.service.deleteSpecialist(request)
         await service.delete(request.id, request.expectedRevision)
         onProfilesChanged?.()
+        return { status: 'deleted' }
       } catch (error) {
         log.error('specialist:delete failed', { error })
         throw error
@@ -128,6 +286,10 @@ export const registerSpecialistIpcHandlers = (
     async (_event, request: DuplicateSpecialistRequest): Promise<CreateSpecialistInput> =>
       service.duplicate(request.id)
   )
+
+  if (exportContributionTemplate) {
+    ipcMainHandle(SPECIALIST_IPC.EXPORT_CONTRIBUTION_TEMPLATE, exportContributionTemplate)
+  }
 
   // Session switching. This handler is a named seam: the future host.agents.switch() SDK (issue 08)
   // will resolve name→UUID and call this same channel, not a parallel path.

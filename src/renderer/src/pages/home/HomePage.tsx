@@ -9,7 +9,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { DropdownMenu } from 'radix-ui'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
@@ -91,6 +91,8 @@ const HomePage = ({
   const sessions = useSessionStore((state) => state.sessions)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
+  const pendingProjectCreation = useNavigationStore((state) => state.pendingProjectCreation)
+  const consumeProjectCreation = useNavigationStore((state) => state.consumeProjectCreation)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
@@ -151,6 +153,17 @@ const HomePage = ({
     setDescriptionDraft('')
     setFormError(undefined)
   }
+
+  useEffect(() => {
+    if (!pendingProjectCreation) return
+    queueMicrotask(() => {
+      setFormState({ mode: 'create' })
+      setNameDraft('')
+      setDescriptionDraft('')
+      setFormError(undefined)
+      consumeProjectCreation()
+    })
+  }, [consumeProjectCreation, pendingProjectCreation])
 
   const openEditDialog = (project: Project): void => {
     setFormState({ mode: 'edit', projectId: project.id })

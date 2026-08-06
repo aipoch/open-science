@@ -30,6 +30,29 @@ describe('preview workbench store', () => {
     })
   })
 
+  it('owns one transient file dialog independent of preview tabs', () => {
+    const item = {
+      id: 'artifact-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      type: 'file' as const,
+      title: 'sin.png',
+      path: 'artifact-version:project-a/session-1/artifact-1/version-1',
+      format: 'image' as const,
+      name: 'sin.png'
+    }
+
+    usePreviewWorkbenchStore.getState().openFileDialog(item)
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      fileDialogItem: item,
+      items: []
+    })
+
+    usePreviewWorkbenchStore.getState().closeFileDialog()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+  })
+
   it('stores file preview items in one ordered list', () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem({
       id: 'file:session-1:/workspace/project/report.md',
@@ -391,9 +414,20 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
 
     usePreviewWorkbenchStore.getState().setToolItemExpanded(PROJECT_FILES_PREVIEW_ID)
+    usePreviewWorkbenchStore.getState().openFileDialog({
+      id: 'artifact-1',
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      type: 'file',
+      title: 'result.png',
+      path: 'artifact-version:project-a/session-1/artifact-1/version-1',
+      format: 'image',
+      name: 'result.png'
+    })
     usePreviewWorkbenchStore.getState().removeItem(PROJECT_FILES_PREVIEW_ID)
 
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
   })
 
   it('clears the expanded tool item when its session is removed', () => {

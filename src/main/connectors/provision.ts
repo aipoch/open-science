@@ -4,6 +4,7 @@ import { ALL_CONNECTOR_IDS } from './registry'
 import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
+import { customConnectorSlug } from '../../shared/custom-connector'
 
 // Whether an `mcp-<x>` directory's suffix names a bundled connector — CASE-INSENSITIVELY. This
 // matters for cleanup ownership: an older version could have left a case-variant dir like
@@ -61,21 +62,10 @@ export async function syncConnectorSkillDocs(
 
 export type CustomServerListTools = (server: StoredCustomMcpServer) => Promise<CustomSkillDocTool[]>
 
-// A custom server's skill dir is keyed on its immutable UUID id, NEVER its user-facing name. The
-// name is only validated non-empty upstream, so a name like `../evil` would let SKILL.md escape
-// skillsDir, and a name equal to a bundled connector id (e.g. `chemistry`) would clobber the
-// built-in mcp-chemistry doc. The id is a randomUUID (safe token, never a bundled id); this guard
-// additionally rejects any id that isn't a safe path segment — defense against a tampered
-// settings.json — so a hand-crafted id can't reintroduce traversal or a bundled-id collision.
-//
-// The safe alphabet is LOWERCASE-only: a randomUUID is already lowercase, and this closes a
-// case-folding escape — on a case-insensitive filesystem (default macOS/Windows) an id like
-// `Chemistry` would otherwise pass a case-sensitive reserved-id check yet write to the same
-// `mcp-chemistry` directory as the built-in, and two ids differing only in case would collide.
-const isSafeCustomServerId = (id: string): boolean =>
-  /^[a-z0-9_-]+$/.test(id) && !ALL_CONNECTOR_IDS.includes(id)
+const isSafeCustomServerSlug = (slug: string): boolean =>
+  /^[a-z0-9-]+$/.test(slug) && !ALL_CONNECTOR_IDS.includes(slug)
 
-// Writes skills/mcp-<id>/SKILL.md for enabled custom MCP servers, sourced from the server's
+// Writes skills/mcp-<slug>/SKILL.md for enabled custom MCP servers, sourced from the server's
 // live listTools() schema rather than a bundled descriptor table (§3.4). Cleanup mirrors
 // syncConnectorSkillDocs: it only removes ids that are NOT known bundled connector ids, so
 // the two sync passes never delete each other's directories even when run against the same dir.
@@ -85,11 +75,13 @@ export async function syncCustomServerSkillDocs(
   listTools: CustomServerListTools
 ): Promise<void> {
   await mkdir(skillsDir, { recursive: true })
-  const safeServers = servers.filter((s) => isSafeCustomServerId(s.id))
-  const enabledIds = new Set(safeServers.map((s) => s.id))
-  for (const server of safeServers) {
+  const safeServers = servers
+    .map((server) => ({ server, slug: customConnectorSlug(server) }))
+    .filter(({ slug }) => isSafeCustomServerSlug(slug))
+  const enabledSlugs = new Set(safeServers.map(({ slug }) => slug))
+  for (const { server, slug } of safeServers) {
     const tools = await listTools(server)
-    const dir = join(skillsDir, `mcp-${server.id}`)
+    const dir = join(skillsDir, `mcp-${slug}`)
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
   }
@@ -99,7 +91,7 @@ export async function syncCustomServerSkillDocs(
     // A bundled-connector dir (case-insensitive) belongs to syncConnectorSkillDocs — never delete it
     // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.
     if (!m || namesBundledConnector(m[1])) continue
-    if (!enabledIds.has(m[1])) {
+    if (!enabledSlugs.has(m[1])) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }

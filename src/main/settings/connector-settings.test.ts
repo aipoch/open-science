@@ -148,6 +148,7 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toHaveLength(1)
     const added = snapshot.customServers[0]
     expect(added).toMatchObject({
+      slug: 'my-mem',
       name: 'my-mem',
       transport: 'stdio',
       command: 'npx',
@@ -159,8 +160,153 @@ describe('ConnectorSettingsModule', () => {
     snapshot = await service.setCustomServerEnabled({ id: added.id, enabled: false })
     expect(snapshot.customServers[0].enabled).toBe(false)
 
+    await repository.setConnectorAutoAllow(added.slug, true)
+    await repository.setToolPolicy(`${added.slug}/lookup`, true, false)
     snapshot = await service.removeCustomServer({ id: added.id })
     expect(snapshot.customServers).toEqual([])
+    const afterRemoval = (await repository.getSettings()).connectors
+    expect(afterRemoval?.autoAllowIds).not.toContain(added.slug)
+    expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
+  })
+
+  it('rejects duplicate and built-in custom connector names', async () => {
+    await service.addCustomServer({
+      name: 'example-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+
+    await expect(
+      service.addCustomServer({
+        name: ' Example-Server ',
+        transport: 'stdio',
+        command: 'another-mcp'
+      })
+    ).rejects.toThrow('already exists')
+    await expect(
+      service.addCustomServer({ name: 'Chemistry', transport: 'stdio', command: 'example-mcp' })
+    ).rejects.toThrow('reserved by a built-in connector')
+  })
+
+  it('separates the display name from the immutable host.mcp Connector ID', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'Example OAuth E2E',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: {}
+    })
+
+    expect(snapshot.customServers[0]).toMatchObject({
+      name: 'Example OAuth E2E',
+      slug: 'example-oauth-e2e'
+    })
+    await expect(
+      service.addCustomServer({
+        name: 'Another display name',
+        slug: 'example-oauth-e2e',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('already exists')
+  })
+
+  it('rejects IDs and names that overlap an installed Connector legacy alias', async () => {
+    const existing = await service.addCustomServer({
+      name: 'legacy-route',
+      slug: 'stable-route',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+
+    await expect(
+      service.addCustomServer({
+        name: 'Different name',
+        slug: 'legacy-route',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector alias')
+    await expect(
+      service.addCustomServer({
+        name: 'Another name',
+        slug: existing.customServers[0].id,
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector alias')
+    await expect(
+      service.addCustomServer({
+        name: 'stable-route',
+        slug: 'new-route',
+        transport: 'stdio',
+        command: 'example-mcp'
+      })
+    ).rejects.toThrow('conflicts with an existing Connector identity')
+  })
+
+  it('fails closed when a legacy Connector derives a bundled route', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-reserved-route',
+      name: 'Chemistry!',
+      transport: 'stdio',
+      enabled: true,
+      command: 'legacy-command'
+    })
+
+    const snapshot = await service.listConnectors()
+    expect(snapshot.customServers[0]).toMatchObject({
+      slug: 'chemistry',
+      enabled: false,
+      availability: 'unavailable'
+    })
+  })
+
+  it('fails closed when legacy Connectors derive the same route', async () => {
+    await repository.addCustomServer({
+      id: 'legacy-duplicate-a',
+      name: 'Duplicate MCP',
+      transport: 'stdio',
+      enabled: true,
+      command: 'first-command'
+    })
+    await repository.addCustomServer({
+      id: 'legacy-duplicate-b',
+      name: 'Duplicate-MCP!',
+      transport: 'stdio',
+      enabled: true,
+      command: 'second-command'
+    })
+
+    const snapshot = await service.listConnectors()
+    expect(snapshot.customServers).toHaveLength(2)
+    expect(snapshot.customServers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ enabled: false, availability: 'unavailable' }),
+        expect.objectContaining({ enabled: false, availability: 'unavailable' })
+      ])
+    )
+  })
+
+  it('exports only credential names and validates imports against installed connectors', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'example-export',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@example/research-mcp'],
+      env: { API_TOKEN: 'must-not-export' }
+    })
+
+    const result = await service.buildCustomServerTemplateExport(snapshot.customServers[0].id)
+    expect(result.preview).toMatchObject({ ready: true, connectorId: snapshot.customServers[0].id })
+    expect(result.contents).toContain('API_TOKEN')
+    expect(result.contents).not.toContain('must-not-export')
+    expect(result.contents).not.toContain(snapshot.customServers[0].id)
+
+    const imported = await service.previewCustomServerTemplateImport(result.contents!)
+    expect(imported.ready).toBe(false)
+    expect(imported.diagnostics.map((item) => item.code)).toContain(
+      'connector-template.duplicate-name'
+    )
   })
 
   it('adds a remote (streamable_http) custom server with a url', async () => {
@@ -175,6 +321,132 @@ describe('ConnectorSettingsModule', () => {
       transport: 'streamable_http',
       url: 'https://example.com/mcp'
     })
+  })
+
+  it('stores OAuth configuration publicly and OAuth state encrypted', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'oauth-x',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      oauth: {
+        authorizationServerUrl: 'https://example.com/oauth',
+        scopes: ['openid', 'profile']
+      }
+    })
+    const id = snapshot.customServers[0].id
+    expect(snapshot.customServers[0].enabled).toBe(false)
+    expect(snapshot.customServers[0].oauth).toEqual({
+      authorizationServerUrl: 'https://example.com/oauth',
+      scopes: ['openid', 'profile'],
+      hasTokens: false
+    })
+    expect(snapshot.customServers[0].availability).toBe('unauthenticated')
+    await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
+
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+    })
+    const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
+    expect(storedJson).not.toContain('oauth-access')
+    expect(storedJson).toContain('oauthRef')
+
+    const resolved = (await service.getConnectors())?.customMcpServers?.[0]
+    expect(resolved?.oauthState?.tokens?.access_token).toBe('oauth-access')
+    const connected = (await service.listConnectors()).customServers[0]
+    expect(connected.oauth?.hasTokens).toBe(true)
+    expect(connected.availability).toBeUndefined()
+    expect(connected.enabled).toBe(false)
+
+    const enabled = await service.setCustomServerEnabled({ id, enabled: true })
+    expect(enabled.customServers[0].enabled).toBe(true)
+  })
+
+  it('clears OAuth credentials when the remote endpoint changes', async () => {
+    const added = await service.addCustomServer({
+      name: 'oauth-endpoint',
+      transport: 'streamable_http',
+      url: 'https://one.example/mcp',
+      oauth: { scopes: ['openid'] }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'endpoint-token', token_type: 'Bearer' }
+    })
+    await service.setCustomServerEnabled({ id, enabled: true })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'streamable_http',
+      url: 'https://two.example/mcp'
+    })
+
+    expect(updated.customServers[0]).toMatchObject({
+      url: 'https://two.example/mcp',
+      enabled: false,
+      availability: 'unauthenticated',
+      oauth: { hasTokens: false }
+    })
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauthRef).toBeUndefined()
+  })
+
+  it('clears OAuth when switching a remote Connector to local transport', async () => {
+    const added = await service.addCustomServer({
+      name: 'oauth-to-local',
+      transport: 'streamable_http',
+      url: 'https://mcp.example.test',
+      oauth: { scopes: ['openid'] }
+    })
+    const id = added.customServers[0].id
+    await service.saveCustomServerOAuthState(id, {
+      tokens: { access_token: 'remote-token', token_type: 'Bearer' }
+    })
+
+    const updated = await service.updateCustomServer({
+      id,
+      transport: 'stdio',
+      command: 'local-command'
+    })
+
+    expect(updated.customServers[0]).toMatchObject({
+      transport: 'stdio',
+      command: 'local-command'
+    })
+    expect(updated.customServers[0].oauth).toBeUndefined()
+    const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
+    expect(stored?.oauth).toBeUndefined()
+    expect(stored?.oauthRef).toBeUndefined()
+  })
+
+  it('keeps OAuth and static-header authentication mutually exclusive', async () => {
+    await expect(
+      service.addCustomServer({
+        name: 'invalid-auth',
+        transport: 'streamable_http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer stale' },
+        oauth: { scopes: ['openid'] }
+      })
+    ).rejects.toThrow('OAuth and static headers cannot be configured together')
+
+    const added = await service.addCustomServer({
+      name: 'switch-auth',
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      headers: { Authorization: 'Bearer static' }
+    })
+    await service.updateCustomServer({
+      id: added.customServers[0].id,
+      transport: 'streamable_http',
+      url: 'https://example.com/mcp',
+      headers: {},
+      oauth: { scopes: ['openid'] }
+    })
+
+    const stored = (await service.getConnectors())?.customMcpServers?.[0]
+    expect(stored?.oauth).toEqual({ scopes: ['openid'] })
+    expect(stored?.headers).toBeUndefined()
+    expect(stored?.headerRefs).toBeUndefined()
   })
 
   it('rejects an invalid custom server (stdio without a command)', async () => {

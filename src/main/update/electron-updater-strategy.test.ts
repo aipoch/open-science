@@ -1,8 +1,15 @@
 import { EventEmitter } from 'node:events'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { Logger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
+import {
+  clearApplicationShutdownTrigger,
+  currentApplicationShutdownTrigger
+} from '../application-shutdown-trigger'
+
+afterEach(() => clearApplicationShutdownTrigger())
 
 // The default autoUpdater is never exercised here (every test injects a FakeUpdater); mock the module
 // so importing the strategy doesn't pull a real Electron runtime into the test process. A stub
@@ -67,6 +74,18 @@ const offlineFetch = (): typeof fetch =>
     throw new Error('no network in test')
   }) as unknown as typeof fetch
 
+const createLogSpy = (): Logger => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+})
+
+const diagnosticRecords = (log: Logger): Record<string, unknown>[] =>
+  (['debug', 'info', 'warn', 'error'] as const).flatMap((level) =>
+    vi.mocked(log[level]).mock.calls.map(([, data]) => data as Record<string, unknown>)
+  )
+
 describe('ElectronUpdaterStrategy', () => {
   it('disables auto download/install on construction', () => {
     const updater = new FakeUpdater()
@@ -94,16 +113,48 @@ describe('ElectronUpdaterStrategy', () => {
     )
   })
 
+  it('records a completed in-place check without release notes or feed URLs', async () => {
+    const updater = new FakeUpdater()
+    const log = createLogSpy()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch(),
+      manifestUrl: 'https://diagnostic-private.example/version.json?token=secret',
+      log
+    })
+
+    await strategy.check()
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-check',
+          outcome: 'completed',
+          result: 'available'
+        })
+      ])
+    )
+    const serialized = JSON.stringify(records)
+    expect(serialized).not.toContain('diagnostic-private')
+    expect(serialized).not.toContain('notes')
+  })
+
   it('maps download → progress then ready', async () => {
     const broadcast = vi.fn()
     const updater = new FakeUpdater()
+    const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast,
-      fetchImpl: offlineFetch()
+      fetchImpl: offlineFetch(),
+      log
     })
     await strategy.check()
+    vi.mocked(log.info).mockClear()
     const status = await strategy.download()
     expect(broadcast).toHaveBeenCalledWith('update:progress', {
       phase: 'downloading',
@@ -114,6 +165,50 @@ describe('ElectronUpdaterStrategy', () => {
       attempt: 0
     })
     expect(status.state).toBe('ready')
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'completed',
+          result: 'ready'
+        })
+      ])
+    )
+  })
+
+  it('records a failed in-place download without the provider error message', async () => {
+    const updater = new FakeUpdater()
+    updater.runDownload = async () => {
+      throw new Error('private updater diagnostic detail')
+    }
+    const log = createLogSpy()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch(),
+      log
+    })
+    await strategy.check()
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      vi.mocked(log[level]).mockClear()
+    }
+
+    const status = await strategy.download()
+
+    expect(status.error).toBe('private updater diagnostic detail')
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'failed',
+          phase: 'transfer',
+          errorCategory: 'error'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('private updater diagnostic detail')
   })
 
   it('cancel aborts an in-flight download and resets the status to available', async () => {
@@ -126,13 +221,18 @@ describe('ElectronUpdaterStrategy', () => {
       await new Promise<void>((resolve) => (release = resolve))
       if (token?.cancelled) throw new Error('cancelled')
     }
+    const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
-      fetchImpl: offlineFetch()
+      fetchImpl: offlineFetch(),
+      log
     })
     await strategy.check()
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      vi.mocked(log[level]).mockClear()
+    }
 
     const downloading = strategy.download()
     const cancelled = await strategy.cancel()
@@ -144,6 +244,15 @@ describe('ElectronUpdaterStrategy', () => {
     const final = await downloading
     expect(final.state).toBe('available')
     expect(final.error).toBeUndefined()
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-download',
+          outcome: 'cancelled',
+          reason: 'user'
+        })
+      ])
+    )
   })
 
   it('cancel is a no-op when nothing is downloading', async () => {
@@ -243,28 +352,72 @@ describe('ElectronUpdaterStrategy', () => {
   it('surfaces errors as status error', async () => {
     const updater = new FakeUpdater()
     updater.checkForUpdates = vi.fn(async () => {
-      updater.emit('error', new Error('boom'))
+      updater.emit('error', new Error('raw provider diagnostic detail'))
     })
+    const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
-      broadcast: vi.fn()
+      broadcast: vi.fn(),
+      log
     })
     const status = await strategy.check()
     expect(status.state).toBe('error')
-    expect(status.error).toBe('boom')
+    expect(status.error).toBe('raw provider diagnostic detail')
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-check',
+          outcome: 'failed',
+          phase: 'query-provider',
+          errorCategory: 'error'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('raw provider diagnostic detail')
   })
 
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
+    const log = createLogSpy()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      log
+    })
+    await strategy.apply()
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(currentApplicationShutdownTrigger()).toBe('update')
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          outcome: 'completed',
+          result: 'handoff-requested'
+        })
+      ])
+    )
+  })
+
+  it('rolls back the update shutdown trigger when quitAndInstall throws', async () => {
+    const updater = new FakeUpdater()
+    updater.quitAndInstall.mockImplementation(() => {
+      throw new Error('installer unavailable')
+    })
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn()
     })
-    await strategy.apply()
+
+    const status = await strategy.apply()
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(status.state).toBe('error')
+    expect(currentApplicationShutdownTrigger()).toBe('quit')
   })
 
   it('apply runs the install gate before quitAndInstall when the teardown is clean', async () => {
@@ -283,20 +436,190 @@ describe('ElectronUpdaterStrategy', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
   })
 
+  it('reports preparation immediately and ignores a repeat apply while teardown is pending', async () => {
+    const updater = new FakeUpdater()
+    const broadcast = vi.fn()
+    let finishGate: (() => void) | undefined
+    const gate = vi.fn(
+      () =>
+        new Promise<{ completed: true; reaped: true }>((resolve) => {
+          finishGate = () => resolve({ completed: true, reaped: true })
+        })
+    )
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast,
+      installGate: gate
+    })
+
+    const applying = strategy.apply()
+    expect(strategy.getStatus().state).toBe('applying')
+    expect(broadcast).toHaveBeenCalledWith(
+      'update:status',
+      expect.objectContaining({ state: 'applying' })
+    )
+
+    await strategy.apply()
+    expect(gate).toHaveBeenCalledTimes(1)
+
+    updater.emit('checking-for-update')
+    await strategy.check()
+    await strategy.download()
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    expect(strategy.getStatus().state).toBe('applying')
+
+    finishGate?.()
+    await applying
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
   it('apply refuses to install and reports an error when the teardown times out', async () => {
     const updater = new FakeUpdater()
     const gate = vi.fn(async () => ({ completed: false, reaped: false }))
+    const log = createLogSpy()
     const strategy = new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       broadcast: vi.fn(),
-      installGate: gate
+      installGate: gate,
+      log
     })
 
     const status = await strategy.apply()
 
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     expect(status.state).toBe('error')
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          outcome: 'failed',
+          phase: 'install-gate',
+          reason: 'install-gate-refused',
+          gateCompleted: false,
+          processTreesReaped: false
+        })
+      ])
+    )
+  })
+
+  it('records a thrown install-gate failure without its error message', async () => {
+    const updater = new FakeUpdater()
+    const log = createLogSpy()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: () => Promise.reject(new Error('private teardown diagnostic detail')),
+      log
+    })
+
+    const status = await strategy.apply()
+
+    expect(status.state).toBe('error')
+
+    const records = diagnosticRecords(log)
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          outcome: 'failed',
+          phase: 'install-gate',
+          errorCategory: 'error'
+        })
+      ])
+    )
+    expect(JSON.stringify(records)).not.toContain('private teardown diagnostic detail')
+  })
+
+  it('ignores stale updater errors during preparation', async () => {
+    const updater = new FakeUpdater()
+    let finishGate: (() => void) | undefined
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: () =>
+        new Promise((resolve) => {
+          finishGate = () => resolve({ completed: true, reaped: true })
+        })
+    })
+
+    const applying = strategy.apply()
+    updater.emit('error', new Error('stale download failure'))
+    expect(strategy.getStatus().state).toBe('applying')
+    finishGate?.()
+    const status = await applying
+
+    expect(status.state).toBe('applying')
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores an actionable error after the installer handoff starts', async () => {
+    const updater = new FakeUpdater()
+    const log = createLogSpy()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      log
+    })
+
+    await strategy.apply()
+    expect(currentApplicationShutdownTrigger()).toBe('update')
+    updater.emit('error', new Error('installer failed'))
+
+    expect(strategy.getStatus().state).toBe('error')
+    expect(strategy.getStatus().error).toBe('installer failed')
+    expect(currentApplicationShutdownTrigger()).toBe('quit')
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-installer',
+          outcome: 'failed',
+          phase: 'handoff',
+          errorCategory: 'error'
+        })
+      ])
+    )
+  })
+
+  it('restores an actionable error when quitAndInstall throws', async () => {
+    const updater = new FakeUpdater()
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('installer launch failed')
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn()
+    })
+
+    const status = await strategy.apply()
+
+    expect(status.state).toBe('error')
+    expect(status.error).toBe('installer launch failed')
+  })
+
+  it('restores an actionable error when the install gate throws', async () => {
+    const updater = new FakeUpdater()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      fetchImpl: offlineFetch(),
+      installGate: vi.fn(async () => Promise.reject(new Error('teardown failed')))
+    })
+    await strategy.check()
+
+    const status = await strategy.apply()
+
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(status.state).toBe('error')
+    expect(status.latest).toBe('0.3.0')
+    expect(status.error).toContain('Please try again')
   })
 
   it('apply refuses to install when the teardown completed but a tree was not cleanly reaped', async () => {
