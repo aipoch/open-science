@@ -447,6 +447,10 @@ const createApplicationModules = async (
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
+  const notebookActivityRef: {
+    current:
+      { getActiveNotebookSessions(): { projectName: string; sessionId: string }[] } | undefined
+  } = { current: undefined }
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
   // is essential: separate coordinators would have independent queues and recovery gates.
@@ -492,20 +496,26 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     permissionGrantRegistry
   )
+  const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
+    detectActiveSessions({
+      runtime: {
+        getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
+      },
+      notebook: {
+        getActiveNotebookSessions: () =>
+          notebookActivityRef.current?.getActiveNotebookSessions() ?? []
+      }
+    })
   const archiveCoordinator = new ArchiveCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
     {
       isSessionBusy: (projectId, sessionId) =>
-        runtimeRef.current
-          ?.getActivePromptSessions()
-          .some(
-            (session) => session.projectName === projectId && session.sessionId === sessionId
-          ) ?? false,
+        detectArchiveBlockingSessions().some(
+          (session) => session.projectId === projectId && session.sessionId === sessionId
+        ),
       isProjectBusy: (projectId) =>
-        runtimeRef.current
-          ?.getActivePromptSessions()
-          .some((session) => session.projectName === projectId) ?? false,
+        detectArchiveBlockingSessions().some((session) => session.projectId === projectId),
       liveSessionProjectId: (sessionId) => runtimeRef.current?.liveSessionProjectId(sessionId)
     }
   )
@@ -602,6 +612,7 @@ const createApplicationModules = async (
     commands: notebookCommands,
     localRpc: notebookLocalRpc
   } = notebookApplication
+  notebookActivityRef.current = notebookService
 
   // Builtins are validated once at startup from read-only repository resources. Package imports use
   // the same repository while keeping their dynamic Connector/custom-Skill catalog separate.

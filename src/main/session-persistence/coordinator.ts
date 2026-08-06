@@ -141,7 +141,7 @@ type ArtifactStorageReconciler = {
 
 type SessionDeletionHandlers = {
   commit(sessionIds: string[]): Promise<void>
-  reconcile(existingSessionIds: string[]): Promise<void>
+  reconcile(existingSessionIds: string[], archivedSessionIds: string[]): Promise<void>
 }
 
 const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
@@ -575,15 +575,20 @@ class SessionPersistenceCoordinator {
       }
 
       let degradedReconciliationCount = 0
-      operation.phase('reconcile-unread-deletions')
+      operation.phase('reconcile-unread-sessions')
       try {
-        await this.sessionDeletionHandlers?.reconcile(sessions.map((session) => session.id))
+        await this.sessionDeletionHandlers?.reconcile(
+          sessions.map((session) => session.id),
+          sessions
+            .filter((session) => session.archivedAt !== undefined)
+            .map((session) => session.id)
+        )
       } catch (error) {
         degradedReconciliationCount += 1
         // Unread metadata is a recoverable projection and must not block Session hydration.
-        emitRecoverableDiagnostic(this.log, 'unread deletion reconciliation failed', {
+        emitRecoverableDiagnostic(this.log, 'unread Session reconciliation failed', {
           operation: 'session-hydration',
-          phase: 'reconcile-unread-deletions',
+          phase: 'reconcile-unread-sessions',
           outcome: 'degraded',
           ...diagnosticErrorFields(error)
         })
