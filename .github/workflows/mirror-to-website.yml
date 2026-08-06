@@ -59,6 +59,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CURRENT_TAG: ${{ steps.ref.outputs.tag }}
         run: |
+          set -euo pipefail
+          blockmap_index="$RUNNER_TEMP/historical-windows-blockmaps.tsv"
+          gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | . as $release | select($release.tag_name | startswith("v")) | .assets[] | select(.name | test("-win-x64-setup\\.exe\\.blockmap$"; "i")) | [$release.tag_name, (.id | tostring), .name] | @tsv' \
+            > "$blockmap_index"
+
           while IFS=$'\t' read -r tag asset_id name; do
             [ "$tag" = "$CURRENT_TAG" ] && continue
             version="${tag#v}"
@@ -73,12 +81,7 @@ jobs:
               -H "Accept: application/octet-stream" \
               "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$target"
             gzip -t "$target"
-          done < <(
-            gh api --paginate \
-              -H "Accept: application/vnd.github+json" \
-              "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq '.[] | select(.draft == false and .prerelease == false) | . as $release | select($release.tag_name | startswith("v")) | .assets[] | select(.name | test("-win-x64-setup\\.exe\\.blockmap$"; "i")) | [$release.tag_name, (.id | tostring), .name] | @tsv'
-          )
+          done < "$blockmap_index"
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
