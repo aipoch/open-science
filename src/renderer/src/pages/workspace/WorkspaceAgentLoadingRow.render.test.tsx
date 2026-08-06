@@ -50,7 +50,7 @@ describe('WorkspaceAgentLoadingRow', () => {
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
     expect(container.textContent).toContain('0:00')
-    expect(container.textContent).toContain('thinking')
+    expect(container.textContent).toContain('Thinking')
     const indicator = container.querySelector('[data-testid="open-science-thinking-indicator"]')
     expect(indicator).not.toBeNull()
     expect(
@@ -62,7 +62,7 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(indicator?.classList.contains('text-text-300')).toBe(true)
     const status = container.querySelector('[role="status"]')
     const thinkingLabel = Array.from(status?.querySelectorAll('span') ?? []).find(
-      (element) => element.textContent === '· thinking'
+      (element) => element.textContent === 'Thinking'
     )
     expect(thinkingLabel?.getAttribute('aria-hidden')).toBeNull()
     expect(container.textContent).not.toContain('taking longer than usual')
@@ -150,8 +150,9 @@ describe('WorkspaceAgentLoadingRow', () => {
     seedRunningSession(45_000, 'retrying request…')
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="interacting-with-tools" />))
 
-    expect(container.textContent).toContain('interacting with tools')
-    expect(container.textContent).not.toContain('thinking')
+    expect(container.textContent).toContain('Interacting with tools')
+    expect(container.textContent).not.toContain('Thinking')
+    expect(container.textContent).not.toContain('· Interacting with tools')
     expect(container.textContent).not.toContain('0:00')
     expect(container.textContent).not.toContain('taking longer than usual')
     expect(container.textContent).not.toContain('retrying request…')

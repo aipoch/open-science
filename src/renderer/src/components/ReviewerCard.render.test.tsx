@@ -76,16 +76,24 @@ afterEach(() => {
 })
 
 describe('ReviewerCard — running state', () => {
-  it('mounts the branded indicator only while the review is running', async () => {
+  it('renders only the transparent branded status row while the review is running', async () => {
     const runningReview = makeReview({ lifecycle: 'running', outcome: null })
     await act(async () => {
       root.render(<ReviewerCard review={runningReview} />)
     })
 
-    expect(container.textContent).toContain('Reviewing…')
+    const runningState = container.querySelector('[data-testid="reviewer-running-state"]')
+    expect(runningState).not.toBeNull()
+    expect(runningState?.textContent).toBe('Reviewing...')
+    expect(runningState?.className).toContain('px-0')
+    expect(runningState?.className).not.toContain('px-3')
+    expect(runningState?.className).not.toMatch(/\bbg-|\bborder(?:-|\b)/)
     expect(
       container.querySelector('[data-testid="open-science-thinking-indicator"]')
     ).not.toBeNull()
+    expect(container.querySelector('[data-testid="reviewer-card"]')).toBeNull()
+    expect(container.querySelector('button')).toBeNull()
+    expect(container.textContent).not.toContain('Reviewer')
 
     await act(async () => {
       root.render(
@@ -94,7 +102,60 @@ describe('ReviewerCard — running state', () => {
     })
 
     expect(container.textContent).toContain('No issues found')
+    expect(container.querySelector('[data-testid="reviewer-running-state"]')).toBeNull()
+    expect(container.querySelector('[data-testid="reviewer-card"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="open-science-thinking-indicator"]')).toBeNull()
+  })
+})
+
+describe('ReviewerCard — borderless grayscale hierarchy', () => {
+  it('uses grayscale surfaces without borders for completed review content', async () => {
+    const review = makeReview({
+      outcome: 'flagged',
+      stale: true,
+      checks: [makeCheck({ reflagCount: 1 })]
+    })
+    await act(async () => {
+      root.render(
+        <ReviewerCard
+          review={review}
+          defaultExpanded
+          onGoToTranscript={vi.fn()}
+          onRerun={vi.fn().mockResolvedValue(true)}
+        />
+      )
+    })
+
+    const card = container.querySelector('[data-testid="reviewer-card"]')
+    const item = container.querySelector('[data-testid="reviewer-finding-card"]')
+    const badge = container.querySelector('[data-testid="reviewer-item-badge"]')
+    const model = container.querySelector('[data-testid="reviewer-model-pill"]')
+    const staleNotice = container.querySelector('[data-testid="reviewer-stale-notice"]')
+
+    expect(card?.className).toContain('bg-bg-200')
+    expect(item?.className).toContain('bg-bg-000')
+    expect(badge?.className).toContain('bg-bg-200')
+    expect(model?.className).toContain('bg-bg-200')
+    expect(staleNotice?.className).toContain('bg-bg-300')
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('[class]')).filter((element) =>
+        (element.getAttribute('class') ?? '')
+          .split(/\s+/)
+          .some((className) => /^border(?:-|$)/.test(className))
+      )
+    ).toEqual([])
+  })
+
+  it('keeps expanded error details borderless', async () => {
+    const review = makeReview({ lifecycle: 'error', outcome: null, errorMessage: 'Review failed' })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} defaultExpanded />)
+    })
+
+    const errorDetail = container.querySelector('[data-testid="reviewer-error-detail"]')
+    expect(errorDetail).not.toBeNull()
+    expect(errorDetail?.className).toContain('bg-bg-000')
+    expect(errorDetail?.className).not.toMatch(/\bborder(?:-|\b)/)
   })
 })
 

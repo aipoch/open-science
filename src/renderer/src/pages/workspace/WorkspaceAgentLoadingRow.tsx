@@ -50,7 +50,7 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
     <>
       <div className="flex items-center gap-2 text-xs text-text-000/70">
         <OpenScienceThinkingIndicator />
-        <span>· thinking</span>
+        <span>Thinking</span>
         <span className="tabular-nums" aria-hidden="true">
           {formatElapsed(elapsedMs)}
         </span>
@@ -78,7 +78,7 @@ const AgentLoadingIndicator = ({
       ) : (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
-          <span>· interacting with tools</span>
+          <span>Interacting with tools</span>
         </div>
       )}
     </div>
@@ -96,7 +96,7 @@ const WorkspaceAgentLoadingRow = ({
     className="min-w-0"
   >
     <div className="px-4 pb-1 pt-5 md:px-6">
-      <div className={cn(assistantMessageSurfaceClassName, 'px-3 py-2')}>
+      <div className={cn(assistantMessageSurfaceClassName, 'px-0 py-2')}>
         <AgentLoadingIndicator sessionId={sessionId} phase={phase} />
       </div>
     </div>

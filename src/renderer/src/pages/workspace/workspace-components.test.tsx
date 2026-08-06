@@ -321,7 +321,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('pb-[56px]')
     expect(workspaceMessageScrollerSource).toContain('bg-gradient-to-b from-bg-10 to-bg-10/0')
     expect(workspaceAgentLoadingRowSource).toContain(
-      "cn(assistantMessageSurfaceClassName, 'px-3 py-2')"
+      "cn(assistantMessageSurfaceClassName, 'px-0 py-2')"
     )
     expect(workspaceAgentLoadingRowSource).not.toContain('rounded-2xl bg-bg-200')
   })

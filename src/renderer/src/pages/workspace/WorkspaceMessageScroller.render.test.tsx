@@ -244,8 +244,13 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('role="status"')
     expect(html).toContain('aria-live="polite"')
     expect(html).toContain('data-testid="open-science-thinking-indicator"')
-    expect(html).toContain('thinking')
+    expect(html).toContain('>Thinking</span>')
     expect(html).toContain('data-message-id="session-1-agent-loading"')
+    const loadingSurfaceClassName = html.match(
+      /<div class="([^"]*max-w-\[56rem\][^"]*)"><div class="flex min-h-5/
+    )?.[1]
+    expect(loadingSurfaceClassName).toContain('px-0')
+    expect(loadingSurfaceClassName).not.toContain('px-3')
   })
 
   it('shows tool interaction while a tool is running before the first agent token', async () => {
@@ -261,7 +266,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('data-testid="open-science-thinking-indicator"')
-    expect(html).toContain('interacting with tools')
+    expect(html).toContain('>Interacting with tools</span>')
     expect(html).not.toContain('>0:00</span>')
   })
 
@@ -295,7 +300,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('data-testid="open-science-thinking-indicator"')
-    expect(html).toContain('thinking')
+    expect(html).toContain('>Thinking</span>')
   })
 
   it('does not render loading after current-run agent text arrives', async () => {
@@ -457,7 +462,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     // Permission remains a tool interaction before and after visible assistant output.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.toContain('· interacting with tools')
+    ).resolves.toContain('>Interacting with tools</span>')
     await expect(
       renderScroller({
         ...runningSession,
@@ -474,7 +479,7 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('· interacting with tools')
+    ).resolves.toContain('>Interacting with tools</span>')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
@@ -505,7 +510,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('role="status"')
-    expect(html).toContain('thinking')
+    expect(html).toContain('>Thinking</span>')
   })
 
   it('renders generated artifact gallery cards under agent messages', async () => {
