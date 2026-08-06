@@ -725,9 +725,10 @@ class AcpPermissionBroker {
   setProviderPermissionProfile(
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
-  ): void {
-    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return
+  ): boolean {
+    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return false
     this.setLivePermissionProfile(sessionId, profile)
+    return true
   }
 
   clearLivePermissionProfile(sessionId: string): void {

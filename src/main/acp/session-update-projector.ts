@@ -50,7 +50,7 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   setProviderPermissionProfile: (
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
-  ) => void
+  ) => boolean
   emitState: () => void
   pushEvent: (event: Readonly<AcpRuntimeEvent>) => void
   reportToolFailure: (
@@ -271,8 +271,8 @@ class AcpSessionUpdateProjector {
             profileState as SessionPermissionProfileState,
             effect.currentModeId
           )
+          if (!this.options.setProviderPermissionProfile(effect.sessionId, nextProfile)) break
           aggregate.setPermissionProfile(nextProfile)
-          this.options.setProviderPermissionProfile(effect.sessionId, nextProfile)
           emitState()
         }
         break

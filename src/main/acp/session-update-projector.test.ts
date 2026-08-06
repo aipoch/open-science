@@ -33,7 +33,8 @@ const createProjector = (
     currentModeId: 'default',
     availableModeIds: ['default', 'bypassPermissions'],
     fullAccessAvailable: true
-  }
+  },
+  acceptProviderPermissionProfile = true
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -87,8 +88,11 @@ const createProjector = (
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
     nextEventId: () => routing.eventId,
-    setProviderPermissionProfile: (sessionId, profile) =>
-      record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile }),
+    setProviderPermissionProfile: (sessionId, profile) => {
+      if (!acceptProviderPermissionProfile) return false
+      record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile })
+      return true
+    },
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
     reportToolFailure: (effect) => record(effect)
@@ -142,7 +146,7 @@ describe('AcpSessionUpdateProjector', () => {
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
       nextEventId,
-      setProviderPermissionProfile: () => undefined,
+      setProviderPermissionProfile: () => true,
       emitState: () => journal.push('state:emit'),
       pushEvent: () => journal.push('event:push'),
       reportToolFailure: () => journal.push('diagnostic')
@@ -360,17 +364,45 @@ describe('AcpSessionUpdateProjector', () => {
 
     expect(projector.route(notification, routing)).toMatchObject([
       {
+        kind: 'live-profile',
+        sessionId: 'session-1',
+        selectedProfile: 'ask'
+      },
+      {
         kind: 'current-mode',
         sessionId: 'session-1',
         currentModeId: 'default',
         selectedProfile: 'ask'
-      },
-      {
-        kind: 'live-profile',
-        sessionId: 'session-1',
-        selectedProfile: 'ask'
       }
     ])
+  })
+
+  it('does not project provider modes while a user profile transition owns the state', () => {
+    const projector = createProjector(
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        currentModeId: 'bypassPermissions',
+        availableModeIds: ['default', 'bypassPermissions'],
+        fullAccessAvailable: true
+      },
+      false
+    )
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
+        },
+        {
+          eventId: 'event-mode',
+          visible: false,
+          reconnectPending: false,
+          mcpServerNames: []
+        }
+      )
+    ).toMatchObject([{ kind: 'context-observation', sessionId: 'session-1' }])
   })
 
   it('classifies MCP context and emits a bounded canonical failure diagnostic before the event', () => {

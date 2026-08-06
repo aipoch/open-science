@@ -422,8 +422,8 @@ class AcpPermissionContext {
   setProviderPermissionProfile(
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
-  ): void {
-    this.broker.setProviderPermissionProfile(sessionId, profile)
+  ): boolean {
+    return this.broker.setProviderPermissionProfile(sessionId, profile)
   }
 
   clearLivePermissionProfile(sessionId: string): void {
