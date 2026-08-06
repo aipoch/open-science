@@ -887,11 +887,11 @@ class AcpPermissionBroker {
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     // Resolve against the projected options so a stripped policy amendment can never be an automatic
     // outcome — the "amendments are never selectable" invariant must hold on the auto path too.
-    const automaticOptionId = resolveAutomaticPermission(
-      { ...params, options: providerPermissionOptions },
+    const automaticRequest = { ...params, options: providerPermissionOptions }
+    const automaticOptionId = this.resolveCurrentAutomaticPermission(
+      automaticRequest,
       policyContext
     )
-    const automaticRequest = { ...params, options: providerPermissionOptions }
 
     if (automaticOptionId) {
       return Promise.resolve({
@@ -956,15 +956,9 @@ class AcpPermissionBroker {
   private resolveOrEnqueuePermissionRequest(
     pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
   ): Promise<RequestPermissionResponse> {
-    const liveProfile = this.livePermissionProfiles.get(pending.request.sessionId)
-    const liveAutomaticOptionId =
-      pending.automaticRequest && liveProfile?.isCurrent()
-        ? resolveAutomaticPermission(pending.automaticRequest, {
-            ...pending.policyContext,
-            profile: liveProfile.profile.selectedProfile,
-            autoReviewStrategy: liveProfile.profile.autoReviewStrategy
-          })
-        : undefined
+    const liveAutomaticOptionId = pending.automaticRequest
+      ? this.resolveCurrentAutomaticPermission(pending.automaticRequest, pending.policyContext)
+      : undefined
 
     if (liveAutomaticOptionId) {
       return Promise.resolve({
@@ -973,6 +967,21 @@ class AcpPermissionBroker {
     }
 
     return this.enqueuePermissionRequest(pending)
+  }
+
+  private resolveCurrentAutomaticPermission(
+    request: RequestPermissionRequest,
+    policyContext?: PermissionPolicyContext
+  ): string | undefined {
+    const liveProfile = this.livePermissionProfiles.get(request.sessionId)
+    if (!liveProfile) return resolveAutomaticPermission(request, policyContext)
+    if (!liveProfile.isCurrent()) return undefined
+
+    return resolveAutomaticPermission(request, {
+      ...policyContext,
+      profile: liveProfile.profile.selectedProfile,
+      autoReviewStrategy: liveProfile.profile.autoReviewStrategy
+    })
   }
 
   private enqueuePermissionRequest(

@@ -282,6 +282,39 @@ describe('ACP permission broker', () => {
     expect(broker.getPendingRequests()).toEqual([])
   })
 
+  it('uses a live Ask profile for a delayed request carrying a stale Full policy', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+
+    const profileChange = broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    const delayed = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python delayed.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python delayed.py' }
+      }),
+      { profile: 'full', cwd: '/workspace' }
+    )
+
+    await profileChange
+    expect(emitted.map(({ title }) => title)).toEqual(['python delayed.py'])
+    expect(broker.getPendingRequests()).toHaveLength(1)
+    broker.cancelAllPending()
+    await expect(delayed).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
   it('stops releasing pending requests when a live profile change is superseded', async () => {
     const broker = new AcpPermissionBroker(() => undefined)
     const policy = { profile: 'ask' as const, cwd: '/workspace' }
