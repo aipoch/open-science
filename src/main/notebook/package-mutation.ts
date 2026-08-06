@@ -17,6 +17,7 @@ import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './
 import type { InstallDeps, InstallResult } from './package-manager'
 import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
+import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 
@@ -46,8 +47,10 @@ type NotebookPackageMutationOwnerOptions = {
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
   ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
-  quarantineProtectedIdentity: (target: NotebookPackageAdmittedTarget) => Promise<void>
-  completeInterruptedInstallRepair: (target: NotebookPackageAdmittedTarget) => Promise<void>
+  runtimeRepair: Pick<
+    NotebookRuntimeRepairOwner,
+    'quarantineProtectedIdentity' | 'completeInterruptedInstall'
+  >
   blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget) => void
 }
 
@@ -192,7 +195,7 @@ class NotebookPackageMutationOwner {
             } catch (error) {
               journalUpdateError = error
             }
-            await this.options.quarantineProtectedIdentity(target)
+            await this.options.runtimeRepair.quarantineProtectedIdentity(target)
             if (journalUpdateError) {
               deferredQuarantineError = new Error(
                 `${REPAIR_QUARANTINE_FAILED}: the runtime was quarantined, but its operation journal ` +
@@ -248,7 +251,7 @@ class NotebookPackageMutationOwner {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
-    if (result.ok) await this.options.completeInterruptedInstallRepair(target)
+    if (result.ok) await this.options.runtimeRepair.completeInterruptedInstall(target)
     return result
   }
 }

@@ -49,7 +49,6 @@ type NotebookPackageAdmittedTarget = Readonly<{
   environmentCaptureTarget: EnvironmentCaptureTarget
   repairRuntimeId: string
   repairMarkerKey: string
-  repairRegistryKeys: readonly string[]
   journalTarget?: string
 }>
 
@@ -172,7 +171,6 @@ class NotebookPackageAdmissionOwner {
         ),
         repairRuntimeId,
         repairMarkerKey,
-        repairRegistryKeys: repair.keys,
         journalTarget
       }
     }

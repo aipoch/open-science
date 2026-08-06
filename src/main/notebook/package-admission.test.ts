@@ -152,8 +152,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         interpreter: { command: '/usr/local/bin/python' },
         environmentCaptureTarget: { runtimeSource: 'external' },
         repairRuntimeId: binding.runtimeId,
-        repairMarkerKey: binding.runtimeId,
-        repairRegistryKeys: [binding.runtimeId]
+        repairMarkerKey: binding.runtimeId
       }
     })
     expect(admission.status === 'admitted' && admission.target.journalTarget).toBeUndefined()
