@@ -81,13 +81,13 @@ const launchEnvironment = (
   return environment
 }
 
-const launchOpenScience = (
+const launchOpenScience = async (
   { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
   fakeAgentEnabled: boolean,
   fakeRemoteItEnabled: boolean,
   fakeRemoteItRoot: string
-): Promise<ElectronApplication> =>
-  electron.launch({
+): Promise<ElectronApplication> => {
+  const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
     cwd: fakeRemoteItEnabled ? fakeRemoteItRoot : APP_ROOT,
     env: launchEnvironment(
@@ -97,6 +97,15 @@ const launchOpenScience = (
       fakeRemoteItEnabled ? fakeRemoteItRoot : undefined
     )
   })
+
+  if (process.platform === 'linux') {
+    await application.evaluate(({ safeStorage }) => {
+      safeStorage.setUsePlainTextEncryption(true)
+    })
+  }
+
+  return application
+}
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
