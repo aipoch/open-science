@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x64\.AppImage$/
+const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
 

@@ -93,8 +93,14 @@ const assertPackagedResources = async (appBundle) => {
   return { executable: paths[0], micromamba: paths[2] }
 }
 
-const launchAndProbe = async ({ executable, expectedVersion, env }) => {
-  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+const packagedLaunchArguments = (userDataRoot) => [
+  `--user-data-dir=${userDataRoot}`,
+  '--open-science-headless',
+  '--serve=0'
+]
+
+const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }) => {
+  const child = spawn(executable, packagedLaunchArguments(userDataRoot), {
     env,
     stdio: ['ignore', 'pipe', 'pipe']
   })
@@ -148,7 +154,7 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
   }
 }
 
-const smokeAppBundle = async ({ appBundle, expectedVersion, env, gatekeeper }) => {
+const smokeAppBundle = async ({ appBundle, expectedVersion, env, gatekeeper, userDataRoot }) => {
   await runProcess(
     '/usr/bin/codesign',
     ['--verify', '--deep', '--strict', '--verbose=2', appBundle],
@@ -167,7 +173,7 @@ const smokeAppBundle = async ({ appBundle, expectedVersion, env, gatekeeper }) =
   }
   const { executable, micromamba } = await assertPackagedResources(appBundle)
   await runProcess(micromamba, ['--version'], { env })
-  await launchAndProbe({ executable, expectedVersion, env })
+  await launchAndProbe({ executable, expectedVersion, env, userDataRoot })
 }
 
 const parseArguments = (argv) => {
@@ -197,19 +203,15 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const mount = join(root, 'dmg-mount')
   const extracted = join(root, 'zip-extracted')
+  const storageRoot = join(root, 'storage')
+  const userDataRoot = join(root, 'electron-profile')
   const env = {
     ...process.env,
-    HOME: join(root, 'home'),
-    OPEN_SCIENCE_STORAGE_ROOT: join(root, 'storage')
+    OPEN_SCIENCE_E2E_STORAGE_ROOT: storageRoot
   }
 
   try {
-    await Promise.all([
-      mkdir(mount),
-      mkdir(extracted),
-      mkdir(env.HOME),
-      mkdir(env.OPEN_SCIENCE_STORAGE_ROOT)
-    ])
+    await Promise.all([mkdir(mount), mkdir(extracted), mkdir(storageRoot)])
     if (options.gatekeeper) {
       await runProcess(
         '/usr/sbin/spctl',
@@ -238,10 +240,11 @@ const main = async () => {
         appBundle: await findAppBundle(mount),
         expectedVersion,
         env,
-        gatekeeper: false
+        gatekeeper: false,
+        userDataRoot
       })
     } finally {
-      await runProcess('/usr/bin/hdiutil', ['detach', mount])
+      await runProcess('/usr/bin/hdiutil', ['detach', '-force', mount])
     }
 
     await runProcess('/usr/bin/ditto', ['-x', '-k', zip, extracted], { env })
@@ -249,7 +252,8 @@ const main = async () => {
       appBundle: await findAppBundle(extracted),
       expectedVersion,
       env,
-      gatekeeper: options.gatekeeper
+      gatekeeper: options.gatekeeper,
+      userDataRoot
     })
     console.log('macOS DMG and ZIP launch smoke completed successfully.')
   } finally {
@@ -271,6 +275,7 @@ export {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  packagedLaunchArguments,
   parseArguments,
   parsePackagedAppEndpoint
 }

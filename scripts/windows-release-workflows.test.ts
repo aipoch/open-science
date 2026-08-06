@@ -96,6 +96,7 @@ describe('post-merge Windows validation', () => {
   })
 
   it('runs cross-platform P0 and visual against packaged apps before recording evidence', () => {
+    const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
     const job = readWorkflow('build.yml').jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
     const packaged = findStep(job, 'Resolve packaged Electron executable')
@@ -108,6 +109,8 @@ describe('post-merge Windows validation', () => {
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
+    expect(setup.run).toContain('"name":"macos-arm64","os":"macos-14"')
+    expect(setup.run).toContain('"name":"macos-x64","os":"macos-15-intel"')
     expect(packaged.id).toBe('packaged_app')
     expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
     expect(packaged.run).toContain('win-unpacked/open-science.exe')

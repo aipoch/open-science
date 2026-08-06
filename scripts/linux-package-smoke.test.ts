@@ -15,7 +15,7 @@ import {
 describe('Linux package smoke', () => {
   it('discovers one AppImage and derives stable or nightly versions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-linux-artifacts-'))
-    const appImage = join(root, 'aipoch-open-science-0.11.0-nightly.abc1234-linux-x64.AppImage')
+    const appImage = join(root, 'aipoch-open-science-0.11.0-nightly.abc1234-linux-x86_64.AppImage')
     await writeFile(appImage, '')
 
     await expect(findOne(root, /\.AppImage$/, 'AppImage')).resolves.toBe(appImage)
