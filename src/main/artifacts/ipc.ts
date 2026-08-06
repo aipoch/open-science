@@ -224,10 +224,13 @@ const createArtifactHandlers = (
       return dependencies.codeReconstruction.get(request)
     },
     generateCodeReconstruction: (request) => {
-      if (!dependencies.codeReconstruction) {
+      const codeReconstruction = dependencies.codeReconstruction
+      if (!codeReconstruction) {
         throw new Error('Artifact code reconstruction is not configured.')
       }
-      return dependencies.codeReconstruction.generate(request)
+      // Hold one migration lease across evidence reads, model work, and the cache commit so a data
+      // root move cannot switch beneath an in-flight reconstruction.
+      return withDataRootWrite(() => codeReconstruction.generate(request))
     },
     resolveVersionDescriptors: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')

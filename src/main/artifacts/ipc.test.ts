@@ -549,6 +549,48 @@ describe('artifact IPC handlers', () => {
     expect(drained).toBe(true)
   })
 
+  it('keeps migration drain pending until code reconstruction generation finishes', async () => {
+    let releaseGeneration: (() => void) | undefined
+    const codeReconstruction = {
+      get: vi.fn(),
+      generate: vi.fn(
+        () =>
+          new Promise<{ state: 'ready'; language: 'python'; sourceTruncated: false }>((resolve) => {
+            releaseGeneration = () =>
+              resolve({ state: 'ready', language: 'python', sourceTruncated: false })
+          })
+      )
+    }
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      codeReconstruction
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+
+    const generationPromise = handlers.generateCodeReconstruction(request)
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseGeneration?.()
+    await expect(generationPromise).resolves.toEqual({
+      state: 'ready',
+      language: 'python',
+      sourceTruncated: false
+    })
+    await drainPromise
+    expect(drained).toBe(true)
+    expect(codeReconstruction.generate).toHaveBeenCalledWith(request)
+  })
+
   it('opens only files inside the managed artifact root', async () => {
     const repository = new ArtifactRepository(await createStorageRoot())
     const openPath = vi.fn().mockResolvedValue('')
