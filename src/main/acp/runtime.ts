@@ -642,15 +642,50 @@ class AcpRuntime {
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')
-    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile(
-      {
-        backend: this.backend,
-        connection,
-        session,
-        permissionProfile: request.profile
-      },
-      true
+    const backend = this.backend
+    const aggregate = this.sessionRegistry.lookup(request.sessionId)?.aggregate
+    const previousPermissionProfile = aggregate?.snapshot().permissionProfile
+    const requestedPermissionProfile = backend.framework.mapPermissionProfile(
+      request.profile,
+      session.modes
+    ).state
+    const isCurrent = (): boolean =>
+      state.revision === revision &&
+      this.connection === connection &&
+      this.activeSessionFor(request.sessionId) === session
+
+    // Make the requested posture authoritative before the provider mode request can yield. A
+    // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
+    this.permissionContext.setLivePermissionProfile(
+      request.sessionId,
+      requestedPermissionProfile,
+      isCurrent
     )
+
+    let permissionProfile
+    try {
+      permissionProfile = await this.sessionConfigurator.configurePermissionProfile(
+        {
+          backend,
+          connection,
+          session,
+          permissionProfile: request.profile
+        },
+        true
+      )
+    } catch (error) {
+      if (previousPermissionProfile && isCurrent()) {
+        this.permissionContext.setLivePermissionProfile(
+          request.sessionId,
+          {
+            ...previousPermissionProfile,
+            availableModeIds: [...previousPermissionProfile.availableModeIds]
+          },
+          isCurrent
+        )
+      }
+      throw error
+    }
     if (state.revision !== revision) return this.getSnapshot()
     if (this.activeSessionFor(request.sessionId) !== session) {
       throw new Error('ACP session startup was superseded.')

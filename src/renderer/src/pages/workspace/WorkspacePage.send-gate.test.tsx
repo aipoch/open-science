@@ -548,6 +548,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.canEditDraft).toBe(false)
     expect(conversationProps.canSendMessage).toBe(false)
     expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangePermissionProfile).toBe(false)
   })
 
   it('blocks new prompts after terminal conversation graph synchronization fails', async () => {

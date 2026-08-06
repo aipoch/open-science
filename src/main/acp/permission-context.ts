@@ -405,9 +405,10 @@ class AcpPermissionContext {
 
   setLivePermissionProfile(
     sessionId: string,
-    profile: Readonly<SessionPermissionProfileState>
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
   ): void {
-    this.broker.setLivePermissionProfile(sessionId, profile)
+    this.broker.setLivePermissionProfile(sessionId, profile, isCurrent)
   }
 
   listGrants(sessionId: string): AcpPermissionGrant[] {

@@ -6353,6 +6353,91 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it('enforces a requested downgrade while the provider mode change is in flight', async () => {
+    const process = new FakeAgentProcess()
+    const askModeEntered = createDeferred()
+    const releaseAskMode = createDeferred()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async ({ modeId }) => {
+        if (modeId === 'default') {
+          askModeEntered.resolve()
+          await releaseAskMode.promise
+        }
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    const selectingAsk = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'ask'
+    })
+    await askModeEntered.promise
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    const permission = await permissionSeen.promise
+
+    expect(permissionResponse).toBeUndefined()
+    releaseAskMode.resolve()
+    await expect(selectingAsk).resolves.toBeDefined()
+    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('restores the committed profile when the provider mode change fails', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = vi.fn()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: ({ modeId }) => {
+        if (modeId === 'default') throw new Error('set mode failed')
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: permissionSeen }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    await expect(
+      runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'ask' })
+    ).rejects.toMatchObject({ data: { details: 'set mode failed' } })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(permissionSeen).not.toHaveBeenCalled()
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full'
+    })
+  })
+
   it('lets the latest overlapping profile change commit without releasing pending permission', async () => {
     const process = new FakeAgentProcess()
     const permissionSeen = createDeferred<AcpPermissionRequest>()

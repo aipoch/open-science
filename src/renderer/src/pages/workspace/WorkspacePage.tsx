@@ -1114,7 +1114,8 @@ const WorkspacePage = ({
     activeSession?.status !== 'waiting-permission' &&
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting
-  const canChangePermissionProfile = isSessionPersistenceReady && !activeSession?.compacting
+  const canChangePermissionProfile =
+    isSessionPersistenceReady && !activeSessionHasSendPreparation && !activeSession?.compacting
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&
