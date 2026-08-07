@@ -204,7 +204,10 @@
       "consumerModules": [],
       "testFiles": {
         "owner": ["src/main/session-persistence/coordinator.test.ts"],
-        "contract": ["src/shared/session-persistence.test.ts"],
+        "contract": [
+          "src/shared/session-persistence.test.ts",
+          "src/main/session-persistence/coordinator-contract.test.ts"
+        ],
         "consumer": [
           "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
           "src/main/session-persistence/deletion-integration.test.ts"
