@@ -1,6 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto'
-
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
@@ -14,20 +11,13 @@ import type {
   SaveSessionManifestRequest,
   UpdateSessionArchiveRequest,
   SessionRuntimeContext,
-  SessionRuntimeContextPatch,
   SessionLoadFailure,
   SessionLoadWarning
 } from '../../shared/session-persistence'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
-import {
-  materializeSessionConversationGraph,
-  sanitizeSessionRuntimeContext
-} from '../../shared/session-persistence'
-import {
-  FinalizedArtifactBindingConflictError,
-  type SessionDeletionReceipt
-} from '../artifacts/provenance-message-snapshot'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { repairHistoricalArtifactAliases } from './artifact-alias-repair'
@@ -36,16 +26,17 @@ import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError
 } from '../uploads/repository'
+import {
+  SessionPersistenceStateOwner,
+  SessionRuntimeContextRevisionConflictError,
+  type AppendUserMessageToInteractionCommand,
+  type PatchSessionRuntimeContextCommand,
+  type SessionMetadata,
+  type SessionMetadataSnapshot
+} from './state-owner'
 
 type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
-
-type SessionMetadata = Readonly<Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>>
-
-type SessionMetadataSnapshot = Readonly<{
-  sessions: readonly SessionMetadata[]
-  isComplete: boolean
-}>
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -159,42 +150,6 @@ const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Sess
 const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
-type PatchSessionRuntimeContextCommand = Readonly<{
-  projectId: string
-  sessionId: string
-  expectedRevision: number
-  patch: SessionRuntimeContextPatch
-  sessionStatus?: PersistedSessionStatus
-  beforePersist?: () => void
-}>
-
-type AppendUserMessageToInteractionCommand = Readonly<{
-  projectId: string
-  sessionId: string
-  interactionId: string
-  content: string
-  beforePersist?: () => void
-}>
-
-class SessionRuntimeContextRevisionConflictError extends Error {
-  readonly code = 'revision-conflict' as const
-
-  constructor(
-    readonly expectedRevision: number,
-    readonly actualRevision: number
-  ) {
-    super(
-      `Session runtime context revision conflict: expected ${expectedRevision}, actual ${actualRevision}.`
-    )
-    this.name = 'SessionRuntimeContextRevisionConflictError'
-  }
-}
-
-const emptySessionRuntimeContext = (): SessionRuntimeContext => ({ version: 1, revision: 0 })
-
-const cloneRuntimeContext = (context: SessionRuntimeContext): SessionRuntimeContext =>
-  structuredClone(context)
-
 const hasLegacySessionUpload = (session: PersistedChatSession): boolean =>
   [...session.messages, ...(session.conversationGraph?.messages ?? [])].some((message) =>
     message.uploads?.some((upload) => !upload.versionId)
@@ -227,91 +182,6 @@ const appendUnique = (existing: string[] | undefined, incoming: readonly string[
     result.push(value)
   }
   return result
-}
-
-const rebaseSafeSessionFields = (
-  authoritative: PersistedChatSession,
-  submitted: PersistedChatSession,
-  fields: NonNullable<SaveSessionOptions['conflictRebaseFields']>
-): PersistedChatSession => {
-  const rebased = { ...authoritative }
-  for (const field of fields) {
-    switch (field) {
-      case 'title':
-        rebased.title = submitted.title
-        break
-      case 'permissionProfile':
-        rebased.permissionProfile = submitted.permissionProfile
-        break
-      case 'autoReviewEnabled':
-        rebased.autoReviewEnabled = submitted.autoReviewEnabled
-        break
-      case 'enabledComputeHosts':
-        rebased.enabledComputeHosts = submitted.enabledComputeHosts
-          ? [...submitted.enabledComputeHosts]
-          : undefined
-        break
-      case 'pinned':
-        rebased.pinned = submitted.pinned
-        break
-      case 'specialistId':
-        rebased.specialistId = submitted.specialistId
-        break
-    }
-  }
-  rebased.updatedAt = Math.max(authoritative.updatedAt, submitted.updatedAt) + 1
-  return rebased
-}
-
-const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
-  const graph = session.conversationGraph
-  const topology = graph
-    ? {
-        rootFrameId: graph.rootFrameId,
-        branches: graph.branches.map(({ id, agentFrameId, headMessageId }) => ({
-          id,
-          agentFrameId,
-          headMessageId
-        })),
-        messages: graph.messages.map(({ id, agentFrameId, parentMessageId }) => ({
-          id,
-          agentFrameId,
-          parentMessageId
-        }))
-      }
-    : null
-  return createHash('sha256').update(JSON.stringify(topology)).digest('hex')
-}
-
-type FinalizedArtifactBindingValidation =
-  | { status: 'valid' }
-  | { status: 'unavailable' }
-  | { status: 'conflict'; error: FinalizedArtifactBindingConflictError }
-
-const validateFinalizedArtifactBindings = async (
-  provenance: SessionProvenancePersistence | undefined,
-  session: PersistedChatSession,
-  log: Logger
-): Promise<FinalizedArtifactBindingValidation> => {
-  if (!provenance) return { status: 'valid' }
-
-  try {
-    await provenance.validateFinalizedMessageBindings(session)
-    return { status: 'valid' }
-  } catch (error) {
-    if (error instanceof FinalizedArtifactBindingConflictError) {
-      return { status: 'conflict', error }
-    }
-    // Provenance is derived from authoritative Session JSON. A transient lookup failure must not
-    // regress the JSON-first durability guarantee; capture/indexing keep their post-save retry path.
-    emitRecoverableDiagnostic(log, 'pre-save provenance validation unavailable', {
-      operation: 'session-save',
-      phase: 'validate-provenance',
-      outcome: 'degraded',
-      ...diagnosticErrorFields(error)
-    })
-    return { status: 'unavailable' }
-  }
 }
 
 const emitRecoverableDiagnostic = (
@@ -408,9 +278,7 @@ class SessionPersistenceCoordinator {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
-  private readonly validatedBindingTopologies = new Map<string, string>()
-  private sessionMetadata = new Map<string, SessionMetadata>()
-  private isSessionMetadataComplete = false
+  private readonly stateOwner: SessionPersistenceStateOwner
   private destructiveStartupWindowOpen = true
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
@@ -423,23 +291,33 @@ class SessionPersistenceCoordinator {
     private readonly artifactStorage?: ArtifactStorageReconciler,
     private readonly permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence')
-  ) {}
+  ) {
+    this.stateOwner = new SessionPersistenceStateOwner({
+      repository,
+      fileIndex,
+      provenance,
+      uploads,
+      log,
+      assertMutable: (projectId, sessionId, operation) => {
+        if (this.deletedProjects.has(projectId)) {
+          throw new Error(`Cannot ${operation} a session whose project has been deleted.`)
+        }
+        if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
+          throw new Error(`Cannot ${operation} a session that has been deleted.`)
+        }
+      },
+      notifyFilesChanged: (event) => this.notifyFilesChanged(event)
+    })
+  }
 
   containsMessageOnActiveBranch(
     projectId: string,
     sessionId: string,
     messageId: string
   ): Promise<boolean> {
-    return this.enqueue(async () => {
-      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-      if (loaded.status !== 'found') {
-        throw new Error(`Cannot read active Message Branch for a ${loaded.status} Session.`)
-      }
-      const graph = materializeSessionConversationGraph(loaded.session).conversationGraph
-      return graph
-        ? resolveActiveConversationMessages(graph).some((message) => message.id === messageId)
-        : false
-    })
+    return this.enqueue(() =>
+      this.stateOwner.containsMessageOnActiveBranch(projectId, sessionId, messageId)
+    )
   }
 
   // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
@@ -449,41 +327,7 @@ class SessionPersistenceCoordinator {
   }
 
   sessionMetadataSnapshot(): Promise<SessionMetadataSnapshot> {
-    return this.enqueue(async () => ({
-      sessions: [...this.sessionMetadata.values()],
-      isComplete: this.isSessionMetadataComplete
-    }))
-  }
-
-  private replaceSessionMetadata(
-    sessions: readonly PersistedChatSession[],
-    isComplete: boolean
-  ): void {
-    this.sessionMetadata = new Map(
-      sessions.map((session) => [
-        session.id,
-        { id: session.id, projectId: session.projectId, title: session.title }
-      ])
-    )
-    this.isSessionMetadataComplete = isComplete
-  }
-
-  private upsertSessionMetadata(session: PersistedChatSession): void {
-    this.sessionMetadata.set(session.id, {
-      id: session.id,
-      projectId: session.projectId,
-      title: session.title
-    })
-  }
-
-  private removeSessionMetadata(sessionId: string): void {
-    this.sessionMetadata.delete(sessionId)
-  }
-
-  private removeProjectSessionMetadata(projectId: string): void {
-    for (const [sessionId, metadata] of this.sessionMetadata) {
-      if (metadata.projectId === projectId) this.sessionMetadata.delete(sessionId)
-    }
+    return this.enqueue(async () => this.stateOwner.metadataSnapshot())
   }
 
   /**
@@ -493,7 +337,7 @@ class SessionPersistenceCoordinator {
    */
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
     return this.enqueue(async () => {
-      this.validatedBindingTopologies.clear()
+      this.stateOwner.beginHydration()
       // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
       // treat the process as an untouched startup boundary for destructive cleanup.
       this.destructiveStartupWindowOpen = false
@@ -510,7 +354,7 @@ class SessionPersistenceCoordinator {
         operation.fail(error, { status: 'failed', hydrationAvailable: false })
         throw error
       }
-      this.replaceSessionMetadata(scan.result.sessions, false)
+      this.stateOwner.replaceMetadata(scan.result.sessions, false)
       operation.complete({
         status: 'degraded',
         sessionCount: scan.result.sessions.length,
@@ -534,7 +378,7 @@ class SessionPersistenceCoordinator {
    */
   loadAll(): Promise<LoadAllSessionsResult> {
     return this.enqueue(async () => {
-      this.validatedBindingTopologies.clear()
+      this.stateOwner.beginHydration()
       // Public loadAll can be called by multiple renderers/tasks. Only the first invocation in this
       // process is a startup boundary; consume it before any await so failures and partial scans cannot
       // reopen destructive cleanup while live clients may already hold the legacy projection.
@@ -555,7 +399,7 @@ class SessionPersistenceCoordinator {
         operation.fail(error, { status: 'failed', hydrationAvailable: false })
         throw error
       }
-      this.replaceSessionMetadata(scan.result.sessions, scan.isComplete)
+      this.stateOwner.replaceMetadata(scan.result.sessions, scan.isComplete)
       scan.result.diagnostics = {
         isComplete: scan.isComplete,
         warnings: scan.warnings ?? [],
@@ -699,7 +543,7 @@ class SessionPersistenceCoordinator {
           await this.fileIndex.syncSession(session)
         }
       } catch (error) {
-        this.isSessionMetadataComplete = false
+        this.stateOwner.markMetadataIncomplete()
         this.fileIndex.markReconciliationIncomplete()
         operation.fail(error, {
           status: 'degraded',
@@ -727,109 +571,20 @@ class SessionPersistenceCoordinator {
     })
   }
 
-  private async loadRuntimeContextSession(
-    projectId: string,
-    sessionId: string,
-    operation: 'read' | 'patch'
-  ): Promise<PersistedChatSession> {
-    const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
-    if (loaded.status === 'unreadable') {
-      throw new Error(
-        `Cannot ${operation} Session runtime context because its durable JSON is unreadable.`
-      )
-    }
-    if (loaded.status === 'missing') {
-      throw new Error(`Cannot ${operation} runtime context for a missing Session.`)
-    }
-    return loaded.session
-  }
-
   readSessionRuntimeContext(projectId: string, sessionId: string): Promise<SessionRuntimeContext> {
-    return this.enqueue(async () => {
-      const session = await this.loadRuntimeContextSession(projectId, sessionId, 'read')
-      return cloneRuntimeContext(session.runtimeContext ?? emptySessionRuntimeContext())
-    })
+    return this.enqueue(() => this.stateOwner.readRuntimeContext(projectId, sessionId))
   }
 
   patchSessionRuntimeContext(
     command: PatchSessionRuntimeContextCommand
   ): Promise<SessionRuntimeContext> {
-    return this.enqueue(async () => {
-      const { projectId, sessionId, expectedRevision, patch, sessionStatus } = command
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error('Cannot mutate a session whose project has been deleted.')
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error('Cannot mutate a session that has been deleted.')
-      }
-      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-        throw new Error('Session runtime context expected revision must be a non-negative integer.')
-      }
-      if (Object.keys(patch).some((owner) => owner !== 'plan')) {
-        throw new Error('Session runtime context patch contains an unknown authority owner.')
-      }
-
-      const session = await this.loadRuntimeContextSession(projectId, sessionId, 'patch')
-      const current = session.runtimeContext ?? emptySessionRuntimeContext()
-      if (current.revision !== expectedRevision) {
-        throw new SessionRuntimeContextRevisionConflictError(expectedRevision, current.revision)
-      }
-      command.beforePersist?.()
-
-      const candidate: Record<string, unknown> = { ...current }
-      for (const [owner, value] of Object.entries(patch)) {
-        if (value === undefined) delete candidate[owner]
-        else candidate[owner] = value
-      }
-      candidate.revision = current.revision + 1
-      const runtimeContext = sanitizeSessionRuntimeContext(candidate)
-      if (!runtimeContext) throw new Error('Session runtime context patch is not JSON-safe.')
-
-      await this.repository.saveSession({
-        ...session,
-        ...(sessionStatus ? { status: sessionStatus } : {}),
-        runtimeContext,
-        updatedAt: Math.max(session.updatedAt + 1, Date.now())
-      })
-      return cloneRuntimeContext(runtimeContext)
-    })
+    return this.enqueue(() => this.stateOwner.patchRuntimeContext(command))
   }
 
   appendUserMessageToInteraction(
     command: AppendUserMessageToInteractionCommand
   ): Promise<PersistedChatMessage> {
-    return this.enqueue(async () => {
-      const { projectId, sessionId, interactionId } = command
-      const content = command.content.trim()
-      if (!content) throw new Error('User Message content must be non-empty.')
-      if (this.deletedProjects.has(projectId)) {
-        throw new Error('Cannot mutate a session whose project has been deleted.')
-      }
-      if (this.deletedSessions.has(sessionKey(projectId, sessionId))) {
-        throw new Error('Cannot mutate a session that has been deleted.')
-      }
-      const session = await this.loadRuntimeContextSession(projectId, sessionId, 'patch')
-      command.beforePersist?.()
-      const timestamp = Math.max(session.updatedAt + 1, Date.now())
-      const message: PersistedChatMessage = {
-        id: `message-${randomUUID()}`,
-        role: 'user',
-        content,
-        status: 'complete',
-        eventIds: [],
-        responseToMessageId: interactionId,
-        createdAt: timestamp,
-        updatedAt: timestamp
-      }
-      const durable = materializeSessionConversationGraph({
-        ...session,
-        messages: [...session.messages, message],
-        updatedAt: timestamp
-      })
-      await this.repository.saveSession(durable)
-      this.upsertSessionMetadata(durable)
-      return message
-    })
+    return this.enqueue(() => this.stateOwner.appendUserMessage(command))
   }
 
   // Project archive must fail closed when even one child Session cannot be read. A partial catalog
@@ -872,7 +627,7 @@ class SessionPersistenceCoordinator {
   // Finds a persisted Session's owner for runtime admission. Fresh, unsaved sessions have no durable
   // archive state and deliberately return undefined.
   sessionProjectId(sessionId: string): Promise<string | undefined> {
-    return this.enqueue(async () => this.sessionMetadata.get(sessionId)?.projectId)
+    return this.enqueue(async () => this.stateOwner.sessionProjectId(sessionId))
   }
 
   // Dedicated main-owned archive mutation. Unlike full renderer saves it preserves updatedAt and
@@ -912,7 +667,7 @@ class SessionPersistenceCoordinator {
       if (request.archived) next.archivedAt = Date.now()
       else delete next.archivedAt
       await this.repository.saveSession(next)
-      this.upsertSessionMetadata(next)
+      this.stateOwner.recordSession(next)
       return next
     })
   }
@@ -924,119 +679,7 @@ class SessionPersistenceCoordinator {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
-      if (this.deletedProjects.has(session.projectId)) {
-        throw new Error('Cannot save a session whose project has been deleted.')
-      }
-      if (this.deletedSessions.has(sessionKey(session.projectId, session.id))) {
-        throw new Error('Cannot save a session that has been deleted.')
-      }
-
-      // Whole-session saves are renderer-owned projections. Resolve main authority on every save so
-      // a window holding an old snapshot cannot clear, forge, or roll back runtime context. An
-      // unreadable primary fails closed because overwriting it would silently destroy that authority.
-      const authoritative = await this.repository.loadSessionWithDiagnostics(
-        session.projectId,
-        session.id
-      )
-      if (authoritative.status === 'unreadable') {
-        throw new Error(
-          'Cannot save Session projection because main-owned runtime context is unreadable.'
-        )
-      }
-      const rendererOwnedSession: PersistedChatSession = { ...session }
-      delete rendererOwnedSession.runtimeContext
-      delete rendererOwnedSession.archivedAt
-      const authority = authoritative.status === 'found' ? authoritative.session : undefined
-      const mainOwnedStatus =
-        authority?.status === 'waiting-plan-approval' ||
-        rendererOwnedSession.status === 'waiting-plan-approval'
-          ? (authority?.status ?? 'idle')
-          : undefined
-      const mergedSession: PersistedChatSession = {
-        ...rendererOwnedSession,
-        ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
-        ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
-        // Awaiting Plan approval is main-owned blocking state and must survive the same stale save.
-        ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
-        updatedAt:
-          authority?.runtimeContext || mainOwnedStatus
-            ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
-            : rendererOwnedSession.updatedAt
-      }
-
-      const materializedSession = materializeSessionConversationGraph(mergedSession)
-      let durableSession = this.uploads
-        ? await this.uploads.upgradeLegacySessionUploads(materializedSession, {
-            mode: 'live-save'
-          })
-        : materializedSession
-      const key = sessionKey(session.projectId, session.id)
-      let bindingTopology = sessionBindingTopologyHash(durableSession)
-      let bindingValidation: FinalizedArtifactBindingValidation =
-        this.validatedBindingTopologies.get(key) === bindingTopology
-          ? { status: 'valid' }
-          : await validateFinalizedArtifactBindings(this.provenance, durableSession, this.log)
-      // Reject a stale graph before it can replace the authoritative Session JSON. Capture remains
-      // after the durable write so immutable evidence never includes Message bytes that were not saved.
-      // Streaming payload changes preserve this topology, avoiding a database lookup on every chunk.
-      if (bindingValidation.status === 'conflict') {
-        const conflictRebaseFields = options.conflictRebaseFields ?? []
-        if (conflictRebaseFields.length === 0) throw bindingValidation.error
-
-        const authoritative = await this.repository.loadSessionWithDiagnostics(
-          session.projectId,
-          session.id
-        )
-        if (authoritative.status !== 'found') throw bindingValidation.error
-
-        const rebasedSession = rebaseSafeSessionFields(
-          authoritative.session,
-          durableSession,
-          conflictRebaseFields
-        )
-        durableSession = this.uploads
-          ? await this.uploads.upgradeLegacySessionUploads(rebasedSession, { mode: 'live-save' })
-          : rebasedSession
-        bindingTopology = sessionBindingTopologyHash(durableSession)
-        bindingValidation =
-          this.validatedBindingTopologies.get(key) === bindingTopology
-            ? { status: 'valid' }
-            : await validateFinalizedArtifactBindings(this.provenance, durableSession, this.log)
-        if (bindingValidation.status === 'conflict') throw bindingValidation.error
-      }
-      await this.repository.saveSession(durableSession)
-      this.upsertSessionMetadata(durableSession)
-      // Cache only confirmed topology. A transient validation failure keeps the old fingerprint so
-      // the next autosave retries the narrow lookup instead of silently treating it as acknowledged.
-      if (bindingValidation.status === 'valid') {
-        this.validatedBindingTopologies.set(key, bindingTopology)
-      }
-      await this.provenance?.captureFinalizedMessages(durableSession)
-      let changedSources: ProjectFileSource[]
-      try {
-        changedSources = await this.fileIndex.syncSession(durableSession)
-      } catch (error) {
-        this.isSessionMetadataComplete = false
-        // The JSON is already durable. Tell open Files views to surface the incomplete projection,
-        // then preserve the rejection so the normal persistence retry path remains active.
-        this.notifyFilesChanged({
-          projectId: session.projectId,
-          sources: ['artifact', 'upload'],
-          kind: 'reset'
-        })
-        throw error
-      }
-      if (changedSources.length > 0) {
-        this.notifyFilesChanged({
-          projectId: session.projectId,
-          sessionId: session.id,
-          sources: changedSources,
-          kind: 'upsert'
-        })
-      }
-      return durableSession
-    })
+    return this.enqueue(() => this.stateOwner.saveSession(session, options))
   }
 
   // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
@@ -1045,9 +688,11 @@ class SessionPersistenceCoordinator {
     session: PersistedChatSession,
     specialistId: string | undefined
   ): Promise<PersistedChatSession> {
-    return this.saveSession(
-      { ...session, specialistId },
-      { conflictRebaseFields: ['specialistId'] }
+    return this.enqueue(() =>
+      this.stateOwner.saveSession(
+        { ...session, specialistId },
+        { conflictRebaseFields: ['specialistId'] }
+      )
     )
   }
 
@@ -1070,7 +715,7 @@ class SessionPersistenceCoordinator {
       } finally {
         // Artifact finalization can add a new binding without changing the Session graph. Force the
         // next save to validate that new database scope before reusing a topology fingerprint.
-        this.validatedBindingTopologies.delete(sessionKey(projectId, sessionId))
+        this.stateOwner.invalidateBindingTopology(projectId, sessionId)
       }
     })
   }
@@ -1211,10 +856,7 @@ class SessionPersistenceCoordinator {
         // The marked directory rename is the sole authoritative commit. Derived index deletion runs
         // afterward so any failure is replayable from the durable Project intent and tombstone.
         await this.repository.deleteProjectSessions(projectId)
-        this.removeProjectSessionMetadata(projectId)
-        for (const sessionId of deletedSessionIds) {
-          this.validatedBindingTopologies.delete(sessionKey(projectId, sessionId))
-        }
+        this.stateOwner.removeProject(projectId, deletedSessionIds)
         await this.fileIndex.softDeleteProject(projectId)
       } catch (error) {
         try {
@@ -1356,8 +998,7 @@ class SessionPersistenceCoordinator {
         }
         await this.repository.deleteSession(projectId, sessionId)
         jsonDeleted = true
-        this.removeSessionMetadata(sessionId)
-        this.validatedBindingTopologies.delete(key)
+        this.stateOwner.removeSession(projectId, sessionId)
         await this.provenance?.completeSessionDeletion(receipt)
       } catch (error) {
         try {
@@ -1387,7 +1028,7 @@ class SessionPersistenceCoordinator {
       try {
         const scan = await this.repository.loadAllWithDiagnostics()
         if (scan.isComplete) {
-          this.replaceSessionMetadata(scan.result.sessions, true)
+          this.stateOwner.replaceMetadata(scan.result.sessions, true)
           // The deleted session may have owned a canonical row referenced by a surviving legacy
           // session. Retry the project's revision ledgers after the owner is durably gone.
           for (const session of scan.result.sessions) {
@@ -1401,11 +1042,11 @@ class SessionPersistenceCoordinator {
           // and any other stale ledgers that no longer have authoritative JSON.
           await this.fileIndex.reconcileActiveSessions(scan.result.sessions)
         } else {
-          this.isSessionMetadataComplete = false
+          this.stateOwner.markMetadataIncomplete()
           this.fileIndex.markReconciliationIncomplete()
         }
       } catch {
-        this.isSessionMetadataComplete = false
+        this.stateOwner.markMetadataIncomplete()
         this.fileIndex.markReconciliationIncomplete()
       }
 

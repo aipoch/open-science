@@ -199,7 +199,10 @@
       "fallbackCapability": "main_runtime"
     },
     "session_persistence": {
-      "ownerPaths": ["src/main/session-persistence/coordinator.ts"],
+      "ownerPaths": [
+        "src/main/session-persistence/coordinator.ts",
+        "src/main/session-persistence/state-owner.ts"
+      ],
       "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
       "consumerModules": [],
       "testFiles": {
