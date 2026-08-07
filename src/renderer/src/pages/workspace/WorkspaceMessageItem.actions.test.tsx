@@ -162,7 +162,7 @@ describe('WorkspaceMessageItem user message actions', () => {
 
     expect(container.querySelectorAll('[data-slot="user-message-bubble"]')).toHaveLength(1)
     expect(container.querySelector('[data-slot="user-message-interrupted"]')?.textContent).toBe(
-      '该轮已中断'
+      'This turn was interrupted.'
     )
   })
 

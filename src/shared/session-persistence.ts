@@ -170,6 +170,9 @@ export type PersistedSessionResumeRecovery = {
   promptMessageId?: string
 }
 
+export type PersistedPendingHistoryReplay =
+  { kind: 'all' } | { kind: 'before-message'; messageId: string }
+
 export type PersistedToolActivityStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
 // A file location a tool touched; kept small so it can always be persisted.
@@ -267,9 +270,10 @@ export type PersistedChatSession = {
   // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
   // state from an error string or re-sending the interrupted prompt.
   resumeRecovery?: PersistedSessionResumeRecovery
-  // A fresh provider adoption has no conversation context. The next user-authored turn replays only
-  // completed active-Branch history before this interrupted prompt, never the prompt itself.
-  pendingHistoryReplayBeforeMessageId?: string
+  // A fresh provider adoption has no conversation context. The next user-authored turn replays
+  // either the full completed active Branch (for an interrupted control operation) or only history
+  // before an interrupted prompt. The interrupted prompt itself is never replayed.
+  pendingHistoryReplay?: PersistedPendingHistoryReplay
   error?: string
   // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
   // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
@@ -1483,6 +1487,16 @@ const sanitizeSessionResumeRecovery = (
   }
 }
 
+const sanitizePendingHistoryReplay = (
+  replay: unknown
+): PersistedPendingHistoryReplay | undefined => {
+  if (!isRecord(replay)) return undefined
+  if (replay.kind === 'all') return { kind: 'all' }
+  if (replay.kind !== 'before-message') return undefined
+  const messageId = asString(replay.messageId)
+  return messageId ? { kind: 'before-message', messageId } : undefined
+}
+
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
 const sanitizeSession = (
   session: unknown,
@@ -1533,6 +1547,13 @@ const sanitizeSession = (
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
   const resumeRecovery = sanitizeSessionResumeRecovery(session.resumeRecovery)
+  const pendingHistoryReplay =
+    sanitizePendingHistoryReplay(session.pendingHistoryReplay) ??
+    // Migrate feature-preview files that used the cutoff id as a top-level scalar.
+    (() => {
+      const messageId = asString(session.pendingHistoryReplayBeforeMessageId)
+      return messageId ? ({ kind: 'before-message', messageId } as const) : undefined
+    })()
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
   const agentBackendId = asString(session.agentBackendId)
@@ -1547,6 +1568,7 @@ const sanitizeSession = (
 
   if (activeRun) sanitized.activeRun = activeRun
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
+  if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
@@ -1557,10 +1579,6 @@ const sanitizeSession = (
   if (providerSessionId) sanitized.providerSessionId = providerSessionId
   if (providerContinuityToken) sanitized.providerContinuityToken = providerContinuityToken
   if (agentModel) sanitized.agentModel = agentModel
-  const pendingHistoryReplayBeforeMessageId = asString(session.pendingHistoryReplayBeforeMessageId)
-  if (pendingHistoryReplayBeforeMessageId) {
-    sanitized.pendingHistoryReplayBeforeMessageId = pendingHistoryReplayBeforeMessageId
-  }
   // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
   if (session.pinned === true) sanitized.pinned = true
   const archivedAt = asNumber(session.archivedAt)
@@ -1629,10 +1647,10 @@ const sanitizeSession = (
     }
   }
   if (
-    sanitized.pendingHistoryReplayBeforeMessageId &&
-    !activeUserMessageIds.has(sanitized.pendingHistoryReplayBeforeMessageId)
+    sanitized.pendingHistoryReplay?.kind === 'before-message' &&
+    !activeUserMessageIds.has(sanitized.pendingHistoryReplay.messageId)
   ) {
-    sanitized.pendingHistoryReplayBeforeMessageId = undefined
+    sanitized.pendingHistoryReplay = undefined
   }
   const recoveryPromptMessageId = sanitized.resumeRecovery?.promptMessageId
   if (recoveryPromptMessageId && sanitized.conversationGraph) {

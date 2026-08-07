@@ -958,7 +958,7 @@ const WorkspaceMessageItem = ({
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
                   {message.interrupted ? (
-                    <span data-slot="user-message-interrupted">该轮已中断</span>
+                    <span data-slot="user-message-interrupted">This turn was interrupted.</span>
                   ) : null}
                   {sentDate ? <MessageTimestamp label="Sent" date={sentDate} /> : null}
                   {showRevisionNavigation ? (

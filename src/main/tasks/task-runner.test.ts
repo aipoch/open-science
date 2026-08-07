@@ -447,6 +447,165 @@ describe('TaskRunner', () => {
     ])
   })
 
+  it('starts a new run without replaying an interrupted task prompt or retaining recovery state', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Collect the papers',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'Collected 20 papers',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'interrupted-user',
+          role: 'user',
+          content: 'Delete the duplicates',
+          status: 'complete',
+          interrupted: true,
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'interrupted-user'
+      },
+      pendingHistoryReplay: { kind: 'before-message', messageId: 'interrupted-user' },
+      error: 'Session was interrupted before the app closed.'
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({
+          sessionId: existing.id,
+          cwd: existing.cwd,
+          contextReset: true
+        }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue with a different cleanup rule.'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        text: 'Continue with a different cleanup rule.',
+        contextReset: true,
+        historyPreamble:
+          'Previous conversation:\n\nUser: Collect the papers\n\nAssistant: Collected 20 papers'
+      })
+    ])
+    expect(prompts[0]?.historyPreamble).not.toContain('Delete the duplicates')
+    expect(saved[0]).not.toHaveProperty('resumeRecovery')
+    expect(saved[0]).not.toHaveProperty('pendingHistoryReplay')
+    expect(
+      saved[0]?.messages.filter((message) => message.content === 'Delete the duplicates')
+    ).toHaveLength(1)
+  })
+
+  it('replays and consumes full-history recovery for an attached task session', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Summarize the evidence',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'The evidence is mixed.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      pendingHistoryReplay: { kind: 'all' }
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({ sessionId: 'unused' }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Compare the evidence groups.'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        text: 'Compare the evidence groups.',
+        contextReset: true,
+        historyPreamble:
+          'Previous conversation:\n\nUser: Summarize the evidence\n\nAssistant: The evidence is mixed.'
+      })
+    ])
+    expect(saved[0]).not.toHaveProperty('pendingHistoryReplay')
+  })
+
   it('provides transcript fallback for skill-triggered reconnects', async () => {
     const existing: PersistedChatSession = {
       ...session,

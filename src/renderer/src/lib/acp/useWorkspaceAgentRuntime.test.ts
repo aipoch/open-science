@@ -3189,6 +3189,61 @@ describe('resuming an interrupted session on demand', () => {
     ).toHaveLength(3)
   })
 
+  it('replays full history after fresh adoption recovers an interrupted compaction', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Summarize the dataset',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The dataset contains 20 samples.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().beginCompaction('session-1')
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'connection-lost'
+    })
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    runtime.state = createSnapshot(['session-1'])
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Compare the sample groups',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    await flushRuntimeTasks()
+
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('Summarize the dataset')
+    expect(preamble).toContain('The dataset contains 20 samples.')
+    expect(preamble).not.toContain('Compare the sample groups')
+    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+  })
+
   it('marks the next new turn as fresh context when no earlier history is replayable', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

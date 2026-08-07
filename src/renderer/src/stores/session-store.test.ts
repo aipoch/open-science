@@ -2376,7 +2376,7 @@ describe('session store', () => {
         agentBackendId: 'codex:codex-isolated',
         providerSessionId: 'provider-session-new',
         providerContinuityToken: 'bridge-generation-new',
-        pendingHistoryReplayBeforeMessageId: 'prompt-1'
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'prompt-1' }
       })
       const session = useSessionStore.getState().sessions[0]
 
@@ -2388,7 +2388,10 @@ describe('session store', () => {
       expect(session.providerSessionId).toBe('provider-session-new')
       expect(session.providerContinuityToken).toBe('bridge-generation-new')
       expect(session.resumeRecovery).toBeUndefined()
-      expect(session.pendingHistoryReplayBeforeMessageId).toBe('prompt-1')
+      expect(session.pendingHistoryReplay).toEqual({
+        kind: 'before-message',
+        messageId: 'prompt-1'
+      })
       expect(session.messages[1]).toMatchObject({
         responseToMessageId: 'prompt-1',
         completedAt: 13,

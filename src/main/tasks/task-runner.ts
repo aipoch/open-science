@@ -189,10 +189,29 @@ const toPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => ({
   mtimeMs: artifact.mtimeMs
 })
 
-const createHistoryPreamble = (session: PersistedChatSession): string | undefined => {
-  if (session.messages.length === 0) return undefined
-  const transcript = session.messages
-    .filter((message) => message.content.trim())
+const selectTaskHistoryMessages = (session: PersistedChatSession): PersistedChatMessage[] => {
+  const cutoffMessageIds = [
+    session.pendingHistoryReplay?.kind === 'before-message'
+      ? session.pendingHistoryReplay.messageId
+      : undefined,
+    session.resumeRecovery?.promptMessageId
+  ].filter((messageId): messageId is string => Boolean(messageId))
+  let cutoffIndex = session.messages.length
+
+  for (const messageId of cutoffMessageIds) {
+    const index = session.messages.findIndex((message) => message.id === messageId)
+    // A stale recovery reference must not turn an interrupted prompt into replay history.
+    if (index < 0) return []
+    cutoffIndex = Math.min(cutoffIndex, index)
+  }
+
+  return session.messages.slice(0, cutoffIndex)
+}
+
+const createHistoryPreamble = (messages: PersistedChatMessage[]): string | undefined => {
+  if (messages.length === 0) return undefined
+  const transcript = messages
+    .filter((message) => message.status !== 'error' && message.content.trim())
     .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`)
     .join('\n\n')
   return transcript ? `Previous conversation:\n\n${transcript}` : undefined
@@ -518,12 +537,22 @@ class TaskRunner {
           updatedAt: now
         }
 
+    // Starting a new authored turn consumes recovery authority. Delete the keys from the prepared
+    // snapshot so later saves and restarts cannot present Resume for the completed handoff.
+    if (existing) {
+      delete session.resumeRecovery
+      delete session.pendingHistoryReplay
+    }
+
     await this.dependencies.sessions.save(session)
-    const previousHistoryPreamble = existing ? createHistoryPreamble(existing) : undefined
+    const previousHistoryPreamble = existing
+      ? createHistoryPreamble(selectTaskHistoryMessages(existing))
+      : undefined
+    const contextReset = Boolean(sessionInfo.contextReset || existing?.pendingHistoryReplay)
     return {
       session,
-      historyPreamble: sessionInfo.contextReset ? previousHistoryPreamble : undefined,
-      contextReset: sessionInfo.contextReset,
+      historyPreamble: contextReset ? previousHistoryPreamble : undefined,
+      contextReset,
       resumeFallback:
         request.skillIds?.length && previousHistoryPreamble
           ? { historyPreamble: previousHistoryPreamble }

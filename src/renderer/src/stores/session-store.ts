@@ -2,7 +2,10 @@ import { create } from 'zustand'
 
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
-import type { PersistedChatSession } from '../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  PersistedPendingHistoryReplay
+} from '../../../shared/session-persistence'
 import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
 import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
@@ -51,10 +54,10 @@ type SessionStore = SessionStoreData &
         | 'agentBackendId'
         | 'providerSessionId'
         | 'providerContinuityToken'
-        | 'pendingHistoryReplayBeforeMessageId'
+        | 'pendingHistoryReplay'
       >
     ) => void
-    clearPendingHistoryReplay: (sessionId: string, beforeMessageId: string) => void
+    clearPendingHistoryReplay: (sessionId: string, replay: PersistedPendingHistoryReplay) => void
     markDisconnected: (sessionId: string, reason?: string) => void
     setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
     clearBranchContextReset: (sessionId: string) => void
@@ -122,9 +125,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                 update === undefined
                   ? session.providerContinuityToken
                   : update.providerContinuityToken,
-              pendingHistoryReplayBeforeMessageId:
-                update?.pendingHistoryReplayBeforeMessageId ??
-                session.pendingHistoryReplayBeforeMessageId,
+              pendingHistoryReplay: update?.pendingHistoryReplay ?? session.pendingHistoryReplay,
               compacting: undefined,
               updatedAt: Date.now()
             }
@@ -133,13 +134,18 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  clearPendingHistoryReplay: (sessionId, beforeMessageId) => {
+  clearPendingHistoryReplay: (sessionId, replay) => {
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId && session.pendingHistoryReplayBeforeMessageId === beforeMessageId
-          ? { ...session, pendingHistoryReplayBeforeMessageId: undefined }
+      sessions: state.sessions.map((session) => {
+        const pending = session.pendingHistoryReplay
+        const matches =
+          pending?.kind === replay.kind &&
+          (replay.kind === 'all' ||
+            (pending.kind === 'before-message' && pending.messageId === replay.messageId))
+        return session.id === sessionId && matches
+          ? { ...session, pendingHistoryReplay: undefined }
           : session
-      )
+      })
     }))
   },
 

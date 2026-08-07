@@ -1141,7 +1141,9 @@ const sendWorkspaceMessage = async (
         ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
         : -1
     if (truncateFromMessageId && historyCutIndex < 0) return undefined
-    const resumeReplayCutMessageId = preparedSession?.pendingHistoryReplayBeforeMessageId
+    const pendingHistoryReplay = preparedSession?.pendingHistoryReplay
+    const resumeReplayCutMessageId =
+      pendingHistoryReplay?.kind === 'before-message' ? pendingHistoryReplay.messageId : undefined
     const resumeReplayCutIndex =
       resumeReplayCutMessageId && preparedSession
         ? preparedSession.messages.findIndex((message) => message.id === resumeReplayCutMessageId)
@@ -1191,7 +1193,7 @@ const sendWorkspaceMessage = async (
         forceHistoryReplay ||
         specialistSwitchReplay ||
         preparedSession?.pendingContextReplayMessageId ||
-        resumeReplayCutMessageId) &&
+        pendingHistoryReplay) &&
       historyMessages
     ) {
       const replay = buildWorkspaceReplay(
@@ -1229,7 +1231,7 @@ const sendWorkspaceMessage = async (
       forceHistoryReplay ||
       specialistSwitchReplay ||
       preparedSession?.pendingContextReplayMessageId ||
-      resumeReplayCutMessageId
+      pendingHistoryReplay
     )
 
     let promptAttachments = effectiveAttachments
@@ -1291,10 +1293,10 @@ const sendWorkspaceMessage = async (
         if (preparedSession?.pendingContextReplayMessageId) {
           useSessionStore.getState().clearPendingContextReplay(targetSessionId, appended.messageId)
         }
-        if (resumeReplayCutMessageId) {
+        if (pendingHistoryReplay) {
           useSessionStore
             .getState()
-            .clearPendingHistoryReplay(targetSessionId, resumeReplayCutMessageId)
+            .clearPendingHistoryReplay(targetSessionId, pendingHistoryReplay)
         }
         return snapshot
       })
@@ -1436,8 +1438,13 @@ const resumeInterruptedWorkspaceSession = async (
             agentBackendId: resumeResult.backendId,
             providerSessionId: resumeResult.providerSessionId,
             providerContinuityToken: resumeResult.providerContinuityToken,
-            pendingHistoryReplayBeforeMessageId: resumeResult.contextReset
+            pendingHistoryReplay: resumeResult.contextReset
               ? session.resumeRecovery?.promptMessageId
+                ? {
+                    kind: 'before-message',
+                    messageId: session.resumeRecovery.promptMessageId
+                  }
+                : { kind: 'all' }
               : undefined
           }
         : undefined

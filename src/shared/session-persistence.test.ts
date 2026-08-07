@@ -936,6 +936,45 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
+  it('restores explicit full and cutoff history replay scopes', () => {
+    const base = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Replay state',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Earlier prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    expect(
+      normalizeSessionFile({ ...base, pendingHistoryReplay: { kind: 'all' } })?.pendingHistoryReplay
+    ).toEqual({ kind: 'all' })
+    expect(
+      normalizeSessionFile({
+        ...base,
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'prompt-1' }
+      })?.pendingHistoryReplay
+    ).toEqual({ kind: 'before-message', messageId: 'prompt-1' })
+    expect(
+      normalizeSessionFile({
+        ...base,
+        pendingHistoryReplayBeforeMessageId: 'prompt-1'
+      })?.pendingHistoryReplay
+    ).toEqual({ kind: 'before-message', messageId: 'prompt-1' })
+  })
+
   it('loads sessions that predate persisted activities', () => {
     const session = normalizeSessionFile({
       id: 'session-1',
