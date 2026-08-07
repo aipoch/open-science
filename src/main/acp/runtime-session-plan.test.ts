@@ -765,6 +765,68 @@ describe('AcpRuntime Session Plan seam', () => {
     )
   })
 
+  it('rejects and settles feedback when its owning interaction is superseded during persistence', async () => {
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    const pendingApproval = runtime
+      .callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+      .catch((error: unknown) => error)
+    await Promise.resolve()
+    let markRespondStarted!: () => void
+    let finishRespond!: () => void
+    const respondStarted = new Promise<void>((resolve) => {
+      markRespondStarted = resolve
+    })
+    const respondGate = new Promise<void>((resolve) => {
+      finishRespond = resolve
+    })
+    service.respond.mockImplementationOnce(async (input) => {
+      markRespondStarted()
+      await respondGate
+      interactions.release('session-1', 'version-1')
+      return {
+        kind: 'feedback' as const,
+        routeToInteractionId: 'interaction-1',
+        artifactVersionId: 'version-1',
+        text: input.feedback,
+        message: {
+          id: 'message-1',
+          role: 'user' as const,
+          content: input.feedback,
+          status: 'complete' as const,
+          eventIds: [],
+          responseToMessageId: 'interaction-1',
+          createdAt: 10,
+          updatedAt: 10
+        }
+      }
+    })
+
+    const response = runtime.respondSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Split the analysis by cohort.'
+    })
+    await respondStarted
+    setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
+    finishRespond()
+
+    await expect(response).rejects.toThrow('no longer available')
+    await expect(pendingApproval).resolves.toBeInstanceOf(Error)
+    expect(interactions.approvalInteractionIdFor('session-1')).toBeUndefined()
+    expect(
+      interactions.isAgentDecisionAuthorized({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: 8
+      })
+    ).toBe(false)
+  })
+
   it('lets the resumed Agent explicitly approve after interpreting a user Message', async () => {
     const { runtime, service } = createRuntimeHarness({})
     const pending = runtime.callSessionPlan({

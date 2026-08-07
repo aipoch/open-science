@@ -294,10 +294,26 @@ const composeAcpRuntimePlanWorkflow = (
     }) ?? Promise.resolve(null)
   const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
-    if (input.decision === undefined && !interactions.approvalInteractionIdFor(input.sessionId)) {
-      throw new Error('The paused Session Plan interaction is no longer available.')
+    const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)
+    const feedbackInteraction =
+      input.decision === undefined ? sessionInteractions.current(input.sessionId) : undefined
+    if (input.decision === undefined) {
+      if (
+        !approvalInteractionId ||
+        feedbackInteraction?.kind !== 'prompt' ||
+        feedbackInteraction.promptMessageId !== approvalInteractionId
+      ) {
+        if (approvalInteractionId) {
+          rejectApprovalForInteraction(
+            input.sessionId,
+            approvalInteractionId,
+            'The paused Session Plan interaction was superseded before feedback was routed.'
+          )
+        }
+        throw new Error('The paused Session Plan interaction is no longer available.')
+      }
     }
-    const interactionIsLive = interactions.approvalInteractionIdFor(input.sessionId) !== undefined
+    const interactionIsLive = approvalInteractionId !== undefined
     const current = await service.getProjection(input.projectId, input.sessionId, {
       interactionIsLive
     })
@@ -325,9 +341,6 @@ const composeAcpRuntimePlanWorkflow = (
       publishProjection(input.sessionId, result.projection)
       return result
     }
-    if (interactions.approvalInteractionIdFor(input.sessionId) !== result.routeToInteractionId) {
-      throw new Error('The paused Session Plan interaction is no longer available.')
-    }
     try {
       pushEvent({
         id: `session-user-message-${result.message.id}`,
@@ -343,18 +356,34 @@ const composeAcpRuntimePlanWorkflow = (
     } catch (error) {
       safeLogError('Routed user Message projection callback failed', error)
     }
-    const interaction = sessionInteractions.current(input.sessionId)
-    if (!interaction || interaction.kind !== 'prompt') {
+    const currentInteraction = sessionInteractions.current(input.sessionId)
+    if (
+      !approvalInteractionId ||
+      !feedbackInteraction ||
+      feedbackInteraction.kind !== 'prompt' ||
+      result.routeToInteractionId !== approvalInteractionId ||
+      interactions.approvalInteractionIdFor(input.sessionId) !== approvalInteractionId ||
+      currentInteraction?.kind !== 'prompt' ||
+      currentInteraction.sequence !== feedbackInteraction.sequence ||
+      currentInteraction.promptMessageId !== feedbackInteraction.promptMessageId
+    ) {
+      if (approvalInteractionId) {
+        rejectApprovalForInteraction(
+          input.sessionId,
+          approvalInteractionId,
+          'The paused Session Plan interaction was superseded while feedback was routed.'
+        )
+      }
       throw new Error('The paused Session Plan interaction is no longer available.')
     }
     const authorization = {
       sessionId: input.sessionId,
       artifactVersionId: result.artifactVersionId,
-      interactionSequence: interaction.sequence
+      interactionSequence: feedbackInteraction.sequence
     }
     interactions.authorizeAgentDecision(authorization)
     if (!interactions.resolveApproval(input.sessionId, result)) {
-      interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
+      interactions.releaseAgentDecisionAuthorization(input.sessionId, feedbackInteraction.sequence)
       throw new Error('The paused Session Plan interaction is no longer available.')
     }
     safeLogInfo('Session Plan feedback routed', {
