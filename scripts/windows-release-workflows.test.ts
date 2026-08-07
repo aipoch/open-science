@@ -98,6 +98,10 @@ describe('post-merge Windows validation', () => {
       if: "${{ matrix.platform == 'mac' && !inputs.nightly }}"
     })
     expect(prepareMacSigning.run).toContain('security create-keychain -p "$keychain_password"')
+    expect(prepareMacSigning.run).toContain('security list-keychains -d user > "$keychain_list"')
+    expect(prepareMacSigning.run).toContain(
+      'security list-keychains -d user -s "$keychain" "${user_keychains[@]}"'
+    )
     expect(prepareMacSigning.run).toContain('-P "${MAC_CSC_KEY_PASSWORD:-}"')
     expect(prepareMacSigning.run).toContain('-k "$keychain_password"')
     expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
@@ -108,10 +112,20 @@ describe('post-merge Windows validation', () => {
       'if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then'
     )
     expect(cleanupMacSigning).toMatchObject({
-      if: "${{ always() && steps.mac_signing.outputs.keychain != '' }}"
+      if: "${{ always() && steps.mac_signing.outputs.keychain != '' }}",
+      env: {
+        MAC_SIGNING_CERTIFICATE: '${{ steps.mac_signing.outputs.certificate }}',
+        MAC_SIGNING_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}',
+        MAC_SIGNING_KEYCHAIN_LIST: '${{ steps.mac_signing.outputs.keychain_list }}'
+      }
     })
+    expect(cleanupMacSigning.run).toContain(
+      'security list-keychains -d user -s "${user_keychains[@]}"'
+    )
     expect(cleanupMacSigning.run).toContain('security delete-keychain "$MAC_SIGNING_KEYCHAIN"')
-    expect(cleanupMacSigning.run).toContain('rm -f "$MAC_SIGNING_CERTIFICATE"')
+    expect(cleanupMacSigning.run).toContain(
+      'rm -f "$MAC_SIGNING_CERTIFICATE" "$MAC_SIGNING_KEYCHAIN_LIST"'
+    )
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
     expect(packageStep.run).not.toContain('publisherName')
   })

@@ -204,15 +204,29 @@ jobs:
 
           keychain="$RUNNER_TEMP/open-science-signing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.name }}.keychain-db"
           certificate="$RUNNER_TEMP/open-science-signing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.name }}.p12"
+          keychain_list="$RUNNER_TEMP/open-science-signing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.name }}-user-keychains.txt"
           keychain_password=$(openssl rand -base64 32)
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
           echo "certificate=$certificate" >> "$GITHUB_OUTPUT"
+          echo "keychain_list=$keychain_list" >> "$GITHUB_OUTPUT"
 
+          security list-keychains -d user > "$keychain_list"
           printf '%s' "$MAC_CSC_LINK" | base64 --decode > "$certificate"
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
+          user_keychains=()
+          while IFS= read -r entry; do
+            entry="${entry#*\"}"
+            entry="${entry%\"*}"
+            if [ -n "$entry" ] && [ "$entry" != "$keychain" ]; then
+              user_keychains+=("$entry")
+            fi
+          done < "$keychain_list"
+          # codesign ignores an explicitly selected keychain unless it is also in the user search
+          # list. Preserve the runner entries and restore them in the always-run cleanup below.
+          security list-keychains -d user -s "$keychain" "${user_keychains[@]}"
           security import "$certificate" -k "$keychain" \
             -P "${MAC_CSC_KEY_PASSWORD:-}" \
             -T /usr/bin/codesign \
@@ -288,10 +302,20 @@ jobs:
         env:
           MAC_SIGNING_CERTIFICATE: ${{ steps.mac_signing.outputs.certificate }}
           MAC_SIGNING_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
+          MAC_SIGNING_KEYCHAIN_LIST: ${{ steps.mac_signing.outputs.keychain_list }}
         run: |
           set -euo pipefail
+          if [ -f "$MAC_SIGNING_KEYCHAIN_LIST" ]; then
+            user_keychains=()
+            while IFS= read -r entry; do
+              entry="${entry#*\"}"
+              entry="${entry%\"*}"
+              [ -n "$entry" ] && user_keychains+=("$entry")
+            done < "$MAC_SIGNING_KEYCHAIN_LIST"
+            security list-keychains -d user -s "${user_keychains[@]}" || true
+          fi
           security delete-keychain "$MAC_SIGNING_KEYCHAIN" || true
-          rm -f "$MAC_SIGNING_CERTIFICATE"
+          rm -f "$MAC_SIGNING_CERTIFICATE" "$MAC_SIGNING_KEYCHAIN_LIST"
 
       - name: Resolve packaged Electron executable
         id: packaged_app
