@@ -136,8 +136,32 @@ type ArtifactFinalizationContext = Pick<
 
 type PreparedArtifactFinalizationContext = Omit<ArtifactFinalizationContext, 'messageId'>
 
+export type ArtifactFinalizationProofReason =
+  | 'claim-context-missing'
+  | 'claim-version-ids-missing'
+  | 'root-frame-mismatch'
+  | 'branch-frame-mismatch'
+  | 'runtime-segment-missing'
+  | 'prompt-ownership-mismatch'
+  | 'message-not-durable'
+  | 'message-ownership-mismatch'
+  | 'version-ids-missing'
+  | 'version-ids-duplicate'
+  | 'version-not-eligible'
+  | 'version-omitted-from-claim'
+  | 'version-message-conflict'
+  | 'version-evidence-invalid'
+  | 'execution-snapshot-missing'
+  | 'execution-snapshot-corrupt'
+  | 'execution-outside-ancestry'
+  | 'execution-snapshot-invalid'
+
 export class ArtifactFinalizationProofError extends Error {
-  constructor(message: string, cause?: unknown) {
+  constructor(
+    readonly reasonCode: ArtifactFinalizationProofReason,
+    message: string,
+    cause?: unknown
+  ) {
     super(message, cause === undefined ? undefined : { cause })
     this.name = 'ArtifactFinalizationProofError'
   }
@@ -145,7 +169,7 @@ export class ArtifactFinalizationProofError extends Error {
 
 export class ArtifactOwnershipPersistenceRaceError extends ArtifactFinalizationProofError {
   constructor(message = 'Artifact finalization ownership is not durable yet.') {
-    super(message)
+    super('message-not-durable', message)
     this.name = 'ArtifactOwnershipPersistenceRaceError'
   }
 }
@@ -175,6 +199,7 @@ const validateDurableMessageOwnership = (
   const graph = materializeSessionConversationGraph(session).conversationGraph!
   if (graph.rootFrameId !== context.rootFrameId) {
     throw new ArtifactFinalizationProofError(
+      'root-frame-mismatch',
       'Artifact finalization root Frame does not match the durable Session graph.'
     )
   }
@@ -182,6 +207,7 @@ const validateDurableMessageOwnership = (
   const branch = graph.branches.find((candidate) => candidate.id === context.messageBranchId)
   if (!frame || !branch || branch.agentFrameId !== frame.id) {
     throw new ArtifactFinalizationProofError(
+      'branch-frame-mismatch',
       'Artifact finalization Branch does not belong to the declared Agent Frame.'
     )
   }
@@ -191,6 +217,7 @@ const validateDurableMessageOwnership = (
   )
   if (!segment) {
     throw new ArtifactFinalizationProofError(
+      'runtime-segment-missing',
       'Artifact finalization Runtime Segment is not durable.'
     )
   }
@@ -213,6 +240,7 @@ const validateDurableMessageOwnership = (
     promptMessage.runtimeSegmentId !== context.runtimeSegmentId
   ) {
     throw new ArtifactFinalizationProofError(
+      'prompt-ownership-mismatch',
       'Artifact finalization prompt does not match the declared durable ownership.'
     )
   }
@@ -229,6 +257,7 @@ const validateDurableMessageOwnership = (
     finalMessage.runtimeSegmentId !== context.runtimeSegmentId
   ) {
     throw new ArtifactFinalizationProofError(
+      'message-ownership-mismatch',
       'Artifact finalization message does not match the declared durable ownership.'
     )
   }
@@ -313,13 +342,19 @@ const normalizeArtifactFinalizationProofRequest = (
   request: ArtifactFinalizationProofRequest
 ): ArtifactFinalizationProofRequest => {
   if (!Array.isArray(request.artifactVersionIds) || request.artifactVersionIds.length === 0) {
-    throw new ArtifactFinalizationProofError('Artifact Version ids are required for finalization.')
+    throw new ArtifactFinalizationProofError(
+      'version-ids-missing',
+      'Artifact Version ids are required for finalization.'
+    )
   }
   const artifactVersionIds = request.artifactVersionIds.map((versionId) =>
     assertSafeSegment(versionId, 'artifact version id')
   )
   if (new Set(artifactVersionIds).size !== artifactVersionIds.length) {
-    throw new ArtifactFinalizationProofError('Artifact Version ids must be unique.')
+    throw new ArtifactFinalizationProofError(
+      'version-ids-duplicate',
+      'Artifact Version ids must be unique.'
+    )
   }
 
   return {
@@ -367,12 +402,14 @@ const validateArtifactFinalizationProof = (
   )
   if (missingExpectedVersionId) {
     throw new ArtifactFinalizationProofError(
+      'version-not-eligible',
       `Artifact Version is no longer eligible for finalization: ${missingExpectedVersionId}`
     )
   }
   const unexpectedMatchingVersion = matching.find((version) => !expectedIds.has(version.id))
   if (unexpectedMatchingVersion) {
     throw new ArtifactFinalizationProofError(
+      'version-omitted-from-claim',
       `Artifact Version was omitted from the finalization claim: ${unexpectedMatchingVersion.id}`
     )
   }
@@ -382,6 +419,7 @@ const validateArtifactFinalizationProof = (
   )
   if (conflicting) {
     throw new ArtifactFinalizationProofError(
+      'version-message-conflict',
       `Artifact Version ${conflicting.id} is already finalized to a different message.`
     )
   }
@@ -400,6 +438,7 @@ const validateArtifactFinalizationProof = (
           parsedEvidence.producer?.state !== 'unavailable')
       ) {
         throw new ArtifactFinalizationProofError(
+          'version-evidence-invalid',
           `Artifact Version evidence is invalid: ${version.id}`
         )
       }
@@ -422,6 +461,7 @@ const validateArtifactFinalizationProof = (
           evidence.reproduction_code === undefined
         if (hasProducerOrExecutionFields || !isProvenUnavailableWithoutExecution) {
           throw new ArtifactFinalizationProofError(
+            'execution-snapshot-missing',
             `Artifact Version execution snapshot is missing: ${version.id}`
           )
         }
@@ -433,6 +473,7 @@ const validateArtifactFinalizationProof = (
         sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum
       ) {
         throw new ArtifactFinalizationProofError(
+          'execution-snapshot-corrupt',
           `Artifact Version execution snapshot is corrupt: ${version.id}`
         )
       }
@@ -456,12 +497,14 @@ const validateArtifactFinalizationProof = (
       )
       if (outsideDurableAncestry) {
         throw new ArtifactFinalizationProofError(
+          'execution-outside-ancestry',
           `Artifact Version execution snapshot is outside the durable Branch ancestry: ${version.id}`
         )
       }
     } catch (error) {
       if (error instanceof ArtifactFinalizationProofError) throw error
       throw new ArtifactFinalizationProofError(
+        'execution-snapshot-invalid',
         error instanceof Error
           ? error.message
           : `Artifact Version execution snapshot is invalid: ${version.id}`,
