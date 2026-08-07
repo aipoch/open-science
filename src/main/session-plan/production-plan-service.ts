@@ -4,7 +4,7 @@ import type { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { SessionRuntimeContextRevisionConflictError } from '../session-persistence/coordinator'
-import { PlanService } from './plan-service'
+import { PlanService, type PlanServiceDependencies } from './plan-service'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 type ProductionPlanServiceDependencies = Readonly<{
@@ -15,13 +15,17 @@ type ProductionPlanServiceDependencies = Readonly<{
     SessionPersistenceCoordinator,
     'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'appendUserMessageToInteraction'
   >
+  onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
+  onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }>
 
 const createProductionPlanService = ({
   interactions = new SessionPlanInteractionOwner(),
   artifactTurns,
   provenance,
-  sessions
+  sessions,
+  onApprovalRequested,
+  onApprovalSettled
 }: ProductionPlanServiceDependencies): PlanService =>
   new PlanService({
     interactions,
@@ -63,7 +67,9 @@ const createProductionPlanService = ({
         content: input.content,
         ...(input.beforePersist ? { beforePersist: input.beforePersist } : {})
       }),
-    isRevisionConflict: (error) => error instanceof SessionRuntimeContextRevisionConflictError
+    isRevisionConflict: (error) => error instanceof SessionRuntimeContextRevisionConflictError,
+    onApprovalRequested,
+    onApprovalSettled
   })
 
 export { createProductionPlanService }

@@ -22,6 +22,7 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
+import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
@@ -356,6 +357,7 @@ const HomePage = ({
               <GitHubStarBadge />
             </span>
             <ThemePreferenceMenu />
+            <NotificationBell />
             <button
               type="button"
               aria-label="Model settings"

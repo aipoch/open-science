@@ -772,10 +772,12 @@ describe('SkillImportApprovalBroker lifecycle', () => {
   it('settles and dismisses a request when its timeout expires', async () => {
     vi.useFakeTimers()
     const onSettled = vi.fn()
+    const onLifecycleSettled = vi.fn()
     const broker = new SkillImportApprovalBroker({
       generateId: () => 'approval-timeout',
       broadcast: vi.fn(),
       onSettled,
+      onLifecycleSettled,
       timeoutMs: 10
     })
     const response = broker.request(approvalInfo('session-1'))
@@ -784,6 +786,7 @@ describe('SkillImportApprovalBroker lifecycle', () => {
 
     await expect(response).resolves.toEqual({ id: 'approval-timeout', cancelled: true })
     expect(onSettled).toHaveBeenCalledWith('approval-timeout')
+    expect(onLifecycleSettled).toHaveBeenCalledWith('approval-timeout', 'expired')
   })
 
   it('cancels only approvals owned by the stopped conversation', async () => {

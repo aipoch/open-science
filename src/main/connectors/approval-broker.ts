@@ -24,6 +24,7 @@ type ApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  onSettled?: (id: string, state: 'resolved' | 'expired') => void
 }
 
 // Bridges the main-process connector gate to the renderer approval card: it holds a connector call
@@ -49,7 +50,7 @@ export class ApprovalBroker {
     const id = this.deps.generateId()
 
     return new Promise<ApprovalDecision>((resolve) => {
-      const timer = this.setTimer(() => this.settle(id, 'deny'), this.timeoutMs)
+      const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
       this.pending.set(id, { resolve, timer })
       this.deps.broadcast({ id, ...info, availableScopes: info.availableScopes ?? ['once'] })
     })
@@ -57,14 +58,15 @@ export class ApprovalBroker {
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).
   respond(id: string, decision: ApprovalDecision): void {
-    this.settle(id, decision)
+    this.settle(id, decision, 'resolved')
   }
 
-  private settle(id: string, decision: ApprovalDecision): void {
+  private settle(id: string, decision: ApprovalDecision, state: 'resolved' | 'expired'): void {
     const entry = this.pending.get(id)
     if (!entry) return
     this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
+    this.deps.onSettled?.(id, state)
   }
 }

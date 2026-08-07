@@ -224,9 +224,10 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['provision', 'notebook-env:provision', LOCAL], ['repair', 'notebook-env:repair', LOCAL],
   ]),
   group('notifications', 'notifications', [
-    ['onOpenSession', 'notifications:open-session', DORMANT_EVENT], ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT],
-    ['peekPendingOpenSession', 'notifications:peek-pending-open-session'], ['syncViewState', 'notifications:sync-unread-view', SEND],
-    ['takePendingOpenSession', 'notifications:take-pending-open-session'],
+    ['getSnapshot', 'notifications:get-snapshot'], ['markAllRead', 'notifications:mark-all-read'], ['markRead', 'notifications:mark-read'],
+    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', DORMANT_EVENT],
+    ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
+    ['syncViewState', 'notifications:sync-unread-view', SEND], ['takePendingOpenSession', 'notifications:take-pending-open-session'],
   ]),
   group('office-preview', 'officePreview', [
     ['attachFrame', 'office-preview:attach-frame', ELECTRON], ['close', 'office-preview:close', ELECTRON], ['onState', 'office-preview:state', ELECTRON_EVENT],

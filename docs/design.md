@@ -445,6 +445,24 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
 - Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
 
+### Message Center
+
+- Treat the bell as a user-attention surface, not a general activity feed or audit viewer. Items are
+  limited to user-initiated task outcomes and requests that need a decision; ordinary Project and
+  Session create, rename, archive, restore, and delete operations do not generate unread items.
+- Place the shared bell before Settings on Home, beside Settings in the desktop Workspace footer,
+  and in the always-visible mobile conversation header when the sidebar is hidden.
+- Show a red dot when unread items exist. Opening the panel does not mark items read; opening one
+  item marks that item read, and the header provides an explicit mark-all action.
+- Show authorization lifecycle state separately from read state. Resolving, rejecting, expiring, or
+  cancelling a request does not imply that the user has read its notification.
+- Use the same backend-owned list and unread state on Electron, local Web, and remote Web. Native OS
+  banners, Dock/taskbar attention, and native badges are optional desktop delivery adapters and must
+  not affect whether an inbox item is recorded.
+- Keep summaries safe for persistent display: never include secrets, raw connector arguments,
+  command bodies, credentials, or full approval payloads. Navigation targets are structured Project
+  and Session ids rather than stored UI URLs.
+
 ### Input / Textarea / Field
 
 - Use shadcn `Input`, `Textarea`, `Label`, and `Field`.

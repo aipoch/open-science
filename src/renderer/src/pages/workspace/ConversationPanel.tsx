@@ -58,6 +58,7 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
+import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
@@ -439,6 +440,7 @@ const ConversationPanel = ({
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
           </h1>
+          <NotificationBell className="md:hidden" />
           <button
             type="button"
             className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${

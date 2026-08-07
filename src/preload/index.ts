@@ -364,6 +364,12 @@ const api: OpenScienceAPI = {
     revealInFolder: () => electronRendererContracts.invoke('logs.revealInFolder')
   },
   notifications: {
+    getSnapshot: () => electronRendererContracts.invoke('notifications.getSnapshot'),
+    markAllRead: (request) =>
+      electronRendererContracts.invoke('notifications.markAllRead', request),
+    markRead: (request) => electronRendererContracts.invoke('notifications.markRead', request),
+    onChanged: (listener) =>
+      electronRendererContracts.subscribe('notifications.onChanged', listener),
     // Main-process task notifications route their click through this channel.
     onOpenSession: (listener) =>
       electronRendererContracts.subscribe('notifications.onOpenSession', listener),

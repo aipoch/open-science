@@ -202,7 +202,10 @@ const createComputeHandlers = (
   onJobUpdated?: (job: ComputeJob) => void,
   artifactResolver?: ArtifactResolver,
   storageRoot?: string,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  taskNotifications?: Pick<
+    TaskNotificationService,
+    'handleComputeApproval' | 'settleAuthorization'
+  >,
   permissionGrantRegistry?: PermissionGrantRegistry,
   syncComputeSkillDocument?: () => Promise<void>
 ): ComputeHandlers => {
@@ -234,6 +237,9 @@ const createComputeHandlers = (
               win.webContents.send('compute:approval-request', request)
             }
           },
+      onSettled: taskNotifications
+        ? (id, state) => void taskNotifications.settleAuthorization('compute', id, state)
+        : undefined,
       // Isolated legacy callers retain their old hooks. Production uses only the Registry adapter.
       checkProjectGrant:
         settingsRepository && !permissionGrantRegistry
@@ -470,7 +476,10 @@ const createComputeIpcModule = (
   // one constructed by createComputeHandlers. Lets the renderer-callable error wrapper around
   // `compute:list-dir` / `compute:download` be exercised end-to-end against a fake service.
   injectedService?: ComputeService,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  taskNotifications?: Pick<
+    TaskNotificationService,
+    'handleComputeApproval' | 'settleAuthorization'
+  >,
   permissionGrantRegistry?: PermissionGrantRegistry
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()

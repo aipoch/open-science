@@ -32,6 +32,7 @@ import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
+import { NotificationBell } from '@/components/NotificationBell'
 
 type WorkspaceSidebarProps = {
   projectName: string
@@ -415,6 +416,7 @@ const WorkspaceSidebar = ({
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
             />
+            <NotificationBell side="top" align="start" className="size-8 rounded-md" />
             <button
               type="button"
               onClick={onOpenSettings}

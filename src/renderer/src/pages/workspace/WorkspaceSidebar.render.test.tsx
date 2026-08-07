@@ -91,6 +91,7 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('m-2 flex min-h-0 flex-1 flex-col rounded-lg')
     expect(html).not.toContain('mr-0')
+    expect(html).toContain('aria-label="Messages, no unread messages"')
   })
 
   it('reserves header padding for the external panel toggle without spacer markup', async () => {

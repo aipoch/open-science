@@ -9,7 +9,8 @@ import {
   describePermissionNotification,
   describeTaskNotification,
   TaskNotificationService,
-  type TaskNotificationRequest
+  type TaskNotificationRequest,
+  type TaskNotificationServiceDeps
 } from './task-notifications'
 
 const stopEvent = (stopReason: string, sessionId = 'session-1'): AcpRuntimeEvent => ({
@@ -245,56 +246,47 @@ const createService = (overrides: {
   requestAttention?: () => void
   clearAttention?: () => void
   onAttentionError?: (error: unknown) => void
-  markUnread?: (sessionId: string) => Promise<void>
-  onUnreadError?: (error: unknown) => void
+  inbox?: TaskNotificationServiceDeps['inbox']
+  onInboxError?: (error: unknown) => void
 }): {
   service: TaskNotificationService
   shown: TaskNotificationRequest[]
   deliveryErrors: unknown[]
   attentionRequests: number[]
   attentionErrors: unknown[]
-  unreadSessionIds: string[]
-  unreadErrors: unknown[]
+  inboxErrors: unknown[]
 } => {
   const shown: TaskNotificationRequest[] = []
   const deliveryErrors: unknown[] = []
   const attentionRequests: number[] = []
   const attentionErrors: unknown[] = []
-  const unreadSessionIds: string[] = []
-  const unreadErrors: unknown[] = []
+  const inboxErrors: unknown[] = []
   const service = new TaskNotificationService({
     isEnabled: overrides.isEnabled ?? (() => Promise.resolve(true)),
     isAppFocused: overrides.isAppFocused ?? (() => false),
     show: overrides.show ?? ((request) => shown.push(request)),
     onDeliveryError: overrides.onDeliveryError ?? ((error) => deliveryErrors.push(error)),
     onAttentionError: overrides.onAttentionError ?? ((error) => attentionErrors.push(error)),
-    onUnreadError: overrides.onUnreadError ?? ((error) => unreadErrors.push(error))
+    inbox: overrides.inbox,
+    onInboxError: overrides.onInboxError ?? ((error) => inboxErrors.push(error))
   })
   service.setAttentionHandlers({
     request: overrides.requestAttention ?? (() => attentionRequests.push(1)),
     clear: overrides.clearAttention ?? (() => undefined)
   })
-  service.setUnreadHandler(
-    overrides.markUnread ??
-      (async (sessionId) => {
-        unreadSessionIds.push(sessionId)
-      })
-  )
-
   return {
     service,
     shown,
     deliveryErrors,
     attentionRequests,
     attentionErrors,
-    unreadSessionIds,
-    unreadErrors
+    inboxErrors
   }
 }
 
 describe('TaskNotificationService', () => {
   it('notifies on completion using the tracked prompt as the task name', async () => {
-    const { service, shown, attentionRequests, unreadSessionIds } = createService({})
+    const { service, shown, attentionRequests } = createService({})
 
     service.trackPrompt({ sessionId: 'session-1', text: '\nPlot the curve\nand fit a model' })
     await service.handleRuntimeEvent(stopEvent('end_turn'))
@@ -305,7 +297,6 @@ describe('TaskNotificationService', () => {
       body: 'The agent finished responding to "Plot the curve".'
     })
     expect(attentionRequests).toEqual([])
-    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('collapses multiline prompts to their first line', async () => {
@@ -317,8 +308,52 @@ describe('TaskNotificationService', () => {
     expect(shown[0]?.body).toBe('The agent finished responding to "First line".')
   })
 
+  it('records task outcomes and authorization requests even when native delivery is suppressed', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const show = vi.fn()
+    const service = new TaskNotificationService({
+      isEnabled: async () => false,
+      isAppFocused: () => true,
+      show,
+      inbox
+    })
+    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
+    await service.handlePermissionRequest(permissionRequest('Run command'))
+    await service.handlePlanApproval({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: 'plan-version-1',
+      summary: 'Plot the curve safely.'
+    })
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(inbox.record).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        dedupeKey: 'authorization:agent-tool:req-1',
+        kind: 'authorization.required',
+        actionState: 'pending'
+      })
+    )
+    expect(inbox.record).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        dedupeKey: 'authorization:session-plan:plan-version-1',
+        source: 'session-plan'
+      })
+    )
+    expect(inbox.record).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ dedupeKey: 'task:event-1', kind: 'task.completed' })
+    )
+    expect(show).not.toHaveBeenCalled()
+  })
+
   it('tracks an attachment-only user turn and uses a generic completion body', async () => {
-    const { service, shown, unreadSessionIds } = createService({})
+    const { service, shown } = createService({})
 
     expect(service.trackPrompt({ sessionId: 'session-1', text: '' })).toEqual({
       token: 1
@@ -329,11 +364,10 @@ describe('TaskNotificationService', () => {
       title: 'Task completed',
       body: 'The agent finished responding.'
     })
-    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('does not notify while the app is focused', async () => {
-    const { service, shown, attentionRequests, unreadSessionIds } = createService({
+    const { service, shown, attentionRequests } = createService({
       isAppFocused: () => true
     })
 
@@ -342,11 +376,10 @@ describe('TaskNotificationService', () => {
 
     expect(shown).toHaveLength(0)
     expect(attentionRequests).toHaveLength(0)
-    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('does not notify when the preference is disabled', async () => {
-    const { service, shown, attentionRequests, unreadSessionIds } = createService({
+    const { service, shown, attentionRequests } = createService({
       isEnabled: () => Promise.resolve(false)
     })
 
@@ -355,7 +388,6 @@ describe('TaskNotificationService', () => {
 
     expect(shown).toHaveLength(0)
     expect(attentionRequests).toHaveLength(0)
-    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('fails closed when the preference read throws', async () => {
@@ -370,14 +402,13 @@ describe('TaskNotificationService', () => {
   })
 
   it('stays silent for internal turns that never tracked a prompt (reviewer correction)', async () => {
-    const { service, shown, unreadSessionIds } = createService({})
+    const { service, shown } = createService({})
 
     // The reviewer's auditor-correction calls runtime.sendPrompt directly (no IPC, no trackPrompt).
     await service.handleRuntimeEvent(stopEvent('end_turn', 'main-session'))
     await service.handleRuntimeEvent(errorEvent('boom', { sessionId: 'main-session' }))
 
     expect(shown).toHaveLength(0)
-    expect(unreadSessionIds).toHaveLength(0)
   })
 
   it('ignores terminal events without a session id', async () => {
@@ -495,7 +526,7 @@ describe('TaskNotificationService', () => {
 
   it('fails closed when the focus probe throws and reports the delivery error', async () => {
     const error = new Error('window was destroyed')
-    const { service, shown, deliveryErrors, unreadSessionIds } = createService({
+    const { service, shown, deliveryErrors } = createService({
       isAppFocused: () => {
         throw error
       }
@@ -506,7 +537,6 @@ describe('TaskNotificationService', () => {
     await expect(service.handleRuntimeEvent(stopEvent('end_turn'))).resolves.toBeUndefined()
     expect(shown).toHaveLength(0)
     expect(deliveryErrors).toEqual([error])
-    expect(unreadSessionIds).toEqual(['session-1'])
   })
 
   it('reports approval attention errors without blocking the system notification', async () => {
@@ -525,16 +555,19 @@ describe('TaskNotificationService', () => {
   })
 
   it.each([
-    ['clean completion', stopEvent('end_turn')],
-    ['abnormal stop', stopEvent('max_tokens')],
-    ['task failure', errorEvent('Rate limit reached')]
-  ])('records unread for a tracked %s', async (_label, event) => {
-    const { service, unreadSessionIds } = createService({})
+    ['clean completion', stopEvent('end_turn'), 'task.completed'],
+    ['abnormal stop', stopEvent('max_tokens'), 'task.needs-attention'],
+    ['task failure', errorEvent('Rate limit reached'), 'task.failed']
+  ])('records a message-center item for a tracked %s', async (_label, event, kind) => {
+    const record = vi.fn(async () => undefined)
+    const { service } = createService({
+      inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
+    })
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await service.handleRuntimeEvent(event)
 
-    expect(unreadSessionIds).toEqual(['session-1'])
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ kind, sessionId: 'session-1' }))
   })
 
   it.each([
@@ -549,8 +582,11 @@ describe('TaskNotificationService', () => {
     expect(attentionRequests).toEqual([])
   })
 
-  it('does not record unread for cancellation, recoverable retries, or approvals', async () => {
-    const { service, unreadSessionIds } = createService({})
+  it('does not record task outcomes for cancellation or recoverable retries', async () => {
+    const record = vi.fn(async () => undefined)
+    const { service } = createService({
+      inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
+    })
 
     service.trackPrompt({ sessionId: 'cancelled', text: 'Cancel me' })
     await service.handleRuntimeEvent(stopEvent('cancelled', 'cancelled'))
@@ -563,32 +599,35 @@ describe('TaskNotificationService', () => {
       })
     )
 
-    service.trackPrompt({ sessionId: 'approval', text: 'Approve me' })
-    await service.handlePermissionRequest(permissionRequest('Run command', 'approval'))
-
-    expect(unreadSessionIds).toEqual([])
+    expect(record).not.toHaveBeenCalled()
   })
 
-  it('isolates unread persistence errors and still delivers the system notification', async () => {
-    const error = new Error('unread persistence failed')
-    const { service, shown, unreadErrors } = createService({
-      markUnread: () => Promise.reject(error)
+  it('isolates inbox persistence errors and still delivers the system notification', async () => {
+    const error = new Error('inbox persistence failed')
+    const { service, shown, inboxErrors } = createService({
+      inbox: {
+        record: () => Promise.reject(error),
+        settleAuthorization: vi.fn(async () => undefined)
+      }
     })
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
     await expect(service.handleRuntimeEvent(stopEvent('end_turn'))).resolves.toBeUndefined()
 
-    expect(unreadErrors).toEqual([error])
+    expect(inboxErrors).toEqual([error])
     expect(shown).toHaveLength(1)
   })
 
-  it('does not delay the system notification while unread persistence is pending', async () => {
-    let finishUnread: (() => void) | undefined
+  it('does not delay the system notification while inbox persistence is pending', async () => {
+    let finishInbox: (() => void) | undefined
     const { service, shown } = createService({
-      markUnread: () =>
-        new Promise<void>((resolve) => {
-          finishUnread = resolve
-        })
+      inbox: {
+        record: () =>
+          new Promise<void>((resolve) => {
+            finishInbox = resolve
+          }),
+        settleAuthorization: vi.fn(async () => undefined)
+      }
     })
 
     service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
@@ -597,7 +636,7 @@ describe('TaskNotificationService', () => {
 
     expect(shown).toHaveLength(1)
 
-    finishUnread?.()
+    finishInbox?.()
     await handling
   })
 

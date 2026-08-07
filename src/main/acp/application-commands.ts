@@ -23,6 +23,7 @@ import { canSatisfyHumanApproval } from '../caller-context'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 
 const acpCommands = Object.freeze({
   getState: defineApplicationCommand<'acp:get-state', readonly [], AcpStateSnapshot>(
@@ -152,6 +153,7 @@ type AcpApplicationCommandDependencies = Readonly<{
       operation: () => Promise<Result>
     ): Promise<Result>
   }>
+  notificationInbox?: Pick<NotificationInboxController, 'settleAuthorization'>
 }>
 
 const registerAcpCommands = (
@@ -208,7 +210,18 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to permission requests.')
         }
-        return dependencies.runtime.respondToPermission(invocation.args[0])
+        return Promise.resolve(dependencies.runtime.respondToPermission(invocation.args[0])).then(
+          (snapshot) => {
+            void dependencies.notificationInbox
+              ?.settleAuthorization(
+                'agent-tool',
+                invocation.args[0].requestId,
+                invocation.args[0].cancelled ? 'cancelled' : 'resolved'
+              )
+              .catch(() => undefined)
+            return snapshot
+          }
+        )
       },
       'acp:set-permission-profile': (invocation) =>
         dependencies.runtime.setPermissionProfile(invocation.args[0]),

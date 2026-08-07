@@ -1,0 +1,77 @@
+import { create } from 'zustand'
+
+import type { NotificationInboxSnapshot } from '../../../shared/notifications'
+
+type NotificationInboxStore = NotificationInboxSnapshot & {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  error?: string
+  refresh: () => Promise<void>
+  markRead: (ids: readonly string[]) => Promise<void>
+  markAllRead: () => Promise<void>
+  listen: () => () => void
+}
+
+const EMPTY_SNAPSHOT: NotificationInboxSnapshot = {
+  revision: 0,
+  unreadCount: 0,
+  latestSequence: 0,
+  items: []
+}
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : 'Messages could not be loaded.'
+
+let refreshTail: Promise<void> = Promise.resolve()
+
+// Mirrors the backend-owned snapshot. Every renderer subscribes before its first read, while the
+// serialized refresh queue prevents an older RPC response from overwriting a newer event-triggered one.
+export const useNotificationInboxStore = create<NotificationInboxStore>((set, get) => ({
+  ...EMPTY_SNAPSHOT,
+  status: 'idle',
+
+  refresh: () => {
+    const operation = async (): Promise<void> => {
+      const api = window.api?.notifications
+      if (!api?.getSnapshot) return
+      if (get().status === 'idle') set({ status: 'loading', error: undefined })
+      try {
+        const snapshot = await api.getSnapshot()
+        if (snapshot.revision >= get().revision) {
+          set({ ...snapshot, status: 'ready', error: undefined })
+        }
+      } catch (error) {
+        set({ status: 'error', error: errorMessage(error) })
+      }
+    }
+    refreshTail = refreshTail.then(operation, operation)
+    return refreshTail
+  },
+
+  markRead: async (ids) => {
+    const normalized = [...new Set(ids.map((id) => id.trim()).filter(Boolean))]
+    if (normalized.length === 0) return
+    const mark = window.api?.notifications?.markRead
+    if (!mark) return
+    await mark({ ids: normalized })
+    await get().refresh()
+  },
+
+  markAllRead: async () => {
+    const throughSequence = get().latestSequence
+    if (throughSequence <= 0 || get().unreadCount === 0) return
+    const mark = window.api?.notifications?.markAllRead
+    if (!mark) return
+    await mark({ throughSequence })
+    await get().refresh()
+  },
+
+  listen: () => {
+    const api = window.api?.notifications
+    if (!api?.onChanged || !api.getSnapshot) return () => undefined
+    const remove = api.onChanged(() => void get().refresh())
+    void get().refresh()
+    return remove
+  }
+}))
+
+export { EMPTY_SNAPSHOT }

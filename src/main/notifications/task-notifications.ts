@@ -1,11 +1,16 @@
 import type { AcpPermissionRequest, AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
-import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+import type {
+  NotificationActionState,
+  NotificationSource,
+  OpenSessionFromNotificationRequest
+} from '../../shared/notifications'
 import type {
   ConnectorApprovalRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
+import type { NotificationInboxController } from './notification-inbox-controller'
 
 export type TaskNotification = {
   title: string
@@ -30,17 +35,16 @@ export type TaskNotificationServiceDeps = {
   onDeliveryError?: (error: unknown) => void
   // Native Dock/taskbar calls are isolated from OS banner delivery and reported separately.
   onAttentionError?: (error: unknown) => void
-  // Unread persistence is independent from both delivery channels and must never disturb the
-  // runtime event stream.
-  onUnreadError?: (error: unknown) => void
+  // Durable inbox recording is shared by desktop, Web, and headless clients. Failures are reported
+  // without changing the underlying task or approval lifecycle.
+  inbox?: Pick<NotificationInboxController, 'record' | 'settleAuthorization'>
+  onInboxError?: (error: unknown) => void
 }
 
 export type TaskNotificationAttentionHandlers = {
   request: () => void
   clear: () => void
 }
-
-export type TaskNotificationUnreadHandler = (sessionId: string) => Promise<void>
 
 const reportTaskNotificationError = (
   reporter: ((error: unknown) => void) | undefined,
@@ -239,7 +243,6 @@ export class TaskNotificationService {
   private trackCounter = 0
   private activationHandler: ((sessionId?: string) => void) | undefined
   private attentionHandlers: TaskNotificationAttentionHandlers | undefined
-  private unreadHandler: TaskNotificationUnreadHandler | undefined
   // Click target held for the renderer to pull: a push sent before the renderer's listener exists
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
   // renderer — once its sessions are hydrated — takes it. Consume-once.
@@ -278,12 +281,6 @@ export class TaskNotificationService {
   // service remain Electron-free while attention can still inspect the current native window.
   setAttentionHandlers(handlers: TaskNotificationAttentionHandlers): void {
     this.attentionHandlers = handlers
-  }
-
-  // Bound by the unread controller in index.ts. Terminal task results call this before notification
-  // preference/focus gates, because native unread state is an independent product signal.
-  setUnreadHandler(handler: TaskNotificationUnreadHandler): void {
-    this.unreadHandler = handler
   }
 
   // Records the conversation a notification click should open, so a renderer that misses the push
@@ -376,20 +373,24 @@ export class TaskNotificationService {
 
     if (!notification) return
 
-    let unreadUpdate: Promise<void> | undefined
-
-    try {
-      // Attach rejection handling immediately, but do not await disk persistence before delivering
-      // the banner/attention channels. The controller updates its in-memory count synchronously.
-      unreadUpdate = this.unreadHandler?.(sessionId).catch((error) => {
-        reportTaskNotificationError(this.deps.onUnreadError, error)
-      })
-    } catch (error) {
-      reportTaskNotificationError(this.deps.onUnreadError, error)
-    }
+    const kind =
+      notification.title === 'Task completed'
+        ? 'task.completed'
+        : notification.title === 'Task failed'
+          ? 'task.failed'
+          : 'task.needs-attention'
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `task:${event.id}`,
+      kind,
+      sessionId,
+      originId: event.id,
+      title: notification.title,
+      summary: notification.body,
+      createdAt: event.timestamp
+    })
 
     await this.deliver(notification, sessionId)
-    await unreadUpdate
+    await inboxUpdate
   }
 
   // Observes permission requests (wired next to the 'acp:permission-request' broadcast): a pending
@@ -400,7 +401,19 @@ export class TaskNotificationService {
 
     if (!tracked) return
 
-    await this.deliver(describePermissionNotification(request, tracked.snippet), request.sessionId)
+    const notification = describePermissionNotification(request, tracked.snippet)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:agent-tool:${request.requestId}`,
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: request.sessionId,
+      originId: request.requestId,
+      title: notification.title,
+      summary: notification.body,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
   }
 
   // Observes connector approvals (wired next to the 'connectors:approval-request' broadcast): the
@@ -408,7 +421,8 @@ export class TaskNotificationService {
   // user-turn eligibility gate so internal work stays silent; a sessionless approval still needs a
   // notification because it can independently block a call. A tracked session names and targets it.
   handleConnectorApproval = async (
-    request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
+    request: Pick<ConnectorApprovalRequest, 'connector' | 'method'> &
+      Partial<Pick<ConnectorApprovalRequest, 'id'>>,
     sessionId?: string
   ): Promise<void> => {
     const tracked = sessionId ? this.trackedFor(sessionId) : undefined
@@ -417,7 +431,21 @@ export class TaskNotificationService {
     // sessionless connector approvals visible because they can still block an independent tool call.
     if (sessionId && !tracked) return
 
-    await this.deliver(describeConnectorApprovalNotification(request, tracked?.snippet), sessionId)
+    const notification = describeConnectorApprovalNotification(request, tracked?.snippet)
+    const inboxUpdate = request.id
+      ? this.recordInbox({
+          dedupeKey: `authorization:connector:${request.id}`,
+          kind: 'authorization.required',
+          source: 'connector',
+          ...(sessionId ? { sessionId } : {}),
+          originId: request.id,
+          title: notification.title,
+          summary: notification.body,
+          actionState: 'pending'
+        })
+      : Promise.resolve()
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
   }
 
   // Compute approvals carry their conversation separately from the renderer payload. Keep the same
@@ -430,13 +458,22 @@ export class TaskNotificationService {
 
     if (sessionId && !tracked) return
 
-    await this.deliver(
-      describeApprovalNotification(
-        `${request.provider_name} — ${request.intent}`,
-        tracked?.snippet
-      ),
-      sessionId
+    const notification = describeApprovalNotification(
+      `${request.provider_name} — ${request.intent}`,
+      tracked?.snippet
     )
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:compute:${request.id}`,
+      kind: 'authorization.required',
+      source: 'compute',
+      ...(sessionId ? { sessionId } : {}),
+      originId: request.id,
+      title: notification.title,
+      summary: notification.body,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
   }
 
   // Conversation Skill imports always belong to an active user turn and can target that same
@@ -448,10 +485,77 @@ export class TaskNotificationService {
 
     if (!tracked) return
 
-    await this.deliver(
-      describeApprovalNotification(`Import ${request.source.label}`, tracked.snippet),
-      request.sessionId
+    const notification = describeApprovalNotification(
+      `Import ${request.source.label}`,
+      tracked.snippet
     )
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:skill-import:${request.id}`,
+      kind: 'authorization.required',
+      source: 'skill-import',
+      sessionId: request.sessionId,
+      originId: request.id,
+      title: notification.title,
+      summary: notification.body,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
+  }
+
+  handlePlanApproval = async (request: {
+    projectId: string
+    sessionId: string
+    artifactVersionId: string
+    summary: string
+  }): Promise<void> => {
+    const tracked = this.trackedFor(request.sessionId)
+    if (!tracked) return
+    const notification: TaskNotification = {
+      title: 'Plan approval needed',
+      body: truncate(
+        tracked.snippet
+          ? `${quoteSnippet(tracked.snippet)} has a plan ready for review.`
+          : `Review the proposed plan: ${request.summary}`,
+        MAX_BODY_LENGTH
+      ),
+      attention: true
+    }
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
+      kind: 'authorization.required',
+      source: 'session-plan',
+      projectId: request.projectId,
+      sessionId: request.sessionId,
+      originId: request.artifactVersionId,
+      title: notification.title,
+      summary: notification.body,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
+  }
+
+  settleAuthorization = async (
+    source: NotificationSource,
+    originId: string,
+    state: NotificationActionState
+  ): Promise<void> => {
+    try {
+      await this.deps.inbox?.settleAuthorization(source, originId, state)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
+  }
+
+  private async recordInbox(
+    input: Parameters<NonNullable<TaskNotificationServiceDeps['inbox']>['record']>[0]
+  ): Promise<void> {
+    try {
+      await this.deps.inbox?.record(input)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
   }
 
   // Shared gates and delivery: a focused app and a disabled preference stay silent (and a settings

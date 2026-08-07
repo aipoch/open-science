@@ -88,7 +88,7 @@ import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
-import type { PlanResponseResult } from '../session-plan/plan-service'
+import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -258,6 +258,8 @@ type AcpRuntimePlanOptions = {
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
   >
+  onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
+  onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
 // Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
 // hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,

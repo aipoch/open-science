@@ -2,7 +2,12 @@ import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../share
 import type { CliLauncherStatus } from '../shared/cli'
 import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  NotificationInboxSnapshot,
+  NotificationMarkAllReadRequest,
+  NotificationMarkReadRequest,
+  OpenSessionFromNotificationRequest
+} from '../shared/notifications'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -98,6 +103,21 @@ const logsCommands = Object.freeze({
 })
 
 const notificationCommands = Object.freeze({
+  getSnapshot: defineApplicationCommand<
+    'notifications:get-snapshot',
+    readonly [],
+    NotificationInboxSnapshot
+  >('notifications:get-snapshot'),
+  markAllRead: defineApplicationCommand<
+    'notifications:mark-all-read',
+    readonly [request: NotificationMarkAllReadRequest],
+    void
+  >('notifications:mark-all-read'),
+  markRead: defineApplicationCommand<
+    'notifications:mark-read',
+    readonly [request: NotificationMarkReadRequest],
+    void
+  >('notifications:mark-read'),
   peekPendingOpenSession: defineApplicationCommand<
     'notifications:peek-pending-open-session',
     readonly [],
@@ -265,6 +285,9 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   logs: LogsCommandOwner
   notifications: Readonly<{
+    getSnapshot: () => Promise<NotificationInboxSnapshot>
+    markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
+    markRead: (request: NotificationMarkReadRequest) => Promise<void>
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
   }>
@@ -299,6 +322,32 @@ const localCommand = <Result>(
     throw new Error(`Channel only available from the local app: ${channel}`)
   }
   return invoke()
+}
+
+const requireNotificationMarkReadRequest = (value: unknown): NotificationMarkReadRequest => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !Array.isArray((value as { ids?: unknown }).ids) ||
+    !(value as { ids: unknown[] }).ids.every((id) => typeof id === 'string')
+  ) {
+    throw new Error('Invalid notifications:mark-read request.')
+  }
+  return value as NotificationMarkReadRequest
+}
+
+const requireNotificationMarkAllReadRequest = (value: unknown): NotificationMarkAllReadRequest => {
+  const throughSequence = (value as { throughSequence?: unknown } | null)?.throughSequence
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof throughSequence !== 'number' ||
+    !Number.isSafeInteger(throughSequence) ||
+    throughSequence < 0
+  ) {
+    throw new Error('Invalid notifications:mark-all-read request.')
+  }
+  return value as NotificationMarkAllReadRequest
 }
 
 // Production composition registers all bounded command groups atomically; this group must not be
@@ -349,6 +398,11 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:get-snapshot': () => dependencies.notifications.getSnapshot(),
+      'notifications:mark-all-read': ({ args }) =>
+        dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
+      'notifications:mark-read': ({ args }) =>
+        dependencies.notifications.markRead(requireNotificationMarkReadRequest(args[0])),
       'notifications:peek-pending-open-session': () =>
         dependencies.notifications.peekPendingOpenSession(),
       'notifications:take-pending-open-session': ({ args }) =>

@@ -1,7 +1,7 @@
 // Prisma schema for the project data layer.
 //
 // Sessions and messages stay on disk (see src/shared/session-persistence.ts). SQLite stores projects,
-// preview state, unread desktop task state, reviewer results, and a query projection of app-managed
+// preview state, the message center, reviewer results, and a query projection of app-managed
 // files; file bytes remain on disk. At runtime the datasource url is supplied programmatically (see
 // prisma-client.ts), so DATABASE_URL is CLI-only.
 
@@ -58,11 +58,35 @@ model ProjectPreviewState {
   updatedAt    DateTime @updatedAt
 }
 
-// One row per terminal agent task that the user has not viewed yet. The auto-increment key retains
-// insertion order for oldest-first eviction without making Session JSON subordinate to SQLite.
+// Legacy unread-task rows retained only as the source for the message-center startup migration.
+// Runtime code removes each row after converting it into a generic inbox item.
 model UnreadTaskSession {
   id        Int    @id @default(autoincrement())
   sessionId String @unique
+}
+
+// Backend-owned message center shared by desktop and Web clients connected to one single-user
+// instance. `sequence` is the atomic mark-all boundary and retention order; `dedupeKey` makes every
+// producer retry-safe without exposing provider payloads in the inbox.
+model NotificationInboxItem {
+  sequence    Int       @id @default(autoincrement())
+  id          String    @unique
+  dedupeKey   String    @unique
+  kind        String
+  source      String?
+  projectId   String?
+  sessionId   String?
+  originId    String
+  title       String
+  summary     String
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  actionState String?
+  settledAt   DateTime?
+
+  @@index([readAt, sequence])
+  @@index([sessionId])
+  @@index([projectId])
 }
 
 // One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in

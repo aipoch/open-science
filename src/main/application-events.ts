@@ -9,6 +9,7 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
+import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
@@ -34,6 +35,7 @@ export type ApplicationEventMap = {
   'acp:permission-request': AcpPermissionRequest
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
+  'notifications:changed': NotificationInboxChanged
   'project:created': Project
   'project:updated': Project
   'project:deleted': ProjectDeletedEvent

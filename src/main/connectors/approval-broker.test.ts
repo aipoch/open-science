@@ -132,4 +132,27 @@ describe('ApprovalBroker', () => {
     broker.respond('id-1', 'global')
     await expect(decision).resolves.toBe('global')
   })
+
+  it('reports response and timeout settlement states to durable notification adapters', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+
+    const responded = broker.request({ connector: 'x', method: 'one', argsPreview: '{}' })
+    broker.respond('id-1', 'once')
+    await responded
+    const expired = broker.request({ connector: 'x', method: 'two', argsPreview: '{}' })
+    timer.fire()
+    await expired
+
+    expect(onSettled).toHaveBeenNthCalledWith(1, 'id-1', 'resolved')
+    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'expired')
+  })
 })

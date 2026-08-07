@@ -40,6 +40,7 @@ import { useSkillImportStore } from '@/stores/skill-import-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 
 type NotificationOpenIntent = {
   generation: number
@@ -89,6 +90,7 @@ const App = (): React.JSX.Element | null => {
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
+  const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
   const openPermissionSession = useCallback(
     (sessionId: string): void => {
@@ -253,6 +255,7 @@ const App = (): React.JSX.Element | null => {
   }, [initUpdates])
 
   useEffect(() => listenForPermissionChanges(), [listenForPermissionChanges])
+  useEffect(() => listenForNotificationChanges(), [listenForNotificationChanges])
 
   // Mirrors the main-process provisioner once at launch (Plan A auto-runs upgradeIfNeeded and
   // broadcasts progress); the returned `ui` drives the top-level upgrade/error banner below.

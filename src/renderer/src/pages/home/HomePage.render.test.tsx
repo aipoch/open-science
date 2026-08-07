@@ -51,6 +51,7 @@ describe('HomePage environment repair notice', () => {
 
     expect(document.body.textContent).toContain('Group related sessions under a project.')
     expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
+    expect(container.querySelector('[aria-label^="Messages,"]')).not.toBeNull()
   })
 
   it('does not alert for optional Python or secure-storage warnings', async () => {

@@ -266,6 +266,11 @@ describe('ConversationPanel header spacing', () => {
       expect.arrayContaining(['px-4', 'pt-2'])
     )
     expect(getConversationHeader().className.split(' ')).not.toContain('pl-8')
+    const messageButton = getConversationHeader().querySelector<HTMLButtonElement>(
+      '[aria-label^="Messages,"]'
+    )
+    expect(messageButton).not.toBeNull()
+    expect(messageButton?.className.split(' ')).toContain('md:hidden')
   })
 })
 

@@ -28,6 +28,7 @@ type ComputeApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  onSettled?: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
   permissionGrants?: ComputePermissionGrantAdapter
   // Optional: check whether a project-scope grant exists for (projectId, operation, providerId).
   // Return true → skip the approval card with 'project' decision.
@@ -93,7 +94,7 @@ export class ComputeApprovalBroker {
     const providerId = info.provider_id
 
     return new Promise<ComputeApprovalDecision>((resolve) => {
-      const timer = this.setTimer(() => this.settle(id, 'deny'), this.timeoutMs)
+      const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
       this.pending.set(id, { resolve, timer, providerId })
       this.deps.broadcast({ id, ...info }, context)
     })
@@ -207,7 +208,7 @@ export class ComputeApprovalBroker {
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored.
   respond(id: string, decision: ComputeApprovalDecision): void {
-    this.settle(id, decision)
+    this.settle(id, decision, 'resolved')
   }
 
   // Host deletion begins by advancing its generation and denying every approval card that was
@@ -219,7 +220,7 @@ export class ComputeApprovalBroker {
       if (key.endsWith(`:${providerId}`)) this.conversationGrants.delete(key)
     }
     for (const [id, entry] of this.pending) {
-      if (entry.providerId === providerId) this.settle(id, 'deny')
+      if (entry.providerId === providerId) this.settle(id, 'deny', 'cancelled')
     }
     await Promise.allSettled(Array.from(this.inFlightRequests.get(providerId) ?? []))
   }
@@ -252,11 +253,16 @@ export class ComputeApprovalBroker {
     return (this.providerGenerations.get(providerId) ?? 0) === expectedGeneration
   }
 
-  private settle(id: string, decision: ComputeApprovalDecision): void {
+  private settle(
+    id: string,
+    decision: ComputeApprovalDecision,
+    state: 'resolved' | 'expired' | 'cancelled'
+  ): void {
     const entry = this.pending.get(id)
     if (!entry) return
     this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
+    this.deps.onSettled?.(id, state)
   }
 }
