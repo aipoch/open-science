@@ -39,7 +39,24 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
+
+const stubMobileViewport = (): void => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn((query: string) => ({
+      matches: query === '(max-width: 47.999rem)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+  )
+}
 
 describe('NotificationBell', () => {
   it('renders a red-dot entry point with an accessible unread count and pending state', async () => {
@@ -79,5 +96,31 @@ describe('NotificationBell', () => {
     )
     await act(async () => markAll?.click())
     expect(markAllRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses a bottom drawer on mobile and notifies its host when opening', async () => {
+    stubMobileViewport()
+    const onOpen = vi.fn()
+    await act(async () =>
+      root.render(<NotificationBell side="top" align="start" onOpen={onOpen} />)
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    await act(async () => trigger?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(dialog?.classList.contains('inset-x-0')).toBe(true)
+    expect(dialog?.classList.contains('bottom-0')).toBe(true)
+    expect(dialog?.classList.contains('h-[min(82dvh,760px)]')).toBe(true)
+    expect(dialog?.classList.contains('rounded-t-2xl')).toBe(true)
+    expect(dialog?.classList.contains('inset-0')).toBe(false)
+    expect(dialog?.hasAttribute('style')).toBe(false)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    const close = document.body.querySelector<HTMLButtonElement>('[aria-label="Close messages"]')
+    expect(close).not.toBeNull()
+    await act(async () => close?.click())
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
   })
 })

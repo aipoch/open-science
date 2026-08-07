@@ -1,4 +1,8 @@
-import { Bell, CheckCheck, CircleAlert, CircleCheck, ShieldCheck } from 'lucide-react'
+/* Hallmark · component: message-center · genre: modern-minimal · theme: project-tokens
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass (40–41) · pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
+import { Bell, CheckCheck, CircleAlert, CircleCheck, ShieldCheck, X } from 'lucide-react'
 import {
   type CSSProperties,
   useCallback,
@@ -11,6 +15,7 @@ import {
 import { createPortal } from 'react-dom'
 
 import type { NotificationInboxItem } from '../../../shared/notifications'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -20,6 +25,7 @@ type NotificationBellProps = Readonly<{
   className?: string
   side?: 'top' | 'right' | 'bottom' | 'left'
   align?: 'start' | 'center' | 'end'
+  onOpen?: () => void
 }>
 
 const iconFor = (item: NotificationInboxItem): React.JSX.Element => {
@@ -43,6 +49,7 @@ const actionLabel = (item: NotificationInboxItem): string | undefined => {
 const VIEWPORT_MARGIN = 8
 const PANEL_GAP = 8
 const PANEL_MAX_WIDTH = 368
+const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
@@ -52,9 +59,11 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
 const NotificationBell = ({
   className,
   side = 'bottom',
-  align = 'end'
+  align = 'end',
+  onOpen
 }: NotificationBellProps): React.JSX.Element => {
   const [open, setOpen] = useState(false)
+  const isMobile = useMediaQuery(MOBILE_MESSAGE_CENTER_QUERY)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -72,6 +81,7 @@ const NotificationBell = ({
   const markAllRead = useNotificationInboxStore((state) => state.markAllRead)
 
   const updatePanelPosition = useCallback((): void => {
+    if (isMobile) return
     const trigger = triggerRef.current
     const panel = panelRef.current
     if (!trigger || !panel) return
@@ -124,11 +134,22 @@ const NotificationBell = ({
       top: clamp(top, VIEWPORT_MARGIN, window.innerHeight - VIEWPORT_MARGIN - height),
       width
     })
-  }, [align, side])
+  }, [align, isMobile, side])
 
   useLayoutEffect(() => {
-    if (open) updatePanelPosition()
-  }, [open, updatePanelPosition])
+    if (!open) return
+    if (isMobile) panelRef.current?.focus()
+    else updatePanelPosition()
+  }, [isMobile, open, updatePanelPosition])
+
+  useEffect(() => {
+    if (!open || !isMobile) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isMobile, open])
 
   useEffect(() => {
     if (!open) return
@@ -176,10 +197,13 @@ const NotificationBell = ({
         onClick={() => {
           const nextOpen = !open
           setOpen(nextOpen)
-          if (nextOpen) void refresh()
+          if (nextOpen) {
+            onOpen?.()
+            void refresh()
+          }
         }}
         className={cn(
-          'relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000',
+          "relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out before:absolute before:-inset-1.5 before:content-[''] hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 md:before:hidden",
           className
         )}
       >
@@ -193,93 +217,167 @@ const NotificationBell = ({
       </button>
       {open
         ? createPortal(
-            <div
-              ref={panelRef}
-              id={panelId}
-              role="dialog"
-              aria-label="Message center"
-              style={position}
-              className="fixed z-modal overflow-hidden rounded-xl border border-border-200/70 bg-bg-000 p-0 text-text-000 shadow-menu"
-            >
-              <div className="flex h-12 items-center justify-between border-b border-border-200/60 px-3">
-                <div>
-                  <div className="text-sm font-semibold">Messages</div>
-                  <div className="text-[11px] text-text-300">
-                    {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
-                  </div>
-                </div>
+            <>
+              {isMobile ? (
                 <button
                   type="button"
-                  disabled={unreadCount === 0}
-                  onClick={() => void markAllRead()}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-text-100 hover:bg-bg-300 hover:text-text-000 disabled:cursor-default disabled:opacity-40"
+                  aria-label="Dismiss messages"
+                  onClick={() => setOpen(false)}
+                  className="fixed inset-0 z-[80] bg-black/45 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 active:bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:animate-none"
+                />
+              ) : null}
+              <div
+                ref={panelRef}
+                id={panelId}
+                role="dialog"
+                aria-label="Message center"
+                aria-modal={isMobile || undefined}
+                tabIndex={-1}
+                style={isMobile ? undefined : position}
+                className={cn(
+                  'fixed overflow-hidden border border-border-200/70 bg-bg-000 p-0 text-text-000 outline-none',
+                  isMobile
+                    ? 'inset-x-0 bottom-0 z-[90] flex h-[min(82dvh,760px)] w-full max-w-full flex-col rounded-t-2xl border-b-0 pb-[env(safe-area-inset-bottom)] shadow-dialog motion-safe:animate-in motion-safe:slide-in-from-bottom motion-safe:duration-200 motion-reduce:animate-none'
+                    : 'z-modal rounded-xl shadow-menu'
+                )}
+              >
+                <div
+                  className={cn(
+                    'relative flex shrink-0 items-center justify-between border-b border-border-200/60',
+                    isMobile ? 'min-h-16 gap-2 px-2 pt-2' : 'h-12 px-3'
+                  )}
                 >
-                  <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  Mark all read
-                </button>
-              </div>
-
-              <div className="max-h-[min(28rem,70vh)] overflow-y-auto p-1.5">
-                {status === 'error' ? (
-                  <div className="rounded-lg px-3 py-6 text-center text-xs text-danger-000">
-                    {error}
-                  </div>
-                ) : items.length === 0 ? (
-                  <div className="px-3 py-10 text-center text-sm text-text-300">
-                    {status === 'loading' ? 'Loading messages…' : 'No messages yet.'}
-                  </div>
-                ) : (
-                  items.map((item) => {
-                    const label = actionLabel(item)
-                    return (
+                  {isMobile ? (
+                    <div
+                      className="absolute left-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-border-300"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <div className="flex min-w-0 items-center gap-1">
+                    {isMobile ? (
                       <button
-                        key={item.id}
                         type="button"
-                        onClick={() => void openItem(item)}
-                        className={cn(
-                          'group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300',
-                          item.readAt === undefined && 'bg-bg-100/70'
-                        )}
+                        aria-label="Close messages"
+                        onClick={() => {
+                          setOpen(false)
+                          triggerRef.current?.focus()
+                        }}
+                        className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000"
                       >
-                        <span
+                        <X className="size-5" strokeWidth={2} aria-hidden="true" />
+                      </button>
+                    ) : null}
+                    <div className="min-w-0">
+                      <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
+                        Messages
+                      </div>
+                      <div className={cn('text-text-300', isMobile ? 'text-xs' : 'text-[11px]')}>
+                        {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={unreadCount === 0}
+                    onClick={() => void markAllRead()}
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 disabled:cursor-default disabled:opacity-40',
+                      isMobile ? 'h-11 text-sm' : 'h-8 text-xs'
+                    )}
+                  >
+                    <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    Mark all read
+                  </button>
+                </div>
+
+                <div
+                  className={cn(
+                    'overflow-y-auto p-1.5',
+                    isMobile ? 'min-h-0 flex-1 px-2 py-2' : 'max-h-[min(28rem,70vh)]'
+                  )}
+                >
+                  {status === 'error' ? (
+                    <div className="rounded-lg px-3 py-6 text-center text-xs text-danger-000">
+                      {error}
+                    </div>
+                  ) : items.length === 0 ? (
+                    <div className="px-3 py-10 text-center text-sm text-text-300">
+                      {status === 'loading' ? 'Loading messages…' : 'No messages yet.'}
+                    </div>
+                  ) : (
+                    items.map((item) => {
+                      const label = actionLabel(item)
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => void openItem(item)}
                           className={cn(
-                            'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
-                            item.kind === 'authorization.required' && 'text-session-waiting',
-                            item.kind === 'task.failed' && 'text-danger-000'
+                            'group flex w-full items-start gap-2.5 rounded-lg px-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                            isMobile ? 'py-3' : 'py-2.5',
+                            item.readAt === undefined && 'bg-bg-100/70'
                           )}
                         >
-                          {iconFor(item)}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-start gap-2">
-                            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-000">
-                              {item.title}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-text-300">
-                              {formatRelativeTime(item.createdAt)}
-                            </span>
-                          </span>
-                          <span className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-text-100">
-                            {item.summary}
-                          </span>
-                          {label ? (
-                            <span className="mt-1 inline-flex rounded bg-bg-300 px-1.5 py-0.5 text-[10px] text-text-100">
-                              {label}
-                            </span>
-                          ) : null}
-                        </span>
-                        {item.readAt === undefined ? (
                           <span
-                            className="mt-2 size-1.5 shrink-0 rounded-full bg-destructive"
-                            aria-hidden="true"
-                          />
-                        ) : null}
-                      </button>
-                    )
-                  })
-                )}
+                            className={cn(
+                              'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
+                              item.kind === 'authorization.required' && 'text-session-waiting',
+                              item.kind === 'task.failed' && 'text-danger-000'
+                            )}
+                          >
+                            {iconFor(item)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-start gap-2">
+                              <span
+                                className={cn(
+                                  'min-w-0 flex-1 truncate font-semibold text-text-000',
+                                  isMobile ? 'text-sm' : 'text-xs'
+                                )}
+                              >
+                                {item.title}
+                              </span>
+                              <span
+                                className={cn(
+                                  'shrink-0 tabular-nums text-text-300',
+                                  isMobile ? 'text-xs' : 'text-[10px]'
+                                )}
+                              >
+                                {formatRelativeTime(item.createdAt)}
+                              </span>
+                            </span>
+                            <span
+                              className={cn(
+                                'mt-0.5 line-clamp-2 block text-text-100',
+                                isMobile ? 'text-sm leading-5' : 'text-[11px] leading-4'
+                              )}
+                            >
+                              {item.summary}
+                            </span>
+                            {label ? (
+                              <span
+                                className={cn(
+                                  'mt-1 inline-flex rounded bg-bg-300 px-1.5 py-0.5 text-text-100',
+                                  isMobile ? 'text-xs' : 'text-[10px]'
+                                )}
+                              >
+                                {label}
+                              </span>
+                            ) : null}
+                          </span>
+                          {item.readAt === undefined ? (
+                            <span
+                              className="mt-2 size-1.5 shrink-0 rounded-full bg-destructive"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
               </div>
-            </div>,
+            </>,
             document.body
           )
         : null}
