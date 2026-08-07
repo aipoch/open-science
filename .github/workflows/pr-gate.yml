@@ -170,6 +170,62 @@ jobs:
           }
           NODE
 
+      - name: Prepare trusted module shadow
+        id: trusted_module_shadow
+        continue-on-error: true
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+        run: |
+          set -euo pipefail
+          trusted_dir="$RUNNER_TEMP/pr-gate-trusted-module-shadow"
+          mkdir -p "$trusted_dir"
+          echo "dir=$trusted_dir" >> "$GITHUB_OUTPUT"
+
+          required=(
+            scripts/ci/module-impact-shadow.mjs
+            scripts/ci/module-test-impact.mjs
+            scripts/ci/module-impact.json
+            scripts/ci/validate-module-impact.mjs
+            scripts/ci/classify-pr-changes.mjs
+            scripts/ci/change-impact.json
+          )
+          for file in "${required[@]}"; do
+            if ! git cat-file -e "${BASE_SHA}:${file}" 2>/dev/null; then
+              echo "source=bootstrap" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          for file in "${required[@]}"; do
+            git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
+          done
+          echo "source=base" >> "$GITHUB_OUTPUT"
+
+      - name: Publish module impact shadow
+        continue-on-error: true
+        env:
+          AUTHORITATIVE_PLAN: ${{ steps.classify.outputs.plan }}
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          TRUSTED_MODULE_SHADOW_DIR: ${{ steps.trusted_module_shadow.outputs.dir }}
+          TRUSTED_MODULE_SHADOW_SOURCE: ${{ steps.trusted_module_shadow.outputs.source }}
+        run: |
+          if [[ "$TRUSTED_MODULE_SHADOW_SOURCE" == "base" ]]; then
+            node "$TRUSTED_MODULE_SHADOW_DIR/module-impact-shadow.mjs" \
+              --base "$BASE_SHA" \
+              --head "$HEAD_SHA" \
+              --authoritative-plan "$AUTHORITATIVE_PLAN"
+            exit 0
+          fi
+
+          printf '%s\n' \
+            '## Module impact shadow' \
+            '' \
+            'Status: **bootstrap pending**' \
+            '' \
+            'The base revision does not yet contain the trusted shadow reporter. Module evidence will be published for subsequent changes after this control-plane update merges.' \
+            >> "$GITHUB_STEP_SUMMARY"
+
   policy:
     name: PR policy
     needs: preflight

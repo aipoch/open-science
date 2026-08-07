@@ -139,6 +139,39 @@ describe('PR Gate workflow', () => {
     )
   })
 
+  it('publishes base-trusted module evidence without changing authoritative outputs', () => {
+    const prepare = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Prepare trusted module shadow'
+    )
+    const publish = workflow.jobs.preflight.steps?.find(
+      ({ name }) => name === 'Publish module impact shadow'
+    )
+
+    expect(workflow.jobs.preflight.outputs).toEqual({
+      base: '${{ steps.revisions.outputs.base }}',
+      head: '${{ steps.revisions.outputs.head }}',
+      lanes: '${{ steps.classify.outputs.lanes }}',
+      plan: '${{ steps.classify.outputs.plan }}'
+    })
+    expect(prepare).toMatchObject({ 'continue-on-error': true })
+    expect(prepare?.run).toContain('scripts/ci/module-impact-shadow.mjs')
+    expect(prepare?.run).toContain('git show "${BASE_SHA}:${file}"')
+    expect(prepare?.run).toContain('source=bootstrap')
+    expect(publish).toMatchObject({
+      'continue-on-error': true,
+      env: {
+        AUTHORITATIVE_PLAN: '${{ steps.classify.outputs.plan }}',
+        BASE_SHA: '${{ steps.revisions.outputs.base }}',
+        HEAD_SHA: '${{ steps.revisions.outputs.head }}',
+        TRUSTED_MODULE_SHADOW_DIR: '${{ steps.trusted_module_shadow.outputs.dir }}',
+        TRUSTED_MODULE_SHADOW_SOURCE: '${{ steps.trusted_module_shadow.outputs.source }}'
+      }
+    })
+    expect(publish?.run).toContain('node "$TRUSTED_MODULE_SHADOW_DIR/module-impact-shadow.mjs"')
+    expect(publish?.run).toContain('Status: **bootstrap pending**')
+    expect(publish?.run).not.toContain('GITHUB_OUTPUT')
+  })
+
   it('aggregates all deterministic bundles into the stable PR Gate job', () => {
     const gate = workflow.jobs.gate
 
