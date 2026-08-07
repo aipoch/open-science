@@ -2,6 +2,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import type { ToolActivity } from '@/stores/session-store'
 import { AlertCircle, Check, ChevronRight, LoaderCircle, X } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { projectGeneratePlanActivity } from './generate-plan-activity-projection'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
@@ -19,6 +20,8 @@ const WorkspacePlanActivityRecord = ({
   activity,
   contentPaddingClassName = 'px-4 md:px-6'
 }: WorkspacePlanActivityRecordProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const projection = projectGeneratePlanActivity(activity)
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(() => new Set())
   const [showAllSteps, setShowAllSteps] = useState(false)
@@ -114,7 +117,7 @@ const WorkspacePlanActivityRecord = ({
     <MessageScrollerItem messageId={`plan-activity-${activity.id}`} className="min-w-0">
       <div className={`${contentPaddingClassName} pb-1 pt-5`}>
         <section
-          aria-label="Plan call record"
+          aria-label={t('Plan call record')}
           aria-live={isActive ? 'polite' : undefined}
           className="w-full overflow-hidden rounded-[12px] border border-border-200 bg-bg-200/70"
           data-testid="plan-call-record"
@@ -225,7 +228,7 @@ const WorkspacePlanActivityRecord = ({
             </div>
           ) : projection.kind === 'unavailable' ? (
             <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-border-200 bg-bg-000 px-[13px] py-[11px] text-[12px] text-text-300">
-              Plan details unavailable
+              {t('Plan details unavailable')}
             </div>
           ) : projection.kind === 'failed' && failureDetails ? (
             <div className="mb-1.5 px-1.5">

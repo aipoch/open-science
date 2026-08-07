@@ -13,7 +13,9 @@ export type SearchableSession = {
 
 export type SessionSearchResult = SearchableSession & {
   kind: 'session'
-  projectName: string
+  // Undefined when the Project is not in `projectNames`. This module stays pure and locale-free, so
+  // the placeholder wording belongs to the view that renders it, not here.
+  projectName?: string
 }
 
 export type SessionSearchGroups = {
@@ -34,7 +36,7 @@ const toResult = (
 ): SessionSearchResult => ({
   ...session,
   kind: 'session',
-  projectName: projectNames.get(session.projectId) ?? 'Unknown project'
+  projectName: projectNames.get(session.projectId)
 })
 
 // Session titles are already hydrated in the renderer. Keep this local filter deliberately narrow

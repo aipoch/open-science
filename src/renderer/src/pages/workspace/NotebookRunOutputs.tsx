@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 
 // Shared "cell output" area for the notebook panel and the session dialog. Renders the structured
@@ -136,30 +137,33 @@ const renderAnsi = (text: string): React.ReactNode => {
 // --- output rendering ---
 
 // Renders one display bundle: each image mime inline, every other (text) mime as a text block.
-const NotebookDisplayOutput = ({ data }: { data: Record<string, string> }): React.JSX.Element => (
-  <>
-    {Object.entries(data).map(([mime, payload], index) =>
-      mime.startsWith('image/') ? (
-        <img
-          key={index}
-          data-testid="notebook-output-image"
-          src={`data:${mime};base64,${payload}`}
-          alt="Figure output"
-          className="max-h-80 max-w-full rounded border border-border-200 object-contain"
-          draggable={false}
-        />
-      ) : (
-        <pre
-          key={index}
-          data-testid="notebook-output-text"
-          className={`${preClassName} text-text-200`}
-        >
-          {renderAnsi(payload)}
-        </pre>
-      )
-    )}
-  </>
-)
+const NotebookDisplayOutput = ({ data }: { data: Record<string, string> }): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <>
+      {Object.entries(data).map(([mime, payload], index) =>
+        mime.startsWith('image/') ? (
+          <img
+            key={index}
+            data-testid="notebook-output-image"
+            src={`data:${mime};base64,${payload}`}
+            alt={t('Figure output')}
+            className="max-h-80 max-w-full rounded border border-border-200 object-contain"
+            draggable={false}
+          />
+        ) : (
+          <pre
+            key={index}
+            data-testid="notebook-output-text"
+            className={`${preClassName} text-text-200`}
+          >
+            {renderAnsi(payload)}
+          </pre>
+        )
+      )}
+    </>
+  )
+}
 
 // Renders one structured output entry, or null when it carries no visible content.
 const renderOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {

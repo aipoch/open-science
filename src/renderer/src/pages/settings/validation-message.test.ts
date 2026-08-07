@@ -1,56 +1,70 @@
 import { describe, expect, it } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { describeValidation } from './validation-message'
+
+// English is pinned by test/setup-i18n.ts; these assertions are the guard that the catalog round-trip
+// leaves the user-visible copy byte-identical to what it was before it moved out of the module.
+const t = i18next.getFixedT('en')
 
 describe('describeValidation', () => {
   it('uses a custom auth message verbatim when one is supplied', () => {
     expect(
-      describeValidation({
-        ok: false,
-        category: 'auth',
-        message: 'Custom auth message from the probe.'
-      })
+      describeValidation(
+        {
+          ok: false,
+          category: 'auth',
+          message: 'Custom auth message from the probe.'
+        },
+        t
+      )
     ).toBe('Custom auth message from the probe.')
   })
 
   it('keeps the generic API-key guidance for HTTP auth failures', () => {
-    expect(describeValidation({ ok: false, category: 'auth', status: 401 })).toBe(
+    expect(describeValidation({ ok: false, category: 'auth', status: 401 }, t)).toBe(
       'Authentication failed. Check the API key. (HTTP 401)'
     )
   })
 
   it('surfaces the gateway message for an unknown failure instead of the generic copy', () => {
     expect(
-      describeValidation({
-        ok: false,
-        category: 'unknown',
-        status: 402,
-        message: 'Insufficient Balance'
-      })
+      describeValidation(
+        {
+          ok: false,
+          category: 'unknown',
+          status: 402,
+          message: 'Insufficient Balance'
+        },
+        t
+      )
     ).toBe('Insufficient Balance (HTTP 402)')
   })
 
   it('falls back to the generic unknown copy when no message is present', () => {
-    expect(describeValidation({ ok: false, category: 'unknown', status: 402 })).toBe(
+    expect(describeValidation({ ok: false, category: 'unknown', status: 402 }, t)).toBe(
       'Validation failed for an unknown reason. (HTTP 402)'
     )
   })
 
   it('surfaces the specific route-mismatch reason for an incompatible pairing', () => {
     expect(
-      describeValidation({
-        ok: false,
-        category: 'incompatible',
-        message:
-          'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
-      })
+      describeValidation(
+        {
+          ok: false,
+          category: 'incompatible',
+          message:
+            'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
+        },
+        t
+      )
     ).toBe(
       'Not compatible with Claude Code: it needs /v1/messages, but this provider speaks /v1/chat/completions. Change the API format or switch the agent framework.'
     )
   })
 
   it('falls back to the generic incompatible copy when no reason is supplied', () => {
-    expect(describeValidation({ ok: false, category: 'incompatible' })).toBe(
+    expect(describeValidation({ ok: false, category: 'incompatible' }, t)).toBe(
       "This provider isn't compatible with the active agent framework."
     )
   })

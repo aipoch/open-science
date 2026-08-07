@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Zap } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -16,7 +17,11 @@ type RemoteJobBadgeProps = {
 // Shows running count + elapsed time when jobs are running; shows gray "N jobs" when all finished.
 // Hidden only when session has no jobs at all.
 // Hover reveals a tooltip listing each running job's host + intent + duration.
-export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps): React.JSX.Element | null => {
+export const RemoteJobBadge = ({
+  sessionId,
+  onOpenJobList
+}: RemoteJobBadgeProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const allJobsForSession = useSessionJobStore((state) => state.allJobsForSession)
   const [now, setNow] = useState(() => Date.now())
 
@@ -66,18 +71,24 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
                 gap: '4px',
                 cursor: onOpenJobList ? 'pointer' : 'default'
               }}
-              aria-label={`${activeJobs.length} running remote job${activeJobs.length !== 1 ? 's' : ''}`}
+              aria-label={t('{{count}} running remote jobs', {
+                defaultValue_one: '{{count}} running remote job',
+                count: activeJobs.length
+              })}
             >
               <Zap size={11} />
               <span>
-                {activeJobs.length} running · {elapsedStr}
+                {t('{{count}} running · {{elapsed}}', {
+                  count: activeJobs.length,
+                  elapsed: elapsedStr
+                })}
               </span>
             </button>
           </TooltipTrigger>
           <TooltipContent side="top" align="end" className="p-0 overflow-hidden max-w-sm">
             <div className="px-2 py-1.5">
               <p className="text-[10px] font-medium uppercase tracking-wider opacity-60 mb-1.5">
-                REMOTE · {activeJobs.length}
+                {t('REMOTE · {{count}}', { count: activeJobs.length })}
               </p>
               {activeJobs.map((job) => (
                 <div key={job.job_id} className="flex items-center gap-2 py-0.5">
@@ -113,10 +124,15 @@ export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps
         gap: '4px',
         cursor: onOpenJobList ? 'pointer' : 'default'
       }}
-      aria-label={`${allJobs.length} remote job${allJobs.length !== 1 ? 's' : ''}`}
+      aria-label={t('{{count}} remote jobs', {
+        defaultValue_one: '{{count}} remote job',
+        count: allJobs.length
+      })}
     >
       <Zap size={11} />
-      <span>{allJobs.length} jobs</span>
+      <span>
+        {t('{{count}} jobs', { defaultValue_one: '{{count}} job', count: allJobs.length })}
+      </span>
     </button>
   )
 }

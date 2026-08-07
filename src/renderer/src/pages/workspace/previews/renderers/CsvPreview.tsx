@@ -1,4 +1,5 @@
 import { parse } from 'papaparse'
+import { useTranslation } from 'react-i18next'
 
 import { getFileExtension } from '../../preview-support'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -25,6 +26,7 @@ const parseCsvRows = (
 }
 
 export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -34,7 +36,7 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="CSV couldn't be read for preview"
+        fallbackMessage={t("CSV couldn't be read for preview")}
       />
     )
   }
@@ -69,8 +71,11 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
                   key={`${header}-${index}`}
                   className="max-w-[180px] border-b border-r border-border-300 bg-bg-200 px-3 py-2 font-medium"
                 >
-                  <span className="block truncate" title={header || `Column ${index + 1}`}>
-                    {header || `Column ${index + 1}`}
+                  <span
+                    className="block truncate"
+                    title={header || t('Column {{index}}', { index: index + 1 })}
+                  >
+                    {header || t('Column {{index}}', { index: index + 1 })}
                   </span>
                 </th>
               ))}

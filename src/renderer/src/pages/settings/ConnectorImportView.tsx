@@ -2,6 +2,7 @@
 
 import { AlertTriangle, FileJson, Upload } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
@@ -35,6 +36,8 @@ export function ConnectorImportView({
   onUse,
   onCancel
 }: ConnectorImportViewProps): React.JSX.Element {
+  const { t } = useTranslation()
+
   const [selection, setSelection] = useState<ConnectorTemplateSelectionResult>()
   const [selecting, setSelecting] = useState(false)
   const [error, setError] = useState<string>()
@@ -90,11 +93,12 @@ export function ConnectorImportView({
       <div className="flex w-full flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-foreground">
-            Import Connector configuration
+            {t('Import Connector configuration')}
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-            Add one credential-free Connector configuration from your computer. You will review the
-            settings and enter any required credentials before it is added.
+            {t(
+              'Add one credential-free Connector configuration from your computer. You will review the settings and enter any required credentials before it is added.'
+            )}
           </p>
         </div>
 
@@ -138,15 +142,15 @@ export function ConnectorImportView({
           <div>
             <div className="mb-2 flex items-center gap-2">
               <FileJson className="size-4 text-muted-foreground" aria-hidden="true" />
-              <h3 className="text-sm font-medium text-foreground">Configuration preview</h3>
+              <h3 className="text-sm font-medium text-foreground">{t('Configuration preview')}</h3>
             </div>
             <dl className="divide-y divide-border border-y border-border text-sm">
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Name</dt>
+                <dt className="text-muted-foreground">{t('Name')}</dt>
                 <dd className="min-w-0 break-words text-foreground">{definition.name}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Transport</dt>
+                <dt className="text-muted-foreground">{t('Transport')}</dt>
                 <dd className="text-foreground">{transportLabel(definition)}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
@@ -160,7 +164,7 @@ export function ConnectorImportView({
                 </dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Credentials</dt>
+                <dt className="text-muted-foreground">{t('Credentials')}</dt>
                 <dd className="text-foreground">
                   {definition.oauth
                     ? 'OAuth browser sign-in after adding'
@@ -174,7 +178,7 @@ export function ConnectorImportView({
         ) : null}
 
         {preview?.diagnostics.length ? (
-          <div className="space-y-2" aria-label="Configuration diagnostics">
+          <div className="space-y-2" aria-label={t('Configuration diagnostics')}>
             {preview.diagnostics.map((item) => (
               <div
                 key={`${item.code}:${item.path ?? ''}`}
@@ -189,7 +193,7 @@ export function ConnectorImportView({
 
         <div className={selection ? 'flex items-center justify-end gap-2' : 'text-center'}>
           <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+            {t('Cancel')}
           </Button>
           {selection ? (
             <Button

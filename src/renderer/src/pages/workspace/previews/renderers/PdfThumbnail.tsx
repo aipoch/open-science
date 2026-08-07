@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FileText } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { AcquireManagedPreviewRequest } from '../../../../../../shared/preview-resources'
 import type { ManagedPreviewResource } from '../../../../../../shared/preview-resources'
@@ -279,6 +280,7 @@ export const PdfThumbnail = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -330,7 +332,7 @@ export const PdfThumbnail = ({
       {cached ? (
         <img
           src={cached.url}
-          alt={`Preview of ${name}`}
+          alt={t('Preview of {{name}}', { name })}
           className="size-full object-cover object-top"
           loading="lazy"
           decoding="async"

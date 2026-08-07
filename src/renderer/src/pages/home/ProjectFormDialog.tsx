@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -47,6 +48,7 @@ const ProjectFormDialog = ({
   onCancel,
   onConfirm
 }: ProjectFormDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogTitle = useRetainedDialogValue(open ? title : undefined) ?? title
   const dialogDescription = useRetainedDialogValue(open ? description : undefined) ?? description
   const dialogSubmitLabel = useRetainedDialogValue(open ? submitLabel : undefined) ?? submitLabel
@@ -78,7 +80,7 @@ const ProjectFormDialog = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
               >
@@ -91,13 +93,13 @@ const ProjectFormDialog = ({
                   className="text-xs font-medium text-muted-foreground"
                   htmlFor="project-form-name"
                 >
-                  Name
+                  {t('Name')}
                 </label>
                 <Input
                   id="project-form-name"
                   value={nameDraft}
                   onChange={(event) => onNameChange(event.target.value)}
-                  placeholder="e.g. Reproduction of published research"
+                  placeholder={t('e.g. Reproduction of published research')}
                   autoFocus
                   className={dialogInputClassName}
                 />
@@ -107,13 +109,14 @@ const ProjectFormDialog = ({
                   className="text-xs font-medium text-muted-foreground"
                   htmlFor="project-form-description"
                 >
-                  Description <span className="text-muted-foreground">(optional)</span>
+                  {t('Description')}{' '}
+                  <span className="text-muted-foreground">{t('(optional)')}</span>
                 </label>
                 <textarea
                   id="project-form-description"
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
-                  placeholder="What is this project about?"
+                  placeholder={t('What is this project about?')}
                   rows={3}
                   className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
                 />
@@ -126,7 +129,7 @@ const ProjectFormDialog = ({
             ) : null}
             <div className={dialogFooterClassName}>
               <Button type="button" variant="outline" onClick={onCancel}>
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>
                 {dialogSubmitLabel}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type {
   AddCustomServerRequest,
@@ -75,15 +76,15 @@ const REMOTE_TRANSPORTS: { id: RemoteTransport; label: string }[] = [
 ]
 
 // Common runtimes used to launch a local stdio MCP server, plus an "other" escape hatch for an
-// absolute path or an uncommon binary.
-const COMMAND_OPTIONS: { value: string; label: string }[] = [
-  { value: 'npx', label: 'npx — Node package' },
-  { value: 'uvx', label: 'uvx — Python (uv)' },
-  { value: 'node', label: 'node — script file' },
-  { value: 'python3', label: 'python3 — script file' },
-  { value: 'docker', label: 'docker — container' },
-  { value: 'other', label: 'Other…' }
-]
+// absolute path or an uncommon binary. Labels are catalog keys, resolved at render.
+const COMMAND_OPTIONS = [
+  { value: 'npx', labelKey: 'npx — Node package' },
+  { value: 'uvx', labelKey: 'uvx — Python (uv)' },
+  { value: 'node', labelKey: 'node — script file' },
+  { value: 'python3', labelKey: 'python3 — script file' },
+  { value: 'docker', labelKey: 'docker — container' },
+  { value: 'other', labelKey: 'Other…' }
+] as const satisfies { value: string; labelKey: string }[]
 
 type ConnectorAddFormProps = {
   initialTransport?: ConnectorMode
@@ -108,6 +109,8 @@ export function ConnectorAddForm({
   onDone,
   onCancel
 }: ConnectorAddFormProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const addCustomServer = useSettingsStore((s) => s.addCustomServer)
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
   const connectors = useSettingsStore((s) => s.connectors)
@@ -300,7 +303,7 @@ export function ConnectorAddForm({
       }
       onDone()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save connector.')
+      setError(err instanceof Error ? err.message : t('Failed to save connector.'))
     } finally {
       setSubmitting(false)
     }
@@ -318,13 +321,14 @@ export function ConnectorAddForm({
       <div className="flex w-full flex-col gap-4">
         {initialTemplate ? (
           <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
-            Imported configuration is prefilled below. Enter required credentials locally, review
-            every field, then confirm that you trust the Connector.
+            {t(
+              'Imported configuration is prefilled below. Enter required credentials locally, review every field, then confirm that you trust the Connector.'
+            )}
           </div>
         ) : null}
         <div
           role="radiogroup"
-          aria-label="Connector type"
+          aria-label={t('Connector type')}
           className="inline-flex w-fit items-center rounded-lg bg-muted p-0.5"
         >
           <button
@@ -334,7 +338,7 @@ export function ConnectorAddForm({
             onClick={() => switchMode('local')}
             className={segmentButtonClassName(mode === 'local')}
           >
-            Local command
+            {t('Local command')}
           </button>
           <button
             type="button"
@@ -343,26 +347,26 @@ export function ConnectorAddForm({
             onClick={() => switchMode('remote')}
             className={segmentButtonClassName(mode === 'remote')}
           >
-            Remote server
+            {t('Remote server')}
           </button>
         </div>
 
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-name">
-            Display name
+            {t('Display name')}
             {isEdit ? null : <RequiredMark />}
           </label>
           <Input
             id="connector-name"
-            aria-label="Display name"
+            aria-label={t('Display name')}
             value={name}
             disabled={isEdit}
-            placeholder="e.g. Memory server"
+            placeholder={t('e.g. Memory server')}
             onChange={(event) => setName(event.target.value)}
           />
           {isEdit ? (
             <p className="text-xs text-muted-foreground">
-              The display name is fixed after creation.
+              {t('The display name is fixed after creation.')}
             </p>
           ) : null}
         </div>
@@ -370,20 +374,22 @@ export function ConnectorAddForm({
         <SettingsRow
           label={
             <>
-              Connector ID
+              {t('Connector ID')}
               {isEdit ? null : <RequiredMark />}
             </>
           }
           description={
             <span className={slugError ? 'text-destructive' : undefined}>
               {slugError ??
-                `Used by host.mcp("${currentSlug}", …), Specialists, and the generated MCP skill.`}
+                t('Used by host.mcp("{{slug}}", …), Specialists, and the generated MCP skill.', {
+                  slug: currentSlug
+                })}
             </span>
           }
         >
           <Input
             id="connector-slug"
-            aria-label="Connector ID"
+            aria-label={t('Connector ID')}
             value={currentSlug}
             readOnly={isEdit}
             aria-invalid={slugError ? true : undefined}
@@ -401,13 +407,13 @@ export function ConnectorAddForm({
 
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-description">
-            Description <span className="text-muted-foreground">(optional)</span>
+            {t('Description')} <span className="text-muted-foreground">{t('(optional)')}</span>
           </label>
           <Input
             id="connector-description"
-            aria-label="Description"
+            aria-label={t('Description')}
             value={description}
-            placeholder="What this connector provides"
+            placeholder={t('What this connector provides')}
             onChange={(event) => setDescription(event.target.value)}
           />
         </div>
@@ -416,26 +422,29 @@ export function ConnectorAddForm({
           <>
             <div className="space-y-1.5">
               <label className={fieldLabelClassName} htmlFor="connector-command">
-                Command
+                {t('Command')}
                 <RequiredMark />
               </label>
               <Select value={commandChoice} onValueChange={setCommandChoice}>
-                <SelectTrigger aria-label="Command">
+                <SelectTrigger aria-label={t('Command')}>
                   <span>
-                    {COMMAND_OPTIONS.find((o) => o.value === commandChoice)?.label ?? commandChoice}
+                    {(() => {
+                      const selected = COMMAND_OPTIONS.find((o) => o.value === commandChoice)
+                      return selected ? t(selected.labelKey) : commandChoice
+                    })()}
                   </span>
                 </SelectTrigger>
                 <SelectContent>
                   {COMMAND_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                      {t(option.labelKey)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               {commandChoice === 'other' ? (
                 <Input
-                  aria-label="Custom command"
+                  aria-label={t('Custom command')}
                   value={customCommand}
                   placeholder="/absolute/path/to/executable"
                   className="font-mono"
@@ -446,11 +455,11 @@ export function ConnectorAddForm({
 
             <div className="space-y-1.5">
               <label className={fieldLabelClassName} htmlFor="connector-args">
-                Arguments <span className="text-muted-foreground">(optional)</span>
+                {t('Arguments')} <span className="text-muted-foreground">{t('(optional)')}</span>
               </label>
               <Textarea
                 id="connector-args"
-                aria-label="Arguments"
+                aria-label={t('Arguments')}
                 value={argsText}
                 rows={2}
                 placeholder="-y @modelcontextprotocol/server-memory"
@@ -458,17 +467,20 @@ export function ConnectorAddForm({
                 onChange={(event) => setArgsText(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                {initialTemplate ? 'One argument per line.' : 'Separated by spaces or newlines.'}
+                {initialTemplate
+                  ? t('One argument per line.')
+                  : t('Separated by spaces or newlines.')}
               </p>
             </div>
 
             <div className="space-y-1.5">
               <label className={fieldLabelClassName} htmlFor="connector-env">
-                Environment variables <span className="text-muted-foreground">(optional)</span>
+                {t('Environment variables')}{' '}
+                <span className="text-muted-foreground">{t('(optional)')}</span>
               </label>
               <Textarea
                 id="connector-env"
-                aria-label="Environment variables"
+                aria-label={t('Environment variables')}
                 value={envText}
                 rows={3}
                 placeholder={'KEY=value\nANOTHER_KEY=value'}
@@ -476,11 +488,13 @@ export function ConnectorAddForm({
                 onChange={(event) => setEnvText(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                One KEY=VALUE per line.
+                {t('One KEY=VALUE per line.')}
                 {initialTemplate?.requiredSecrets?.environment?.length
-                  ? ` Required: ${initialTemplate.requiredSecrets.environment.join(', ')}.`
+                  ? ` ${t('Required: {{names}}.', {
+                      names: initialTemplate.requiredSecrets.environment.join(', ')
+                    })}`
                   : ''}
-                {isEdit ? ' Leave blank to keep the current values.' : ''}
+                {isEdit ? ` ${t('Leave blank to keep the current values.')}` : ''}
               </p>
             </div>
           </>
@@ -488,12 +502,12 @@ export function ConnectorAddForm({
           <>
             <div className="space-y-1.5">
               <label className={fieldLabelClassName} htmlFor="connector-url">
-                Server URL
+                {t('Server URL')}
                 <RequiredMark />
               </label>
               <Input
                 id="connector-url"
-                aria-label="Server URL"
+                aria-label={t('Server URL')}
                 value={url}
                 placeholder="https://example.com/mcp"
                 className="font-mono"
@@ -502,12 +516,12 @@ export function ConnectorAddForm({
             </div>
 
             <div className="space-y-1.5">
-              <span className={fieldLabelClassName}>Transport</span>
+              <span className={fieldLabelClassName}>{t('Transport')}</span>
               <Select
                 value={remoteTransport}
                 onValueChange={(value) => setRemoteTransport(value as RemoteTransport)}
               >
-                <SelectTrigger aria-label="Transport">
+                <SelectTrigger aria-label={t('Transport')}>
                   <span>
                     {REMOTE_TRANSPORTS.find((entry) => entry.id === remoteTransport)?.label}
                   </span>
@@ -522,24 +536,24 @@ export function ConnectorAddForm({
               </Select>
             </div>
 
-            <SettingsRow label="Authentication">
+            <SettingsRow label={t('Authentication')}>
               <Select
                 value={remoteAuth}
                 onValueChange={(value) => setRemoteAuth(value as RemoteAuth)}
               >
-                <SelectTrigger aria-label="Authentication">
+                <SelectTrigger aria-label={t('Authentication')}>
                   <span>
                     {remoteAuth === 'oauth'
-                      ? 'OAuth (browser sign-in)'
+                      ? t('OAuth (browser sign-in)')
                       : remoteAuth === 'headers'
-                        ? 'Static headers'
-                        : 'None'}
+                        ? t('Static headers')
+                        : t('None')}
                   </span>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="oauth">OAuth (browser sign-in)</SelectItem>
-                  <SelectItem value="headers">Static headers</SelectItem>
+                  <SelectItem value="none">{t('None')}</SelectItem>
+                  <SelectItem value="oauth">{t('OAuth (browser sign-in)')}</SelectItem>
+                  <SelectItem value="headers">{t('Static headers')}</SelectItem>
                 </SelectContent>
               </Select>
             </SettingsRow>
@@ -549,13 +563,14 @@ export function ConnectorAddForm({
                 <SettingsRow
                   label={
                     <>
-                      OAuth scopes <span className="text-muted-foreground">(optional)</span>
+                      {t('OAuth scopes')}{' '}
+                      <span className="text-muted-foreground">{t('(optional)')}</span>
                     </>
                   }
                 >
                   <Input
                     id="connector-oauth-scopes"
-                    aria-label="OAuth scopes"
+                    aria-label={t('OAuth scopes')}
                     value={oauthScopesText}
                     placeholder="openid profile"
                     onChange={(event) => setOauthScopesText(event.target.value)}
@@ -564,16 +579,16 @@ export function ConnectorAddForm({
                 <SettingsRow
                   label={
                     <>
-                      Authorization server URL{' '}
-                      <span className="text-muted-foreground">(optional)</span>
+                      {t('Authorization server URL')}{' '}
+                      <span className="text-muted-foreground">{t('(optional)')}</span>
                     </>
                   }
                 >
                   <Input
                     id="connector-oauth-server"
-                    aria-label="Authorization server URL"
+                    aria-label={t('Authorization server URL')}
                     value={authorizationServerUrl}
-                    placeholder="Auto-discover from MCP server"
+                    placeholder={t('Auto-discover from MCP server')}
                     className="font-mono"
                     onChange={(event) => setAuthorizationServerUrl(event.target.value)}
                   />
@@ -581,15 +596,16 @@ export function ConnectorAddForm({
                 <SettingsRow
                   label={
                     <>
-                      Client metadata URL <span className="text-muted-foreground">(optional)</span>
+                      {t('Client metadata URL')}{' '}
+                      <span className="text-muted-foreground">{t('(optional)')}</span>
                     </>
                   }
                 >
                   <Input
                     id="connector-oauth-client-metadata"
-                    aria-label="Client metadata URL"
+                    aria-label={t('Client metadata URL')}
                     value={clientMetadataUrl}
-                    placeholder="Use dynamic client registration by default"
+                    placeholder={t('Use dynamic client registration by default')}
                     className="font-mono"
                     onChange={(event) => setClientMetadataUrl(event.target.value)}
                   />
@@ -600,11 +616,11 @@ export function ConnectorAddForm({
             {remoteAuth === 'headers' ? (
               <div className="space-y-1.5">
                 <label className={fieldLabelClassName} htmlFor="connector-headers">
-                  Headers <span className="text-muted-foreground">(optional)</span>
+                  {t('Headers')} <span className="text-muted-foreground">{t('(optional)')}</span>
                 </label>
                 <Textarea
                   id="connector-headers"
-                  aria-label="Headers"
+                  aria-label={t('Headers')}
                   value={headersText}
                   rows={3}
                   placeholder={'Authorization: Bearer <token>\nX-Api-Key: <key>'}
@@ -612,11 +628,16 @@ export function ConnectorAddForm({
                   onChange={(event) => setHeadersText(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  One <span className="font-mono">Name: Value</span> per line (not JSON).
+                  <Trans
+                    i18nKey="One <code>Name: Value</code> per line (not JSON)."
+                    components={{ code: <span className="font-mono" /> }}
+                  />
                   {initialTemplate?.requiredSecrets?.headers?.length
-                    ? ` Required: ${initialTemplate.requiredSecrets.headers.join(', ')}.`
+                    ? ` ${t('Required: {{names}}.', {
+                        names: initialTemplate.requiredSecrets.headers.join(', ')
+                      })}`
                     : ''}
-                  {isEdit ? ' Leave blank to keep the current values.' : ''}
+                  {isEdit ? ` ${t('Leave blank to keep the current values.')}` : ''}
                 </p>
               </div>
             ) : null}
@@ -632,13 +653,13 @@ export function ConnectorAddForm({
           <label className="flex items-start gap-2.5">
             <input
               type="checkbox"
-              aria-label="I trust this connector"
+              aria-label={t('I trust this connector')}
               checked={trusted}
               className="mt-0.5 size-4 shrink-0"
               onChange={(event) => setTrusted(event.target.checked)}
             />
             <span className="text-sm text-foreground">
-              I trust this connector. Only add connectors from developers you trust.
+              {t('I trust this connector. Only add connectors from developers you trust.')}
             </span>
           </label>
         </div>
@@ -651,16 +672,16 @@ export function ConnectorAddForm({
 
         <div className="flex items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+            {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
             {submitting
               ? isEdit
-                ? 'Saving…'
-                : 'Adding…'
+                ? t('Saving…')
+                : t('Adding…')
               : isEdit
-                ? 'Save changes'
-                : 'Add connector'}
+                ? t('Save changes')
+                : t('Add connector')}
           </Button>
         </div>
       </div>

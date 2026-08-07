@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
@@ -30,6 +31,7 @@ const formatElapsed = (ms: number): string => {
 // Thinking owns only silent model waits. Keeping its timer in this phase-specific child resets the
 // elapsed time whenever tool interaction ends and Thinking mounts again.
 const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX.Element => {
+  const { t } = useTranslation()
   const status = useSessionStore(
     (state) => state.sessions.find((session) => session.id === sessionId)?.agentStatus
   )
@@ -50,11 +52,11 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
     <>
       <div className="flex items-center gap-2 text-xs text-text-000/70">
         <OpenScienceThinkingIndicator />
-        <span>Thinking</span>
+        <span>{t('Thinking')}</span>
         <span className="tabular-nums" aria-hidden="true">
           {formatElapsed(elapsedMs)}
         </span>
-        {slow ? <span aria-hidden="true">· taking longer than usual</span> : null}
+        {slow ? <span aria-hidden="true">{t('· taking longer than usual')}</span> : null}
       </div>
       {status ? (
         <span className="truncate text-[11px] text-text-000/70" title={status}>
@@ -71,6 +73,8 @@ const AgentLoadingIndicator = ({
   sessionId,
   phase
 }: WorkspaceAgentLoadingRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
       {phase === 'thinking' ? (
@@ -78,7 +82,7 @@ const AgentLoadingIndicator = ({
       ) : (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
-          <span>Interacting with tools</span>
+          <span>{t('Interacting with tools')}</span>
         </div>
       )}
     </div>

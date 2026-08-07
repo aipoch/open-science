@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -104,6 +105,8 @@ type SpecialistsPanelProps = {
 }
 
 const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const items = useSpecialistStore((s) => s.items)
   const isLoaded = useSpecialistStore((s) => s.isLoaded)
   const load = useSpecialistStore((s) => s.load)
@@ -290,10 +293,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Import ZIP</p>
-            <h2 className="mt-1 text-xl font-semibold">Import a Specialist package</h2>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+              {t('Import ZIP')}
+            </p>
+            <h2 className="mt-1 text-xl font-semibold">{t('Import a Specialist package')}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Choose one ZIP containing exactly one Specialist.
+              {t('Choose one ZIP containing exactly one Specialist.')}
             </p>
           </div>
           <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'list' })}>
@@ -304,9 +309,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-success-000/10 text-success-000">
             ✓
           </div>
-          <h3 className="mt-4 text-lg font-semibold">Template saved</h3>
+          <h3 className="mt-4 text-lg font-semibold">{t('Template saved')}</h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            openscience-specialist-template.zip is ready for contributor editing.
+            {t('openscience-specialist-template.zip is ready for contributor editing.')}
           </p>
           <Button type="button" className="mt-5" onClick={() => setTemplateSaved(false)}>
             Done
@@ -338,7 +343,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-success-000/10 text-success-000">
               ✓
             </div>
-            <h2 className="mt-4 text-lg font-semibold">Export complete</h2>
+            <h2 className="mt-4 text-lg font-semibold">{t('Export complete')}</h2>
             <p className="mt-2 text-sm text-muted-foreground">
               {exportPreview.fileName} was saved. No location is shown here.
             </p>
@@ -360,7 +365,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">Export ZIP</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+              {t('Export ZIP')}
+            </p>
             <h2 className="mt-1 text-xl font-semibold">
               {exportPreview ? 'Choose Skills to include' : 'Preparing export…'}
             </h2>
@@ -435,7 +442,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               })}
             </div>
             <div className="rounded-lg border border-border p-3 text-sm" role="status">
-              <strong>What the package carries</strong>
+              <strong>{t('What the package carries')}</strong>
               <p className="text-muted-foreground">
                 Only checked Skills are bundled. Connector IDs are imported as selected references;
                 full access can only be chosen later in the configuration page.
@@ -566,16 +573,17 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         {!packagePreview ? (
           <div className="rounded-xl border border-border p-6 text-center">
             <Upload className="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
-            <h3 className="mt-3 text-sm font-semibold">Select a Specialist ZIP</h3>
+            <h3 className="mt-3 text-sm font-semibold">{t('Select a Specialist ZIP')}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              The package will be safely parsed and previewed before it is saved.
+              {t('The package will be safely parsed and previewed before it is saved.')}
             </p>
             <p className="mt-4 text-xs text-muted-foreground">
-              Limits: 50 MB compressed · 200 MB uncompressed · 2,000 files · 25 MB per file
+              {t('Limits: 50 MB compressed · 200 MB uncompressed · 2,000 files · 25 MB per file')}
             </p>
             <p className="mx-auto mt-2 max-w-xl text-xs text-muted-foreground">
-              The ZIP contains app metadata, the specialist.json you fill in, and a README.txt
-              guide. Skills placed in the skills folder are discovered automatically.
+              {t(
+                'The ZIP contains app metadata, the specialist.json you fill in, and a README.txt guide. Skills placed in the skills folder are discovered automatically.'
+              )}
             </p>
             <div className="mt-5 flex justify-center gap-2">
               <Button
@@ -611,26 +619,26 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="Specialist ZIP preview"
+            aria-label={t('Specialist ZIP preview')}
             className="space-y-4"
           >
             <div className="grid grid-cols-2 gap-3 rounded-xl border border-border p-4 text-sm">
               <div>
-                <span className="block text-xs text-muted-foreground">Specialist</span>
+                <span className="block text-xs text-muted-foreground">{t('Specialist')}</span>
                 {summary?.name ?? 'Unknown'}
               </div>
               <div>
-                <span className="block text-xs text-muted-foreground">Immutable ID</span>
+                <span className="block text-xs text-muted-foreground">{t('Immutable ID')}</span>
                 {summary?.id ?? 'Unknown'}
               </div>
               <div>
-                <span className="block text-xs text-muted-foreground">Package version</span>
+                <span className="block text-xs text-muted-foreground">{t('Package version')}</span>
                 {summary?.version ?? 'Unknown'}
               </div>
             </div>
 
             <section className="rounded-xl border border-border p-4">
-              <h3 className="text-sm font-semibold">Skills</h3>
+              <h3 className="text-sm font-semibold">{t('Skills')}</h3>
               <p className="mt-1 text-xs text-muted-foreground">
                 {summary?.bundledSkillIds.length
                   ? `Bundled: ${summary.bundledSkillIds.join(', ')}`
@@ -665,31 +673,31 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
             {packagePreview.archive ? (
               <section className="rounded-xl border border-border p-4">
-                <h3 className="text-sm font-semibold">Archive limits</h3>
+                <h3 className="text-sm font-semibold">{t('Archive limits')}</h3>
                 <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                   <div>
-                    <dt className="text-muted-foreground">Compressed</dt>
+                    <dt className="text-muted-foreground">{t('Compressed')}</dt>
                     <dd>
                       {formatBytes(packagePreview.archive.compressedBytes)} /{' '}
                       {formatBytes(packagePreview.archive.limits.compressedBytes)}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-muted-foreground">Uncompressed</dt>
+                    <dt className="text-muted-foreground">{t('Uncompressed')}</dt>
                     <dd>
                       {formatBytes(packagePreview.archive.uncompressedBytes ?? 0)} /{' '}
                       {formatBytes(packagePreview.archive.limits.uncompressedBytes)}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-muted-foreground">Files</dt>
+                    <dt className="text-muted-foreground">{t('Files')}</dt>
                     <dd>
                       {packagePreview.archive.fileCount ?? 0} /{' '}
                       {packagePreview.archive.limits.fileCount}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-muted-foreground">Per file</dt>
+                    <dt className="text-muted-foreground">{t('Per file')}</dt>
                     <dd>Up to {formatBytes(packagePreview.archive.limits.fileBytes)}</dd>
                   </div>
                 </dl>
@@ -698,7 +706,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
             <section className="rounded-xl border border-border p-4">
               <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold">Diagnostics</h3>
+                <h3 className="text-sm font-semibold">{t('Diagnostics')}</h3>
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -717,7 +725,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     }}
                   >
                     <Copy data-icon="inline-start" aria-hidden="true" />
-                    Copy report
+                    {t('Copy report')}
                   </Button>
                   <Button
                     type="button"
@@ -733,7 +741,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     }}
                   >
                     <Download data-icon="inline-start" aria-hidden="true" />
-                    Download JSON
+                    {t('Download JSON')}
                   </Button>
                 </div>
               </div>
@@ -787,9 +795,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 >
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                   <div>
-                    <strong className="block">Validation passed</strong>
+                    <strong className="block">{t('Validation passed')}</strong>
                     <span className="opacity-80">
-                      The package can be installed after explicit confirmation.
+                      {t('The package can be installed after explicit confirmation.')}
                     </span>
                   </div>
                 </div>
@@ -806,7 +814,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 role="alert"
                 className="rounded-lg border border-warning-100/50 bg-warning-100/10 p-3 text-xs"
               >
-                Local edits will be replaced by this import.
+                {t('Local edits will be replaced by this import.')}
               </p>
             ) : null}
             {packageErrorCode ? (
@@ -863,19 +871,20 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))]')}
                   >
                     <AlertDialog.Title className={dialogTitleClassName}>
-                      Local changes will be permanently replaced
+                      {t('Local changes will be permanently replaced')}
                     </AlertDialog.Title>
                     <AlertDialog.Description className={dialogDescriptionClassName}>
-                      Current local edits are not recoverable after a successful overwrite. A failed
-                      atomic install preserves the current version.
+                      {t(
+                        'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.'
+                      )}
                     </AlertDialog.Description>
                     <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-border p-3 text-xs">
                       <div>
-                        <dt className="text-muted-foreground">Current version</dt>
+                        <dt className="text-muted-foreground">{t('Current version')}</dt>
                         <dd>{packagePreview.overwrite.currentVersion}</dd>
                       </div>
                       <div>
-                        <dt className="text-muted-foreground">Incoming version</dt>
+                        <dt className="text-muted-foreground">{t('Incoming version')}</dt>
                         <dd>
                           {packagePreview.overwrite.incomingVersion}
                           {packagePreview.diagnostics.some(
@@ -886,7 +895,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-muted-foreground">Local status</dt>
+                        <dt className="text-muted-foreground">{t('Local status')}</dt>
                         <dd>
                           {packagePreview.overwrite.hasImportBaseline
                             ? packagePreview.overwrite.modifiedSinceImport
@@ -896,8 +905,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-muted-foreground">Target</dt>
-                        <dd>Custom Specialist only</dd>
+                        <dt className="text-muted-foreground">{t('Target')}</dt>
+                        <dd>{t('Custom Specialist only')}</dd>
                       </div>
                     </dl>
                     <Button
@@ -916,7 +925,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     <div className="mt-6 flex justify-end gap-2">
                       <AlertDialog.Cancel asChild>
                         <Button type="button" variant="outline">
-                          Cancel
+                          {t('Cancel')}
                         </Button>
                       </AlertDialog.Cancel>
                       <Button
@@ -980,13 +989,13 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           </div>
           <p className="mt-4 text-sm text-foreground">{specialist.description}</p>
           <div className="mt-5 rounded-lg border border-border bg-muted/30 p-3">
-            <p className="text-sm font-medium text-foreground">Read-only</p>
+            <p className="text-sm font-medium text-foreground">{t('Read-only')}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              This Specialist ships with the app and cannot be changed.
+              {t('This Specialist ships with the app and cannot be changed.')}
             </p>
           </div>
           <div className="mt-5">
-            <h3 className="text-sm font-semibold text-foreground">Capabilities</h3>
+            <h3 className="text-sm font-semibold text-foreground">{t('Capabilities')}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               {specialist.capabilityMode === 'full' ? 'Full access' : 'Selected capabilities'}
             </p>
@@ -1010,7 +1019,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         <div
           className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
           role="tablist"
-          aria-label="Filter specialists by category"
+          aria-label={t('Filter specialists by category')}
         >
           {(['all', 'custom', 'builtin'] as const).map((key) => {
             const count =
@@ -1046,8 +1055,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           />
           <Input
             type="search"
-            aria-label="Search specialists"
-            placeholder="Search specialists…"
+            aria-label={t('Search specialists')}
+            placeholder={t('Search specialists…')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="pl-8"
@@ -1057,7 +1066,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">
               <Plus data-icon="inline-start" aria-hidden="true" />
-              Add specialist
+              {t('Add specialist')}
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
@@ -1065,9 +1074,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
               <Pencil className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Write from scratch</span>
+                <span>{t('Write from scratch')}</span>
                 <span className="text-xs text-muted-foreground">
-                  Configure instructions and capabilities yourself
+                  {t('Configure instructions and capabilities yourself')}
                 </span>
               </span>
             </DropdownMenuItem>
@@ -1087,7 +1096,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             >
               <MessagesSquare className="size-4 shrink-0 text-primary" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Chat with agent</span>
+                <span>{t('Chat with agent')}</span>
                 <span className="text-xs text-muted-foreground">
                   Start a normal conversation; the agent guides you step by step
                 </span>
@@ -1097,7 +1106,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               <>
                 <DropdownMenuSeparator />
                 <p className="px-2.5 pb-1 pt-0.5 text-xs text-muted-foreground">
-                  Open a project to chat with the agent
+                  {t('Open a project to chat with the agent')}
                 </p>
               </>
             ) : null}
@@ -1105,9 +1114,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
               <Upload className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
-                <span>Import ZIP</span>
+                <span>{t('Import ZIP')}</span>
                 <span className="text-xs text-muted-foreground">
-                  Preview a package, then finish setup in the existing editor
+                  {t('Preview a package, then finish setup in the existing editor')}
                 </span>
               </span>
             </DropdownMenuItem>
@@ -1116,15 +1125,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       </div>
 
       {!isLoaded ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
       ) : (
         <div className="flex flex-col gap-6">
           {/* Custom specialists group */}
           {filter !== 'builtin' ? (
             <div>
               <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">Custom</span>
-                <span className="text-xs text-muted-foreground">Created by you.</span>
+                <span className="text-sm font-semibold text-foreground">{t('Custom')}</span>
+                <span className="text-xs text-muted-foreground">{t('Created by you.')}</span>
               </div>
 
               {visibleCustomItems.length > 0 ? (
@@ -1201,7 +1210,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                     aria-label={`Actions for ${item.displayName ?? item.name}`}
                                   >
                                     {exportingId === item.id ? (
-                                      <span role="status" aria-label="Preparing export">
+                                      <span role="status" aria-label={t('Preparing export')}>
                                         <Loader2
                                           className="size-4 animate-spin"
                                           aria-hidden="true"
@@ -1227,13 +1236,13 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                 )
                               }
                             >
-                              <Copy className="size-3.5" aria-hidden="true" /> Duplicate
+                              <Copy className="size-3.5" aria-hidden="true" /> {t('Duplicate')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2 text-xs"
                               onSelect={() => void runDirectExport(item.id)}
                             >
-                              <Download className="size-3.5" aria-hidden="true" /> Export ZIP
+                              <Download className="size-3.5" aria-hidden="true" /> {t('Export ZIP')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2 text-xs text-destructive"
@@ -1254,7 +1263,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                   )
                               }}
                             >
-                              <Trash2 className="size-3.5" aria-hidden="true" /> Delete
+                              <Trash2 className="size-3.5" aria-hidden="true" /> {t('Delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1274,9 +1283,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           {visibleBuiltinItems.length > 0 || visibleReviewerItems.length > 0 ? (
             <div>
               <div className="mb-1 flex flex-col gap-0.5">
-                <span className="text-sm font-semibold text-foreground">Built-in</span>
+                <span className="text-sm font-semibold text-foreground">{t('Built-in')}</span>
                 <span className="text-xs text-muted-foreground">
-                  Shipped with the app. Not configurable.
+                  {t('Shipped with the app. Not configurable.')}
                 </span>
               </div>
               <ul className="mt-2 flex flex-col divide-y divide-border">
@@ -1320,9 +1329,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       ✓
                     </span>
                     <div className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-foreground">Reviewer</span>
+                      <span className="block truncate text-sm text-foreground">
+                        {t('Reviewer')}
+                      </span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        Used by Auto-review
+                        {t('Used by Auto-review')}
                       </span>
                     </div>
                     {/* No toggle, no actions for Reviewer */}
@@ -1351,17 +1362,21 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               Delete “{deletingItem?.name}”?
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              This permanently deletes the Specialist. Conversations using it will no longer be able
-              to use it.
+              {t(
+                'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
+              )}
             </AlertDialog.Description>
             <div className="mt-4">
               <p className="text-sm font-medium text-foreground">
-                Skills you can also delete{' '}
-                <span className="font-normal text-muted-foreground">(optional)</span>
+                <Trans
+                  i18nKey="Skills you can also delete <muted>(optional)</muted>"
+                  components={{ muted: <span className="font-normal text-muted-foreground" /> }}
+                />
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Only Skills used exclusively by this Specialist can be deleted. Other linked Skills
-                will be kept automatically.
+                {t(
+                  'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
+                )}
               </p>
             </div>
             <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
@@ -1412,7 +1427,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 })
               ) : (
                 <p className="py-3 text-xs text-muted-foreground">
-                  No additional Skills will be deleted.
+                  {t('No additional Skills will be deleted.')}
                 </p>
               )}
             </div>
@@ -1427,7 +1442,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="outline">
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <Button

@@ -1,8 +1,10 @@
+import type { TFunction } from 'i18next'
+
 import type { ValidateProviderResult, ValidationCategory } from '../../../../shared/settings'
 
-// Maps a validation category to an actionable, user-facing message. Centralized so the wizard and the
-// settings page phrase failures identically.
-const CATEGORY_MESSAGES: Record<ValidationCategory, string> = {
+// Maps a validation category to its English message. Centralized so the wizard and the settings
+// page phrase failures identically.
+const CATEGORY_KEYS = {
   ok: 'Connection succeeded.',
   network: 'Could not reach the endpoint. Check your network and base URL.',
   auth: 'Authentication failed. Check the API key.',
@@ -12,7 +14,7 @@ const CATEGORY_MESSAGES: Record<ValidationCategory, string> = {
   incompatible: "This provider isn't compatible with the active agent framework.",
   'server-error': 'The gateway or upstream service is temporarily unavailable. Try again later.',
   unknown: 'Validation failed for an unknown reason.'
-}
+} as const satisfies Record<ValidationCategory, string>
 
 // Categories whose generic text benefits from the specific error/probe message (a timeout or network
 // failure). Auth/model/bad-url already carry actionable text.
@@ -25,8 +27,12 @@ const MESSAGE_CATEGORIES = new Set<ValidationCategory>([
 
 // Produces the message to show for a validation result, appending a specific server/probe message when
 // the category is generic and an HTTP status when one is available.
-const describeValidation = (result: ValidateProviderResult): string => {
-  const base = CATEGORY_MESSAGES[result.category]
+//
+// Takes `t` rather than reaching for the i18next singleton so it stays a pure function of (result,
+// locale) and a test can pin the language. Gateway-supplied `message` text passes through verbatim in
+// every locale — it comes from the provider, not from us, so there is nothing to translate.
+const describeValidation = (result: ValidateProviderResult, t: TFunction): string => {
+  const base = t(CATEGORY_KEYS[result.category])
 
   // Some gateways return their own actionable auth text; prefer it over the generic HTTP 401/403 copy.
   if (result.category === 'auth' && result.message) {
@@ -42,18 +48,20 @@ const describeValidation = (result: ValidateProviderResult): string => {
   // A gateway that rejected the probe with its own error text (e.g. "Insufficient Balance" on a
   // billing 402) has already told us the reason — surface it instead of the generic "unknown" copy.
   if (result.category === 'unknown' && result.message) {
-    return result.status ? `${result.message} (HTTP ${result.status})` : result.message
+    return result.status
+      ? t('{{base}} (HTTP {{status}})', { base: result.message, status: result.status })
+      : result.message
   }
 
   if (result.message && MESSAGE_CATEGORIES.has(result.category)) {
-    return `${base} (${result.message})`
+    return t('{{base}} ({{detail}})', { base, detail: result.message })
   }
 
   if (result.status) {
-    return `${base} (HTTP ${result.status})`
+    return t('{{base}} (HTTP {{status}})', { base, status: result.status })
   }
 
   return base
 }
 
-export { CATEGORY_MESSAGES, describeValidation }
+export { CATEGORY_KEYS, describeValidation }

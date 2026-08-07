@@ -5,6 +5,7 @@
  * contrast: inherited from the app's verified semantic tokens · slop: pass
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ArrowUpRight, AtSign, Hash, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
@@ -14,6 +15,7 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { cn } from '@/lib/utils'
 import { ArtifactPreview } from '@/pages/workspace/artifact-preview'
@@ -63,22 +65,10 @@ const emptyArtifactState: ArtifactState = {
   isIndexComplete: true
 }
 
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : 'Could not load artifacts.'
-
-const pluralizeTime = (value: number, unit: string): string =>
-  `${value} ${unit}${value === 1 ? '' : 's'} ago`
-
-const formatRelativeTime = (timestamp: number): string => {
-  const elapsed = Math.max(0, Date.now() - timestamp)
-  const minutes = Math.floor(elapsed / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return pluralizeTime(minutes, 'minute')
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return pluralizeTime(hours, 'hour')
-  const days = Math.floor(hours / 24)
-  return days < 7 ? pluralizeTime(days, 'day') : pluralizeTime(Math.floor(days / 7), 'week')
-}
+// An IPC rejection carries an English message from the main process, so it is only shown when it
+// exists; the fallback is the one the catalog owns.
+const getErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error ? error.message : fallback
 
 const artifactToPreviewItem = (
   artifact: ProjectFileItem
@@ -118,11 +108,31 @@ const shortcutClassName = 'inline-flex min-w-0 items-center gap-1.5 whitespace-n
 const keycapClassName =
   'inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md border border-border bg-bg-000 px-1.5 font-mono text-[11px] leading-none text-foreground shadow-sm'
 
+// English source text per bucket, keyed by the unit the pure helper returns. A map rather than an
+// interpolated key: the key IS the English, so it can't be computed from `unit` at runtime. The
+// `satisfies` clause makes a new RelativeTimeUnit a compile error instead of a missing label.
+// `plural` is the English singular, passed as defaultValue_one — English has no catalog, so the
+// singular form has to come from the call site.
+// Verbose wording ("3 days ago"), unlike the compact labels on the home page: rows here have room,
+// and the timestamp is the only recency cue a search hit carries. The unit can't be interpolated into
+// the key — a natural-language key has to be a literal — so each bucket names its own English text.
+// `other` is the key i18next looks up; `one` supplies the English singular, which is what lets this
+// work with no English catalog at all. 'now' is absent because the caller returns early for it.
+const ELAPSED_LABELS = {
+  minute: { other: '{{count}} minutes ago', one: '{{count}} minute ago' },
+  hour: { other: '{{count}} hours ago', one: '{{count}} hour ago' },
+  day: { other: '{{count}} days ago', one: '{{count}} day ago' },
+  week: { other: '{{count}} weeks ago', one: '{{count}} week ago' },
+  month: { other: '{{count}} months ago', one: '{{count}} month ago' },
+  year: { other: '{{count}} years ago', one: '{{count}} year ago' }
+} as const satisfies Record<Exclude<RelativeTimeUnit, 'now'>, { other: string; one: string }>
+
 export const GlobalSearchDialog = ({
   open,
   onOpenChange,
   isSessionPersistenceReady
 }: GlobalSearchDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const requestVersionRef = useRef(0)
   const listboxId = useId()
@@ -170,6 +180,13 @@ export const GlobalSearchDialog = ({
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
 
   const isProjectScope = view === 'workspace' && activeProjectId !== undefined
+  const relativeTime = (timestamp: number): string => {
+    const { unit, count } = relativeTimeParts(timestamp)
+    if (unit === 'now') return t('just now')
+    const { other, one } = ELAPSED_LABELS[unit]
+    return t(other, { count, defaultValue_one: one })
+  }
+
   const primaryProjectId = useMemo(
     () => (isProjectScope ? activeProjectId : resolveCustomizeProjectId(projects)),
     [activeProjectId, isProjectScope, projects]
@@ -251,7 +268,7 @@ export const GlobalSearchDialog = ({
           ).map((session) => ({
             ...session,
             kind: 'session' as const,
-            projectName: projectNames.get(session.projectId) ?? 'Unknown project'
+            projectName: projectNames.get(session.projectId)
           }))
         : [],
     [isProjectScope, primaryProject, projectNames, sessions]
@@ -300,7 +317,7 @@ export const GlobalSearchDialog = ({
       } catch (error) {
         if (version !== requestVersionRef.current) return
         setArtifactStatus('error')
-        setArtifactError(getErrorMessage(error))
+        setArtifactError(getErrorMessage(error, t('Could not load artifacts.')))
         setFailedArtifactCursor(cursor)
       }
     },
@@ -310,6 +327,7 @@ export const GlobalSearchDialog = ({
       isSearchMode,
       otherProjectIds,
       primaryProject,
+      t,
       trimmedQuery
     ]
   )
@@ -465,7 +483,7 @@ export const GlobalSearchDialog = ({
             !session.isPending
         )
         if (!isStillAvailable) {
-          setActionError('This session is no longer available.')
+          setActionError(t('This session is no longer available.'))
           return
         }
         openSession(row.session.projectId, row.session.id, 'user')
@@ -514,7 +532,8 @@ export const GlobalSearchDialog = ({
       primaryProject,
       reloadArtifacts,
       requestProjectCreation,
-      sessions
+      sessions,
+      t
     ]
   )
 
@@ -576,17 +595,20 @@ export const GlobalSearchDialog = ({
           </span>
           <span className="block truncate text-xs text-muted-foreground">
             {!isProjectScope || session.projectId !== primaryProject?.id
-              ? `${session.projectName} · `
+              ? `${session.projectName ?? t('Unknown project')} · `
               : ''}
-            {session.artifactCount} artifact{session.artifactCount === 1 ? '' : 's'} ·{' '}
-            {formatRelativeTime(session.updatedAt)}
+            {t('{{count}} artifacts', {
+              defaultValue_one: '{{count}} artifact',
+              count: session.artifactCount
+            })}{' '}
+            · {relativeTime(session.updatedAt)}
           </span>
         </span>
         {active ? (
-          <Hash className="size-5 shrink-0 text-foreground" aria-label="Session" />
+          <Hash className="size-5 shrink-0 text-foreground" aria-label={t('Session')} />
         ) : (
           <span className="rounded bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-            Session
+            {t('Session')}
           </span>
         )}
       </div>
@@ -633,13 +655,12 @@ export const GlobalSearchDialog = ({
           </span>
           <span className="block truncate text-xs text-muted-foreground">
             {!isProjectScope || artifact.projectId !== primaryProject?.id
-              ? `${projectNames.get(artifact.projectId) ?? 'Unknown project'} · `
+              ? `${projectNames.get(artifact.projectId) ?? t('Unknown project')} · `
               : ''}
             {artifact.originSession?.title ??
               sessionTitles.get(`${artifact.projectId}:${artifact.sessionId}`) ??
-              'Unknown session'}{' '}
-            ·{' '}
-            {createdAt === undefined ? 'Creation time unavailable' : formatRelativeTime(createdAt)}
+              t('Unknown session')}{' '}
+            · {createdAt === undefined ? t('Creation time unavailable') : relativeTime(createdAt)}
           </span>
         </span>
         {active ? (
@@ -655,7 +676,7 @@ export const GlobalSearchDialog = ({
                         size="icon-xs"
                         tabIndex={-1}
                         className="cursor-pointer"
-                        aria-label={`Mention ${artifact.name}`}
+                        aria-label={t('Mention {{name}}', { name: artifact.name })}
                         disabled={!canMention}
                         onClick={(event) => {
                           event.stopPropagation()
@@ -668,8 +689,10 @@ export const GlobalSearchDialog = ({
                   </TooltipTrigger>
                   <TooltipContent>
                     {canMention
-                      ? `Mention ${artifact.name}`
-                      : 'Mention is unavailable while the composer cannot accept another artifact.'}
+                      ? t('Mention {{name}}', { name: artifact.name })
+                      : t(
+                          'Mention is unavailable while the composer cannot accept another artifact.'
+                        )}
                   </TooltipContent>
                 </Tooltip>
               ) : null}
@@ -681,7 +704,7 @@ export const GlobalSearchDialog = ({
                     size="icon-xs"
                     tabIndex={-1}
                     className="cursor-pointer"
-                    aria-label={`Open ${artifact.name}`}
+                    aria-label={t('Open {{name}}', { name: artifact.name })}
                     onClick={(event) => {
                       event.stopPropagation()
                       previewArtifact(artifact)
@@ -690,7 +713,7 @@ export const GlobalSearchDialog = ({
                     <ArrowUpRight className="size-4" aria-hidden="true" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Open {artifact.name}</TooltipContent>
+                <TooltipContent>{t('Open {{name}}', { name: artifact.name })}</TooltipContent>
               </Tooltip>
             </span>
           </TooltipProvider>
@@ -713,7 +736,7 @@ export const GlobalSearchDialog = ({
             'flex h-[calc(100dvh_-_1rem)] w-[calc(100%_-_1rem)] max-w-[680px] flex-col overflow-hidden p-0 sm:h-[min(760px,calc(100dvh_-_2rem))] sm:w-[calc(100%_-_2rem)]'
           )}
         >
-          <Dialog.Title className="sr-only">Command palette</Dialog.Title>
+          <Dialog.Title className="sr-only">{t('Command palette')}</Dialog.Title>
           <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-border px-4 py-3">
             <Search className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
@@ -726,7 +749,7 @@ export const GlobalSearchDialog = ({
               aria-controls={listboxId}
               aria-activedescendant={selectableRows.length > 0 ? activeRowId : undefined}
               placeholder={
-                isProjectScope ? 'Search this project…' : 'Search sessions and artifacts…'
+                isProjectScope ? t('Search this project…') : t('Search sessions and artifacts…')
               }
               maxLength={256}
               className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xl text-foreground placeholder:text-muted-foreground focus-visible:border-transparent focus-visible:ring-0"
@@ -738,7 +761,7 @@ export const GlobalSearchDialog = ({
             ) : null}
           </div>
           <p className="sr-only" aria-live="polite">
-            {resultCount} results
+            {t('{{count}} results', { defaultValue_one: '{{count}} result', count: resultCount })}
           </p>
           {actionError ? (
             <p role="alert" className="border-b border-border px-4 py-2 text-sm text-destructive">
@@ -752,21 +775,21 @@ export const GlobalSearchDialog = ({
             <div id={listboxId} role="listbox" className="py-1.5">
               {!primaryProject ? (
                 <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  Create a project to search sessions and artifacts.
+                  {t('Create a project to search sessions and artifacts.')}
                 </p>
               ) : !isSearchMode ? (
                 <>
                   {displayedArtifacts.length > 0 ? (
-                    <section role="group" aria-label="Recent artifacts">
-                      <h2 className={sectionTitleClassName}>Recent artifacts</h2>
+                    <section role="group" aria-label={t('Recent artifacts')}>
+                      <h2 className={sectionTitleClassName}>{t('Recent artifacts')}</h2>
                       {displayedArtifacts.map((artifact) =>
                         renderArtifactRow(artifact, nextIndex())
                       )}
                     </section>
                   ) : null}
                   {recentSessions.length > 0 ? (
-                    <section role="group" aria-label="Recent sessions">
-                      <h2 className={sectionTitleClassName}>Recent sessions</h2>
+                    <section role="group" aria-label={t('Recent sessions')}>
+                      <h2 className={sectionTitleClassName}>{t('Recent sessions')}</h2>
                       {recentSessions.map((session) => renderSessionRow(session, nextIndex()))}
                     </section>
                   ) : null}
@@ -774,14 +797,14 @@ export const GlobalSearchDialog = ({
               ) : (
                 <>
                   {displayedArtifacts.length || artifactStatus === 'loading' || artifactError ? (
-                    <section role="group" aria-label="Artifacts">
-                      <h2 className={sectionTitleClassName}>Artifacts</h2>
+                    <section role="group" aria-label={t('Artifacts')}>
+                      <h2 className={sectionTitleClassName}>{t('Artifacts')}</h2>
                       {displayedArtifacts.map((artifact) =>
                         renderArtifactRow(artifact, nextIndex())
                       )}
                       {artifactStatus === 'loading' && displayedArtifacts.length === 0 ? (
                         <p className="px-4 py-3 text-sm text-muted-foreground">
-                          Searching artifacts…
+                          {t('Searching artifacts…')}
                         </p>
                       ) : null}
                       {artifactError ? (
@@ -796,8 +819,8 @@ export const GlobalSearchDialog = ({
                           onClick={() => void reloadArtifacts(failedArtifactCursor)}
                         >
                           {failedArtifactCursor
-                            ? 'Could not load more — retry'
-                            : 'Could not load artifacts — retry'}
+                            ? t('Could not load more — retry')
+                            : t('Could not load artifacts — retry')}
                         </Button>
                       ) : null}
                       {canLoadMoreArtifacts ? (
@@ -815,14 +838,14 @@ export const GlobalSearchDialog = ({
                           onMouseEnter={() => setActiveIndex(rowIndex - 1)}
                           onClick={() => activate({ kind: 'more-artifacts' })}
                         >
-                          +{artifactMoreCount} more matches — show more
+                          {t('+{{count}} more matches — show more', { count: artifactMoreCount })}
                         </Button>
                       ) : null}
                     </section>
                   ) : null}
                   {sessionGroups?.primary.length ? (
-                    <section role="group" aria-label="Sessions">
-                      <h2 className={sectionTitleClassName}>Sessions</h2>
+                    <section role="group" aria-label={t('Sessions')}>
+                      <h2 className={sectionTitleClassName}>{t('Sessions')}</h2>
                       {sessionGroups.primary.map((session) =>
                         renderSessionRow(session, nextIndex())
                       )}
@@ -840,14 +863,14 @@ export const GlobalSearchDialog = ({
                           onMouseEnter={() => setActiveIndex(rowIndex - 1)}
                           onClick={() => activate({ kind: 'more-sessions' })}
                         >
-                          +{sessionMoreCount} more matches — show more
+                          {t('+{{count}} more matches — show more', { count: sessionMoreCount })}
                         </Button>
                       ) : null}
                     </section>
                   ) : null}
                   {otherRows.length > 0 ? (
-                    <section role="group" aria-label="Other projects">
-                      <h2 className={sectionTitleClassName}>Other projects</h2>
+                    <section role="group" aria-label={t('Other projects')}>
+                      <h2 className={sectionTitleClassName}>{t('Other projects')}</h2>
                       {otherRows.map((row) =>
                         row.kind === 'artifact'
                           ? renderArtifactRow(row.artifact, nextIndex())
@@ -863,14 +886,14 @@ export const GlobalSearchDialog = ({
                   artifactStatus !== 'loading' &&
                   !artifactError ? (
                     <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      No sessions or artifacts match “{query}”.
+                      {t('No sessions or artifacts match “{{query}}”.', { query })}
                     </p>
                   ) : null}
                 </>
               )}
               {!isProjectScope || primaryProject ? (
-                <section role="group" aria-label="Commands">
-                  <h2 className={sectionTitleClassName}>Commands</h2>
+                <section role="group" aria-label={t('Commands')}>
+                  <h2 className={sectionTitleClassName}>{t('Commands')}</h2>
                   <Button
                     id={`global-search-option-${nextIndex()}`}
                     type="button"
@@ -894,14 +917,14 @@ export const GlobalSearchDialog = ({
                       <Zap className="size-5 text-primary" aria-hidden="true" />
                     )}
                     <span className="text-sm font-medium">
-                      {isProjectScope ? 'New session' : 'New project'}
+                      {isProjectScope ? t('New session') : t('New project')}
                     </span>
                   </Button>
                 </section>
               ) : null}
               {!artifacts.isIndexComplete ? (
                 <p className="px-4 py-2 text-xs text-muted-foreground">
-                  Some artifact results may be missing.
+                  {t('Some artifact results may be missing.')}
                 </p>
               ) : null}
             </div>
@@ -912,21 +935,21 @@ export const GlobalSearchDialog = ({
           >
             <span className={shortcutClassName}>
               <kbd className={keycapClassName}>↑↓</kbd>
-              <span>navigate</span>
+              <span>{t('navigate')}</span>
             </span>
             <span className={shortcutClassName}>
               <kbd className={keycapClassName}>↵</kbd>
-              <span>open</span>
+              <span>{t('open')}</span>
             </span>
             {isProjectScope ? (
               <span className={shortcutClassName}>
                 <kbd className={keycapClassName}>⇧↵</kbd>
-                <span>mention</span>
+                <span>{t('mention')}</span>
               </span>
             ) : null}
             <span className={shortcutClassName}>
               <kbd className={keycapClassName}>esc</kbd>
-              <span>close</span>
+              <span>{t('close')}</span>
             </span>
           </footer>
         </Dialog.Content>

@@ -14,6 +14,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -337,6 +338,7 @@ const WorkspaceMessageScrollerImpl = ({
   handoffLifecycleSource,
   onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
   const historicalArtifactsByVersionId = useHistoricalArtifactDescriptors(activeSession)
@@ -695,7 +697,7 @@ const WorkspaceMessageScrollerImpl = ({
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
-          <MessageScrollerViewport aria-label="Conversation">
+          <MessageScrollerViewport aria-label={t('Conversation')}>
             <MessageScrollerContent className="gap-0 px-4">
               <div className={conversationContentClassName}>
                 {/* Messages and tool activities share one sorted transcript timeline. */}

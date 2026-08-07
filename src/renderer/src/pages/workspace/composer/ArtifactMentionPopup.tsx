@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -37,9 +38,9 @@ type ArtifactRow = PickedArtifact & {
   positions?: number[]
 }
 
-// Human-readable section headers, ordered as they render.
-const SECTION_UPLOADS = 'User uploads'
-const SECTION_ARTIFACTS = 'Other artifacts'
+// Catalog keys for the section headers, ordered as they render.
+const SECTION_UPLOADS_KEY = 'User uploads'
+const SECTION_ARTIFACTS_KEY = 'Other artifacts'
 const PROJECT_FILE_PAGE_SIZE = 100
 
 const loadProjectFiles = async (projectId: string): Promise<ProjectFileItem[]> => {
@@ -70,6 +71,7 @@ export const ArtifactMentionPopup = ({
   onSelect,
   onClose
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const listboxId = useId()
   const [projectFiles, setProjectFiles] = useState<{
@@ -243,16 +245,16 @@ export const ArtifactMentionPopup = ({
       {matches.length === 0 ? (
         <div className="px-2 py-1.5 text-sm text-text-300">
           {loadState === 'loading'
-            ? 'Loading project files…'
+            ? t('Loading project files…')
             : loadState === 'error'
-              ? 'Could not load project files'
-              : 'No artifacts yet'}
+              ? t('Could not load project files')
+              : t('No artifacts yet')}
         </div>
       ) : (
         <ul
           id={`${listboxId}-listbox`}
           role="listbox"
-          aria-label="Artifact suggestions"
+          aria-label={t('Artifact suggestions')}
           className="overflow-y-auto max-h-[min(45vh,18rem)]"
         >
           {uploadMatches.length > 0 ? (
@@ -261,7 +263,7 @@ export const ArtifactMentionPopup = ({
                 aria-hidden="true"
                 className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
               >
-                {SECTION_UPLOADS}
+                {t(SECTION_UPLOADS_KEY)}
               </li>
               {uploadMatches.map((row, index) => renderRow(row, index))}
             </>
@@ -272,7 +274,7 @@ export const ArtifactMentionPopup = ({
                 aria-hidden="true"
                 className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
               >
-                {SECTION_ARTIFACTS}
+                {t(SECTION_ARTIFACTS_KEY)}
               </li>
               {artifactMatches.map((row, index) => renderRow(row, uploadMatches.length + index))}
             </>
@@ -281,13 +283,13 @@ export const ArtifactMentionPopup = ({
       )}
       <div className="mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>
-          <span className="text-text-300">↑↓</span> navigate
+          <span className="text-text-300">↑↓</span> {t('navigate')}
         </span>
         <span>
-          <span className="text-text-300">Enter</span> select
+          <span className="text-text-300">Enter</span> {t('select')}
         </span>
         <span>
-          <span className="text-text-300">Esc</span> close
+          <span className="text-text-300">Esc</span> {t('close')}
         </span>
       </div>
     </div>

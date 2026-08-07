@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { formatProgressLine, type DownloadProgress } from '../../../shared/download-progress'
 
 // Single-line download status reused by the update dialog and the provisioning surface. The bar stays
@@ -8,12 +9,13 @@ export const DownloadProgressLine = ({
 }: {
   progress: DownloadProgress
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const reconnecting = progress.phase === 'reconnecting'
   const known = progress.total != null && progress.percent != null
   return (
     <div className="mt-2">
       <div className="mb-1 text-xs text-muted-foreground tabular-nums">
-        {formatProgressLine(progress)}
+        {formatProgressLine(t, progress)}
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
         <div

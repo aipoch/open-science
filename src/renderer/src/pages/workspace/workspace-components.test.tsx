@@ -436,7 +436,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')
     expect(workspaceWebSearchActivityRowSource).toContain('panelTestId="tool-search-details"')
     expect(workspaceWebSearchActivityRowSource).toContain(
-      'formatResultCountLabel(details.resultCount)'
+      'formatResultCountLabel(details.resultCount, t)'
     )
     expect(workspaceWebSearchActivityRowSource).toContain(
       'canExpand={Boolean(details.query || details.resultCount)}'
@@ -446,6 +446,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('content={message.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
+    expect(workspaceAgentLoadingRowSource).toContain("t('Thinking')")
   })
 
   // Non-search tool calls render an expandable details row backed by a dedicated parser module.
@@ -524,6 +525,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')
     expect(workspaceAgentLoadingRowSource).toContain('aria-live="polite"')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
+    expect(workspaceAgentLoadingRowSource).toContain("t('Thinking')")
     expect(workspaceMessageItemSource).toContain("isAnimating={message.status === 'streaming'}")
   })
 })

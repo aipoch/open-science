@@ -6,6 +6,7 @@
 
 import { Check, ChevronRight, UserRound } from 'lucide-react'
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import {
   DropdownMenuSub,
@@ -32,14 +33,16 @@ type SpecialistSubmenuProps = {
 }
 
 // Short label for the trigger capsule: truncated name when selected, "None" or
-// "Unavailable" otherwise. Kept compact so the trigger never wraps.
+// "Unavailable" otherwise. Kept compact so the trigger never wraps. Takes the
+// resolved strings rather than calling t() so it stays a pure helper.
 const capsuleLabel = (
   selected: SpecialistProfileView | undefined,
-  unavailable: boolean
+  unavailable: boolean,
+  labels: { none: string; unavailable: string }
 ): string => {
-  if (unavailable) return 'Unavailable'
+  if (unavailable) return labels.unavailable
   if (selected) return selected.name
-  return 'None'
+  return labels.none
 }
 
 const SpecialistSubmenu = ({
@@ -48,6 +51,7 @@ const SpecialistSubmenu = ({
   unavailable = false,
   readOnly = false
 }: SpecialistSubmenuProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const items = useSpecialistStore((state) => state.items)
   const isLoaded = useSpecialistStore((state) => state.isLoaded)
   const load = useSpecialistStore((state) => state.load)
@@ -77,7 +81,10 @@ const SpecialistSubmenu = ({
   const selected = enabledSpecialists.find((s) => s.id === selectedId)
   const isNone = selectedId === undefined
 
-  const label = capsuleLabel(selected, unavailable)
+  const label = capsuleLabel(selected, unavailable, {
+    none: t('None'),
+    unavailable: t('Unavailable')
+  })
   const showValue = Boolean(selectedId) || unavailable
 
   // When the selected specialist is unavailable, keep it visible in the list as struck-through so
@@ -105,10 +112,10 @@ const SpecialistSubmenu = ({
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] font-medium leading-5">Specialist</span>
+          <span className="block text-[13px] font-medium leading-5">{t('Specialist')}</span>
           {!showValue ? (
             <span className="block text-[11px] leading-4 text-text-300">
-              Bind a personal specialist to this conversation.
+              {t('Bind a personal specialist to this conversation.')}
             </span>
           ) : null}
         </span>
@@ -146,7 +153,7 @@ const SpecialistSubmenu = ({
             >
               —
             </span>
-            <span className="min-w-0 flex-1 truncate text-[13px]">None</span>
+            <span className="min-w-0 flex-1 truncate text-[13px]">{t('None')}</span>
             {isNone && !unavailable ? (
               <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
             ) : null}
@@ -174,7 +181,7 @@ const SpecialistSubmenu = ({
                   <span className="min-w-0 flex-1 truncate text-[13px] line-through">
                     {unavailableProfile.name}
                   </span>
-                  <span className="text-[10px] text-amber-500">Unavailable</span>
+                  <span className="text-[10px] text-amber-500">{t('Unavailable')}</span>
                 </div>
               ) : null}
               {enabledSpecialists.map((specialist) => {
@@ -214,7 +221,7 @@ const SpecialistSubmenu = ({
             className="items-center gap-2 px-2 py-1.5 text-[13px] text-text-200"
             data-testid="specialist-option-create"
           >
-            Create new…
+            {t('Create new…')}
           </DropdownMenuItem>
         </DropdownMenuSubContent>
       ) : null}

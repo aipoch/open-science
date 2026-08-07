@@ -1,4 +1,5 @@
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -25,6 +26,8 @@ const SwitchFrameworkDialog = ({
   onCancel,
   onConfirm
 }: SwitchFrameworkDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const dialogTargetName = useRetainedDialogValue(targetName)
 
   return (
@@ -40,23 +43,23 @@ const SwitchFrameworkDialog = ({
           className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))]')}
         >
           <AlertDialog.Title className={dialogTitleClassName}>
-            Switch to {dialogTargetName}?
+            {t('Switch to {{name}}?', { name: dialogTargetName })}
           </AlertDialog.Title>
           <AlertDialog.Description className={dialogDescriptionClassName}>
-            A conversation can&apos;t be resumed on a different backend, so switching starts a fresh
-            agent session. Open conversations keep their existing messages, and their transcript is
-            replayed to {dialogTargetName} so it can pick up where you left off (tool state is not
-            carried over). New conversations are unaffected.
+            {t(
+              "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
+              { name: dialogTargetName }
+            )}
           </AlertDialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
               <Button type="button" variant="outline">
-                Cancel
+                {tCommon('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
               <Button type="button" onClick={onConfirm}>
-                Switch
+                {t('Switch')}
               </Button>
             </AlertDialog.Action>
           </div>

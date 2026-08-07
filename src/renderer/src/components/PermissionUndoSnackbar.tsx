@@ -1,5 +1,6 @@
 import { Archive, KeyRound, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -20,6 +21,8 @@ const PermissionUndoItem = ({
   dismiss: (token: string) => void
   isRestoring: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
   const paused = pointerPaused || focusPaused
@@ -101,14 +104,14 @@ const PermissionUndoItem = ({
               variant="ghost"
               size="icon"
               className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
-              aria-label="Dismiss permission Undo"
+              aria-label={t('Dismiss permission Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.token)}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Dismiss</TooltipContent>
+          <TooltipContent>{t('Dismiss')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>
@@ -126,6 +129,8 @@ const ArchiveUndoItem = ({
   restore: (key: string) => Promise<void>
   isRestoring: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
   const paused = pointerPaused || focusPaused
@@ -181,14 +186,14 @@ const ArchiveUndoItem = ({
               variant="ghost"
               size="icon"
               className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
-              aria-label="Dismiss archive Undo"
+              aria-label={t('Dismiss archive Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.key)}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Dismiss</TooltipContent>
+          <TooltipContent>{t('Dismiss')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>

@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -34,6 +35,8 @@ const RenameSessionDialog = ({
   onCancel,
   onConfirmRename
 }: RenameSessionDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const dialogRenameDraft = useRetainedDialogValue(session ? renameDraft : undefined) ?? renameDraft
 
   return (
@@ -54,16 +57,16 @@ const RenameSessionDialog = ({
           <form onSubmit={onConfirmRename}>
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
-                <Dialog.Title className={dialogTitleClassName}>Rename session</Dialog.Title>
+                <Dialog.Title className={dialogTitleClassName}>{t('Rename session')}</Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
-                  Update the name shown in the session list.
+                  {t('Update the name shown in the session list.')}
                 </Dialog.Description>
               </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close"
+                aria-label={tCommon('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
               >
@@ -74,17 +77,17 @@ const RenameSessionDialog = ({
               <Input
                 value={dialogRenameDraft}
                 onChange={(event) => onRenameDraftChange(event.target.value)}
-                aria-label="Session name"
+                aria-label={t('Session name')}
                 autoFocus
                 className={renameDialogInputClassName}
               />
             </div>
             <div className={dialogFooterClassName}>
               <Button type="button" variant="outline" onClick={onCancel}>
-                Cancel
+                {tCommon('Cancel')}
               </Button>
               <Button type="submit" disabled={dialogRenameDraft.trim().length === 0}>
-                Rename
+                {t('Rename')}
               </Button>
             </div>
           </form>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
@@ -47,6 +48,8 @@ type NotificationOpenIntent = {
 }
 
 const App = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
   useQuitPersistenceFlush()
@@ -445,7 +448,7 @@ const App = (): React.JSX.Element | null => {
         >
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm">
             <h1 className="text-base font-semibold text-foreground">
-              Settings could not be loaded
+              {t('Settings could not be loaded')}
             </h1>
             <p className="mt-2 break-words text-sm text-muted-foreground">{settingsLoadError}</p>
             <Button
@@ -471,7 +474,7 @@ const App = (): React.JSX.Element | null => {
       >
         <div className="flex flex-col items-center gap-14">
           <OpenScienceLogoLoader />
-          <span className="text-sm text-muted-foreground">Loading settings…</span>
+          <span className="text-sm text-muted-foreground">{t('Loading settings…')}</span>
         </div>
       </main>
     )
@@ -488,7 +491,7 @@ const App = (): React.JSX.Element | null => {
         role="status"
         className="flex min-h-svh items-center justify-center bg-background text-foreground"
       >
-        <span className="text-sm text-muted-foreground">Loading saved conversations…</span>
+        <span className="text-sm text-muted-foreground">{t('Loading saved conversations…')}</span>
       </main>
     )
   }
@@ -502,7 +505,7 @@ const App = (): React.JSX.Element | null => {
         className="flex min-h-svh items-center justify-center bg-background p-6 text-foreground"
       >
         <SessionPersistenceAlert
-          title="Saved conversations could not be loaded"
+          title={t('Saved conversations could not be loaded')}
           message={sessionPersistence.loadError}
           inline
           onRetry={sessionPersistence.retryLoad}
@@ -516,19 +519,19 @@ const App = (): React.JSX.Element | null => {
       <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
       {sessionPersistence.loadError ? (
         <SessionPersistenceAlert
-          title="Saved conversations could not be loaded"
+          title={t('Saved conversations could not be loaded')}
           message={sessionPersistence.loadError}
           onRetry={sessionPersistence.retryLoad}
         />
       ) : sessionPersistence.writeError ? (
         <SessionPersistenceAlert
-          title="Conversation storage needs attention"
+          title={t('Conversation storage needs attention')}
           message={sessionPersistence.writeError}
           onRetry={sessionPersistence.retryWrites}
         />
       ) : sessionPersistence.loadWarning ? (
         <SessionPersistenceAlert
-          title="Saved conversation data was damaged"
+          title={t('Saved conversation data was damaged')}
           message={sessionPersistence.loadWarning}
           variant="warning"
           onDismiss={sessionPersistence.dismissLoadWarning}

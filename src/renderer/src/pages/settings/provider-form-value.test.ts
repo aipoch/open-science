@@ -97,11 +97,11 @@ describe('getProviderFormErrors', () => {
     expect(
       getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '0' }))
         .contextWindow
-    ).toMatch(/positive whole number/i)
+    ).toBe('Context window must be a positive whole number of tokens.')
     expect(
       getProviderFormErrors(createEmptyProviderFormValue({ ...complete, contextWindow: '1.5' }))
         .contextWindow
-    ).toMatch(/positive whole number/i)
+    ).toBe('Context window must be a positive whole number of tokens.')
   })
 })
 

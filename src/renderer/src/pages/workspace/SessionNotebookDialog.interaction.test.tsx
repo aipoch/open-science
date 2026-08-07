@@ -72,7 +72,10 @@ describe('SessionNotebookContent export', () => {
 
   it('passes the clicked tab kernel to the export callback after switching tabs', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
-    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    const mixedRuns: NotebookRunRecord[] = [
+      run,
+      { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }
+    ]
     await act(async () => {
       root.render(
         <SessionNotebookContent
@@ -204,7 +207,10 @@ describe('SessionNotebookContent export', () => {
 
   it('invokes onExportAll for the "Download all" button on mixed sessions', async () => {
     const onExportAll = vi.fn().mockResolvedValue(undefined)
-    const mixedRuns: NotebookRunRecord[] = [run, { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }]
+    const mixedRuns: NotebookRunRecord[] = [
+      run,
+      { ...run, runId: 'r1', kernelKind: 'r', environment: 'default-r' }
+    ]
     await act(async () => {
       root.render(
         <SessionNotebookContent

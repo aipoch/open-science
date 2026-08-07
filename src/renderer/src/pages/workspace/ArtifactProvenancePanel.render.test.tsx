@@ -641,9 +641,14 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).toContain('Execution Log')
     expect(container.textContent).not.toContain('Captured producer block')
 
-    const reconstructionCaption = [...container.querySelectorAll('span')].find(
-      (span) => span.textContent === 'LLM-generated reconstruction · see '
-    )?.parentElement
+    // The caption is one <Trans> sentence, so its copy arrives as text nodes sitting directly in the
+    // wrapper rather than in a <span> that can be matched on. What this pins is the wrapper's own
+    // layout, so match the wrapper — and assert it was found first, since the `not.toContain` below
+    // passes vacuously when the lookup misses.
+    const reconstructionCaption = [...container.querySelectorAll('div')].find((div) =>
+      div.textContent?.startsWith('LLM-generated reconstruction')
+    )
+    expect(reconstructionCaption).toBeDefined()
     expect(reconstructionCaption?.className).toContain('truncate')
     expect(reconstructionCaption?.parentElement?.className).not.toContain('flex-wrap')
 

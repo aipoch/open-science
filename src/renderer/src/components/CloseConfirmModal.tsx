@@ -1,5 +1,6 @@
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -7,6 +8,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { APP } from '../../../shared/app-config'
 import type { ActiveSessionInfo } from '../../../shared/storage'
 import type {
   CloseConfirmChoice,
@@ -30,6 +32,7 @@ export const CloseConfirmModal = ({
 }: {
   onOpenChange?: (open: boolean) => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
   const [remember, setRemember] = useState(true)
 
@@ -61,10 +64,12 @@ export const CloseConfirmModal = ({
 
   const isQuitVariant = dialogRequest.variant === 'quit'
   const hasSessions = dialogRequest.sessions.length > 0
-  const title = isQuitVariant ? 'Quit Open Science?' : 'Minimize or quit?'
+  const title = isQuitVariant
+    ? t('Quit {{appName}}?', { appName: APP.name })
+    : t('Minimize or quit?')
   const description = isQuitVariant
-    ? 'Work is still running and will be interrupted if you quit.'
-    : 'This app can keep running in the tray, or you can quit.'
+    ? t('Work is still running and will be interrupted if you quit.')
+    : t('This app can keep running in the tray, or you can quit.')
 
   return (
     <AlertDialog.Root
@@ -100,7 +105,10 @@ export const CloseConfirmModal = ({
                   // events, so a button-level tooltip would be dead exactly on truncated unresolved rows.
                   <li
                     key={`${session.kind}:${session.sessionId}`}
-                    title={`${row.project} — ${row.title}`}
+                    title={t('{{project}} — {{title}}', {
+                      project: row.project,
+                      title: row.title
+                    })}
                   >
                     <button
                       type="button"
@@ -108,7 +116,10 @@ export const CloseConfirmModal = ({
                       disabled={!row.projectId}
                       className="block w-full truncate rounded-lg border border-border bg-muted/40 p-2 text-left text-foreground enabled:cursor-pointer enabled:hover:bg-muted disabled:cursor-default"
                     >
-                      {truncateLabel(row.project)} — {truncateLabel(row.title)}
+                      {t('{{project}} — {{title}}', {
+                        project: truncateLabel(row.project),
+                        title: truncateLabel(row.title)
+                      })}
                     </button>
                   </li>
                 )
@@ -123,23 +134,23 @@ export const CloseConfirmModal = ({
                 onChange={(event) => setRemember(event.target.checked)}
                 className="size-4 shrink-0 accent-primary"
               />
-              <span>Don&apos;t ask again</span>
+              <span>{t("Don't ask again")}</span>
             </label>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
             {isQuitVariant ? (
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost">
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
             ) : (
               <Button type="button" variant="ghost" onClick={() => reply('minimize')}>
-                Minimize to tray
+                {t('Minimize to tray')}
               </Button>
             )}
             <Button type="button" onClick={() => reply('quit')}>
-              Quit
+              {t('Quit')}
             </Button>
           </div>
         </AlertDialog.Content>

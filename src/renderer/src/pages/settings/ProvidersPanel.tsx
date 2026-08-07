@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ProviderView, ValidateProviderResult } from '../../../../shared/settings'
@@ -30,6 +31,7 @@ const ProvidersPanel = ({
   busyProviderId,
   onBusyProviderChange
 }: ProvidersPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -120,7 +122,7 @@ const ProvidersPanel = ({
       await validateProvider({ providerId: provider.id })
     } catch (error) {
       setProviderTestError(
-        error instanceof Error ? error.message : 'Could not test the provider connection.'
+        error instanceof Error ? error.message : t('Could not test the provider connection.')
       )
     } finally {
       onBusyProviderChange(undefined)
@@ -137,7 +139,9 @@ const ProvidersPanel = ({
     try {
       await loginIsolatedCodex()
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Codex.')
+      setProviderTestError(
+        error instanceof Error ? error.message : t('Could not sign in to Codex.')
+      )
     } finally {
       setIsCodexLoginPending(false)
     }
@@ -151,10 +155,12 @@ const ProvidersPanel = ({
       // A timeout or other failure leaves the credential in place; surface the reason so the user
       // knows to retry rather than assuming they are signed out.
       if (!result.ok) {
-        setProviderTestError(result.message ?? 'Codex sign-out did not complete. Try again.')
+        setProviderTestError(result.message ?? t('Codex sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Codex.')
+      setProviderTestError(
+        error instanceof Error ? error.message : t('Could not sign out of Codex.')
+      )
     }
   }
 
@@ -173,7 +179,7 @@ const ProvidersPanel = ({
       })
     } catch (error) {
       setProviderTestError(
-        error instanceof Error ? error.message : 'Could not re-import the Codex login.'
+        error instanceof Error ? error.message : t('Could not re-import the Codex login.')
       )
     } finally {
       onBusyProviderChange(undefined)
@@ -196,13 +202,13 @@ const ProvidersPanel = ({
     try {
       const result = await loginIsolatedClaude(token)
       if (!result.ok) {
-        setProviderTestError(result.message ?? 'Could not save the Claude token. Try again.')
+        setProviderTestError(result.message ?? t('Could not save the Claude token. Try again.'))
       }
 
       return result
     } catch (error) {
       setProviderTestError(
-        error instanceof Error ? error.message : 'Could not save the Claude token.'
+        error instanceof Error ? error.message : t('Could not save the Claude token.')
       )
 
       return undefined
@@ -233,11 +239,13 @@ const ProvidersPanel = ({
       } else {
         // Browser login failed (e.g. it never opened). Leave the modal open so the user can paste a
         // token, and surface the reason there rather than only on the card behind it.
-        setProviderTestError(result.message ?? 'Could not sign in to Claude. Try again.')
+        setProviderTestError(result.message ?? t('Could not sign in to Claude. Try again.'))
       }
     } catch (error) {
       if (manualClaudePasteWonRef.current) return
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Claude.')
+      setProviderTestError(
+        error instanceof Error ? error.message : t('Could not sign in to Claude.')
+      )
     } finally {
       setIsClaudeIsolatedLoginPending(false)
     }
@@ -249,10 +257,12 @@ const ProvidersPanel = ({
     try {
       const result = await logoutIsolatedClaude()
       if (!result.ok) {
-        setProviderTestError(result.message ?? 'Claude sign-out did not complete. Try again.')
+        setProviderTestError(result.message ?? t('Claude sign-out did not complete. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign out of Claude.')
+      setProviderTestError(
+        error instanceof Error ? error.message : t('Could not sign out of Claude.')
+      )
     }
   }
 
@@ -264,10 +274,12 @@ const ProvidersPanel = ({
     try {
       const result = await loginSharedClaude()
       if (!result.ok && !result.cancelled) {
-        setProviderTestError(result.message ?? 'Could not sign in to Claude. Try again.')
+        setProviderTestError(result.message ?? t('Could not sign in to Claude. Try again.'))
       }
     } catch (error) {
-      setProviderTestError(error instanceof Error ? error.message : 'Could not sign in to Claude.')
+      setProviderTestError(
+        error instanceof Error ? error.message : t('Could not sign in to Claude.')
+      )
     } finally {
       setIsClaudeSharedLoginPending(false)
     }
@@ -279,11 +291,11 @@ const ProvidersPanel = ({
     try {
       const result = await logoutSharedClaude()
       if (!result.ok) {
-        setProviderTestError(result.message ?? 'Could not disconnect Claude from Open Science.')
+        setProviderTestError(result.message ?? t('Could not disconnect Claude from Open Science.'))
       }
     } catch (error) {
       setProviderTestError(
-        error instanceof Error ? error.message : 'Could not disconnect Claude from Open Science.'
+        error instanceof Error ? error.message : t('Could not disconnect Claude from Open Science.')
       )
     }
   }
@@ -294,9 +306,9 @@ const ProvidersPanel = ({
           management. */}
       {visibleProviders.length > 0 ? (
         <SettingsSection
-          title="Active model"
-          aria-label="Active model"
-          description="The model that drives new agent sessions."
+          title={t('Active model')}
+          aria-label={t('Active model')}
+          description={t('The model that drives new agent sessions.')}
         >
           <div className="max-w-md">
             <ActiveModelSelect />
@@ -307,9 +319,11 @@ const ProvidersPanel = ({
       {/* Model-level generation tuning; always visible, unlike the Active model section above
           which needs at least one provider. */}
       <SettingsSection
-        title="Reasoning effort"
-        aria-label="Reasoning effort"
-        description="Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests."
+        title={t('Reasoning effort')}
+        aria-label={t('Reasoning effort')}
+        description={t(
+          'Higher levels think longer, while lower levels respond faster. Choices follow the selected model and preserve relative strength when models change; some agent frameworks may approximate unsupported levels. Applies to subsequent requests.'
+        )}
         separated={visibleProviders.length > 0}
       >
         <div className="max-w-md">
@@ -317,7 +331,7 @@ const ProvidersPanel = ({
         </div>
       </SettingsSection>
 
-      <SettingsSection title="Providers" aria-label="Providers" separated>
+      <SettingsSection title={t('Providers')} aria-label={t('Providers')} separated>
         <ProviderList
           providers={visibleProviders}
           activeProviderId={activeProviderId}
@@ -360,7 +374,7 @@ const ProvidersPanel = ({
           className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border text-sm text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 hover:text-foreground"
         >
           <Plus className="size-4" aria-hidden="true" />
-          Add provider
+          {t('Add provider')}
         </button>
       </SettingsSection>
       {/* The Claude subscription's sign-in modal collects the pasted token. Closing it (without a

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
@@ -10,6 +11,8 @@ const EnvProvisionOverlay = ({
   ui: ProvisionUiState
   onRetry?: () => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (ui.kind === 'ready') return null
 
   const title =
@@ -59,7 +62,7 @@ const EnvProvisionOverlay = ({
               onClick={onRetry}
               className="rounded border border-border-100 px-3 py-1 text-xs text-text-100 hover:bg-bg-300"
             >
-              Retry
+              {t('Retry')}
             </button>
           ) : null}
         </>

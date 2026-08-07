@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import {
   Select,
   SelectContent,
@@ -24,6 +26,7 @@ const SEP = '␟'
 // source provider. Mirrors the composer picker (both drive activeProviderId + activeModel), so
 // changing it here changes what the composer shows and vice versa. Hidden until a model exists.
 const ActiveModelSelect = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -70,7 +73,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
         void setActiveProvider(providerId, model).catch(() => undefined)
       }}
     >
-      <SelectTrigger aria-label="Active model">
+      <SelectTrigger aria-label={t('Active model')}>
         <span className="flex items-center gap-2 truncate">
           {current ? (
             <>
@@ -84,7 +87,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
               </span>
             </>
           ) : (
-            'Select a model'
+            t('Select a model')
           )}
         </span>
       </SelectTrigger>

@@ -20,6 +20,7 @@ import {
   Pencil
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
@@ -45,7 +46,7 @@ import {
   getArtifactName,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
-import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
+import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
@@ -115,7 +116,8 @@ const MessageTimestamp = ({
   label,
   date
 }: {
-  label: 'Sent' | 'Completed' | 'Failed'
+  // Already-resolved copy: the caller owns which of sent/completed/failed applies.
+  label: string
   date: Date
 }): React.JSX.Element => {
   return (
@@ -149,6 +151,7 @@ const TurnTokenUsage = ({
   usage?: AcpTurnTokenUsage
   runtimeIdentity?: MessageRuntimeIdentity
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const frameworks = useSettingsStore((state) =>
     open && runtimeIdentity ? state.agentFrameworks : undefined
@@ -169,30 +172,33 @@ const TurnTokenUsage = ({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const openedFromPointerRef = useRef(false)
   const accessibleLabel = usage
-    ? 'Token usage for this response'
-    : 'Token usage unavailable for this response'
+    ? t('Token usage for this response')
+    : t('Token usage unavailable for this response')
   const hasCacheBreakdown =
     usage?.cachedReadTokens !== undefined && usage.cachedWriteTokens !== undefined
   const entries: readonly TurnTokenUsageEntry[] = hasCacheBreakdown
     ? [
-        ['Input', usage.inputTokens, 'bg-chart-2'],
-        ['Cache read', usage.cachedReadTokens, 'bg-chart-4'],
-        ['Cache write', usage.cachedWriteTokens, 'bg-chart-3'],
-        ['Output', usage.outputTokens, 'bg-chart-1']
+        [t('Input'), usage.inputTokens, 'bg-chart-2'],
+        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-4'],
+        [t('Cache write'), usage.cachedWriteTokens, 'bg-chart-3'],
+        [t('Output'), usage.outputTokens, 'bg-chart-1']
       ]
     : [
-        ['Input', usage?.inputTokens, 'bg-chart-2'],
-        ['Cache', usage?.cacheTokens, 'bg-chart-4'],
-        ['Output', usage?.outputTokens, 'bg-chart-1']
+        [t('Input'), usage?.inputTokens, 'bg-chart-2'],
+        [t('Cache'), usage?.cacheTokens, 'bg-chart-4'],
+        [t('Output'), usage?.outputTokens, 'bg-chart-1']
       ]
   const totalTokens = usage ? usage.inputTokens + usage.cacheTokens + usage.outputTokens : undefined
   const safeTotalTokens = Number.isSafeInteger(totalTokens) ? totalTokens : undefined
   const breakdownLabel =
     usage && safeTotalTokens !== undefined
-      ? `${entries
-          .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
-          .join(', ')}; Total ${tokenCountFormatter.format(safeTotalTokens)} tokens`
-      : 'Token usage breakdown unavailable'
+      ? t('{{entries}}; Total {{total}} tokens', {
+          entries: entries
+            .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
+            .join(', '),
+          total: tokenCountFormatter.format(safeTotalTokens)
+        })
+      : t('Token usage breakdown unavailable')
 
   const keepOpen = (): void => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -257,7 +263,7 @@ const TurnTokenUsage = ({
               strokeWidth={2}
               aria-hidden="true"
             />
-            Usage
+            {t('Usage')}
           </button>
         </span>
       </PopoverAnchor>
@@ -280,15 +286,15 @@ const TurnTokenUsage = ({
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
-            <div className="text-[13px] font-medium">Usage</div>
+            <div className="text-[13px] font-medium">{t('Usage')}</div>
             {frameworkName || provider ? (
               <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
                 {frameworkName && runtimeIdentity?.frameworkId ? (
                   <span
                     data-slot="turn-runtime-framework"
                     role="img"
-                    aria-label={`Agent framework: ${frameworkName}`}
-                    title={`Agent framework: ${frameworkName}`}
+                    aria-label={t('Agent framework: {{name}}', { name: frameworkName })}
+                    title={t('Agent framework: {{name}}', { name: frameworkName })}
                     className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
                   >
                     <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={12} />
@@ -298,8 +304,22 @@ const TurnTokenUsage = ({
                   <span
                     data-slot="turn-runtime-model"
                     role="img"
-                    aria-label={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
-                    title={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
+                    aria-label={
+                      model
+                        ? t('Model provider: {{name}}; model: {{model}}', {
+                            name: provider.name,
+                            model
+                          })
+                        : t('Model provider: {{name}}', { name: provider.name })
+                    }
+                    title={
+                      model
+                        ? t('Model provider: {{name}}; model: {{model}}', {
+                            name: provider.name,
+                            model
+                          })
+                        : t('Model provider: {{name}}', { name: provider.name })
+                    }
                     className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
                   >
                     <ProviderKindIcon kindKey={kindKey} className="size-3" />
@@ -313,7 +333,7 @@ const TurnTokenUsage = ({
               data-slot="turn-token-usage-turn-count"
               className="text-[10px] font-normal text-muted-foreground tabular-nums"
             >
-              {usage.turnCount} {usage.turnCount === 1 ? 'turn' : 'turns'}
+              {t('{{count}} turns', { defaultValue_one: '{{count}} turn', count: usage.turnCount })}
             </div>
           ) : null}
         </div>
@@ -358,7 +378,7 @@ const TurnTokenUsage = ({
           data-slot="turn-token-usage-total"
           className="mt-2 flex items-center justify-between gap-4 border-t border-border pt-2 font-medium whitespace-nowrap"
         >
-          <span>Total</span>
+          <span>{t('Total')}</span>
           <span className="tabular-nums">
             {safeTotalTokens !== undefined ? tokenCountFormatter.format(safeTotalTokens) : '—'}
           </span>
@@ -377,7 +397,7 @@ const TurnTokenUsage = ({
                 >
                   <Bot className="size-2.5" strokeWidth={2} />
                 </span>
-                <span className="truncate">Agent: {frameworkName}</span>
+                <span className="truncate">{t('Agent: {{name}}', { name: frameworkName })}</span>
               </div>
             ) : null}
             {model ? (
@@ -389,7 +409,7 @@ const TurnTokenUsage = ({
                 >
                   <Brain className="size-2.5" strokeWidth={2} />
                 </span>
-                <span className="truncate">Model: {model}</span>
+                <span className="truncate">{t('Model: {{model}}', { model })}</span>
               </div>
             ) : null}
           </div>
@@ -517,6 +537,7 @@ const ArtifactCard = ({
   artifact: MessageArtifact
   onPreviewArtifact: (artifact: MessageArtifact) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const artifactName = getArtifactName(artifact)
   const sizeLabel = formatByteSize(artifact.size) ?? ''
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
@@ -540,7 +561,7 @@ const ArtifactCard = ({
       onClick={() => {
         onPreviewArtifact(artifact)
       }}
-      aria-label={`Preview generated file ${artifactName}`}
+      aria-label={t('Preview generated file {{name}}', { name: artifactName })}
       title={artifact.path}
     >
       <div className={cn('relative', artifactPreviewClassName)}>
@@ -554,7 +575,7 @@ const ArtifactCard = ({
         </span>
         {missing ? (
           <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-            {FILE_MISSING_TAG}
+            {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
       </div>
@@ -580,6 +601,7 @@ const MessageArtifactList = ({
   onPreviewArtifact: (artifact: MessageArtifact) => void
   artifacts: MessageArtifact[]
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const visibleCount = expanded ? artifacts.length : ARTIFACT_GALLERY_VISIBLE_COUNT
   const visibleArtifacts = artifacts.slice(0, visibleCount)
@@ -590,7 +612,7 @@ const MessageArtifactList = ({
   return (
     <div className="mt-3 border-t border-border-200 pt-3">
       <div className="mb-2 text-[11px] font-medium uppercase text-text-300">
-        GENERATED · {artifacts.length}
+        {t('GENERATED · {{count}}', { count: artifacts.length })}
       </div>
       <Collapsible.Root open={expanded} onOpenChange={setExpanded}>
         <div className={artifactGalleryClassName}>
@@ -609,9 +631,9 @@ const MessageArtifactList = ({
                   'flex items-center justify-center text-[13px] font-semibold',
                   artifactCardClassName
                 )}
-                aria-label="Expand generated files"
+                aria-label={t('Expand generated files')}
               >
-                +{remainingCount} more
+                {t('+{{count}} more', { context: 'files', count: remainingCount })}
               </button>
             </Collapsible.Trigger>
           ) : null}
@@ -623,9 +645,9 @@ const MessageArtifactList = ({
                   'flex items-center justify-center text-[13px]',
                   artifactCardClassName
                 )}
-                aria-label="Collapse generated files"
+                aria-label={t('Collapse generated files')}
               >
-                Show less
+                {t('Show less')}
               </button>
             </Collapsible.Trigger>
           ) : null}
@@ -643,6 +665,8 @@ const MessageUploadAttachmentList = ({
   attachments: MessageUploadAttachment[]
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (attachments.length === 0) return null
 
   return (
@@ -660,7 +684,7 @@ const MessageUploadAttachmentList = ({
             onClick={() => {
               onPreviewUploadAttachment(attachment)
             }}
-            aria-label={`Preview uploaded attachment ${attachmentName}`}
+            aria-label={t('Preview uploaded attachment {{name}}', { name: attachmentName })}
             title={attachment.path}
           >
             <Icon className="h-3.5 w-3.5 shrink-0 text-text-300" aria-hidden="true" />
@@ -683,72 +707,77 @@ const MessagePartsContent = ({
   isStatic?: boolean
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
-}): React.JSX.Element => (
-  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-    {parts.map((part, index) => {
-      if (part.type === 'skill') {
-        if (isStatic || !('id' in part)) {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+      {parts.map((part, index) => {
+        if (part.type === 'skill') {
+          // A static (provenance) part carries no id, so it renders as a plain pill.
+          if (isStatic || !('id' in part)) {
+            return (
+              <span
+                key={index}
+                className={cn(mentionPillClassName, 'bg-skill-chip text-skill-chip-foreground')}
+              >
+                /{part.name}
+              </span>
+            )
+          }
           return (
-            <span
+            <button
               key={index}
-              className={cn(mentionPillClassName, 'bg-skill-chip text-skill-chip-foreground')}
+              type="button"
+              className={cn(
+                mentionPillClassName,
+                mentionButtonClassName,
+                'bg-skill-chip text-skill-chip-foreground'
+              )}
+              onClick={() => onOpenSkillMention(part.id, part.name)}
+              aria-label={t('Open skill {{name}}', { name: part.name })}
             >
               /{part.name}
-            </span>
+            </button>
           )
         }
-        return (
-          <button
-            key={index}
-            type="button"
-            className={cn(
-              mentionPillClassName,
-              mentionButtonClassName,
-              'bg-skill-chip text-skill-chip-foreground'
-            )}
-            onClick={() => onOpenSkillMention(part.id, part.name)}
-            aria-label={`Open skill ${part.name}`}
-          >
-            /{part.name}
-          </button>
-        )
-      }
-      if (part.type === 'artifact') {
-        if (isStatic || !('source' in part)) {
+        if (part.type === 'artifact') {
+          if (isStatic || !('source' in part)) {
+            return (
+              <span
+                key={index}
+                className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
+              >
+                @{part.name}
+              </span>
+            )
+          }
           return (
-            <span
+            <button
               key={index}
-              className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
+              type="button"
+              className={cn(
+                artifactMentionPillClassName,
+                mentionButtonClassName,
+                'bg-mention-chip text-mention-chip-foreground'
+              )}
+              onClick={() => onPreviewMentionArtifact(part)}
+              aria-label={t('Preview {{name}}', { name: part.name })}
             >
-              @{part.name}
-            </span>
+              @<ExtensionPreservingFileName name={part.name} />
+            </button>
           )
         }
-        return (
-          <button
-            key={index}
-            type="button"
-            className={cn(
-              artifactMentionPillClassName,
-              mentionButtonClassName,
-              'bg-mention-chip text-mention-chip-foreground'
-            )}
-            onClick={() => onPreviewMentionArtifact(part)}
-            aria-label={`Preview ${part.name}`}
-          >
-            @<ExtensionPreservingFileName name={part.name} />
-          </button>
-        )
-      }
 
-      return (
-        <span key={index} className="whitespace-pre-wrap">
-          {part.text}
-        </span>
-      )
-    })}
-  </p>
-)
+        return (
+          <span key={index} className="whitespace-pre-wrap">
+            {part.text}
+          </span>
+        )
+      })}
+    </p>
+  )
+}
 
 // Renders one chat message with user bubbles and full-width assistant markdown surfaces.
 const WorkspaceMessageItem = ({
@@ -769,6 +798,7 @@ const WorkspaceMessageItem = ({
   artifacts = [],
   staticParts
 }: WorkspaceMessageItemProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isUserMessage = message.role === 'user'
   const uploads = message.uploads ?? []
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
@@ -782,7 +812,7 @@ const WorkspaceMessageItem = ({
   const sentDate = toMessageDate(message.createdAt)
   const terminalDate = toMessageDate(terminalTimestamp)
   const turnStartedDate = toMessageDate(turnStartedAt)
-  const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
+  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
   const showRevisionNavigation =
     showUserActions && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -866,8 +896,8 @@ const WorkspaceMessageItem = ({
                   onDocChange={setEditDoc}
                   onSubmit={handleConfirmEdit}
                   onPaste={ignoreEditPaste}
-                  placeholder="Edit your message"
-                  ariaLabel="Edit message"
+                  placeholder={t('Edit your message')}
+                  ariaLabel={t('Edit message')}
                 />
                 <div className="flex items-center justify-end gap-1">
                   <button
@@ -875,7 +905,7 @@ const WorkspaceMessageItem = ({
                     className={editCancelButtonClassName}
                     onClick={handleCancelEdit}
                   >
-                    Cancel
+                    {t('Cancel')}
                   </button>
                   <button
                     type="button"
@@ -883,7 +913,7 @@ const WorkspaceMessageItem = ({
                     disabled={!canEditMessage || docIsEmpty(editDoc)}
                     onClick={handleConfirmEdit}
                   >
-                    Send
+                    {t('Send')}
                   </button>
                 </div>
               </div>
@@ -898,11 +928,11 @@ const WorkspaceMessageItem = ({
                 {showUserActions ? (
                   <TooltipProvider delayDuration={200}>
                     <div data-slot="user-message-actions" className={userMessageActionsClassName}>
-                      <UserMessageActionTooltip label={copied ? 'Copied' : 'Copy message'}>
+                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
                         <button
                           type="button"
                           className={userMessageActionButtonClassName}
-                          aria-label={copied ? 'Copied' : 'Copy message'}
+                          aria-label={copied ? t('Copied') : t('Copy message')}
                           onClick={handleCopyMessage}
                         >
                           {copied ? (
@@ -912,11 +942,11 @@ const WorkspaceMessageItem = ({
                           )}
                         </button>
                       </UserMessageActionTooltip>
-                      <UserMessageActionTooltip label="Edit message">
+                      <UserMessageActionTooltip label={t('Edit message')}>
                         <button
                           type="button"
                           className={userMessageActionButtonClassName}
-                          aria-label="Edit message"
+                          aria-label={t('Edit message')}
                           disabled={!canEditMessage}
                           onClick={handleStartEdit}
                         >
@@ -957,18 +987,18 @@ const WorkspaceMessageItem = ({
                   data-slot="user-message-footer"
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
-                  {sentDate ? <MessageTimestamp label="Sent" date={sentDate} /> : null}
+                  {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
                   {showRevisionNavigation ? (
                     <TooltipProvider delayDuration={200}>
                       <div
                         data-slot="user-message-revision-navigation"
                         className="flex items-center gap-0.5 text-[13px] text-text-100"
                       >
-                        <UserMessageActionTooltip label="Previous message revision">
+                        <UserMessageActionTooltip label={t('Previous message revision')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label="Previous message revision"
+                            aria-label={t('Previous message revision')}
                             disabled={!revisionNavigation.onPrevious || !canEditMessage}
                             onClick={revisionNavigation.onPrevious}
                           >
@@ -980,14 +1010,14 @@ const WorkspaceMessageItem = ({
                           className="size-3.5 text-text-300"
                           aria-hidden="true"
                         />
-                        <span aria-label="Message revision" className="min-w-7 text-center">
+                        <span aria-label={t('Message revision')} className="min-w-7 text-center">
                           {revisionNavigation.index + 1}/{revisionNavigation.total}
                         </span>
-                        <UserMessageActionTooltip label="Next message revision">
+                        <UserMessageActionTooltip label={t('Next message revision')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label="Next message revision"
+                            aria-label={t('Next message revision')}
                             disabled={!revisionNavigation.onNext || !canEditMessage}
                             onClick={revisionNavigation.onNext}
                           >
@@ -1023,9 +1053,12 @@ const WorkspaceMessageItem = ({
                 ) : null}
                 {terminalDate && turnStartedDate ? (
                   <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
-                    <span aria-label="Elapsed run time">
-                      Elapsed{' '}
-                      {formatElapsedDuration(terminalDate.getTime() - turnStartedDate.getTime())}
+                    <span aria-label={t('Elapsed run time')}>
+                      {t('Elapsed {{duration}}', {
+                        duration: formatElapsedDuration(
+                          terminalDate.getTime() - turnStartedDate.getTime()
+                        )
+                      })}
                     </span>
                   </span>
                 ) : null}

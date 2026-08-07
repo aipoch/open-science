@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -10,6 +11,7 @@ import { SettingsSection } from './SettingsLayout'
 // does not render this section: its installed icon comes from Icon Composer and its live Dock icon is
 // bound to General > Theme, so exposing an independent picker there would create competing controls.
 const AppIconSection = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const appIconVariant = useSettingsStore((state) => state.appIconVariant)
   const setAppIconVariant = useSettingsStore((state) => state.setAppIconVariant)
   const [previews, setPreviews] = useState<AppIconPreview[]>([])
@@ -36,12 +38,14 @@ const AppIconSection = (): React.JSX.Element => {
 
   return (
     <SettingsSection
-      title="App icon"
-      description="Choose the built-in icon shown in app windows. On Windows, the tray follows the same choice."
-      aria-label="App icon"
+      title={t('App icon')}
+      description={t(
+        'Choose the built-in icon shown in app windows. On Windows, the tray follows the same choice.'
+      )}
+      aria-label={t('App icon')}
       separated
     >
-      <div role="radiogroup" aria-label="App icon" className="flex flex-wrap gap-3">
+      <div role="radiogroup" aria-label={t('App icon')} className="flex flex-wrap gap-3">
         {previews.map((preview) => {
           const selected = preview.id === appIconVariant
           return (
@@ -81,8 +85,9 @@ const AppIconSection = (): React.JSX.Element => {
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        The new icon appears right away in the app window. The icon in Explorer, the taskbar, the
-        Start menu, or a Linux launcher is part of the installed app and stays the same.
+        {t(
+          'The new icon appears right away in the app window. The icon in Explorer, the taskbar, the Start menu, or a Linux launcher is part of the installed app and stays the same.'
+        )}
       </p>
     </SettingsSection>
   )

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Download, Info, ListChecks, Maximize2, Minimize2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -75,6 +76,8 @@ const WorkspacePlanCard = ({
     onResolved?: () => void
     className?: string
   }>): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const decisionPending = projection.approval === 'pending' && !stale
   const [responseText, setResponseText] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
@@ -120,7 +123,7 @@ const WorkspacePlanCard = ({
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={onOpen}>
-              Open
+              {t('Open')}
             </Button>
             {decisionPending ? (
               <>
@@ -174,7 +177,7 @@ const WorkspacePlanCard = ({
             }}
           >
             <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
-              Respond to Plan
+              {t('Respond to Plan')}
             </label>
             <div className="flex items-center gap-2">
               <span aria-hidden="true">✎</span>
@@ -182,13 +185,13 @@ const WorkspacePlanCard = ({
                 id={`plan-response-${projection.artifactVersionId}`}
                 rows={1}
                 className="min-h-9 flex-1 resize-none border-0 bg-transparent px-0 py-2 shadow-none dark:bg-transparent"
-                placeholder="Describe changes, or type “approve”…"
+                placeholder={t('Describe changes, or type “approve”…')}
                 value={responseText}
                 disabled={decisionBusy}
                 onChange={(event) => setResponseText(event.target.value)}
               />
               <Button type="submit" disabled={decisionBusy || responseText.trim().length === 0}>
-                Send
+                {t('Send')}
               </Button>
             </div>
             {decisionError ? (
@@ -262,6 +265,8 @@ const PlanPreviewSurface = ({
   onRespond,
   onToggleFullScreen
 }: PlanPreviewSurfaceProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const planDocument = validatedPreviewDocument(projection.document)
 
   const download =
@@ -289,12 +294,12 @@ const PlanPreviewSurface = ({
         <div className="flex items-center gap-1">
           <Button
             type="button"
-            aria-label="Download Plan"
+            aria-label={t('Download Plan')}
             variant="ghost"
             onClick={() => void download()}
           >
             <Download className="size-4" aria-hidden="true" />
-            Download
+            {t('Download')}
           </Button>
           {planDocument && !stale && projection.approval === 'pending' && onRespond ? (
             <>
@@ -339,8 +344,9 @@ const PlanPreviewSurface = ({
       ) : null}
       {!stale && projection.approval === 'pending' && !onRespond ? (
         <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
-          This Plan is still pending, but its original Agent interaction has ended. Send a normal
-          message to let the Agent decide how to continue.
+          {t(
+            'This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.'
+          )}
         </div>
       ) : null}
       {planDocument ? (
@@ -414,7 +420,7 @@ const PlanPreviewSurface = ({
               </section>
             ))}
             <section className="mt-7 border-t border-border pt-6">
-              <h2 className="text-sm font-medium">Desired outputs</h2>
+              <h2 className="text-sm font-medium">{t('Desired outputs')}</h2>
               {planDocument.desired_outputs.length > 0 ? (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
                   {planDocument.desired_outputs.map((output) => (
@@ -422,7 +428,9 @@ const PlanPreviewSurface = ({
                   ))}
                 </ul>
               ) : (
-                <p className="mt-2 text-xs text-muted-foreground">No desired outputs specified.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('No desired outputs specified.')}
+                </p>
               )}
             </section>
             <div className="mt-7 rounded-lg bg-muted p-4">
@@ -442,7 +450,7 @@ const PlanPreviewSurface = ({
             role="alert"
             className="max-w-sm rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
           >
-            Invalid Plan document. This preview cannot be displayed.
+            {t('Invalid Plan document. This preview cannot be displayed.')}
           </div>
         </div>
       )}

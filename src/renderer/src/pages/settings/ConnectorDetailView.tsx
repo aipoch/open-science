@@ -1,5 +1,6 @@
 import { ArrowUpRight, ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type {
   ConnectorDetailView as ConnectorDetail,
@@ -38,6 +39,7 @@ const ConnectorDetailView = ({
   id,
   onManagePermissions
 }: ConnectorDetailViewProps): React.JSX.Element => {
+  const { t, i18n } = useTranslation()
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setConnectorAutoAllow = useSettingsStore((state) => state.setConnectorAutoAllow)
   const setToolPermission = useSettingsStore((state) => state.setToolPermission)
@@ -95,13 +97,13 @@ const ConnectorDetailView = ({
               {detail.displayName}
             </h1>
             <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-              Featured
+              {t('Featured')}
             </span>
           </div>
         </div>
         <SettingsToggle
           enabled={enabled}
-          aria-label={`Toggle ${detail.displayName}`}
+          aria-label={t('Toggle {{name}}', { name: detail.displayName })}
           onToggle={() => void setConnectorEnabled(id, !enabled)}
         />
       </div>
@@ -115,25 +117,28 @@ const ConnectorDetailView = ({
       {/* Skip approvals: allow every tool without a per-call approval card. */}
       <div className="mt-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm text-foreground">Skip approvals</p>
+          <p className="text-sm text-foreground">{t('Skip approvals')}</p>
           <p className="text-xs text-muted-foreground [text-wrap:pretty]">
-            Allow the agent to use every tool from this connector without showing an approval card
-            each time.
+            {t(
+              'Allow the agent to use every tool from this connector without showing an approval card each time.'
+            )}
           </p>
         </div>
         <SettingsToggle
           enabled={autoAllow}
-          aria-label={`Skip approvals for ${id}`}
+          aria-label={t('Skip approvals for {{name}}', { name: id })}
           onToggle={() => void setConnectorAutoAllow(id, !autoAllow)}
         />
       </div>
 
       {/* Tools: per-tool permission controls. */}
       <section className="mt-6 border-t border-border pt-4">
-        <h2 className="text-sm font-semibold text-foreground">Tools</h2>
-        <p className="text-xs text-muted-foreground">What the agent can do with this connector</p>
+        <h2 className="text-sm font-semibold text-foreground">{t('Tools')}</h2>
+        <p className="text-xs text-muted-foreground">
+          {t('What the agent can do with this connector')}
+        </p>
         {detail.tools.length === 0 ? (
-          <p className="mt-3 text-sm text-muted-foreground">This connector has no tools.</p>
+          <p className="mt-3 text-sm text-muted-foreground">{t('This connector has no tools.')}</p>
         ) : (
           <div className="mt-2 flex flex-col">
             {detail.tools.map((tool) => {
@@ -161,26 +166,33 @@ const ConnectorDetailView = ({
                     </button>
                     <ToolPermissionControl
                       value={tool.permission}
-                      label={`Permission for ${tool.method}`}
+                      label={t('Permission for {{name}}', {
+                        name: tool.method
+                      })}
                       onChange={(permission) => void handleToolChange(tool.id, permission)}
                     />
                   </div>
                   {isExpanded ? (
                     <div className="space-y-2 pb-3 pl-6 pr-2 text-xs text-muted-foreground">
                       <p className="whitespace-pre-wrap [text-wrap:pretty]">
-                        {tool.description || 'No description provided for this tool.'}
+                        {tool.description || t('No description provided for this tool.')}
                       </p>
                       {tool.permission === 'ask' ? (
-                        <p>Ask when no Session, Project, or Global permission applies.</p>
+                        <p>{t('Ask when no Session, Project, or Global permission applies.')}</p>
                       ) : null}
                       {remembered.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1.5">
+                          {/* The status clause is a separate key so translators aren't handed a
+                              sentence fragment glued on with a middot. */}
                           <span>
-                            Remembered approvals: {remembered.length}
+                            {t('Remembered approvals: {{count}}', {
+                              defaultValue_one: 'Remembered approvals: {{count}}',
+                              count: remembered.length
+                            })}
                             {tool.permission === 'block'
-                              ? ' · currently blocked'
+                              ? ` · ${t('currently blocked')}`
                               : tool.permission === 'allow' || autoAllow
-                                ? ' · currently unnecessary'
+                                ? ` · ${t('currently unnecessary')}`
                                 : ''}
                           </span>
                           {remembered.map((grant) => (
@@ -189,10 +201,10 @@ const ConnectorDetailView = ({
                               className="rounded-md bg-muted px-1.5 py-0.5 text-muted-foreground"
                             >
                               {grant.scopeKind === 'global'
-                                ? 'Global'
+                                ? t('Global')
                                 : grant.scopeKind === 'project'
-                                  ? 'Project'
-                                  : 'Session'}
+                                  ? t('Project')
+                                  : t('Session')}
                             </span>
                           ))}
                           <Button
@@ -202,7 +214,7 @@ const ConnectorDetailView = ({
                             className="h-auto px-1 py-0 text-xs"
                             onClick={onManagePermissions}
                           >
-                            Manage permissions
+                            {t('Manage permissions')}
                           </Button>
                         </div>
                       ) : null}
@@ -218,9 +230,16 @@ const ConnectorDetailView = ({
       {/* Details: third-party source(s) and terms. */}
       {detail.sources.length > 0 ? (
         <section className="mt-6 border-t border-border pt-4">
-          <h2 className="mb-1 text-sm font-semibold text-foreground">Details</h2>
-          <DetailRow label="Third-party software, content, terms, and information">
-            <span className="text-foreground">{detail.sources.join(', ')}</span>
+          <h2 className="mb-1 text-sm font-semibold text-foreground">{t('Details')}</h2>
+          <DetailRow label={t('Third-party software, content, terms, and information')}>
+            {/* Intl supplies the locale's own list separator; a literal ", " would leak a Western
+                comma into zh, which separates list items with 、 instead. */}
+            <span className="text-foreground">
+              {new Intl.ListFormat(i18n.language, {
+                style: 'narrow',
+                type: 'conjunction'
+              }).format(detail.sources)}
+            </span>
             {detail.termsUrl ? (
               <>
                 {' '}
@@ -233,7 +252,7 @@ const ConnectorDetailView = ({
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-0.5 align-baseline text-primary"
                 >
-                  <span className="underline">Terms</span>
+                  <span className="underline">{t('Terms')}</span>
                   <ArrowUpRight className="size-3.5" aria-hidden="true" />
                 </a>
               </>

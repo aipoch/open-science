@@ -1,5 +1,6 @@
 import { ImageOff } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
 import { PreviewErrorCard, PreviewFallbackCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -49,6 +50,7 @@ export const PreviewImageContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -74,7 +76,7 @@ export const PreviewImageContent = ({
       <PreviewErrorCard
         name={name}
         error={state.error}
-        fallbackMessage="Image couldn't be loaded for preview"
+        fallbackMessage={t("Image couldn't be loaded for preview")}
       />
     )
   }
@@ -84,7 +86,7 @@ export const PreviewImageContent = ({
       <PreviewFallbackCard
         icon={ImageOff}
         name={name}
-        message="Image couldn't be loaded for preview"
+        message={t("Image couldn't be loaded for preview")}
         retryable
       />
     )

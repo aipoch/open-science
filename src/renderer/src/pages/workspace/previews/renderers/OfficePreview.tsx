@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type {
@@ -23,15 +24,19 @@ import { usePreviewRuntime } from '../preview-runtime-context'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { officePreviewHostLeaseCoordinator } from './office-preview-lease'
 
+// `title` carries already-resolved text forwarded from the child runtime over IPC; `titleKey` carries
+// a catalog key for the phases this component sets itself. Only one is ever populated.
+type OfficeLoadingTitleKey = 'Checking the Office file' | 'Starting Office preview'
+
 type OfficeHostState =
-  | { kind: 'loading'; title?: string; description?: string }
+  | { kind: 'loading'; title?: string; titleKey?: OfficeLoadingTitleKey; description?: string }
   | { kind: 'ready' }
   | { kind: 'too-large' }
   | { kind: 'error'; error?: OfficePreviewErrorCode }
 
 const OFFICE_CHECKING_STATE: OfficeHostState = {
   kind: 'loading',
-  title: 'Checking the Office file'
+  titleKey: 'Checking the Office file'
 }
 
 const resolveOfficeExtension = (item: PreviewFileItem): OfficePreviewRequestedExtension => {
@@ -87,15 +92,18 @@ const OfficeDownloadFallback = ({
   />
 )
 
-const getDownloadOnlyErrorMessage = (
+// Returns the catalog key for errors that leave download as the only remedy, or undefined when the
+// error is a plain render failure that keeps the retryable card.
+const getDownloadOnlyErrorMessageKey = (
   error: OfficePreviewErrorCode | undefined
-): string | undefined => {
-  if (error === 'INVALID_PACKAGE') {
+):
+  | 'This Office file is damaged or unsupported. Download it to view.'
+  | 'This Office file exceeds the safe preview limits. Download it to view.'
+  | undefined => {
+  if (error === 'INVALID_PACKAGE')
     return 'This Office file is damaged or unsupported. Download it to view.'
-  }
-  if (error === 'RESOURCE_LIMIT_EXCEEDED') {
+  if (error === 'RESOURCE_LIMIT_EXCEEDED')
     return 'This Office file exceeds the safe preview limits. Download it to view.'
-  }
   return undefined
 }
 
@@ -114,6 +122,7 @@ const RemoteOfficePreviewContent = ({
   item: PreviewFileItem
   source: OfficePreviewSource
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const hostId = useId()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const runtime = usePreviewRuntime()
@@ -273,20 +282,20 @@ const RemoteOfficePreviewContent = ({
       <OfficeDownloadFallback
         item={item}
         source={source}
-        title="File too large to preview"
-        message="This file is larger than 40 MB. Download it to view."
+        title={t('File too large to preview')}
+        message={t('This file is larger than 40 MB. Download it to view.')}
       />
     )
   }
   if (state.kind === 'error') {
-    const downloadOnlyMessage = getDownloadOnlyErrorMessage(state.error)
-    if (downloadOnlyMessage) {
+    const downloadOnlyMessageKey = getDownloadOnlyErrorMessageKey(state.error)
+    if (downloadOnlyMessageKey) {
       return (
         <OfficeDownloadFallback
           item={item}
           source={source}
-          title="Preview unavailable"
-          message={downloadOnlyMessage}
+          title={t('Preview unavailable')}
+          message={t(downloadOnlyMessageKey)}
         />
       )
     }
@@ -294,7 +303,7 @@ const RemoteOfficePreviewContent = ({
       <PreviewFallbackCard
         icon={FileWarning}
         name={item.name}
-        message="This Office file couldn't be rendered for preview"
+        message={t("This Office file couldn't be rendered for preview")}
         retryable={isRetryableOfficeError(state.error)}
       />
     )
@@ -309,11 +318,11 @@ const RemoteOfficePreviewContent = ({
         <iframe
           ref={frameRef}
           data-office-preview-frame
-          title={`Preview of ${item.name}`}
+          title={t('Preview of {{name}}', { name: item.name })}
           src={frame.url}
           onLoad={() => {
             // A same-document frame reload needs a fresh process check and start capability.
-            setState({ kind: 'loading', title: 'Starting Office preview' })
+            setState({ kind: 'loading', titleKey: 'Starting Office preview' })
             setFrameLoadGeneration((generation) => generation + 1)
           }}
           sandbox="allow-scripts allow-same-origin"
@@ -323,7 +332,10 @@ const RemoteOfficePreviewContent = ({
       ) : null}
       {state.kind === 'loading' ? (
         <div className="absolute inset-0 z-10 bg-bg-000">
-          <PreviewLoadingContent title={state.title} description={state.description} />
+          <PreviewLoadingContent
+            title={state.titleKey ? t(state.titleKey) : state.title}
+            description={state.description}
+          />
         </div>
       ) : null}
     </div>
@@ -339,6 +351,8 @@ export const OfficePreviewContent = ({
   item: PreviewFileItem
   source?: PreviewFileSource
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   if (source === 'local') {
     return (
       <PreviewFallbackCard
@@ -354,7 +368,7 @@ export const OfficePreviewContent = ({
       <OfficeDownloadFallback
         item={item}
         source={source}
-        title="Preview unavailable"
+        title={t('Preview unavailable')}
         message="Office preview is only available in the desktop app. Download this file to view it."
       />
     )
