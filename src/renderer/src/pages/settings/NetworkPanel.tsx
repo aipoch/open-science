@@ -22,6 +22,12 @@ const actionButtonClassName =
 type NetworkView = { kind: 'list' | 'configure' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
+// Shared identity of the single check row this panel renders (and its pending placeholder).
+const NETWORK_CHECK_BASE = {
+  id: 'install-network',
+  label: 'Internet connection'
+} as const satisfies Pick<EnvironmentCheckItem, 'id' | 'label'>
+
 // Settings -> Network. The Network status section presents the network store's connectivity
 // (navigator.onLine link signal plus the store's shared end-to-end reachability probe) and the
 // local interface details reported by the main process; the Package mirror section lets a user
@@ -64,9 +70,9 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const handleRetry = (): void => {
     recheckOnline()
     refreshNetworkInfo()
-    if (useNetworkStore.getState().isOnline) {
-      void probeConnectivity({ announce: true })
-    }
+    // Announced even while offline: the store short-circuits a link-down probe to
+    // 'unreachable', but still holds the Checking… state for its minimum delay first.
+    void probeConnectivity({ announce: true })
   }
 
   // Seed the draft from the saved mirror once each time the configure view is entered (including via
@@ -123,28 +129,27 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   // internet is amber (warning) rather than red — the machine is connected, the path out is not.
   const networkCheck: EnvironmentCheckItem = !isOnline
     ? {
-        id: 'install-network',
-        label: 'Internet connection',
+        ...NETWORK_CHECK_BASE,
         status: 'failed',
         summary: 'This machine is offline.'
       }
     : connectivity === 'unreachable'
       ? {
-          id: 'install-network',
-          label: 'Internet connection',
+          ...NETWORK_CHECK_BASE,
           status: 'warning',
           summary: 'The network link is up, but the internet is unreachable.',
           detail: interfaceDetail
         }
       : {
-          id: 'install-network',
-          label: 'Internet connection',
+          ...NETWORK_CHECK_BASE,
           status: 'passed',
           summary: 'The internet is reachable.',
           detail: interfaceDetail
         }
 
-  const isChecking = isOnline && connectivity === 'unknown'
+  // 'unknown' only ever means a probe is in flight (offline settles on 'unreachable'), so it
+  // always renders as Checking… — including an offline Retry.
+  const isChecking = connectivity === 'unknown'
 
   // Tile icon follows the actual link: WifiOff while offline, then by connection type.
   const networkIcon = !isOnline
@@ -165,11 +170,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
           <div className="rounded-xl border border-border px-4">
             <ul aria-live="polite">
               {isChecking ? (
-                <PendingCheckRow
-                  id="install-network"
-                  label="Internet connection"
-                  pendingText="Checking…"
-                />
+                <PendingCheckRow {...NETWORK_CHECK_BASE} pendingText="Checking…" />
               ) : (
                 <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
               )}

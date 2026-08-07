@@ -16,44 +16,49 @@ type NetworkStore = {
   // Re-reads navigator.onLine on demand — used by the Network panel's Retry button so the
   // "how we know we are online" knowledge stays in this one module.
   recheckOnline: () => void
-  // Probes real reachability through the main process. `announce` flips connectivity back to
-  // 'unknown' for the duration (user-visible re-checks); background polls stay silent so a
-  // healthy 'reachable' never flickers through a checking state.
+  // Probes real reachability. `announce` flips connectivity to 'unknown' for the duration and
+  // holds the result for MIN_CHECKING_MS (user-visible re-checks); silent probes apply as soon
+  // as the answer lands. With no link the probe short-circuits to 'unreachable' — no point
+  // issuing HTTPS requests we know cannot get out.
   probeConnectivity: (options?: { announce?: boolean }) => Promise<void>
 }
 
-// Minimum time a probe's Checking… presentation stays visible, so a fast answer reads as a
-// deliberate check instead of a flash.
+// Minimum time an announced probe's Checking… presentation stays visible, so a clicked
+// re-check reads as a deliberate check instead of a flash.
 const MIN_CHECKING_MS = 500
-// Background re-probe cadence while the machine looks online.
-const CONNECTIVITY_POLL_MS = 30_000
 
 export const useNetworkStore = create<NetworkStore>((set) => {
   let probeGeneration = 0
 
   const probeConnectivity = async ({ announce = false } = {}): Promise<void> => {
-    const checkConnectivity = window.api?.network?.checkConnectivity
     const generation = ++probeGeneration
     const startedAt = Date.now()
 
     if (announce) set({ connectivity: 'unknown' })
 
     let reachable: boolean
-    if (!checkConnectivity) {
-      // Web surface has no probe bridge; the navigator.onLine signal is all there is.
-      reachable = true
+    if (!navigator.onLine) {
+      reachable = false
     } else {
-      try {
-        reachable = await checkConnectivity()
-      } catch {
-        // Bridge failure keeps the last known state rather than crying wolf.
-        return
+      const checkConnectivity = window.api?.network?.checkConnectivity
+      if (!checkConnectivity) {
+        // Web surface has no probe bridge; the navigator.onLine signal is all there is.
+        reachable = true
+      } else {
+        try {
+          reachable = await checkConnectivity()
+        } catch {
+          // Bridge failure keeps the last known state rather than crying wolf.
+          return
+        }
       }
     }
 
-    const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
-    if (remaining > 0) {
-      await new Promise((resolve) => setTimeout(resolve, remaining))
+    if (announce) {
+      const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining))
+      }
     }
     if (probeGeneration === generation) {
       set({ connectivity: reachable ? 'reachable' : 'unreachable' })
@@ -68,24 +73,29 @@ export const useNetworkStore = create<NetworkStore>((set) => {
   }
 })
 
-// The listeners live at module scope (not in a component) so the store stays accurate even
-// before any subscriber mounts. Probing starts immediately and re-runs on recovery and on a
-// slow background cadence; the offline event resets to 'unknown' so recovery always re-probes.
-if (typeof window !== 'undefined') {
+// Installs the window listeners and runs the first probe. Called once from the app entry
+// (main.tsx) — deliberately NOT at module scope, so importing the store in tests stays free
+// of side effects. Probing happens on startup, on every link recovery, and on demand (panel
+// mount / Retry); there is no background polling.
+let monitorStarted = false
+
+export const startNetworkMonitor = (): void => {
+  if (monitorStarted || typeof window === 'undefined') return
+  monitorStarted = true
+
   window.addEventListener('online', () => {
     useNetworkStore.setState({ isOnline: true })
     void useNetworkStore.getState().probeConnectivity({ announce: true })
   })
   window.addEventListener('offline', () => {
-    useNetworkStore.setState({ isOnline: false, connectivity: 'unknown' })
+    // A dropped link is a known-unreachable state, so surfaces can show it immediately.
+    useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
   })
 
-  if (typeof navigator === 'undefined' || navigator.onLine) {
+  if (navigator.onLine) {
     void useNetworkStore.getState().probeConnectivity()
+  } else {
+    // Starting offline is a known-down state, same as the offline event.
+    useNetworkStore.setState({ connectivity: 'unreachable' })
   }
-  window.setInterval(() => {
-    if (useNetworkStore.getState().isOnline) {
-      void useNetworkStore.getState().probeConnectivity()
-    }
-  }, CONNECTIVITY_POLL_MS)
 }

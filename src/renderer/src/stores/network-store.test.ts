@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useNetworkStore } from './network-store'
+import { startNetworkMonitor, useNetworkStore } from './network-store'
 
 type CheckConnectivity = () => Promise<boolean>
 
@@ -12,8 +12,17 @@ const stubCheckConnectivity = (checkConnectivity?: CheckConnectivity): void => {
     checkConnectivity === undefined ? undefined : { network: { checkConnectivity } }
 }
 
+const setNavigatorOnline = (online: boolean): void => {
+  Object.defineProperty(window.navigator, 'onLine', { value: online, configurable: true })
+}
+
+beforeAll(() => {
+  startNetworkMonitor()
+})
+
 afterEach(() => {
   stubCheckConnectivity()
+  setNavigatorOnline(true)
   useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
 })
 
@@ -97,9 +106,33 @@ describe('probeConnectivity', () => {
     stubCheckConnectivity()
     useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
 
-    const probe = useNetworkStore.getState().probeConnectivity()
+    await useNetworkStore.getState().probeConnectivity()
+
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
+  it('short-circuits to unreachable without calling the bridge when the link is down', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    setNavigatorOnline(false)
+    useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
+
+    const probe = useNetworkStore.getState().probeConnectivity({ announce: true })
+    expect(useNetworkStore.getState().connectivity).toBe('unknown')
+
     await vi.advanceTimersByTimeAsync(500)
     await probe
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(checkConnectivity).not.toHaveBeenCalled()
+  })
+
+  it('applies silent probe results without the minimum delay', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
+
+    // Resolves on microtasks alone — no timer advance needed when not announced.
+    await useNetworkStore.getState().probeConnectivity()
 
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })

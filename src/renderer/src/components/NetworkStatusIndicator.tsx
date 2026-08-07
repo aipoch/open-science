@@ -1,6 +1,7 @@
 import { WifiOff } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 
@@ -13,6 +14,21 @@ type NetworkStatusIndicatorProps = {
 // Offline / unreachable warning entry point. Renders nothing while the internet is genuinely
 // reachable; a missing link shows red ("Offline"), a live link with a broken path out shows
 // amber ("Unreachable"). Clicking opens the settings Network panel for troubleshooting.
+
+// Tone maps keep the Update-capsule design spec identical across states — only the palette
+// changes (danger for a missing link, session-waiting amber for unreachable).
+const pillToneClasses = {
+  danger:
+    'border-danger-000/20 bg-danger-000/10 text-danger-000 hover:border-danger-000/30 hover:bg-danger-000/15',
+  warning:
+    'border-session-waiting/20 bg-session-waiting/10 text-session-waiting hover:border-session-waiting/30 hover:bg-session-waiting/15'
+} as const
+
+const iconToneClasses = {
+  danger: 'text-danger-000 hover:bg-danger-900',
+  warning: 'text-session-waiting hover:bg-session-waiting/10'
+} as const
+
 const NetworkStatusIndicator = ({
   variant
 }: NetworkStatusIndicatorProps): React.JSX.Element | null => {
@@ -22,9 +38,10 @@ const NetworkStatusIndicator = ({
 
   if (isOnline && connectivity !== 'unreachable') return null
 
-  const warning = isOnline // online but unreachable: amber instead of red
-  const label = warning ? 'Internet unreachable' : 'No internet connection'
-  const text = warning ? 'Unreachable' : 'Offline'
+  const unreachable = isOnline // online but unreachable: amber instead of red
+  const tone = unreachable ? 'warning' : 'danger'
+  const label = unreachable ? 'Internet unreachable' : 'No internet connection'
+  const text = unreachable ? 'Unreachable' : 'Offline'
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -36,12 +53,14 @@ const NetworkStatusIndicator = ({
             aria-label={label}
             className={
               variant === 'pill'
-                ? warning
-                  ? 'inline-flex h-8 items-center gap-1 rounded-full border border-session-waiting/20 bg-session-waiting/10 px-2.5 text-xs font-medium text-session-waiting transition-colors duration-150 ease-out hover:border-session-waiting/30 hover:bg-session-waiting/15'
-                  : 'inline-flex h-8 items-center gap-1 rounded-full border border-danger-000/20 bg-danger-000/10 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/30 hover:bg-danger-000/15'
-                : warning
-                  ? 'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-session-waiting transition-colors duration-150 ease-out hover:bg-session-waiting/10'
-                  : 'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-danger-000 transition-colors duration-150 ease-out hover:bg-danger-900'
+                ? cn(
+                    'inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 ease-out',
+                    pillToneClasses[tone]
+                  )
+                : cn(
+                    'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 ease-out',
+                    iconToneClasses[tone]
+                  )
             }
           >
             <WifiOff

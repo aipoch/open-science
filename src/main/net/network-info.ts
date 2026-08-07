@@ -19,7 +19,7 @@ const createInternetReachabilityChecker =
     const registries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
     return Promise.all(
       registries.map((registry) =>
-        probe(registry, '').then(
+        probe(registry).then(
           () => true,
           () => false
         )

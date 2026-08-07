@@ -66,15 +66,14 @@ const PendingCheckRow = ({
   )
 }
 
-const EnvironmentCheckRow = ({
-  check,
-  icon
-}: {
+type EnvironmentCheckRowProps = {
   check: EnvironmentCheckItem
   // Overrides the id-derived tile icon — e.g. the settings Network panel swaps it by
   // connection type (Wi-Fi vs Ethernet) and state (WifiOff while offline).
   icon?: typeof MonitorCog
-}): React.JSX.Element => {
+}
+
+const EnvironmentCheckRow = ({ check, icon }: EnvironmentCheckRowProps): React.JSX.Element => {
   const Icon = icon ?? CHECK_ICONS[check.id] ?? MonitorCog
 
   return (

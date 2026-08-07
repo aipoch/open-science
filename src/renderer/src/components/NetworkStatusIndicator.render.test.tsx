@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { NetworkStatusIndicator } from './NetworkStatusIndicator'
-import { useNetworkStore } from '@/stores/network-store'
+import { startNetworkMonitor, useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 
 let container: HTMLDivElement
 let root: Root
+
+beforeAll(() => {
+  startNetworkMonitor()
+})
 
 beforeEach(() => {
   container = document.createElement('div')
