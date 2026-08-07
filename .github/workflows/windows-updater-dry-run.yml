@@ -90,6 +90,7 @@ jobs:
       - name: Certify Windows electron-updater differential update
         shell: pwsh
         run: |
+          $env:OPEN_SCIENCE_INSTALLER_TRACE = Join-Path $PWD 'windows-updater-installer-trace.log'
           node scripts/windows-updater-certification.mjs `
             --current-dir dist `
             --previous-dir previous `
@@ -105,5 +106,6 @@ jobs:
           retention-days: 1
           path: |
             windows-updater-certification.log
+            windows-updater-installer-trace.log
             windows-updater-observation.json
           if-no-files-found: warn

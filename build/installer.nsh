@@ -12,6 +12,23 @@ Var perUserDataBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
+!macro traceUpdaterInstaller MESSAGE
+  Push $R8
+  Push $R9
+  ReadEnvStr $R9 "OPEN_SCIENCE_INSTALLER_TRACE"
+  ${if} $R9 != ""
+    ClearErrors
+    FileOpen $R8 "$R9" a
+    ${ifNot} ${Errors}
+      FileWrite $R8 "${MESSAGE}$\r$\n"
+      FileClose $R8
+    ${endif}
+  ${endif}
+  ClearErrors
+  Pop $R9
+  Pop $R8
+!macroend
+
 # Registry values that identify the same Windows directory may differ only in letter case or a
 # trailing separator. LogicLib's == comparison is already case-insensitive; trim separators here
 # so every later shared-path decision uses one canonical form. Keep drive roots such as C:\ intact.
@@ -174,6 +191,7 @@ FunctionEnd
   Push $perUserInstallDirCache
   Call normalizeRegisteredInstallPath
   Pop $perUserInstallDirCache
+  !insertmacro traceUpdaterInstaller "init|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR|hkcu=$perUserInstallDirCache|hklm=$perMachineInstallDirCache"
 
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
@@ -234,8 +252,13 @@ FunctionEnd
   FunctionEnd
 
   Function .onInstFailed
+    !insertmacro traceUpdaterInstaller "failed|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR"
     !insertmacro restoreAllNestedDataRoots
   FunctionEnd
+!macroend
+
+!macro customInstall
+  !insertmacro traceUpdaterInstaller "installed|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR"
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
@@ -392,6 +415,7 @@ FunctionEnd
 !macroend
 
 !macro customUnInstallCheck
+  !insertmacro traceUpdaterInstaller "post-uninstall|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR|code=$R0|hkcu=$perUserInstallDirCache|hklm=$perMachineInstallDirCache"
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
   # customInit. Keep registered data outside the install tree through any non-zero-exit recovery:
   # a live old process can recreate OpenScience, and restoring first would make the recovery path
