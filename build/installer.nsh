@@ -12,7 +12,7 @@ Var perUserDataBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
-!macro traceUpdaterInstaller MESSAGE
+!macro traceUpdaterInstaller PHASE
   Push $R8
   Push $R9
   ReadEnvStr $R9 "OPEN_SCIENCE_INSTALLER_TRACE"
@@ -20,7 +20,13 @@ Var dataRestoreFailed
     ClearErrors
     FileOpen $R8 "$R9" a
     ${ifNot} ${Errors}
-      FileWrite $R8 "${MESSAGE}$\r$\n"
+      FileWrite $R8 "${PHASE}"
+      FileWrite $R8 "|updated=$isUpdated"
+      FileWrite $R8 "|mode=$installMode"
+      FileWrite $R8 "|instdir=$INSTDIR"
+      FileWrite $R8 "|hkcu=$perUserInstallDirCache"
+      FileWrite $R8 "|hklm=$perMachineInstallDirCache"
+      FileWrite $R8 "|code=$R0$\r$\n"
       FileClose $R8
     ${endif}
   ${endif}
@@ -191,7 +197,7 @@ FunctionEnd
   Push $perUserInstallDirCache
   Call normalizeRegisteredInstallPath
   Pop $perUserInstallDirCache
-  !insertmacro traceUpdaterInstaller "init|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR|hkcu=$perUserInstallDirCache|hklm=$perMachineInstallDirCache"
+  !insertmacro traceUpdaterInstaller init
 
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
@@ -252,13 +258,13 @@ FunctionEnd
   FunctionEnd
 
   Function .onInstFailed
-    !insertmacro traceUpdaterInstaller "failed|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR"
+    !insertmacro traceUpdaterInstaller failed
     !insertmacro restoreAllNestedDataRoots
   FunctionEnd
 !macroend
 
 !macro customInstall
-  !insertmacro traceUpdaterInstaller "installed|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR"
+  !insertmacro traceUpdaterInstaller installed
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
@@ -415,7 +421,7 @@ FunctionEnd
 !macroend
 
 !macro customUnInstallCheck
-  !insertmacro traceUpdaterInstaller "post-uninstall|updated=$isUpdated|mode=$installMode|instdir=$INSTDIR|code=$R0|hkcu=$perUserInstallDirCache|hklm=$perMachineInstallDirCache"
+  !insertmacro traceUpdaterInstaller post-uninstall
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
   # customInit. Keep registered data outside the install tree through any non-zero-exit recovery:
   # a live old process can recreate OpenScience, and restoring first would make the recovery path
