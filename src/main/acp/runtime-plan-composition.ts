@@ -511,6 +511,13 @@ const composeAcpRuntimePlanWorkflow = (
           return committed()
         })
     }
+    if (continuation?.pendingAction === 'review' && protectedPending) {
+      interactions.authorizeAgentDecision({
+        sessionId: request.sessionId,
+        interactionSequence: interaction.sequence,
+        artifactVersionId: protectedPending.artifactVersionId
+      })
+    }
     return committed()
   }
   const beforeRelease = (

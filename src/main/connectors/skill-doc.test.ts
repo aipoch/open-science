@@ -41,7 +41,9 @@ describe('renderConnectorInstructions', () => {
   it('lists the exact enabled Connector Skill names without duplicates or guessed aliases', () => {
     const md = renderConnectorInstructions(['pubmed', 'literature', 'pubmed', 'openalex'])
 
-    expect(md).toContain('Available Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md).toContain('Allowed Specialist Skills for this session')
+    expect(md).toContain('do not load or call any `mcp-*` skill absent from that list')
     expect(md.match(/`mcp-pubmed`/g)).toHaveLength(1)
     expect(md).not.toContain('`mcp-openalex`')
   })

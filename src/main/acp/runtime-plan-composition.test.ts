@@ -17,6 +17,7 @@ vi.mock('../logger', async (importOriginal) => {
   }
 })
 
+import type { AcpPromptRequest } from '../../shared/acp'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -252,6 +253,38 @@ describe('ACP Session Plan approval causality', () => {
 })
 
 describe('ACP Runtime Session Plan composition', () => {
+  it('authorizes one Agent decision from restored pending Plan feedback without execution authority', async () => {
+    const harness = createHarness()
+    const request: AcpPromptRequest = {
+      sessionId: 'session-1',
+      text: 'The restored Plan looks good.',
+      planContinuation: {
+        projectId: 'project-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 1,
+        pendingAction: 'review'
+      }
+    }
+
+    const protectedPlan = await harness.workflow.prompt.preflight(request)
+    if (harness.interaction.kind !== 'prompt') throw new Error('Expected a prompt interaction.')
+    const interaction = harness.interaction
+    const admitted = await harness.workflow.prompt.admit(request, interaction, protectedPlan)
+
+    expect(admitted.protectedPending).toMatchObject({ approval: 'pending' })
+    expect(
+      harness.interactions.isAgentDecisionAuthorized({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: interaction.sequence
+      })
+    ).toBe(true)
+    expect(harness.interactions.executionBindingFor('session-1')).toBeUndefined()
+
+    harness.workflow.prompt.beforeRelease('session-1', interaction)
+    harness.sessionInteractions.release(interaction)
+  })
+
   it('builds a fresh frozen workflow without publishing or requiring Plan capability', async () => {
     const options = { appVersion: 'test', defaultCwd: '/workspace' }
     const create = (): ReturnType<typeof composeAcpRuntimePlanWorkflow> => {

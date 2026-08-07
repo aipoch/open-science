@@ -1138,7 +1138,10 @@ describe('AgentBackendResolver bridge predicates', () => {
         ? backend.systemPromptAppends?.join('\n\n')
         : backend.persistentSystemPrompt
 
-    expect(instructions).toContain('Available Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(instructions).toContain(
+      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.'
+    )
+    expect(instructions).toContain('Allowed Specialist Skills for this session')
     expect(instructions).not.toContain('`mcp-openalex`')
     await backend.anthropicBridgeLease?.release()
     await backend.responsesBridgeLease?.release()
