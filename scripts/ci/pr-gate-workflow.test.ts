@@ -226,7 +226,12 @@ describe('PR Gate workflow', () => {
       run: 'npm run test:coverage'
     })
     expect(fallback?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
-    expect(fallback?.if).not.toContain("'unit_macos'")
+    expect(fallback?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit')"
+    )
+    expect(fallback?.if).toContain(
+      "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')"
+    )
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
     expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(1)
     expect(coverageUpload).toMatchObject({
@@ -301,6 +306,10 @@ describe('PR Gate workflow', () => {
     })
     expect(enforceUnit?.run).toContain('check unit_macos_related "$UNIT_MACOS_RELATED_OUTCOME"')
     expect(enforceUnit?.run).toContain('check unit_macos_full "$UNIT_MACOS_FULL_OUTCOME"')
+    expect(enforceUnit?.run).toContain(
+      '[[ "$UNIT_MACOS_RELATED_OUTCOME" == "skipped" && "$UNIT_MACOS_FULL_OUTCOME" == "skipped" ]]'
+    )
+    expect(enforceUnit?.run).toContain('Selected unit bundle did not execute a Module-test path')
   })
 
   it('preserves the complete portable suite and hard Windows contracts', () => {

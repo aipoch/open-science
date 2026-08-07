@@ -324,8 +324,9 @@ jobs:
         run: npx vitest run --coverage --changed "$BASE_SHA"
       - name: Test complete suite fallback
         id: unit_macos_full
-        # A trusted pre-migration base plan uses legacy unit lane names but still declares mode=full.
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        # A trusted pre-migration selective plan can select the unit bundle through legacy
+        # unit_linux/unit_renderer lanes. Route that migration case through one full coverage run.
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
         continue-on-error: true
         run: npm run test:coverage
       - name: Upload Module coverage report
@@ -354,6 +355,10 @@ jobs:
           }
           check unit_macos_related "$UNIT_MACOS_RELATED_OUTCOME"
           check unit_macos_full "$UNIT_MACOS_FULL_OUTCOME"
+          if [[ "$UNIT_MACOS_RELATED_OUTCOME" == "skipped" && "$UNIT_MACOS_FULL_OUTCOME" == "skipped" ]]; then
+            echo "Selected unit bundle did not execute a Module-test path" >&2
+            failed=1
+          fi
           exit "$failed"
 
   # The trusted base classifier for the introducing PR still selects this legacy bundle.
