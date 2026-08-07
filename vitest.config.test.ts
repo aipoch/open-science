@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { VITEST_EXCLUDE_PATTERNS } from './vitest.config'
+import { coverageThresholdsEnabled, VITEST_EXCLUDE_PATTERNS } from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
   it.each(['**/.pnpm-store/**', '**/tmp/**', '**/.worktrees/**', '**/.worktree/**'])(
@@ -9,4 +9,10 @@ describe('Vitest discovery boundaries', () => {
       expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
     }
   )
+})
+
+it('defers coverage thresholds only for explicit shard collection', () => {
+  expect(coverageThresholdsEnabled({})).toBe(true)
+  expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '1' })).toBe(false)
+  expect(coverageThresholdsEnabled({ VITEST_DEFER_COVERAGE_THRESHOLDS: '0' })).toBe(true)
 })
