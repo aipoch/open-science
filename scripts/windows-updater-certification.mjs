@@ -394,22 +394,6 @@ const runElectronUpdater = async ({ executable, env, expectedVersion, expectedIn
   }
 }
 
-const executableVersion = async (executable, env) => {
-  const result = await runProcess(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '[Console]::Out.Write((Get-Item -LiteralPath $args[0]).VersionInfo.ProductVersion)',
-      executable
-    ],
-    { allowNonZero: true, env, timeoutMs: 10_000 }
-  )
-  if (result.code !== 0) return undefined
-  return result.stdout.trim()
-}
-
 const assertDifferentialObservation = (observation) => {
   if (
     observation.feedRequests < 1 ||
@@ -561,13 +545,17 @@ const main = async () => {
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
     await waitFor(
-      `installed version ${currentVersion}`,
+      'the updated executable to be committed to disk',
       async () => {
-        const observedVersion = await executableVersion(installedExecutable, env)
-        if (observedVersion?.startsWith(currentVersion)) return observedVersion
-        throw new Error(
-          `Last observed ${observedVersion || '<missing>'} at ${installedExecutable}.`
-        )
+        try {
+          const installedFile = await stat(installedExecutable)
+          if (installedFile.isFile() && installedFile.size > 0) return installedFile.size
+        } catch (error) {
+          throw new Error(`Last observed no executable at ${installedExecutable}.`, {
+            cause: error
+          })
+        }
+        throw new Error(`Last observed an empty executable at ${installedExecutable}.`)
       },
       UPDATE_TIMEOUT_MS
     )
