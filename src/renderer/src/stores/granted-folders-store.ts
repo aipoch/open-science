@@ -1,5 +1,5 @@
 // Renderer-side cache of the folders the user granted the app access to ("Grant folder access").
-// The main-process settings store is authoritative; every mutation channel returns the full updated
+// The main-process SQLite table is authoritative; every mutation channel returns the full updated
 // list, so each action just stores what comes back. `loaded` distinguishes "never fetched" from
 // "fetched, user granted nothing" so surfaces don't flash an empty state on first paint.
 import { create } from 'zustand'

@@ -1,7 +1,12 @@
 import { useCallback, useId, useLayoutEffect, useRef } from 'react'
 
 import type { SkillView } from '../../../../../shared/settings'
+import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
+import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+
+import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
 
 import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
 import {
@@ -205,6 +210,32 @@ export const ComposerEditor = ({
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 
+  // Clicking a linked-folder `@path:` chip opens the file in the preview workbench, like the
+  // sent-message pill does. The chip only carries rootId + relativePath, so the absolute path is
+  // resolved through the granted-roots store; a revoked root makes the chip inert on click.
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    const chip = (event.target as HTMLElement).closest?.(
+      '[data-mention-source="linked-folder"]'
+    ) as HTMLElement | null
+    if (!root || !chip || !root.contains(chip)) return
+    const rootId = chip.getAttribute('data-mention-root-id')
+    const relativePath = chip.getAttribute('data-mention-relative-path')
+    if (!rootId || !relativePath) return
+    const grantedRoot = useGrantedFoldersStore
+      .getState()
+      .roots.find((candidate) => candidate.id === rootId)
+    if (!grantedRoot) return
+    event.preventDefault()
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createPreviewFileItemFromLocal({
+        sessionId: LOCAL_PREVIEW_SESSION_ID,
+        path: resolveLocalPath(grantedRoot.path, relativePath, window.api?.platform ?? 'darwin'),
+        name: chip.getAttribute('data-mention-filename') ?? relativePath
+      })
+    )
+  }
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (disabled) return
     // While either mention popup is open it owns Enter/arrow keys; leave them to its document listener.
@@ -299,6 +330,7 @@ export const ComposerEditor = ({
         data-placeholder={placeholder}
         className={cn(composerEditorClassName, className)}
         onInput={handleInput}
+        onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onCompositionStart={() => {
