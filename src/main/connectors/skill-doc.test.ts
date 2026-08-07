@@ -37,6 +37,14 @@ describe('renderConnectorInstructions', () => {
     expect(md).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(md).toContain('Never guess a connector server or method name')
   })
+
+  it('lists the exact enabled Connector Skill names without duplicates or guessed aliases', () => {
+    const md = renderConnectorInstructions(['pubmed', 'literature', 'pubmed', 'openalex'])
+
+    expect(md).toContain('Available Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md.match(/`mcp-pubmed`/g)).toHaveLength(1)
+    expect(md).not.toContain('`mcp-openalex`')
+  })
 })
 
 describe('renderSkillDoc', () => {

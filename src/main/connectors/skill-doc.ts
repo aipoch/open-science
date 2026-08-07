@@ -114,12 +114,17 @@ export function renderSkillDoc(connectorId: string): string {
 // from consuming the initial context window while still steering calls through the approved host.mcp
 // path instead of raw HTTP.
 export function renderConnectorInstructions(connectorIds: string[]): string {
-  if (!connectorIds.some((id) => CONNECTOR_CATALOG.some((connector) => connector.id === id))) {
-    return ''
-  }
+  const enabledConnectorIds = [
+    ...new Set(
+      connectorIds.filter((id) => CONNECTOR_CATALOG.some((connector) => connector.id === id))
+    )
+  ]
+  if (enabledConnectorIds.length === 0) return ''
+  const availableSkills = enabledConnectorIds.map((id) => `\`mcp-${id}\``).join(', ')
 
   return (
     `# Open Science data connector conventions\n\n` +
+    `Available Connector Skills: ${availableSkills}.\n\n` +
     `Detailed instructions, exact server/method names, schemas, return shapes, and examples are available through the matching \`mcp-*\` skill. Load the matching \`mcp-*\` skill before the first \`host.mcp\` call. Never guess a connector server or method name; if the matching skill is not loaded, do not call the connector.\n\n` +
     CONVENTIONS
   )
