@@ -2,7 +2,7 @@
 // browses subfolders of home (or of already-granted roots) via a breadcrumb + folder-only listing,
 // picks an access level, and grants the current folder. The main process is authoritative on what
 // may be granted; the dialog mirrors its scope check only to avoid listing out-of-scope folders.
-import { Folder, Home } from 'lucide-react'
+import { CircleAlert, Folder, Home, Info } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
@@ -284,49 +284,59 @@ const GrantFolderAccessDialogContent = ({
           )}
         </div>
 
-        {/* Footer: access level, messages, actions */}
-        <div className="flex items-center gap-2.5 border-t border-border-200 px-5 pb-4 pt-3">
-          <AccessRadio
-            label="Read-only"
-            selected={access === 'ro'}
-            onSelect={() => setAccess('ro')}
-          />
-          <AccessRadio
-            label="Read & write"
-            selected={access === 'rw'}
-            onSelect={() => setAccess('rw')}
-          />
-          <span className="flex-1" />
+        {/* Footer: full-width alert strips (hint/error variants) sit inside the action bar,
+            above the row of radios + buttons. */}
+        <div className="flex flex-col gap-2.5 border-t border-border-200 px-5 pb-4 pt-3">
           {isHome ? (
-            <span className="max-w-[220px] text-xs leading-4 text-text-100">
-              Your home folder itself can&apos;t be granted — pick a subfolder.
-            </span>
+            <div className="flex items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs leading-[18px] text-text-100">
+              <Info className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+              <span>Your home folder itself can&apos;t be granted — pick a subfolder.</span>
+            </div>
           ) : null}
           {grantFailed ? (
-            <span
+            <div
+              role="alert"
               data-testid="grant-access-error"
-              className="max-w-[180px] text-xs leading-4 text-danger-000"
+              className="flex items-start gap-2 rounded-lg bg-danger-900 px-3 py-2 text-xs leading-[18px] text-danger-000 ring-1 ring-inset ring-danger-000/25"
             >
-              Directory could not be accessed.
-            </span>
+              <CircleAlert
+                className="mt-px size-3.5 shrink-0"
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+              <span>Directory could not be accessed.</span>
+            </div>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="grant-access-cancel"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            data-testid="grant-access-grant"
-            disabled={isHome}
-            onClick={() => void handleGrant()}
-            className="bg-text-000 text-bg-000 hover:bg-text-000/85"
-          >
-            Grant this folder
-          </Button>
+          <div className="flex items-center gap-2.5">
+            <AccessRadio
+              label="Read-only"
+              selected={access === 'ro'}
+              onSelect={() => setAccess('ro')}
+            />
+            <AccessRadio
+              label="Read & write"
+              selected={access === 'rw'}
+              onSelect={() => setAccess('rw')}
+            />
+            <span className="flex-1" />
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="grant-access-cancel"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              data-testid="grant-access-grant"
+              disabled={isHome}
+              onClick={() => void handleGrant()}
+              className="bg-text-000 text-bg-000 hover:bg-text-000/85"
+            >
+              Grant this folder
+            </Button>
+          </div>
         </div>
       </Dialog.Content>
     </>
