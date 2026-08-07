@@ -7,11 +7,11 @@ on:
     - cron: '17 * * * *'
   workflow_dispatch:
 
-# The manual path calls the real publish workflow in dry-run mode. Reusable workflows cannot elevate
-# permissions above their caller, so contents:write is declared even though that path never publishes.
+# Build and publication preparation run without write access. Only the separate workflow_run
+# publisher receives contents:write, and it never checks out or executes the triggering revision.
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: nightly-build
@@ -45,14 +45,47 @@ jobs:
     with:
       nightly: true
 
-  # A manual Nightly is the focused, no-side-effect validation path: it uses the exact build and
-  # publish preparation jobs, but stops before changing the rolling tag or GitHub Release.
-  publish-dry-run:
+  # Aggregate and checksum on the low-privilege build run. A manual Nightly stops here, making this
+  # the focused no-side-effect dry-run; a successful schedule hands these prepared files to the
+  # separate publisher as artifacts, never as executable code.
+  prepare:
+    name: Prepare nightly publish artifact
     needs: [plan, build]
-    if: github.event_name == 'workflow_dispatch' && needs.build.result == 'success'
-    uses: ./.github/workflows/nightly-publish.yml
-    secrets: inherit
-    with:
-      dry_run: true
-      source_run_id: ${{ github.run_id }}
-      source_sha: ${{ github.sha }}
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Aggregate release certification evidence
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs aggregate
+          --directory artifacts
+          --output artifacts/RELEASE-CERTIFICATION.json
+          --expected-sha "$GITHUB_SHA"
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          files=(*.dmg *.zip *.exe *.AppImage *.deb)
+          if [ ${#files[@]} -gt 0 ]; then
+            sha256sum "${files[@]}" > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          fi
+
+      - name: Upload prepared nightly metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nightly-ready
+          retention-days: 1
+          path: |
+            artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json
+          if-no-files-found: error

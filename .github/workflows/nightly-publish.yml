@@ -1,24 +1,15 @@
 name: Nightly Publish
 
-# Scheduled Nightly completion enters the real, cross-run publish path. workflow_call is the same-run
-# dry-run path used by a manual Nightly so artifact preparation can be tested without side effects.
+# Publish only after a successful scheduled Nightly on main. The low-privilege triggering workflow
+# prepares all metadata; this privileged workflow never checks out or executes triggering-run code.
 on:
-  workflow_call:
-    inputs:
-      dry_run:
-        type: boolean
-        required: true
-      source_run_id:
-        type: string
-        required: true
-      source_sha:
-        type: string
-        required: true
   workflow_run:
     workflows:
       - Nightly
     types:
       - completed
+    branches:
+      - main
 
 permissions:
   actions: read
@@ -33,17 +24,14 @@ concurrency:
 jobs:
   plan:
     if: >-
-      inputs.dry_run ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'schedule' &&
-       github.event.workflow_run.head_branch == 'main')
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     outputs:
       should_publish: ${{ steps.decide.outputs.should_publish }}
     env:
-      DRY_RUN: ${{ inputs.dry_run || false }}
-      SOURCE_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Check for an unpublished build
         id: decide
@@ -51,7 +39,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>/dev/null || true)
-          if [ "$DRY_RUN" = "true" ] || [ "$published" != "$SOURCE_SHA" ]; then
+          if [ "$published" != "$SOURCE_SHA" ]; then
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
@@ -63,16 +51,10 @@ jobs:
     if: needs.plan.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     env:
-      DRY_RUN: ${{ inputs.dry_run || false }}
-      SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
-      SOURCE_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      - name: Checkout source revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ env.SOURCE_SHA }}
-
-      - name: Download all build artifacts
+      - name: Download prepared nightly artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -80,42 +62,17 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Aggregate release certification evidence
-        run: >-
-          node scripts/ci/release-certification-evidence.mjs aggregate
-          --directory artifacts
-          --output artifacts/RELEASE-CERTIFICATION.json
-          --expected-sha "$SOURCE_SHA"
-
-      - name: Generate checksums
-        working-directory: artifacts
+      - name: Verify prepared nightly metadata
         run: |
-          shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb)
-          if [ ${#files[@]} -gt 0 ]; then
-            sha256sum "${files[@]}" > SHA256SUMS.txt
-            cat SHA256SUMS.txt
-          fi
-
-      - name: Upload prepared nightly dry-run
-        if: env.DRY_RUN == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: nightly-publish-dry-run
-          retention-days: 1
-          path: |
-            artifacts/SHA256SUMS.txt
-            artifacts/RELEASE-CERTIFICATION.json
-          if-no-files-found: error
+          test -s artifacts/SHA256SUMS.txt
+          test -s artifacts/RELEASE-CERTIFICATION.json
 
       - name: Reset nightly release
-        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release delete nightly --cleanup-tag --yes || true
 
       - name: Publish nightly pre-release
-        if: env.DRY_RUN != 'true'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: nightly

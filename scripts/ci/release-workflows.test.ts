@@ -19,6 +19,7 @@ type Job = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
   uses?: string
@@ -29,6 +30,7 @@ type Workflow = {
   concurrency?: { 'cancel-in-progress'?: boolean; group?: string }
   jobs: Record<string, Job>
   on?: Record<string, unknown>
+  permissions?: Record<string, string>
 }
 
 const workflow = (name: string): Workflow =>
@@ -57,18 +59,20 @@ describe('release and scheduled workflow topology', () => {
 
     expect(build.needs).toBe('setup')
     expect(build.if).toBe("${{ needs.setup.result == 'success' }}")
-    expect(nightly.jobs['publish-dry-run'].needs).toEqual(['plan', 'build'])
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build'])
     expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac'])
     expect(release.jobs['notarize-mac'].needs).toBe('build')
   })
 
-  it('batches Nightly hourly and limits manual runs to the real publish dry-run', () => {
+  it('batches Nightly hourly and prepares publication without write access', () => {
     const nightly = workflow('nightly.yml')
     const schedule = nightly.on?.schedule as Array<{ cron: string }>
+    const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '17 * * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
+    expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
       group: 'nightly-build',
       'cancel-in-progress': true
@@ -82,33 +86,42 @@ describe('release and scheduled workflow topology', () => {
     expect(step(nightly.jobs.plan, 'Compare main with the rolling nightly tag').run).toContain(
       'repos/$GITHUB_REPOSITORY/commits/nightly'
     )
-    expect(nightly.jobs['publish-dry-run']).toMatchObject({
+    expect(nightly.jobs).not.toHaveProperty('publish-dry-run')
+    expect(prepare).toMatchObject({
       needs: ['plan', 'build'],
-      if: "github.event_name == 'workflow_dispatch' && needs.build.result == 'success'",
-      uses: './.github/workflows/nightly-publish.yml',
-      with: {
-        dry_run: true,
-        source_run_id: '${{ github.run_id }}',
-        source_sha: '${{ github.sha }}'
-      }
+      if: "needs.build.result == 'success'",
+      'runs-on': 'ubuntu-latest'
+    })
+    expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
+      '--expected-sha "$GITHUB_SHA"'
+    )
+    expect(step(prepare, 'Generate checksums').run).toContain('sha256sum')
+    expect(step(prepare, 'Upload prepared nightly metadata').with).toMatchObject({
+      name: 'nightly-ready',
+      'retention-days': 1,
+      'if-no-files-found': 'error'
     })
   })
 
-  it('serializes successful scheduled Nightly publication without cancellation', () => {
+  it('publishes prepared scheduled artifacts without executing triggering-run code', () => {
     const publishWorkflow = workflow('nightly-publish.yml')
     const plan = publishWorkflow.jobs.plan
     const publish = publishWorkflow.jobs.publish
-    const download = step(publish, 'Download all build artifacts')
+    const download = step(publish, 'Download prepared nightly artifacts')
     const reset = step(publish, 'Reset nightly release')
     const release = step(publish, 'Publish nightly pre-release')
-    const dryRun = step(publish, 'Upload prepared nightly dry-run')
     const workflowRun = publishWorkflow.on?.workflow_run as {
+      branches: string[]
       types: string[]
       workflows: string[]
     }
 
-    expect(workflowRun).toEqual({ workflows: ['Nightly'], types: ['completed'] })
-    expect(publishWorkflow.on).toHaveProperty('workflow_call')
+    expect(workflowRun).toEqual({
+      workflows: ['Nightly'],
+      types: ['completed'],
+      branches: ['main']
+    })
+    expect(publishWorkflow.on).not.toHaveProperty('workflow_call')
     expect(publishWorkflow.concurrency).toEqual({
       group: 'nightly-publish',
       'cancel-in-progress': false
@@ -128,9 +141,15 @@ describe('release and scheduled workflow topology', () => {
       'run-id': '${{ env.SOURCE_RUN_ID }}',
       'merge-multiple': true
     })
-    expect(dryRun.if).toBe("env.DRY_RUN == 'true'")
-    expect(reset.if).toBe("env.DRY_RUN != 'true'")
-    expect(release.if).toBe("env.DRY_RUN != 'true'")
+    expect(step(publish, 'Verify prepared nightly metadata').run).toContain(
+      'test -s artifacts/RELEASE-CERTIFICATION.json'
+    )
+    expect(publish.steps?.some(({ uses }) => uses?.startsWith('actions/checkout@'))).toBe(false)
+    expect(
+      publish.steps?.some(({ run }) => run?.includes('release-certification-evidence.mjs'))
+    ).toBe(false)
+    expect(reset.if).toBeUndefined()
+    expect(release.if).toBeUndefined()
   })
 
   it('dispatches the advisory Windows upgrade drill only after stable publication', () => {
