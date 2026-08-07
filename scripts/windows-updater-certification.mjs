@@ -389,12 +389,16 @@ const main = async () => {
       previousInstallerCacheVerified: true
     })
 
+    const installedExecutable = join(installDirectory, 'open-science.exe')
     await waitFor(
       `installed version ${currentVersion}`,
-      async () =>
-        (await executableVersion(join(installDirectory, 'open-science.exe'), env))?.startsWith(
-          currentVersion
-        ),
+      async () => {
+        const observedVersion = await executableVersion(installedExecutable, env)
+        if (observedVersion?.startsWith(currentVersion)) return observedVersion
+        throw new Error(
+          `Last observed ${observedVersion || '<missing>'} at ${installedExecutable}.`
+        )
+      },
       UPDATE_TIMEOUT_MS
     )
     await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {

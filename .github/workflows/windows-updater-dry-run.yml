@@ -1,0 +1,107 @@
+name: Windows updater dry-run
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-updater-dry-run.yml'
+      - 'build/installer.nsh'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/windows-installer-smoke.mjs'
+      - 'scripts/windows-updater-certification.mjs'
+      - 'src/main/app-lifecycle.ts'
+      - 'src/main/application-shutdown-trigger.ts'
+      - 'src/main/lifecycle-shutdown.ts'
+      - 'src/main/update/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-updater-dry-run-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  windows-updater-dry-run:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prune foreign Prisma engines
+        shell: bash
+        run: |
+          found=0
+          for f in node_modules/.prisma/client/*query_engine-*; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *windows.dll*) found=1 ;;
+              *) rm -f "$f" ;;
+            esac
+          done
+          [ "$found" = 1 ] || { echo "::error::Windows Prisma engine was not generated"; exit 1; }
+
+      - name: Stage notebook runtime resources
+        shell: bash
+        run: |
+          export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
+          node scripts/fetch-micromamba.mjs win-64 resources/bin/win/x64/micromamba.exe
+
+      - name: Build current Windows installer
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          npm run build:e2e
+          npm run build:web
+          npx electron-builder --win --x64 --publish never
+
+      - name: Download previous stable Windows installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force previous | Out-Null
+          $currentTag = "v$(node -p "require('./package.json').version")"
+          $releases = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $previousTag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $currentTag } | Select-Object -First 1).tagName
+          if ([string]::IsNullOrWhiteSpace($previousTag)) {
+            Write-Error "No previous stable release is available for $currentTag."
+            exit 1
+          }
+          Write-Host "Testing $previousTag -> $currentTag"
+          gh release download $previousTag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Certify Windows electron-updater differential update
+        shell: pwsh
+        run: |
+          node scripts/windows-updater-certification.mjs `
+            --current-dir dist `
+            --previous-dir previous `
+            --output windows-updater-observation.json 2>&1 |
+            Tee-Object -FilePath windows-updater-certification.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload updater diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-updater-dry-run
+          retention-days: 1
+          path: |
+            windows-updater-certification.log
+            windows-updater-observation.json
+          if-no-files-found: warn

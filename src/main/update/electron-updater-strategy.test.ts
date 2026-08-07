@@ -34,6 +34,7 @@ type FakeToken = { cancelled: boolean; cancel(): void }
 class FakeUpdater extends EventEmitter {
   autoDownload = true
   autoInstallOnAppQuit = true
+  installDirectory?: string
   // The download body each call runs. Default: emit progress + downloaded and resolve. Tests override
   // it to hang, to inspect the token, or to count real starts.
   runDownload: (token?: FakeToken) => Promise<void> = async () => {
@@ -92,6 +93,19 @@ describe('ElectronUpdaterStrategy', () => {
     new ElectronUpdaterStrategy({ updater, currentVersion: '0.2.0', broadcast: vi.fn() })
     expect(updater.autoDownload).toBe(false)
     expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('pins Windows NSIS updates to the current installation directory', () => {
+    const updater = new FakeUpdater()
+    new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'win32',
+      executablePath: 'D:\\Apps\\Open Science\\open-science.exe',
+      broadcast: vi.fn()
+    })
+
+    expect(updater.installDirectory).toBe('D:\\Apps\\Open Science')
   })
 
   it('maps check → available with restart applyKind', async () => {
