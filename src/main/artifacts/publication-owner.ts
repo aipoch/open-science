@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
@@ -9,13 +9,13 @@ import type {
   MovePendingRunArtifactsRequest,
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
-import { createLogger } from '../logger'
 import { runPendingFileTransaction } from './pending-file-transaction'
 import { parseArtifactRunFinalizationMarker } from './run-marker-codec'
-import { METADATA_DIR, PENDING_DIR, SAFE_SEGMENT_PATTERN } from './storage-layout'
+import { METADATA_DIR, PENDING_DIR, RUNS_DIR, SAFE_SEGMENT_PATTERN } from './storage-layout'
 import type {
   ArtifactPublicationStorage,
   ArtifactRunFinalizationMarker,
+  ArtifactRunMarkerReadResult,
   BindPendingArtifactVersionRouting,
   PendingArtifactRunPublication,
   PendingArtifactVersionRoute,
@@ -24,9 +24,6 @@ import type {
   PendingFileTransactionOptions,
   PrepareArtifactRunFinalizationRequest
 } from './publication-types'
-
-const log = createLogger('artifacts:repository')
-const RUNS_DIR = '.runs'
 
 class ArtifactCompatibilityScanIncompleteError extends Error {
   constructor(cause: unknown) {
@@ -442,31 +439,8 @@ class ArtifactPublicationOwner {
     return publications
   }
 
-  async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
-    const runDir = dirname(requestedPath)
-    const runId = basename(runDir)
-    const pendingDir = dirname(runDir)
-    if (basename(pendingDir) !== PENDING_DIR) return undefined
-    const sourceSessionDir = dirname(pendingDir)
-    const markerResult = SAFE_SEGMENT_PATTERN.test(runId)
-      ? await this.readRunMarker(join(sourceSessionDir, RUNS_DIR, `${runId}.json`))
-      : { present: false }
-    if (markerResult.present) {
-      if (!markerResult.marker) {
-        log.warn('artifact recovery skipped: run marker present but unreadable', { requestedPath })
-        return undefined
-      }
-      if (!markerResult.marker.messageId) return undefined
-      const candidate = join(
-        dirname(sourceSessionDir),
-        markerResult.marker.sessionId,
-        markerResult.marker.messageId,
-        basename(requestedPath)
-      )
-      return (await stat(candidate).catch(() => undefined))?.isFile() ? candidate : undefined
-    }
-    log.warn('artifact recovery skipped: stale pending path has no run marker', { requestedPath })
-    return undefined
+  async readRunMarkerForRecovery(markerPath: string): Promise<ArtifactRunMarkerReadResult> {
+    return this.readRunMarker(markerPath)
   }
 
   async findRunFinalizationMarker(
@@ -576,9 +550,7 @@ class ArtifactPublicationOwner {
     }
   }
 
-  private async readRunMarker(
-    markerPath: string
-  ): Promise<{ present: boolean; marker?: ArtifactRunFinalizationMarker }> {
+  private async readRunMarker(markerPath: string): Promise<ArtifactRunMarkerReadResult> {
     let raw: string
     try {
       raw = this.storage.durability.readMarkerFile

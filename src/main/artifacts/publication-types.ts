@@ -36,6 +36,11 @@ type ArtifactRunFinalizationMarker = {
   provenanceContext?: NonNullable<MovePendingRunArtifactsRequest['provenanceContext']>
 }
 
+type ArtifactRunMarkerReadResult = {
+  present: boolean
+  marker?: ArtifactRunFinalizationMarker
+}
+
 type PendingArtifactRunPublication = {
   sourceSessionId: string
   runId: string
@@ -97,6 +102,7 @@ export type {
   ArtifactMetadata,
   ArtifactPublicationStorage,
   ArtifactRunFinalizationMarker,
+  ArtifactRunMarkerReadResult,
   BindPendingArtifactVersionRouting,
   PendingArtifactRunPublication,
   PendingArtifactVersionRoute,

@@ -58,11 +58,13 @@
     },
     "artifact_storage": {
       "ownerPaths": [
+        "src/main/artifacts/compatibility-owner.ts",
         "src/main/artifacts/pending-file-transaction.ts",
         "src/main/artifacts/publication-owner.ts",
         "src/main/artifacts/publication-types.ts",
         "src/main/artifacts/repository.ts",
         "src/main/artifacts/run-marker-codec.ts",
+        "src/main/artifacts/storage-access.ts",
         "src/main/artifacts/storage-layout.ts"
       ],
       "interfacePaths": ["src/main/artifacts/repository.ts"],
