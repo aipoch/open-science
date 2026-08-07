@@ -71,6 +71,10 @@ type PlanIdentityCommand = Readonly<{
   expectedRevision: number
 }>
 
+type PlanDecisionCommitPrecondition = Readonly<{
+  beforeDecisionCommit?: () => boolean
+}>
+
 type PlanDecisionResult = { projection: ActivePlanProjection; changed: boolean }
 type PlanFeedbackResult = {
   kind: 'feedback'
@@ -175,16 +179,21 @@ class PlanService {
 
   async respond(
     input: PlanIdentityCommand &
-      Readonly<{ decision: 'approved' | 'rejected'; interactionIsLive?: boolean }>
+      Readonly<{ decision: 'approved' | 'rejected'; interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition
   ): Promise<PlanDecisionResult>
   async respond(
     input: Readonly<{ projectId: string; sessionId: string; feedback: string }>
   ): Promise<PlanFeedbackResult>
   async respond(
-    input: PlanResponseCommand & Readonly<{ interactionIsLive?: boolean }>
+    input: PlanResponseCommand &
+      Readonly<{ interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition
   ): Promise<PlanResponseResult>
   async respond(
-    input: PlanResponseCommand & Readonly<{ interactionIsLive?: boolean }>
+    input: PlanResponseCommand &
+      Readonly<{ interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition
   ): Promise<PlanResponseResult> {
     if (input.decision === undefined) {
       const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
@@ -230,6 +239,12 @@ class PlanService {
     }
     if (plan.approval !== 'pending') {
       throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
+    }
+    if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
+      throw new PlanCommandError(
+        'interaction-mismatch',
+        'The Session Plan decision authorization was revoked before commit.'
+      )
     }
     const updated = { ...plan, approval: input.decision }
     const next = await this.patch(input, updated, input.interactionIsLive ? 'running' : 'idle')

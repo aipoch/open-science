@@ -258,6 +258,31 @@ describe('PlanService', () => {
     ).rejects.toMatchObject({ code: 'approval-already-decided' })
   })
 
+  it('does not persist a Plan decision when its commit precondition is revoked', async () => {
+    const { service, context, dependencies } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    vi.mocked(dependencies.patchRuntimeContext).mockClear()
+
+    await expect(
+      service.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: generated.projection.revision,
+        decision: 'approved',
+        beforeDecisionCommit: () => false
+      })
+    ).rejects.toMatchObject({ code: 'interaction-mismatch' })
+
+    expect(dependencies.patchRuntimeContext).not.toHaveBeenCalled()
+    expect(context().plan?.approval).toBe('pending')
+  })
+
   it.each(['approved', 'rejected'] as const)(
     'releases the live interaction after a %s decision',
     async (decision) => {

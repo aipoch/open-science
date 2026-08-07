@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import { PlanCommandError, type ActivePlanProjection } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpRuntime } from './runtime'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
@@ -574,9 +574,12 @@ describe('AcpRuntime Session Plan seam', () => {
     const respondGate = new Promise<void>((resolve) => {
       finishRespond = resolve
     })
-    service.respond.mockImplementationOnce(async () => {
+    service.respond.mockImplementationOnce(async (input) => {
       markRespondStarted()
       await respondGate
+      if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
+        throw new PlanCommandError('interaction-mismatch', 'Decision authorization was revoked.')
+      }
       return {
         projection: {
           ...projection('version-1'),
@@ -622,9 +625,14 @@ describe('AcpRuntime Session Plan seam', () => {
     const respondGate = new Promise<void>((resolve) => {
       finishRespond = resolve
     })
-    service.respond.mockImplementationOnce(async () => {
+    let decisionPersisted = false
+    service.respond.mockImplementationOnce(async (input) => {
       markRespondStarted()
       await respondGate
+      if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
+        throw new PlanCommandError('interaction-mismatch', 'Decision authorization was revoked.')
+      }
+      decisionPersisted = true
       return {
         projection: {
           ...projection('version-1'),
@@ -646,7 +654,40 @@ describe('AcpRuntime Session Plan seam', () => {
     finishRespond()
 
     await expect(approved).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(decisionPersisted).toBe(false)
     expect(interactions.executionBindingFor('session-1')).toBeUndefined()
+  })
+
+  it('binds an Agent decision to its authorizing interaction when cancellation follows commit', async () => {
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    interactions.authorizeAgentDecision({
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    })
+    service.respond.mockImplementationOnce(async (input) => {
+      expect(input.beforeDecisionCommit?.()).toBe(true)
+      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
+      return {
+        projection: {
+          ...projection('version-1'),
+          approval: 'approved' as const,
+          lifecycle: 'approved' as const
+        },
+        changed: true
+      }
+    })
+
+    await runtime.callSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'approve'
+    })
+
+    expect(interactions.executionBindingFor('session-1')).toEqual({
+      artifactVersionId: 'version-1',
+      interactionSequence: 7
+    })
   })
 
   it('routes feedback as a visible user Message and resumes the blocked interaction', async () => {
