@@ -65,6 +65,7 @@ type FakeSettingsService = Record<
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
+  | 'buildSkillExport'
   | 'setSkillEnabled'
   | 'createSkill'
   | 'updateSkill'
@@ -156,6 +157,10 @@ const createFakeService = (): FakeSettingsService => ({
     enabled: true,
     body: 'b'
   }),
+  buildSkillExport: vi.fn().mockResolvedValue({
+    fileName: 'my-skill.zip',
+    archiveBytes: new Uint8Array([1, 2, 3])
+  }),
   setSkillEnabled: vi.fn().mockResolvedValue([]),
   createSkill: vi.fn().mockResolvedValue([]),
   updateSkill: vi.fn().mockResolvedValue([]),
@@ -214,6 +219,7 @@ type TestSettingsIpcOptions = {
   onAppIconVariantChanged?: SettingsWorkflowEffects['appearance']['applyAppIconVariant']
   listAppIconPreviews?: SettingsIpcOptions['listAppIconPreviews']
   connectorTemplateFiles?: SettingsIpcOptions['connectorTemplateFiles']
+  skillExportFiles?: SettingsIpcOptions['skillExportFiles']
 }
 
 // Keeps the adapter tests concise while routing every mutation through the real workflow owner.
@@ -228,7 +234,8 @@ const registerTestSettingsIpcHandlers = ({
   onCustomServerSecurityChanged,
   onAppIconVariantChanged,
   listAppIconPreviews,
-  connectorTemplateFiles
+  connectorTemplateFiles,
+  skillExportFiles
 }: TestSettingsIpcOptions): void => {
   registerSettingsIpcHandlers({
     service,
@@ -259,7 +266,8 @@ const registerTestSettingsIpcHandlers = ({
       }
     }),
     listAppIconPreviews,
-    connectorTemplateFiles
+    connectorTemplateFiles,
+    skillExportFiles
   })
 }
 
@@ -295,6 +303,7 @@ describe('settings IPC handlers', () => {
       'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete',
+      'settings:export-skill',
       'settings:preview-custom-server-template-export',
       'settings:select-custom-server-template',
       'settings:export-custom-server-template'
@@ -747,6 +756,25 @@ describe('settings IPC handlers', () => {
     await invoke('settings:set-skill-enabled', { id: 'demo', enabled: false })
     expect(service.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })
     expect(onSkillsChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('builds and saves an eligible Skill export through the desktop adapter', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const skillExportFiles = { save: vi.fn().mockResolvedValue({ saved: true }) }
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      skillExportFiles
+    })
+
+    await expect(invoke('settings:export-skill', { id: 'personal-my-skill' })).resolves.toEqual({
+      saved: true
+    })
+    expect(service.buildSkillExport).toHaveBeenCalledWith('personal-my-skill')
+    expect(skillExportFiles.save).toHaveBeenCalledWith({
+      fileName: 'my-skill.zip',
+      archiveBytes: new Uint8Array([1, 2, 3])
+    })
   })
 
   it('routes create/update/delete skill channels and fires onSkillsChanged', async () => {

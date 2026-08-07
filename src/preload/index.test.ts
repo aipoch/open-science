@@ -86,6 +86,7 @@ type PreloadApi = {
     logoutIsolatedClaude: () => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
+    exportSkill: (request: unknown) => unknown
     selectCustomServerTemplate: (request?: unknown) => unknown
   }
   acp: {
@@ -398,6 +399,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectCodex',
       'settings.detectOpencode',
       'settings.exportCustomServerTemplate',
+      'settings.exportSkill',
       'settings.getConnectorDetail',
       'settings.getPackageMirror',
       'settings.getPreflight',
@@ -548,7 +550,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes all 178 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(178)
+    expect(runtimeContracts).toHaveLength(179)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -907,6 +909,12 @@ const sampleSessionArtifactSelection = {
 }
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'settings.exportSkill → settings:export-skill',
+    invoke: (a) => a.settings.exportSkill({ id: 'personal-my-skill' }),
+    channel: 'settings:export-skill',
+    args: [{ id: 'personal-my-skill' }]
+  },
   {
     name: 'specialist.previewDelete → specialist:delete-preview',
     invoke: (a) => a.specialist.previewDelete({ id: 'research-synth' }),

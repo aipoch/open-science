@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 
 import { SkillRegistry } from '../skills/registry'
 import { SettingsRepository } from './repository'
@@ -106,6 +107,56 @@ describe('SkillCatalogModule', () => {
     expect(
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
+  })
+
+  it('exports a personal Skill as a portable ZIP archive', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({
+      name: 'My Skill',
+      description: 'Mine.',
+      body: '# Mine',
+      references: [
+        { path: 'example.txt', dataBase64: Buffer.from('example reference').toString('base64') }
+      ]
+    })
+
+    const exported = await catalog.buildSkillExport('personal-my-skill')
+    const files = unzipSync(exported.archiveBytes)
+
+    expect(exported.fileName).toBe('my-skill.zip')
+    expect(strFromU8(files['SKILL.md'])).toContain('# Mine')
+    expect(strFromU8(files['references/example.txt'])).toBe('example reference')
+    expect((await catalog.buildSkillExport('personal-my-skill')).archiveBytes).toEqual(
+      exported.archiveBytes
+    )
+  })
+
+  it('omits imported-Skill provenance from the exported ZIP archive', async () => {
+    const catalog = await createCatalog()
+    const importedZip = zipSync({
+      'SKILL.md': strToU8(
+        ['---', 'name: Imported Skill', 'description: Imported.', '---', '', '# Imported'].join(
+          '\n'
+        )
+      )
+    })
+    const imported = await catalog.importSkillZip({
+      dataBase64: Buffer.from(importedZip).toString('base64')
+    })
+
+    const exported = await catalog.buildSkillExport(imported.id)
+    const files = unzipSync(exported.archiveBytes)
+
+    expect(Object.keys(files)).toEqual(['SKILL.md'])
+  })
+
+  it('refuses to export built-in and unknown Skills', async () => {
+    const catalog = await createCatalog()
+
+    await expect(catalog.buildSkillExport('demo')).rejects.toThrow(
+      'Built-in Skills cannot be exported.'
+    )
+    await expect(catalog.buildSkillExport('missing')).rejects.toThrow('Unknown skill: missing')
   })
 
   it('owns active-framework agent-home discovery and batch import', async () => {

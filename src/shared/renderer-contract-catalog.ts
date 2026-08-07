@@ -301,7 +301,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['cancelCodexLogin', 'settings:cancel-codex-login', LOCAL], ['cancelIsolatedClaudeLogin', 'settings:cancel-isolated-claude-login', LOCAL],
     ['checkEnvironment', 'settings:check-environment'], ['createSkill', 'settings:create-skill'], ['deleteProvider', 'settings:delete-provider'],
     ['deleteSkill', 'settings:delete-skill'], ['detectClaude', 'settings:detect-claude'], ['detectCodex', 'settings:detect-codex'],
-    ['detectOpencode', 'settings:detect-opencode'], ['exportCustomServerTemplate', 'settings:export-custom-server-template', ELECTRON], ['getConnectorDetail', 'settings:get-connector-detail'],
+    ['detectOpencode', 'settings:detect-opencode'], ['exportCustomServerTemplate', 'settings:export-custom-server-template', ELECTRON], ['exportSkill', 'settings:export-skill', ELECTRON], ['getConnectorDetail', 'settings:get-connector-detail'],
     ['getPackageMirror', 'settings:get-package-mirror'], ['getPreflight', 'settings:get-preflight'], ['getSettings', 'settings:get-settings'],
     ['getSkillDetail', 'settings:get-skill-detail'], ['importAgentHomeSkills', 'settings:import-agent-home-skills', MAPPED_ELECTRON],
     ['importSkill', 'settings:import-skill'], ['importSkillZip', 'settings:import-skill-zip'], ['importSkillZipBatch', 'settings:import-skill-zip-batch'],

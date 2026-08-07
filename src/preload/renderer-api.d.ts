@@ -202,6 +202,8 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   DeleteSkillRequest,
+  ExportSkillRequest,
+  ExportSkillResult,
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
@@ -421,6 +423,7 @@ export interface OpenScienceAPI {
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
     getSkillDetail(id: string): Promise<SkillDetailView>
+    exportSkill(request: ExportSkillRequest): Promise<ExportSkillResult>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
     createSkill(request: CreateSkillRequest): Promise<SkillView[]>
     updateSkill(request: UpdateSkillRequest): Promise<SkillView[]>

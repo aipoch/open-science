@@ -6,6 +6,8 @@ import {
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
+  type ExportSkillRequest,
+  type ExportSkillResult,
   type ImportAgentHomeSkillsRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
@@ -47,6 +49,7 @@ import {
 import { SettingsService } from './service'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
+import type { SkillExportArchive } from '../skills/export'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   readAppIconVariant,
@@ -75,6 +78,9 @@ export type SettingsIpcOptions = {
     >
     save(suggestedFileName: string, contents: string): Promise<boolean>
   }
+  skillExportFiles?: {
+    save(archive: SkillExportArchive): Promise<ExportSkillResult>
+  }
 }
 
 // Streams one install event (log line or progress tick) to every open renderer window.
@@ -88,7 +94,8 @@ const registerSettingsIpcHandlers = ({
   service,
   workflows,
   listAppIconPreviews,
-  connectorTemplateFiles
+  connectorTemplateFiles,
+  skillExportFiles
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => service.getSettingsView())
@@ -210,6 +217,10 @@ const registerSettingsIpcHandlers = ({
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMainHandle('settings:export-skill', async (_event, request: ExportSkillRequest) => {
+    if (!skillExportFiles) throw new Error('Skill export is unavailable')
+    return skillExportFiles.save(await service.buildSkillExport(request.id))
+  })
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
     workflows.skills.setSkillEnabled(request)
   )

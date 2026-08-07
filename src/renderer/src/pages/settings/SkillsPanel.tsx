@@ -40,6 +40,11 @@ export type SkillsView =
 
 type SourceFilter = 'all' | SkillSource
 
+const skillExportErrorMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
+}
+
 const FILTER_LABELS: Record<SourceFilter, string> = {
   all: 'All',
   featured: 'Featured',
@@ -80,6 +85,25 @@ const SkillsPanel = ({
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
   const [deleteError, setDeleteError] = useState<string | undefined>()
+  const [exportError, setExportError] = useState<string | undefined>()
+  const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
+  const [exportingId, setExportingId] = useState<string | undefined>()
+  const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
+
+  const exportSkill = async (id: string, name: string): Promise<void> => {
+    if (!canExportSkills) return
+    setExportError(undefined)
+    setExportStatus(undefined)
+    setExportingId(id)
+    try {
+      const result = await window.api.settings.exportSkill({ id })
+      if (result.saved) setExportStatus({ id, message: `Exported ${name}.` })
+    } catch (error) {
+      setExportError(skillExportErrorMessage(error) || 'Could not export this Skill.')
+    } finally {
+      setExportingId(undefined)
+    }
+  }
 
   useEffect(() => {
     void loadSkills()
@@ -255,6 +279,15 @@ const SkillsPanel = ({
         </p>
       ) : null}
 
+      {exportError ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+        >
+          {exportError}
+        </p>
+      ) : null}
+
       <div className="flex flex-col gap-4">
         {groups.map((group) => {
           const rows = visible.filter((skill) => skill.source === group.source)
@@ -303,6 +336,19 @@ const SkillsPanel = ({
                             {skill.description}
                           </span>
                         </button>
+                        {exportStatus?.id === skill.id ? (
+                          <span role="status" className="shrink-0 text-xs text-muted-foreground">
+                            {exportStatus.message}
+                          </span>
+                        ) : null}
+                        {skill.source !== 'featured' && canExportSkills ? (
+                          <SettingsIconAction
+                            label={`Export ${skill.name}`}
+                            icon={Download}
+                            disabled={exportingId !== undefined}
+                            onClick={() => void exportSkill(skill.id, skill.name)}
+                          />
+                        ) : null}
                         {skill.source === 'personal' ? (
                           <SettingsIconAction
                             label={`Edit ${skill.name}`}

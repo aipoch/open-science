@@ -12,6 +12,7 @@ import type {
   ExportCustomServerTemplateRequest,
   CreateSkillRequest,
   DeleteSkillRequest,
+  ExportSkillRequest,
   ImportAgentHomeSkillsRequest,
   ImportSkillRequest,
   ImportSkillZipBatchRequest,
@@ -214,6 +215,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setPackageMirror', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
     getSkillDetail: (id: string) => electronRendererContracts.invoke('settings.getSkillDetail', id),
+    exportSkill: (request: ExportSkillRequest) =>
+      electronRendererContracts.invoke('settings.exportSkill', request),
     setSkillEnabled: (request: SetSkillEnabledRequest) =>
       electronRendererContracts.invoke('settings.setSkillEnabled', request),
     createSkill: (request: CreateSkillRequest) =>

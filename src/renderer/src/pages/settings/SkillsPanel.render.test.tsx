@@ -140,6 +140,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  delete (window as unknown as { api?: unknown }).api
 })
 
 const setValue = (label: string, value: string): void => {
@@ -273,6 +274,71 @@ describe('SkillsPanel (list view)', () => {
 
     act(() => remove?.click())
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
+  })
+
+  it('exports imported and personal Skills but never built-in Skills', async () => {
+    const exportSkill = vi.fn().mockResolvedValue({ saved: true })
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    useSettingsStore.setState({
+      skills: [
+        ...seedSkills,
+        {
+          id: 'imported-shared',
+          name: 'Shared',
+          description: 'Imported',
+          source: 'imported',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[aria-label="Export Alpha"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Export Shared"]')).not.toBeNull()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+    })
+    expect(exportSkill).toHaveBeenCalledWith({ id: 'personal-mine' })
+    const status = document.body.querySelector('[role="status"]')
+    expect(status?.textContent).toContain('Exported Mine.')
+    expect(status?.closest('[data-slot="settings-list-row"]')?.textContent).toContain('Mine')
+  })
+
+  it('hides Skill export when the desktop bridge is unavailable', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[aria-label="Export Mine"]')).toBeNull()
+  })
+
+  it('shows a Settings error when Skill export fails', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        exportSkill: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              "Error invoking remote method 'settings:export-skill': Error: Archive could not be written."
+            )
+          )
+      }
+    }
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Archive could not be written.'
+    )
   })
 
   it('shows the shared Specialist reference guard when direct deletion is rejected', async () => {

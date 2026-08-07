@@ -168,6 +168,7 @@ import {
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
 import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
+import { saveSkillExport } from './skills/export'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -1397,6 +1398,16 @@ const createApplicationModules = async (
           await writeFile(selected.filePath, contents, 'utf8')
           return true
         }
+      },
+      skillExportFiles: {
+        save: (archive) =>
+          saveSkillExport(
+            {
+              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
+            },
+            archive
+          )
       }
     })
   )
