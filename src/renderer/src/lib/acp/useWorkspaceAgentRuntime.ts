@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   AcpConnectionStatus,
+  AcpCreateSessionResponse,
   AcpPermissionGrant,
   AcpPermissionRequest,
   AcpRuntimeEvent,
@@ -1381,6 +1382,28 @@ const restoreRemovedTurnProjection = (sessionBeforeRemoval: ChatSession): void =
   }))
 }
 
+// A context reset replaces the provider session without changing the stable application session id.
+// Store the replacement identity immediately so cancellation or restart cannot revive the old owner.
+const replaceWorkspaceProviderIdentity = (
+  sessionId: string,
+  replacement: AcpCreateSessionResponse
+): void => {
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((session) =>
+      session.id === sessionId
+        ? {
+            ...session,
+            agentFrameworkId: replacement.frameworkId ?? session.agentFrameworkId,
+            agentBackendId: replacement.backendId ?? session.agentBackendId,
+            providerSessionId: replacement.providerSessionId,
+            providerContinuityToken: replacement.providerContinuityToken,
+            updatedAt: Date.now()
+          }
+        : session
+    )
+  }))
+}
+
 // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
 // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
 const resumeInterruptedWorkspaceSession = async (
@@ -1570,12 +1593,13 @@ const recoverContextOverflowWorkspaceSession = async (
 
   if (!nativeCompacted) {
     try {
-      await runtime.resetSessionContext(
+      const replacement = await runtime.resetSessionContext(
         sessionId,
         resumeCwd,
         session.projectId,
         session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
       )
+      replaceWorkspaceProviderIdentity(sessionId, replacement)
       const remainingPromptInFlightSessionIds = runtime.state.promptInFlightSessionIds.filter(
         (id) => id !== sessionId
       )

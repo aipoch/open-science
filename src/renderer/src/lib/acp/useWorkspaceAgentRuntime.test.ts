@@ -3691,11 +3691,20 @@ describe('recovering from a request-size overflow', () => {
     useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
   }
 
-  it('resets the agent context, drops the failed turn, and re-sends with a text preamble', async () => {
+  it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
       api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
     })
     seedOverflowedConversation(true)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:old',
+        providerSessionId: 'provider-session-old',
+        providerContinuityToken: 'continuity-old'
+      }))
+    }))
 
     const runtime = {
       state: {
@@ -3708,7 +3717,11 @@ describe('recovering from a request-size overflow', () => {
       resetSessionContext: vi.fn().mockResolvedValue({
         sessionId: 'session-1',
         cwd: '/workspace/project',
-        contextReset: true
+        contextReset: true,
+        frameworkId: 'codex' as const,
+        backendId: 'codex:new',
+        providerSessionId: 'provider-session-new',
+        providerContinuityToken: 'continuity-new'
       }),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
@@ -3731,6 +3744,12 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).not.toContain('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:new',
+      providerSessionId: 'provider-session-new',
+      providerContinuityToken: 'continuity-new'
+    })
   })
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
