@@ -151,6 +151,8 @@
         "src/main/artifacts/provenance-message-snapshot.ts",
         "src/main/artifacts/provenance-producer-capture.ts",
         "src/main/artifacts/provenance-repository.ts",
+        "src/main/artifacts/provenance-staging-recovery.ts",
+        "src/main/artifacts/provenance-storage.ts",
         "src/main/artifacts/provenance-version-writer.ts"
       ],
       "interfacePaths": [

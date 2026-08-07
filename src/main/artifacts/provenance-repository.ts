@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
@@ -34,10 +34,7 @@ import { defaultArtifactDurability, type ArtifactDurability } from './durability
 import {
   ArtifactProvenanceVersionWriter,
   normalizeArtifactFilename as normalizeFilename,
-  type CompatibilityRoutingPublicationOptions,
-  type PersistedVersionFileRecord,
-  type PublishCompatibilityRouting,
-  type StagingArtifactVersionRecord
+  type PersistedVersionFileRecord
 } from './provenance-version-writer'
 import { NotebookRunRepository } from '../notebook/repository'
 import type { NotebookRunInputFile } from '../../shared/notebook'
@@ -54,6 +51,8 @@ import {
   validateDurableMessageOwnership,
   type ArtifactFinalizationProofReason
 } from './provenance-message-finalization'
+import { ArtifactProvenanceStagingRecovery } from './provenance-staging-recovery'
+import { readOptionalFile, resolveStorageKey, storageKey } from './provenance-storage'
 import { toCheck, toReview } from '../reviewer/repository'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
@@ -72,9 +71,6 @@ import {
 import { resolveMessageBranchPath } from '../../shared/conversation-graph'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-// Reconciliation can also run from a read path while an active writer is between copying bytes and
-// inserting its staging row. Only rowless directories older than a full hour are proven abandoned.
-const ORPHAN_STAGING_GRACE_MS = 60 * 60 * 1_000
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 
 type ArtifactProvenanceRepositoryOptions = {
@@ -196,55 +192,6 @@ const assertSafeSegment = (value: string, label: string): string => {
   return value
 }
 
-const storageKey = (...segments: string[]): string => segments.join('/')
-
-const resolveStorageKey = (root: string, key: string): string => {
-  if (!key || isAbsolute(key) || key.includes('\\')) {
-    throw new Error('Invalid provenance storage key.')
-  }
-  const segments = key.split('/')
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
-    throw new Error('Invalid provenance storage key.')
-  }
-
-  const candidate = resolve(root, ...segments)
-  const relativePath = relative(resolve(root), candidate)
-  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
-    throw new Error('Invalid provenance storage key.')
-  }
-  return candidate
-}
-
-const readOptionalFile = async (path: string): Promise<Buffer | undefined> =>
-  readFile(path).catch((error: unknown) => {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: unknown }).code === 'ENOENT'
-    ) {
-      return undefined
-    }
-    throw error
-  })
-
-const moveDirectoryIfPresent = async (source: string, destination: string): Promise<boolean> => {
-  try {
-    await rename(source, destination)
-    return true
-  } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: unknown }).code === 'ENOENT'
-    ) {
-      return false
-    }
-    throw error
-  }
-}
-
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -356,6 +303,7 @@ class ArtifactProvenanceRepository {
   private readonly durability: ArtifactDurability
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly producerCapture: ArtifactProvenanceProducerCapture
+  private readonly stagingRecovery: ArtifactProvenanceStagingRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
@@ -377,6 +325,16 @@ class ArtifactProvenanceRepository {
       projectVersionFile: (version, projectId, appSessionId) =>
         this.toArtifactVersionFile(version, projectId, appSessionId)
     })
+    this.stagingRecovery = new ArtifactProvenanceStagingRecovery({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient,
+      compatibilityRepository: this.compatibilityRepository,
+      createId: this.createId,
+      now: this.now,
+      durability: this.durability,
+      projectVersionFile: (version, projectId, appSessionId) =>
+        this.toArtifactVersionFile(version, projectId, appSessionId)
+    })
     this.versionWriter = new ArtifactProvenanceVersionWriter({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -388,61 +346,10 @@ class ArtifactProvenanceRepository {
         this.producerCapture.captureProducer(request, createdAt, checksum),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
       recoverStagingVersion: (version, projectId, appSessionId, filename, publish) =>
-        this.recoverStagingVersion(version, projectId, appSessionId, filename, publish),
+        this.stagingRecovery.recoverVersion(version, projectId, appSessionId, filename, publish),
       projectVersionFile: (version, projectId, appSessionId) =>
         this.toArtifactVersionFile(version, projectId, appSessionId)
     })
-  }
-
-  private async syncAndVerifyFile(
-    path: string,
-    expectedChecksum: string,
-    corruptMessage: string
-  ): Promise<Buffer> {
-    await this.durability.syncFile(path)
-    const bytes = await readFile(path)
-    if (sha256(bytes) !== expectedChecksum) throw new Error(corruptMessage)
-    return bytes
-  }
-
-  private async ensureCompatibilityRouting(
-    version: PersistedVersionFileRecord,
-    projectId: string,
-    artifactStorageSessionId: string,
-    filename: string,
-    options: CompatibilityRoutingPublicationOptions = {}
-  ): Promise<void> {
-    await this.compatibilityRepository.ensurePendingVersionRouting({
-      projectName: projectId,
-      sessionId: artifactStorageSessionId,
-      runId: version.artifactRunId,
-      filename,
-      sourcePath: resolveStorageKey(this.options.storageRoot, version.contentStorageKey),
-      routing: {
-        artifactId: version.artifactId,
-        versionId: version.id,
-        versionNumber: version.versionNumber,
-        artifactRunId: version.artifactRunId,
-        checksum: version.checksum,
-        ...(version.contentType ? { mimeType: version.contentType } : {})
-      },
-      ...options
-    })
-  }
-
-  private compatibilityRoutingPublisher(
-    projectId: string,
-    artifactStorageSessionId: string,
-    filename: string
-  ): PublishCompatibilityRouting {
-    return (version, options) =>
-      this.ensureCompatibilityRouting(
-        version,
-        projectId,
-        artifactStorageSessionId,
-        filename,
-        options
-      )
   }
 
   // App-owned connector tools do not have an MCP/RPC hop. Keep compatibility bytes, immutable
@@ -506,7 +413,7 @@ class ArtifactProvenanceRepository {
   async createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile> {
     return this.versionWriter.writeVersion(
       request,
-      this.compatibilityRoutingPublisher(
+      this.stagingRecovery.routingPublisher(
         request.projectId,
         request.artifactStorageSessionId,
         request.filename
@@ -549,166 +456,25 @@ class ArtifactProvenanceRepository {
       )
     }
     if (existing.state === 'staging') {
-      return this.recoverStagingVersion(
+      return this.stagingRecovery.recoverVersion(
         existing,
         projectId,
         appSessionId,
         request.filename,
-        this.compatibilityRoutingPublisher(projectId, artifactStorageSessionId, request.filename)
+        this.stagingRecovery.routingPublisher(projectId, artifactStorageSessionId, request.filename)
       )
     }
     if (existing.state !== 'pending' && existing.state !== 'finalized') {
       throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
     }
     if (existing.state === 'pending') {
-      await this.ensureCompatibilityRouting(
-        existing,
+      await this.stagingRecovery.routingPublisher(
         projectId,
         artifactStorageSessionId,
-        request.filename,
-        { replaceUnroutedBytes: true }
-      )
+        request.filename
+      )(existing, { replaceUnroutedBytes: true })
     }
     return this.toArtifactVersionFile(existing, projectId, appSessionId)
-  }
-
-  private async recoverStagingVersion(
-    version: StagingArtifactVersionRecord,
-    projectId: string,
-    appSessionId: string,
-    requestedFilename: string,
-    publishCompatibilityRouting?: PublishCompatibilityRouting
-  ): Promise<ArtifactVersionFile> {
-    if (sha256(version.evidenceJson) !== version.evidenceChecksum) {
-      throw new Error(`Artifact Version canonical evidence is corrupt: ${version.id}`)
-    }
-    if (
-      version.executionSnapshotJson &&
-      (!version.executionSnapshotChecksum ||
-        sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum)
-    ) {
-      throw new Error(`Artifact Version canonical execution snapshot is corrupt: ${version.id}`)
-    }
-
-    const stagingDirectory = resolveStorageKey(
-      this.options.storageRoot,
-      storageKey(
-        'artifacts',
-        projectId,
-        appSessionId,
-        '.provenance',
-        '.staging',
-        'versions',
-        version.id
-      )
-    )
-    const finalContentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-    const finalDirectory = dirname(finalContentPath)
-    const [stagingContent, finalContent] = await Promise.all([
-      readOptionalFile(join(stagingDirectory, 'content')),
-      readOptionalFile(finalContentPath)
-    ])
-    if (stagingContent && finalContent) {
-      throw new Error(`Artifact Version has conflicting staging and final content: ${version.id}`)
-    }
-    const content = finalContent ?? stagingContent
-    if (!content) throw new Error(`Artifact Version staging content is unavailable: ${version.id}`)
-    if (content.byteLength !== Number(version.sizeBytes) || sha256(content) !== version.checksum) {
-      throw new Error(`Artifact Version staging content is corrupt: ${version.id}`)
-    }
-
-    const publishDirectory = finalContent ? finalDirectory : stagingDirectory
-    await this.syncAndVerifyFile(
-      join(publishDirectory, 'content'),
-      version.checksum,
-      `Artifact Version staging content is corrupt: ${version.id}`
-    )
-    await this.ensureCanonicalMirror(
-      join(publishDirectory, 'evidence.json'),
-      version.evidenceJson,
-      version.evidenceChecksum,
-      `Artifact Version evidence mirror is corrupt: ${version.id}`
-    )
-    if (
-      version.executionSnapshotJson &&
-      version.executionSnapshotChecksum &&
-      version.executionSnapshotStorageKey
-    ) {
-      await this.ensureCanonicalMirror(
-        join(publishDirectory, 'execution.json'),
-        version.executionSnapshotJson,
-        version.executionSnapshotChecksum,
-        `Artifact Version execution mirror is corrupt: ${version.id}`
-      )
-    }
-
-    if (!finalContent) {
-      await mkdir(dirname(finalDirectory), { recursive: true })
-      await this.durability.syncDirectory(stagingDirectory)
-      await rename(stagingDirectory, finalDirectory)
-    }
-    await this.durability.syncDirectory(dirname(finalDirectory))
-    let routingPublisher = publishCompatibilityRouting
-    if (!routingPublisher) {
-      const pendingOwner = await this.compatibilityRepository.findPendingFileForRun({
-        projectName: projectId,
-        runId: version.artifactRunId,
-        filename: requestedFilename,
-        checksum: version.checksum
-      })
-      if (!pendingOwner) {
-        throw new Error(
-          `Artifact Version staging compatibility route is unavailable: ${version.id}`
-        )
-      }
-      routingPublisher = this.compatibilityRoutingPublisher(
-        projectId,
-        pendingOwner.storageSessionId,
-        requestedFilename
-      )
-    }
-    await routingPublisher(version, { allowRoutingReplacement: true })
-
-    const client = await this.options.getClient()
-    const recovered = await client.$transaction(async (transaction) => {
-      await transaction.artifactLineage.update({
-        where: { id: version.artifactId },
-        data: { filename: requestedFilename }
-      })
-      return transaction.artifactVersion.update({
-        where: { id: version.id },
-        data: { state: 'pending' }
-      })
-    })
-    return this.toArtifactVersionFile(recovered, projectId, appSessionId)
-  }
-
-  private async ensureCanonicalMirror(
-    path: string,
-    canonical: string,
-    checksum: string,
-    corruptMessage: string
-  ): Promise<string> {
-    if (sha256(canonical) !== checksum) throw new Error(corruptMessage)
-    let bytes = await readOptionalFile(path)
-    if (!bytes) {
-      await mkdir(dirname(path), { recursive: true })
-      const temporaryPath = `${path}.${this.createId()}.tmp`
-      try {
-        await writeFile(temporaryPath, canonical, { encoding: 'utf8', flag: 'wx' })
-        await this.syncAndVerifyFile(temporaryPath, checksum, corruptMessage)
-        await rename(temporaryPath, path)
-        await this.durability.syncDirectory(dirname(path))
-      } finally {
-        await rm(temporaryPath, { force: true }).catch(() => undefined)
-      }
-      bytes = await this.syncAndVerifyFile(path, checksum, corruptMessage)
-    } else {
-      bytes = await this.syncAndVerifyFile(path, checksum, corruptMessage)
-    }
-    const value = bytes.toString('utf8')
-    if (value !== canonical || sha256(bytes) !== checksum) throw new Error(corruptMessage)
-    return value
   }
 
   // SQLite is the normal read authority. A missing reconciliation mirror must not turn a GET into a
@@ -834,102 +600,14 @@ class ArtifactProvenanceRepository {
         throw error
       }
     )
+    const stagingResult = await this.stagingRecovery.reconcileSession(
+      projectId,
+      appSessionId,
+      options?.removeOrphanStaging
+    )
+    result.recoveredVersionIds.push(...stagingResult.recoveredVersionIds)
+    result.quarantinedVersionIds.push(...stagingResult.quarantinedVersionIds)
     const client = await this.options.getClient()
-    const stagingVersions = await client.artifactVersion.findMany({
-      where: {
-        state: 'staging',
-        artifact: { is: { projectId, sessionId: appSessionId } }
-      },
-      include: { artifact: true }
-    })
-
-    // A crash can leave a complete staging row after its immutable bytes were copied but before the
-    // final state update. Resume those rows from SQLite authority before scanning unindexed folders.
-    for (const version of stagingVersions) {
-      try {
-        await this.recoverStagingVersion(version, projectId, appSessionId, version.filename)
-        result.recoveredVersionIds.push(version.id)
-      } catch (error) {
-        // A transient/unrelated compatibility I/O error proves only that the scan was incomplete.
-        // Leave the authoritative staging row untouched so a later startup can retry; quarantine is
-        // reserved for a complete scan that positively fails the recovery proof.
-        if (error instanceof ArtifactCompatibilityScanIncompleteError) continue
-        const stillStaging = await client.artifactVersion.findUnique({
-          where: { id: version.id },
-          select: { state: true }
-        })
-        if (stillStaging?.state !== 'staging') continue
-
-        // A staging row that cannot be resumed must not poison the operation forever. Preserve any
-        // bytes for diagnosis under quarantine, then remove only the still-staging row so an exact
-        // retry can start cleanly instead of colliding with a permanently broken lifecycle record.
-        const quarantineDirectory = join(
-          provenanceRoot,
-          '.quarantine',
-          'staging-invalid',
-          version.artifactId,
-          `${version.id}-${this.createId()}`
-        )
-        await mkdir(quarantineDirectory, { recursive: true })
-        const stagingDirectory = join(provenanceRoot, '.staging', 'versions', version.id)
-        const finalDirectory = dirname(
-          resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-        )
-        await moveDirectoryIfPresent(stagingDirectory, join(quarantineDirectory, 'staging'))
-        await moveDirectoryIfPresent(finalDirectory, join(quarantineDirectory, 'published'))
-        const deleted = await client.artifactVersion.deleteMany({
-          where: { id: version.id, state: 'staging' }
-        })
-        if (deleted.count === 1) result.quarantinedVersionIds.push(version.id)
-      }
-    }
-
-    if (options?.removeOrphanStaging) {
-      // A process can exit after copying immutable bytes but before inserting the staging authority
-      // row. Only startup reconciliation may remove those rowless temporary copies: read-triggered
-      // reconciliation can overlap an active writer and therefore remains non-destructive.
-      const stagingVersionsRoot = join(provenanceRoot, '.staging', 'versions')
-      const orphanCandidates = await readdir(stagingVersionsRoot, { withFileTypes: true }).catch(
-        (error: unknown) => {
-          if (
-            typeof error === 'object' &&
-            error !== null &&
-            'code' in error &&
-            (error as { code?: unknown }).code === 'ENOENT'
-          ) {
-            return []
-          }
-          throw error
-        }
-      )
-      for (const candidate of orphanCandidates) {
-        if (!candidate.isDirectory() || !SAFE_SEGMENT_PATTERN.test(candidate.name)) continue
-        const authority = await client.artifactVersion.findUnique({
-          where: { id: candidate.name },
-          select: { id: true }
-        })
-        if (authority) continue
-        const candidatePath = join(stagingVersionsRoot, candidate.name)
-        const candidateStat = await stat(candidatePath).catch((error: unknown) => {
-          if (
-            typeof error === 'object' &&
-            error !== null &&
-            'code' in error &&
-            (error as { code?: unknown }).code === 'ENOENT'
-          ) {
-            return undefined
-          }
-          throw error
-        })
-        if (
-          !candidateStat ||
-          this.now().getTime() - candidateStat.mtimeMs < ORPHAN_STAGING_GRACE_MS
-        ) {
-          continue
-        }
-        await rm(candidatePath, { recursive: true, force: true })
-      }
-    }
 
     // Runtime publication first records a durable intent, then renderer finalization upgrades it with
     // the terminal message before moving compatibility bytes. Recover either crash window only when
