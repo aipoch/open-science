@@ -7,11 +7,22 @@ import {
   invokeWebRpc,
   parseArguments,
   parseSingleRange,
+  redactPackagedAppOutput,
   rewriteFeedPaths,
   waitForInstallerExit
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('redacts packaged app tokens before output reaches CI diagnostics', () => {
+    expect(
+      redactPackagedAppOutput(
+        'Open Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
+      )
+    ).toBe(
+      'Open Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
+    )
+  })
+
   it('drives updater commands through the authenticated headless RPC', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({ protocolVersion: 1, ok: true, result: { state: 'ready' } })

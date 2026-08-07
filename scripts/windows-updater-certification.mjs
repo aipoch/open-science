@@ -210,6 +210,8 @@ const observeChildExit = (child) =>
     child.once('exit', resolveExit)
   })
 
+const redactPackagedAppOutput = (output) => output.replace(/([?&]token=)[^\s&#]+/gi, '$1<redacted>')
+
 const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
   const response = await fetchWithTimeout(
     `${endpoint}/rpc/${encodeURIComponent(channel)}?${auth}`,
@@ -298,7 +300,13 @@ exit $exitCode
   })
 }
 
-const runElectronUpdater = async ({ executable, env, expectedVersion, expectedInstaller }) => {
+const runElectronUpdater = async ({
+  executable,
+  env,
+  expectedVersion,
+  expectedInstaller,
+  onDownloaded
+}) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
   // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
@@ -312,19 +320,20 @@ const runElectronUpdater = async ({ executable, env, expectedVersion, expectedIn
   child.stderr?.setEncoding('utf8')
   child.stdout?.on('data', (chunk) => {
     stdout += chunk
-    process.stdout.write(`[electron stdout] ${chunk}`)
   })
   child.stderr?.on('data', (chunk) => {
     stderr += chunk
-    process.stderr.write(`[electron stderr] ${chunk}`)
   })
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const diagnosticOutput = () => redactPackagedAppOutput(output())
   const exit = observeChildExit(child)
   try {
     const { endpoint, auth } = await Promise.race([
       waitFor('the updater app web service', async () => parsePackagedAppEndpoint(output())),
       exit.then((code) => {
-        throw new Error(`Updater app exited before becoming healthy (${code}).\n${output()}`)
+        throw new Error(
+          `Updater app exited before becoming healthy (${code}).\n${diagnosticOutput()}`
+        )
       })
     ])
     const bootstrapResponse = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
@@ -360,12 +369,13 @@ const runElectronUpdater = async ({ executable, env, expectedVersion, expectedIn
     if (downloaded.state !== 'ready' || downloaded.applyKind !== 'restart') {
       throw new Error(`Unexpected updater download result: ${JSON.stringify(downloaded)}`)
     }
+    await onDownloaded()
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
     // racing the new executable and to retain the real installer exit code when the handoff fails.
     const installerExit = waitForInstallerExit({ installer: expectedInstaller, env })
-    const closed = waitForShutdownExit(exit, child, output)
+    const closed = waitForShutdownExit(exit, child, diagnosticOutput)
     const applied = await invokeWebRpc({
       endpoint,
       auth,
@@ -376,7 +386,8 @@ const runElectronUpdater = async ({ executable, env, expectedVersion, expectedIn
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
     const exitCode = await closed
-    if (exitCode !== 0) throw new Error(`Updater app exited with ${exitCode}.\n${output()}`)
+    if (exitCode !== 0)
+      throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
     const installerResult = await installerExit
     console.log(`Updater installer observation: ${installerResult.stdout}`)
     if (installerResult.code !== 0) {
@@ -386,9 +397,11 @@ const runElectronUpdater = async ({ executable, env, expectedVersion, expectedIn
     }
   } catch (error) {
     await terminateProcessTree(child)
-    const processOutput = output().trim()
-    if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
-      error.message += `\n${processOutput}`
+    const processOutput = diagnosticOutput().trim()
+    if (error instanceof Error) {
+      error.message = redactPackagedAppOutput(error.message)
+      if (processOutput && !error.message.includes(processOutput))
+        error.message += `\n${processOutput}`
     }
     throw error
   }
@@ -517,6 +530,20 @@ const main = async () => {
       )
     }
 
+    const installerBytes = (await stat(currentInstaller)).size
+    const persistObservation = async () => {
+      observation = assertDifferentialObservation({
+        schemaVersion: 1,
+        mode: 'electron-updater-differential',
+        previousVersion,
+        currentVersion,
+        installerBytes,
+        ...assetServer.metrics,
+        versionedFeed: true,
+        previousInstallerCacheVerified: true
+      })
+      await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
+    }
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
@@ -526,22 +553,9 @@ const main = async () => {
         updateConfig.updaterCacheDirName,
         'pending',
         basename(currentInstaller)
-      )
+      ),
+      onDownloaded: persistObservation
     })
-    const installerBytes = (await stat(currentInstaller)).size
-    observation = assertDifferentialObservation({
-      schemaVersion: 1,
-      mode: 'electron-updater-differential',
-      previousVersion,
-      currentVersion,
-      installerBytes,
-      ...assetServer.metrics,
-      versionedFeed: true,
-      previousInstallerCacheVerified: true
-    })
-    // Persist download evidence before installation. If NSIS later fails, the artifact still proves
-    // whether electron-updater reached the intended differential path.
-    await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
     await waitFor(
@@ -611,6 +625,7 @@ export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   invokeWebRpc,
+  redactPackagedAppOutput,
   waitForInstallerExit,
   parseArguments,
   parseSingleRange,
