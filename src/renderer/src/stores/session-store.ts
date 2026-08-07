@@ -1,10 +1,5 @@
 import { create } from 'zustand'
-import type {
-  ToolCallContent,
-  ToolCallLocation,
-  ToolCallStatus,
-  ToolKind
-} from '@agentclientprotocol/sdk'
+import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
@@ -22,23 +17,15 @@ import {
   type PermissionProfileId
 } from '../../../shared/permission-profiles'
 import {
-  INTERRUPTED_SESSION_ERROR,
-  materializeSessionConversationGraph,
   sanitizeMessageImages,
-  sanitizePlanHistoryProjections,
   sanitizeToolActivity,
   sanitizeActivityGroup,
   type MessagePart,
-  type PersistedActiveRun,
   type PersistedActivityGroup,
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
-  type PersistedMessageRole,
-  type PersistedMessageStatus,
-  type PersistedSessionManifest,
   type PersistedUploadedAttachment,
-  type PersistedSessionStatus,
   type PersistedToolActivity
 } from '../../../shared/session-persistence'
 import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
@@ -55,87 +42,38 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../../shared/conversation-graph'
+import {
+  createInitialSessionState,
+  createSessionPersistenceOwner,
+  hydrateSession,
+  hydrateToolActivity,
+  stripTransientMessageState,
+  type ActiveRun,
+  type ChatMessage,
+  type ChatMessageRole,
+  type ChatMessageStatus,
+  type ChatSession,
+  type SessionStatus,
+  type SessionPersistenceActions,
+  type SessionStoreData,
+  type ToolActivity,
+  type ToolActivityStatus
+} from './session-store-persistence-owner'
 
-export type SessionStatus = PersistedSessionStatus
-export type ChatMessageRole = PersistedMessageRole
-export type ChatMessageStatus = PersistedMessageStatus
-export type ChatMessage = PersistedChatMessage & {
-  sortIndex?: number
-}
-export type ActiveRun = PersistedActiveRun
-export type ToolActivityStatus = ToolCallStatus
-export type ToolActivity = {
-  id: string
-  kind: 'tool'
-  title: string
-  activityGroupId?: string
-  promptMessageId?: string
-  status: ToolActivityStatus
-  eventIds: string[]
-  sortIndex: number
-  providerToolName?: string
-  toolKind?: ToolKind
-  toolContent?: ToolCallContent[]
-  toolLocations?: ToolCallLocation[]
-  rawInput?: unknown
-  rawOutput?: unknown
-  terminalOutput?: string
-  terminalExitCode?: number | null
-  createdAt: number
-  updatedAt: number
-}
-export type ChatSession = Omit<
-  PersistedChatSession,
-  'messages' | 'activities' | 'permissionProfile'
-> & {
-  permissionProfile?: PermissionProfileId
-  messages: ChatMessage[]
-  activities?: ToolActivity[]
-  activePlanProjection?: ActivePlanProjection
-  planHistoryProjections?: ActivePlanProjection[]
-  isPending?: boolean
-  // Transient: set at hydration when a session was interrupted by an app restart, so the UI can
-  // offer an explicit Resume affordance. Never persisted (stripped in stripTransientSessionState).
-  interrupted?: boolean
-  // Transient: true while a Phase 3 fix loop is active for this session. Disables the send button
-  // for the duration of the loop (across reviewer-review and agent-fix sub-phases). Never persisted.
-  fixLoopActive?: boolean
-  // Transient: true while the app is auto-recovering a conversation that outgrew the request-size limit
-  // (reset agent context + replay a text transcript). The UI shows a neutral "Compacting…" note instead
-  // of the overflow error, and the promise-path failure is suppressed. Cleared on the next run/settle.
-  compacting?: boolean
-  // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
-  // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
-  agentStatus?: string
-  // Transient: the current foreground prompt is in a silent gap before visible assistant output.
-  // Tool completion re-arms this flag so each new Thinking phase receives a fresh timer.
-  awaitingFirstAgentOutput?: boolean
-  // Transient: the workspace Agent runtime still owns the foreground prompt. Unlike the first-output
-  // flag, this remains set after visible output so current tool activity cannot be confused with history.
-  agentPromptInFlight?: boolean
-  // Transient: the durable active Branch changed while the Agent/Notebook still hold the previous
-  // Branch's volatile state. The next continuation must rebuild both contexts before prompting.
-  branchContextResetRequired?: boolean
-  // Transient: a specialist switch replaced the live agent session (Claude bakes identity into the
-  // session at creation). The next continuation must replay conversation history so the new
-  // specialist retains continuity, without resetting the notebook kernel (unlike a Branch switch).
-  specialistSwitchResetRequired?: boolean
-  // Transient aggregate of Reviewer, Notebook, Upload-finalization, and deletion activity that lives
-  // outside this store. The workspace projects those operation gates here so direct store callers
-  // cannot bypass disabled revision controls.
-  branchSwitchBlocked?: boolean
-  // Transient: terminal graph synchronization failed, so the in-memory run is settled as an explicit
-  // error while persistence keeps the last valid durable graph. Restarting restores that safe copy.
-  conversationGraphSyncBlocked?: boolean
-  // Transient: identifies the unsent current prompt of a branched pending Session. A creation retry
-  // replaces this prompt and rebuilds its copied history replay instead of appending a duplicate turn.
-  pendingContextReplayMessageId?: string
-}
-
-type SessionStoreData = {
-  sessions: ChatSession[]
-  selectedSessionId: string | undefined
-}
+export {
+  createInitialSessionState,
+  isExternallyHydratedSession,
+  toPersistedSession,
+  type ActiveRun,
+  type ChatMessage,
+  type ChatMessageRole,
+  type ChatMessageStatus,
+  type ChatSession,
+  type SessionHydrationSelection,
+  type SessionStatus,
+  type ToolActivity,
+  type ToolActivityStatus
+} from './session-store-persistence-owner'
 
 type AppendUserMessageInput = {
   sessionId: string
@@ -239,12 +177,6 @@ type ReplaceMessageUploadsInput = {
   uploads: PersistedUploadedAttachment[]
 }
 
-type ApplyDurableSessionProjectionInput = {
-  source: ChatSession
-  session: PersistedChatSession
-  mode?: 'merge-upload-identities' | 'replace-persisted-if-current'
-}
-
 type AppendMessageResult = {
   sessionId: string
   messageId: string
@@ -259,93 +191,87 @@ type AppendRoutedUserMessageInput = {
   responseToMessageId?: string
 }
 
-export type SessionHydrationSelection = {
-  sessionId: string | undefined
-}
-
-type SessionStore = SessionStoreData & {
-  selectSession: (sessionId: string) => void
-  clearSelection: () => void
-  appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
-  appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
-  appendPendingUserMessage: (
-    input: AppendPendingUserMessageInput
-  ) => AppendMessageResult | undefined
-  branchInNewSession: (input: BranchInNewSessionInput) => AppendMessageResult | undefined
-  bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
-  clearPendingContextReplay: (sessionId: string, messageId: string) => void
-  appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
-  setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
-  setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
-  attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
-  replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
-  replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
-  recordArtifactError: (sessionId: string, error: string) => void
-  clearArtifactError: (sessionId: string) => void
-  hydrateSessions: (
-    sessions: PersistedChatSession[],
-    manifest?: PersistedSessionManifest,
-    selection?: SessionHydrationSelection
-  ) => void
-  upsertPersistedSession: (session: PersistedChatSession) => void
-  applyDurableSessionProjection: (input: ApplyDurableSessionProjectionInput) => void
-  finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage, promptMessageId?: string) => void
-  // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
-  // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
-  // from the message (an app-crafted reminder → not reportable; anything else → reportable).
-  failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
-  // Sets the transient agent status line shown in the waiting indicator; only applies while running.
-  setAgentStatus: (sessionId: string, text: string) => void
-  // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
-  // UI shows a neutral note instead of a dead-end, without blocking the recovery re-send.
-  beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
-  // Compaction completion/failure may arrive after a recovery retry has started. These transitions
-  // apply only while the session still owns the compacting state and never settle a newer run.
-  finishCompaction: (sessionId: string) => void
-  failCompaction: (sessionId: string, error: string) => void
-  markResumed: (
-    sessionId: string,
-    agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
-    agentBackendId?: PersistedChatSession['agentBackendId']
-  ) => void
-  markDisconnected: (sessionId: string, reason?: string) => void
-  removeMessage: (sessionId: string, messageId: string) => void
-  truncateSessionFromMessage: (sessionId: string, messageId: string) => void
-  activateMessageBranch: (sessionId: string, branchId: string) => void
-  setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
-  clearBranchContextReset: (sessionId: string) => void
-  markSpecialistSwitchResetRequired: (sessionId: string) => void
-  clearSpecialistSwitchResetRequired: (sessionId: string) => void
-  upsertToolActivity: (input: UpsertToolActivityInput) => void
-  setActivePlanProjection: (sessionId: string, projection: ActivePlanProjection) => void
-  beginActivityGroup: (
-    sessionId: string,
-    groupId: string,
-    title: string,
-    promptMessageId?: string
-  ) => void
-  completeActivityGroup: (sessionId: string, promptMessageId?: string) => void
-  setPermissionPending: (sessionId: string) => void
-  clearPermissionPending: (sessionId: string) => void
-  setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
-  setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
-  // Persists the per-session auto-review toggle. true = on; false = off (default).
-  setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
-  // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
-  setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
-  // Updates the persisted specialist UUID for an existing session after reconfigure succeeds.
-  // Passing undefined clears the binding (Main Agent). Persistence only stores the UUID.
-  setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
-  // Toggles whether a conversation is pinned to the top section of the sidebar.
-  togglePinned: (sessionId: string) => void
-  updateSessionArchive: (request: UpdateSessionArchiveRequest) => Promise<ChatSession>
-  // Sets or clears the per-session fix loop active flag. When true, the composer send button is
-  // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
-  setFixLoopActive: (sessionId: string, active: boolean) => void
-  renameSession: (sessionId: string, title: string) => void
-  deleteSession: (sessionId: string) => void
-  removeSessionsForProject: (projectId: string) => void
-}
+type SessionStore = SessionStoreData &
+  SessionPersistenceActions & {
+    selectSession: (sessionId: string) => void
+    clearSelection: () => void
+    appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
+    appendRoutedUserMessage: (
+      input: AppendRoutedUserMessageInput
+    ) => AppendMessageResult | undefined
+    appendPendingUserMessage: (
+      input: AppendPendingUserMessageInput
+    ) => AppendMessageResult | undefined
+    branchInNewSession: (input: BranchInNewSessionInput) => AppendMessageResult | undefined
+    bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
+    clearPendingContextReplay: (sessionId: string, messageId: string) => void
+    appendAgentMessageChunk: (
+      input: AppendAgentMessageChunkInput
+    ) => AppendMessageResult | undefined
+    setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
+    setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
+    attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
+    replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
+    replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
+    recordArtifactError: (sessionId: string, error: string) => void
+    clearArtifactError: (sessionId: string) => void
+    finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage, promptMessageId?: string) => void
+    // opts.reportable overrides the report-affordance decision: pass false for a model-provider failure
+    // (the agent relayed an upstream LLM/HTTP error), true to force it, or omit to let the store derive it
+    // from the message (an app-crafted reminder → not reportable; anything else → reportable).
+    failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
+    // Sets the transient agent status line shown in the waiting indicator; only applies while running.
+    setAgentStatus: (sessionId: string, text: string) => void
+    // Enters the auto-recovery "compacting" state after a request-size overflow: clears the error so the
+    // UI shows a neutral note instead of a dead-end, without blocking the recovery re-send.
+    beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
+    // Compaction completion/failure may arrive after a recovery retry has started. These transitions
+    // apply only while the session still owns the compacting state and never settle a newer run.
+    finishCompaction: (sessionId: string) => void
+    failCompaction: (sessionId: string, error: string) => void
+    markResumed: (
+      sessionId: string,
+      agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
+      agentBackendId?: PersistedChatSession['agentBackendId']
+    ) => void
+    markDisconnected: (sessionId: string, reason?: string) => void
+    removeMessage: (sessionId: string, messageId: string) => void
+    truncateSessionFromMessage: (sessionId: string, messageId: string) => void
+    activateMessageBranch: (sessionId: string, branchId: string) => void
+    setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
+    clearBranchContextReset: (sessionId: string) => void
+    markSpecialistSwitchResetRequired: (sessionId: string) => void
+    clearSpecialistSwitchResetRequired: (sessionId: string) => void
+    upsertToolActivity: (input: UpsertToolActivityInput) => void
+    setActivePlanProjection: (sessionId: string, projection: ActivePlanProjection) => void
+    beginActivityGroup: (
+      sessionId: string,
+      groupId: string,
+      title: string,
+      promptMessageId?: string
+    ) => void
+    completeActivityGroup: (sessionId: string, promptMessageId?: string) => void
+    setPermissionPending: (sessionId: string) => void
+    clearPermissionPending: (sessionId: string) => void
+    setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
+    setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
+    // Persists the per-session auto-review toggle. true = on; false = off (default).
+    setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
+    // Sets the per-session enabled compute hosts (single-select, stored as array for extensibility).
+    setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
+    // Updates the persisted specialist UUID for an existing session after reconfigure succeeds.
+    // Passing undefined clears the binding (Main Agent). Persistence only stores the UUID.
+    setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
+    // Toggles whether a conversation is pinned to the top section of the sidebar.
+    togglePinned: (sessionId: string) => void
+    updateSessionArchive: (request: UpdateSessionArchiveRequest) => Promise<ChatSession>
+    // Sets or clears the per-session fix loop active flag. When true, the composer send button is
+    // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
+    setFixLoopActive: (sessionId: string, active: boolean) => void
+    renameSession: (sessionId: string, title: string) => void
+    deleteSession: (sessionId: string) => void
+    removeSessionsForProject: (projectId: string) => void
+  }
 
 // Keeps renderer message ids unique across store mutations in this process.
 let messageSequence = 0
@@ -356,209 +282,6 @@ let runtimeSegmentSequence = 0
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
 const CONVERSATION_GRAPH_SYNC_ERROR =
   'Conversation history could not be finalized safely. Restart the app to restore the last saved conversation state, then report this issue.'
-const externallyHydratedSessions = new WeakSet<ChatSession>()
-
-// Builds the empty in-memory state used by the app and isolated tests.
-export const createInitialSessionState = (): SessionStoreData => ({
-  sessions: [],
-  selectedSessionId: undefined
-})
-
-const stripTransientMessageState = (message: ChatMessage): PersistedChatMessage => {
-  const { sortIndex, ...persistedMessage } = message
-
-  void sortIndex
-
-  return persistedMessage
-}
-
-const stripTransientSessionState = (session: ChatSession): PersistedChatSession => {
-  if (session.conversationGraphSyncBlocked) {
-    throw new Error(
-      'Session persistence is blocked after conversation graph synchronization failed.'
-    )
-  }
-
-  const {
-    activities,
-    activityGroups,
-    isPending,
-    interrupted,
-    fixLoopActive,
-    compacting,
-    agentStatus,
-    awaitingFirstAgentOutput,
-    agentPromptInFlight,
-    branchContextResetRequired,
-    specialistSwitchResetRequired,
-    branchSwitchBlocked,
-    conversationGraphSyncBlocked,
-    pendingContextReplayMessageId,
-    activePlanProjection,
-    planHistoryProjections,
-    runtimeContext,
-    messages,
-    ...persistedSession
-  } = session
-
-  void isPending
-  void interrupted
-  void fixLoopActive
-  void compacting
-  void agentStatus
-  void awaitingFirstAgentOutput
-  void agentPromptInFlight
-  void branchContextResetRequired
-  void specialistSwitchResetRequired
-  void branchSwitchBlocked
-  void conversationGraphSyncBlocked
-  void pendingContextReplayMessageId
-  void activePlanProjection
-  void runtimeContext
-
-  const persistedPlanHistory = sanitizePlanHistoryProjections(planHistoryProjections)
-
-  // Persist a bounded projection of tool activities so the transcript survives restarts.
-  const persistedActivities = activities
-    ?.map(sanitizeToolActivity)
-    .filter((activity): activity is PersistedToolActivity => !!activity)
-  const persistedActivityGroups = activityGroups
-    ?.map(sanitizeActivityGroup)
-    .filter((group): group is PersistedActivityGroup => !!group)
-
-  return materializeSessionConversationGraph({
-    ...persistedSession,
-    messages: messages.map(stripTransientMessageState),
-    ...(persistedPlanHistory ? { planHistoryProjections: persistedPlanHistory } : {}),
-    ...(persistedActivities && persistedActivities.length > 0
-      ? { activities: persistedActivities }
-      : {}),
-    ...(persistedActivityGroups && persistedActivityGroups.length > 0
-      ? { activityGroups: persistedActivityGroups }
-      : {})
-  })
-}
-
-// Restores a persisted tool activity into the richer runtime shape the UI derives its rows from.
-const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivity => ({
-  ...activity,
-  toolKind: activity.toolKind as ToolKind | undefined,
-  toolContent: activity.toolContent as ToolCallContent[] | undefined,
-  toolLocations: activity.toolLocations as ToolCallLocation[] | undefined
-})
-
-// Maps a persisted session (with bounded activities) back into the in-memory chat session shape.
-const hydrateSession = (session: PersistedChatSession): ChatSession => ({
-  ...session,
-  permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-  activities: session.activities?.map(hydrateToolActivity),
-  // Sessions restored as interrupted (see normalizeSessionAfterRestore) carry this exact error;
-  // flag them so the composer can surface a Resume button instead of a dead-end error.
-  interrupted: session.error === INTERRUPTED_SESSION_ERROR ? true : undefined
-})
-
-// The main process owns Plan authority while the renderer keeps a read-only projection for the UI.
-// A lifecycle save can arrive after the ACP Plan event that populated this projection, so retain it
-// only when the durable authority identifies the exact same Plan revision. A newer or missing Plan
-// must invalidate the old projection and let the workspace read the authoritative state again.
-const matchesPersistedPlanProjection = (
-  projection: ActivePlanProjection | undefined,
-  session: PersistedChatSession
-): projection is ActivePlanProjection => {
-  const runtimeContext = session.runtimeContext
-  const plan = runtimeContext?.plan
-  return Boolean(
-    projection &&
-    plan &&
-    projection.revision === runtimeContext.revision &&
-    projection.artifactId === plan.artifactId &&
-    projection.artifactVersionId === plan.artifactVersionId &&
-    projection.artifactChecksum === plan.artifactChecksum &&
-    projection.approval === plan.approval
-  )
-}
-
-const withTransientSessionState = (
-  session: PersistedChatSession,
-  source: ChatSession
-): ChatSession => {
-  const sourceMessages = new Map(source.messages.map((message) => [message.id, message]))
-  const hydrated = hydrateSession(session)
-  return {
-    ...hydrated,
-    messages: hydrated.messages.map((message) => ({
-      ...message,
-      sortIndex: sourceMessages.get(message.id)?.sortIndex
-    })),
-    isPending: source.isPending,
-    interrupted: source.interrupted,
-    fixLoopActive: source.fixLoopActive,
-    compacting: source.compacting,
-    agentStatus: source.agentStatus,
-    awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
-    agentPromptInFlight: source.agentPromptInFlight,
-    branchContextResetRequired: source.branchContextResetRequired,
-    specialistSwitchResetRequired: source.specialistSwitchResetRequired,
-    branchSwitchBlocked: source.branchSwitchBlocked,
-    conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
-    pendingContextReplayMessageId: source.pendingContextReplayMessageId
-  }
-}
-
-const isSameSubmittedUpload = (
-  current: PersistedUploadedAttachment,
-  submitted: PersistedUploadedAttachment
-): boolean =>
-  current.id === submitted.id &&
-  current.versionId === submitted.versionId &&
-  current.sessionId === submitted.sessionId &&
-  current.name === submitted.name &&
-  current.originalName === submitted.originalName &&
-  current.path === submitted.path &&
-  current.mimeType === submitted.mimeType &&
-  current.size === submitted.size
-
-// A save may resolve after a newer runtime event already replaced the source Session object. Merge
-// only the legacy Upload identities proven by that submitted snapshot; never overwrite newer text,
-// graph, status, or transient runtime state with an older durable response.
-const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
-  currentMessages: Message[],
-  submittedMessages: PersistedChatMessage[],
-  durableMessages: PersistedChatMessage[]
-): { messages: Message[]; changed: boolean } => {
-  const submittedById = new Map(submittedMessages.map((message) => [message.id, message]))
-  const durableById = new Map(durableMessages.map((message) => [message.id, message]))
-  let changed = false
-  const messages = currentMessages.map((message) => {
-    const submitted = submittedById.get(message.id)
-    const durable = durableById.get(message.id)
-    if (!message.uploads || !submitted?.uploads || !durable?.uploads) return message
-    const submittedUploads = new Map(submitted.uploads.map((upload) => [upload.id, upload]))
-    const durableUploads = new Map(durable.uploads.map((upload) => [upload.id, upload]))
-    let uploadsChanged = false
-    const uploads = message.uploads.map((upload) => {
-      const submittedUpload = submittedUploads.get(upload.id)
-      const durableUpload = durableUploads.get(upload.id)
-      if (
-        !submittedUpload ||
-        !durableUpload?.versionId ||
-        submittedUpload.versionId ||
-        !isSameSubmittedUpload(upload, submittedUpload)
-      ) {
-        return upload
-      }
-      uploadsChanged = true
-      return durableUpload
-    })
-    if (!uploadsChanged) return message
-    changed = true
-    return { ...message, uploads } as Message
-  })
-  return { messages, changed }
-}
-
-// Serializes one in-memory session into the durable per-file projection saved by the main process.
-export { stripTransientSessionState as toPersistedSession }
 
 // Creates renderer-local message ids while session ids come from the runtime.
 const createMessageId = (): string => {
@@ -1432,173 +1155,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  // Replaces renderer state with the per-session files loaded by the main process. Sessions arrive in
-  // filesystem order, so sort newest-first; selection is restored from the manifest when still present.
-  hydrateSessions: (sessions, manifest, selection) => {
-    const hydrated = [...sessions]
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(hydrateSession)
-    const hasExplicitSelection = selection !== undefined
-    const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
-    const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
-      ? requestedSelection
-      : hasExplicitSelection
-        ? undefined
-        : hydrated[0]?.id
-
-    set({
-      sessions: hydrated,
-      selectedSessionId
-    })
-  },
-
-  // Applies a durable lifecycle event without letting this client's own save echo replace newer
-  // transient runtime state. An equal-revision response may still carry a newly published Upload
-  // Version, so merge that identity delta instead of discarding the whole event.
-  upsertPersistedSession: (session) => {
-    set((state) => {
-      const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt > session.updatedAt) {
-        if (existing.archivedAt === session.archivedAt) return state
-        const withoutPreviousArchive = { ...existing }
-        delete withoutPreviousArchive.archivedAt
-        const projected: ChatSession = {
-          ...withoutPreviousArchive,
-          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt })
-        }
-        externallyHydratedSessions.add(projected)
-        return {
-          sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
-        }
-      }
-      if (existing && existing.updatedAt === session.updatedAt) {
-        const flat = mergeDurableUploadProjection(
-          existing.messages,
-          existing.messages,
-          session.messages
-        )
-        const graph = existing.conversationGraph
-          ? mergeDurableUploadProjection(
-              existing.conversationGraph.messages,
-              existing.conversationGraph.messages,
-              session.conversationGraph?.messages ?? session.messages
-            )
-          : undefined
-        const archiveChanged = existing.archivedAt !== session.archivedAt
-        if (!flat.changed && !graph?.changed && !archiveChanged) return state
-        const withoutPreviousArchive = { ...existing }
-        delete withoutPreviousArchive.archivedAt
-        const projected: ChatSession = {
-          ...withoutPreviousArchive,
-          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
-          messages: flat.messages,
-          ...(graph?.changed
-            ? {
-                conversationGraph: {
-                  ...existing.conversationGraph!,
-                  messages: graph.messages
-                }
-              }
-            : {})
-        }
-        externallyHydratedSessions.add(projected)
-        return {
-          sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
-        }
-      }
-
-      const hydratedSession = hydrateSession(session)
-      const currentPlanProjection = matchesPersistedPlanProjection(
-        existing?.activePlanProjection,
-        session
-      )
-        ? { activePlanProjection: existing.activePlanProjection }
-        : {}
-      const retainedPlanHistory =
-        !hydratedSession.planHistoryProjections && existing?.planHistoryProjections
-          ? { planHistoryProjections: existing.planHistoryProjections }
-          : {}
-      const hydratedWithTransientState = {
-        ...hydratedSession,
-        ...retainedPlanHistory,
-        ...currentPlanProjection
-      }
-      externallyHydratedSessions.add(hydratedWithTransientState)
-      const sessions = [
-        hydratedWithTransientState,
-        ...state.sessions.filter((candidate) => candidate.id !== session.id)
-      ].sort((left, right) => right.updatedAt - left.updatedAt)
-
-      return { sessions }
-    })
-  },
-
-  // Acknowledges the exact projection returned by this client's save. Conflict recovery may replace
-  // the full persisted projection while the submitted source is still current; a later live mutation
-  // receives only the immutable Upload identity delta so the response cannot roll it back.
-  applyDurableSessionProjection: ({ source, session, mode = 'merge-upload-identities' }) => {
-    set((state) => {
-      const current = state.sessions.find((candidate) => candidate.id === session.id)
-      if (!current) return state
-
-      let projected: ChatSession
-      if (current === source && mode === 'replace-persisted-if-current') {
-        projected = withTransientSessionState(session, current)
-      } else if (current === source) {
-        const flat = mergeDurableUploadProjection(
-          source.messages,
-          source.messages,
-          session.messages
-        )
-        const graph = source.conversationGraph
-          ? mergeDurableUploadProjection(
-              source.conversationGraph.messages,
-              source.conversationGraph.messages,
-              session.conversationGraph?.messages ?? session.messages
-            )
-          : undefined
-        if (!flat.changed && !graph?.changed) return state
-        projected = withTransientSessionState(session, current)
-      } else {
-        const flat = mergeDurableUploadProjection(
-          current.messages,
-          source.messages,
-          session.messages
-        )
-        const graph = current.conversationGraph
-          ? mergeDurableUploadProjection(
-              current.conversationGraph.messages,
-              source.conversationGraph?.messages ?? source.messages,
-              session.conversationGraph?.messages ?? session.messages
-            )
-          : undefined
-        if (!flat.changed && !graph?.changed) return state
-        projected = {
-          ...current,
-          messages: flat.messages,
-          ...(graph?.changed
-            ? {
-                conversationGraph: {
-                  ...current.conversationGraph!,
-                  messages: graph.messages
-                }
-              }
-            : {})
-        }
-      }
-
-      externallyHydratedSessions.add(projected)
-      return {
-        sessions: state.sessions.map((candidate) =>
-          candidate.id === session.id ? projected : candidate
-        )
-      }
-    })
-  },
+  ...createSessionPersistenceOwner<SessionStore>(set),
 
   // Appends or extends a streamed agent message using a stable stream id.
   appendAgentMessageChunk: ({
@@ -2974,6 +2531,3 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   }
 }))
-
-export const isExternallyHydratedSession = (session: ChatSession): boolean =>
-  externallyHydratedSessions.has(session)
