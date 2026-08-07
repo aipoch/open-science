@@ -201,6 +201,7 @@
     "session_persistence": {
       "ownerPaths": [
         "src/main/session-persistence/coordinator.ts",
+        "src/main/session-persistence/deletion-owner.ts",
         "src/main/session-persistence/state-owner.ts"
       ],
       "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
