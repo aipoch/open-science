@@ -173,6 +173,13 @@ describe('post-merge Windows validation', () => {
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
     )
+    expect(notarize['runs-on']).toBe('${{ matrix.os }}')
+    expect(notarize.strategy?.matrix).toEqual({
+      include: [
+        { arch: 'arm64', os: 'macos-15' },
+        { arch: 'x64', os: 'macos-15-intel' }
+      ]
+    })
     expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
     expect(refreshedMacosEvidence.run).toContain("matrix.arch == 'arm64'")
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')

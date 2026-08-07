@@ -60,14 +60,20 @@ permissions:
 jobs:
   notarize:
     name: Notarize + staple ${{ matrix.arch }}
-    runs-on: macos-14
+    # The final package smoke launches the stapled app. Keep it architecture-native so the x64
+    # launch is not silently dependent on Rosetta being installed on an Apple Silicon runner.
+    runs-on: ${{ matrix.os }}
     # Hard ceiling so a stuck notarization can never run forever (see also the wait --timeout below).
     timeout-minutes: 30
     strategy:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x64
+            os: macos-15-intel
     steps:
       # Notarization is optional: if the API key secret isn't configured, no-op so a tagged release
       # still succeeds with the ad-hoc mac build (today's behavior) instead of failing here. Every
