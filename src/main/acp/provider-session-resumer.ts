@@ -221,7 +221,6 @@ export class AcpProviderSessionResumer {
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
-    let resumedProviderSessionId = providerSessionId
     try {
       let backend = this.deps.currentBackend()
       capability = await this.deps.capabilities.provision({
@@ -277,7 +276,7 @@ export class AcpProviderSessionResumer {
       provisionalSession = (
         connection.agent as unknown as ClientContextSessionAttacher
       ).attachSession({ sessionId: providerSessionId, ...(resumeResponse as object) })
-      resumedProviderSessionId = provisionalSession.sessionId
+      const resumedProviderSessionId = provisionalSession.sessionId
       const extended = this.deps.registry.reserve({
         reservation: identity,
         sessionIds: [provisionalSession.sessionId]

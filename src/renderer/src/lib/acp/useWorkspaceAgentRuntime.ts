@@ -1383,7 +1383,8 @@ const restoreRemovedTurnProjection = (sessionBeforeRemoval: ChatSession): void =
 // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
 const resumeInterruptedWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
-  sessionId: string
+  sessionId: string,
+  drainRuntimeEvents?: RuntimeEventDrain
 ): Promise<void> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -1394,7 +1395,12 @@ const resumeInterruptedWorkspaceSession = async (
   // Resume is reconnect-only. ACP session/resume restores provider context but does not start a turn;
   // an already-attached session therefore only needs its recovery gate cleared.
   if (runtimeAlreadyAttached) {
-    useSessionStore.getState().markResumed(sessionId)
+    try {
+      await drainRuntimeEvents?.(sessionId)
+      useSessionStore.getState().markResumed(sessionId)
+    } catch (error) {
+      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+    }
     return
   }
 
@@ -1418,6 +1424,10 @@ const resumeInterruptedWorkspaceSession = async (
       session.providerSessionId,
       session.providerContinuityToken
     )
+    // Ownership transfer is complete in the coordinator, but accepted events from the previous
+    // runtime generation can still be queued in the renderer. Drain them before unlocking the
+    // composer so a stale terminal event cannot settle the user's next turn.
+    await drainRuntimeEvents?.(sessionId)
     useSessionStore.getState().markResumed(
       sessionId,
       resumeResult
@@ -2090,8 +2100,9 @@ const useWorkspaceAgentRuntime = (): {
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> => resumeInterruptedWorkspaceSession(runtime, sessionId),
-    [runtime]
+    (sessionId: string): Promise<void> =>
+      resumeInterruptedWorkspaceSession(runtime, sessionId, drainRuntimeEvents),
+    [runtime, drainRuntimeEvents]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.

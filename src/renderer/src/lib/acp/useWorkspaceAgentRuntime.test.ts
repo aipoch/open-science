@@ -3002,6 +3002,50 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.interrupted).toBeUndefined()
   })
 
+  it('keeps recovery locked until stale renderer events are drained', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue after reconnecting',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const drainGate = createDeferred<void>()
+    const drainRuntimeEvents = vi.fn(() => drainGate.promise)
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(
+      runtime,
+      'session-1',
+      drainRuntimeEvents
+    )
+    await vi.waitFor(() => expect(drainRuntimeEvents).toHaveBeenCalledWith('session-1'))
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      interrupted: true,
+      resumeRecovery: expect.objectContaining({ promptMessageId: expect.any(String) })
+    })
+
+    drainGate.resolve()
+    await resumeRequest
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+  })
+
   it('does not recreate an interrupted session deleted while reconnecting', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
