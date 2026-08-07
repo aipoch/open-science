@@ -103,7 +103,12 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 }))
 
 vi.mock('./WorkspaceMessageScroller', () => ({
-  WorkspaceMessageScroller: (): null => null
+  WorkspaceMessageScroller: ({
+    isResumingSession
+  }: {
+    isResumingSession?: boolean
+  }): React.JSX.Element | null =>
+    isResumingSession ? <span data-testid="resume-progress-indicator">Resuming session</span> : null
 }))
 
 vi.mock('./PermissionApprovalControls', () => ({
@@ -611,6 +616,41 @@ describe('ConversationPanel composer intake', () => {
 })
 
 describe('ConversationPanel interrupted Session recovery', () => {
+  it('shows message-area progress while the Session resume is in flight', async () => {
+    let resolveResume: (() => void) | undefined
+    const onResumeSession = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveResume = resolve
+        })
+    )
+    const interruptedSession: ChatSession = {
+      id: 'session-interrupted',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'idle',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    renderPanel({ activeSession: interruptedSession, onResumeSession })
+
+    const resumeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Resume session"]'
+    )
+    await act(async () => resumeButton?.click())
+
+    expect(onResumeSession).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+
+    await act(async () => resolveResume?.())
+
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+  })
+
   it('keeps Resume disabled while Session persistence is unavailable', () => {
     const onResumeSession = vi.fn().mockResolvedValue(undefined)
     const interruptedSession: ChatSession = {

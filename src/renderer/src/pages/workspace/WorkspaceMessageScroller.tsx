@@ -56,6 +56,7 @@ import { useNotebookRunsById } from './use-notebook-runs-by-id'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
   // Events are read-only projections; retry sends an intent that main validates against its state.
@@ -336,6 +337,7 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
   handoffLifecycleSource,
@@ -884,10 +886,10 @@ const WorkspaceMessageScrollerImpl = ({
                   </MessageScrollerItem>
                 ))}
 
-                {agentLoadingPhase !== 'hidden' && activeSession ? (
+                {(isResumingSession || agentLoadingPhase !== 'hidden') && activeSession ? (
                   <WorkspaceAgentLoadingRow
                     sessionId={activeSession.id}
-                    phase={agentLoadingPhase}
+                    phase={isResumingSession ? 'resuming' : agentLoadingPhase}
                   />
                 ) : null}
               </div>
@@ -952,6 +954,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
   previous.notebookReference?.projectName === next.notebookReference?.projectName &&
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&

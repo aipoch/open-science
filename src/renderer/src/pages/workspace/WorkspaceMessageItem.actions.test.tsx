@@ -161,9 +161,11 @@ describe('WorkspaceMessageItem user message actions', () => {
     await renderItem(createMessage({ interrupted: true }))
 
     expect(container.querySelectorAll('[data-slot="user-message-bubble"]')).toHaveLength(1)
-    expect(container.querySelector('[data-slot="user-message-interrupted"]')?.textContent).toBe(
-      'This turn was interrupted.'
-    )
+    const interruption = container.querySelector('[data-slot="user-message-interrupted"]')
+    expect(interruption?.textContent).toBe('This turn was interrupted.')
+    expect(interruption?.classList.contains('italic')).toBe(true)
+    expect(interruption?.classList.contains('text-amber-600')).toBe(true)
+    expect(interruption?.classList.contains('dark:text-amber-400')).toBe(true)
   })
 
   it('renders copy and edit actions next to user bubbles only', async () => {

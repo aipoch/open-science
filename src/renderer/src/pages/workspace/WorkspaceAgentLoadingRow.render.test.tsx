@@ -158,6 +158,16 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).not.toContain('retrying request…')
   })
 
+  it('reuses the thinking indicator for Session resume progress', () => {
+    seedRunningSession(5000)
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="resuming" />))
+
+    expect(container.textContent).toContain('Resuming session')
+    expect(container.textContent).not.toContain('Thinking')
+    expect(container.textContent).not.toContain('Interacting with tools')
+    expect(container.querySelector('[data-testid="open-science-thinking-indicator"]')).not.toBeNull()
+  })
+
   it('restarts thinking time when tool interaction returns to thinking', () => {
     seedRunningSession(45_000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))

@@ -6,7 +6,7 @@ type TimelinePosition = {
   sortIndex?: number
 }
 
-type AgentLoadingPhase = 'hidden' | 'thinking' | 'interacting-with-tools'
+type AgentLoadingPhase = 'hidden' | 'thinking' | 'interacting-with-tools' | 'resuming'
 
 const isLaterThan = (candidate: TimelinePosition, reference: TimelinePosition): boolean => {
   if (candidate.updatedAt !== reference.updatedAt) return candidate.updatedAt > reference.updatedAt

@@ -454,6 +454,7 @@ const ConversationPanel = ({
         <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
           <WorkspaceMessageScroller
             activeSession={activeSession}
+            isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
