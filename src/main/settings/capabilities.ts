@@ -37,6 +37,7 @@ export interface SettingsPreferences {
     preference: CloseActionPreference | undefined
   ): Promise<SettingsPreferencesSnapshot>
   setAppIconVariant(variant: AppIconVariant): Promise<SettingsPreferencesSnapshot>
+  setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsPreferencesSnapshot>
 }
 
 // One language's complete persisted Notebook policy, projected as detached values. Package mirrors

@@ -1,6 +1,7 @@
 import type { PackageMirror } from '../../../shared/mirror'
 import type { AppIconVariant, ReasoningEffort, SettingsSnapshot } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
@@ -15,6 +16,7 @@ type SettingsPreferencesState = {
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
+  defaultPermissionProfile: PermissionProfileId
 }
 
 type OptimisticPreferenceField =
@@ -23,6 +25,7 @@ type OptimisticPreferenceField =
   | 'conversationSkillImportEnabled'
   | 'closePreference'
   | 'appIconVariant'
+  | 'defaultPermissionProfile'
 
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
@@ -30,6 +33,7 @@ export type SettingsPreferencesActions = {
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
+  setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<void>
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
@@ -41,6 +45,7 @@ type SettingsPreferencesCommands = Pick<
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
+  | 'setDefaultPermissionProfile'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 >
@@ -58,7 +63,8 @@ const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   notifications: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.'
+  appIcon: 'Could not save app icon preference. Try again.',
+  defaultPermissionProfile: 'Could not save the default permission mode. Try again.'
 }
 
 // Owns renderer preference commands and their optimistic settlement. Core remains the sole owner of
@@ -140,6 +146,15 @@ export const createSettingsPreferencesSlice = ({
         variant,
         () => getCommands().setAppIconVariant({ variant }),
         'Failed to set app icon variant'
+      ),
+
+    setDefaultPermissionProfile: (profile) =>
+      runOptimisticWrite(
+        'defaultPermissionProfile',
+        'defaultPermissionProfile',
+        profile,
+        () => getCommands().setDefaultPermissionProfile({ profile }),
+        'Failed to set default permission profile'
       ),
 
     completeOnboarding: async () => {

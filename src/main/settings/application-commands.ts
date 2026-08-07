@@ -11,6 +11,7 @@ import type {
   ScanRepoRequest,
   SetAppIconVariantRequest,
   SetClosePreferenceRequest,
+  SetDefaultPermissionProfileRequest,
   SetNotificationsEnabledRequest,
   SetPackageMirrorRequest,
   ValidateProviderRequest
@@ -26,6 +27,7 @@ import type { SettingsService } from './service'
 import {
   readAppIconVariant,
   readClosePreference,
+  readDefaultPermissionProfile,
   readNotificationsEnabled
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
@@ -58,6 +60,7 @@ type CoreSettingsCommandStore = Pick<
   | 'refreshProviderModels'
   | 'scanRepoSkills'
   | 'setClosePreference'
+  | 'setDefaultPermissionProfile'
   | 'setNotificationsEnabled'
   | 'setPackageMirror'
   | 'validateProvider'
@@ -208,6 +211,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetClosePreferenceRequest],
     StoreResult<'setClosePreference'>
   >('settings:set-close-preference'),
+  setDefaultPermissionProfile: defineApplicationCommand<
+    'settings:set-default-permission-profile',
+    readonly [request: SetDefaultPermissionProfileRequest],
+    StoreResult<'setDefaultPermissionProfile'>
+  >('settings:set-default-permission-profile'),
   setNotificationsEnabled: defineApplicationCommand<
     'settings:set-notifications-enabled',
     readonly [request: SetNotificationsEnabledRequest],
@@ -254,6 +262,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.scanRepoSkills,
   settingsCoreApplicationCommands.setAppIconVariant,
   settingsCoreApplicationCommands.setClosePreference,
+  settingsCoreApplicationCommands.setDefaultPermissionProfile,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setPackageMirror,
   settingsCoreApplicationCommands.validateProvider
@@ -335,6 +344,12 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-close-preference': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-close-preference')
         return dependencies.service.setClosePreference(readClosePreference(args[0]))
+      },
+      'settings:set-default-permission-profile': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-default-permission-profile')
+        return dependencies.service.setDefaultPermissionProfile(
+          readDefaultPermissionProfile(args[0])
+        )
       },
       'settings:set-notifications-enabled': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-notifications-enabled')

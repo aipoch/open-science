@@ -28,7 +28,7 @@ import {
   isReasoningEffort
 } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
-import { isPermissionProfileId } from '../../shared/permission-profiles'
+import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
@@ -974,6 +974,11 @@ class SettingsRepository {
   // Persists the selected app-icon look; applied live to the window and dock/taskbar by the caller.
   async setAppIconVariant(variant: AppIconVariant): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, appIconVariant: variant }))
+  }
+
+  // Persists the approval profile applied to conversations created after this preference changes.
+  async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, defaultPermissionProfile: profile }))
   }
 
   // Records the detected opencode executable path + version for later spawns + the settings status card.

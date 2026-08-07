@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   readClosePreference,
   readConversationSkillImportEnabled,
+  readDefaultPermissionProfile,
   readAppIconVariant,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
@@ -54,6 +55,16 @@ describe('Settings transport validation', () => {
       'Unknown app icon variant: sparkle'
     )
     expect(() => readAppIconVariant({})).toThrow('Unknown app icon variant: undefined')
+  })
+
+  it('accepts only known default permission profiles', () => {
+    expect(readDefaultPermissionProfile({ profile: 'auto' })).toBe('auto')
+    expect(() => readDefaultPermissionProfile({ profile: 'always' })).toThrow(
+      'Unknown default permission profile: always'
+    )
+    expect(() => readDefaultPermissionProfile({})).toThrow(
+      'Unknown default permission profile: undefined'
+    )
   })
 
   it('accepts only a string isolated Claude token', () => {

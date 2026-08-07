@@ -7,7 +7,10 @@ import {
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
-import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
+import {
+  getDefaultPermissionProfile,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
 import type { SettingsPreferences, SettingsPreferencesSnapshot } from './capabilities'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
@@ -85,6 +88,12 @@ class SettingsPreferencesModule implements SettingsPreferences {
 
   async setAppIconVariant(variant: AppIconVariant): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(await this.repository.setAppIconVariant(variant))
+  }
+
+  async setDefaultPermissionProfile(
+    profile: PermissionProfileId
+  ): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setDefaultPermissionProfile(profile))
   }
 }
 

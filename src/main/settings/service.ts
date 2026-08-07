@@ -60,6 +60,7 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -441,6 +442,12 @@ class SettingsService {
   // Persists the app-icon look; the caller applies it live to the window and dock/taskbar.
   async setAppIconVariant(variant: AppIconVariant): Promise<SettingsSnapshot> {
     await this.preferences.setAppIconVariant(variant)
+
+    return this.getSettingsView()
+  }
+
+  async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsSnapshot> {
+    await this.preferences.setDefaultPermissionProfile(profile)
 
     return this.getSettingsView()
   }

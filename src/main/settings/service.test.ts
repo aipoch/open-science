@@ -5053,6 +5053,15 @@ describe('SettingsService: default permission profile', () => {
 
     expect((await service.getSettingsView()).defaultPermissionProfile).toBe('auto')
   })
+
+  it('persists a profile and returns the refreshed snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.setDefaultPermissionProfile('full')
+
+    expect(snapshot.defaultPermissionProfile).toBe('full')
+    expect((await repository.getSettings()).defaultPermissionProfile).toBe('full')
+  })
 })
 
 describe('SettingsService: listAgentHomeSkills framework routing', () => {

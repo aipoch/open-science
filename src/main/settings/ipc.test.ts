@@ -47,6 +47,7 @@ type FakeSettingsService = Record<
   | 'setNotificationsEnabled'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
+  | 'setDefaultPermissionProfile'
   | 'setAppIconVariant'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -127,6 +128,9 @@ const createFakeService = (): FakeSettingsService => ({
   setClosePreference: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
+  setDefaultPermissionProfile: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], defaultPermissionProfile: 'auto' }),
   setAppIconVariant: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
@@ -1158,6 +1162,21 @@ describe('settings IPC handlers', () => {
     expect(service.setAppIconVariant).toHaveBeenCalledWith('dark')
     expect(onAppIconVariantChanged).toHaveBeenCalledWith('dark')
     expect(result).toBe(snapshot)
+  })
+
+  it('persists valid default permission profiles and rejects unknown values', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    const result = await invoke('settings:set-default-permission-profile', { profile: 'auto' })
+
+    expect(service.setDefaultPermissionProfile).toHaveBeenCalledWith('auto')
+    expect(result).toMatchObject({ defaultPermissionProfile: 'auto' })
+    await expect(
+      invoke('settings:set-default-permission-profile', { profile: 'always' })
+    ).rejects.toThrow('Unknown default permission profile')
+    expect(service.setDefaultPermissionProfile).toHaveBeenCalledTimes(1)
   })
 
   it('rejects an unknown app icon variant without touching the service', async () => {

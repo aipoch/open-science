@@ -44,6 +44,7 @@ describe('SettingsPreferencesModule', () => {
     await preferences.setConversationSkillImportEnabled(false)
     await preferences.setClosePreference('quit')
     await preferences.setAppIconVariant('dark')
+    await preferences.setDefaultPermissionProfile('auto')
     await preferences.setDataRoot(dataRoot)
     await preferences.markOnboardingComplete()
     await preferences.markPathsNormalized()
@@ -59,7 +60,7 @@ describe('SettingsPreferencesModule', () => {
       conversationSkillImportEnabled: false,
       closePreference: 'quit',
       appIconVariant: 'dark',
-      defaultPermissionProfile: 'ask'
+      defaultPermissionProfile: 'auto'
     })
 
     await preferences.setClosePreference(undefined)
@@ -72,7 +73,8 @@ describe('SettingsPreferencesModule', () => {
       reasoningEffort: 'high',
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
-      appIconVariant: 'dark'
+      appIconVariant: 'dark',
+      defaultPermissionProfile: 'auto'
     })
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })

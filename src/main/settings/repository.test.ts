@@ -392,6 +392,16 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).defaultPermissionProfile).toBeUndefined()
   })
 
+  it('persists the default permission profile across a sanitized read and reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setDefaultPermissionProfile('full')
+
+    expect((await repository.getSettings()).defaultPermissionProfile).toBe('full')
+    expect((await new SettingsRepository(root).getSettings()).defaultPermissionProfile).toBe('full')
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

@@ -431,6 +431,10 @@ export type SetAppIconVariantRequest = {
   variant: AppIconVariant
 }
 
+export type SetDefaultPermissionProfileRequest = {
+  profile: PermissionProfileId
+}
+
 // A built-in icon variant plus a small preview image (data URL) generated in the main process from the
 // bundled asset, so the renderer shows exactly what will be applied without shipping the asset twice.
 export type AppIconPreview = AppIconVariantInfo & {

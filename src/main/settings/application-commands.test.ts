@@ -44,6 +44,7 @@ const expectedChannels = [
   'settings:scan-repo-skills',
   'settings:set-app-icon-variant',
   'settings:set-close-preference',
+  'settings:set-default-permission-profile',
   'settings:set-notifications-enabled',
   'settings:set-package-mirror',
   'settings:validate-provider'
@@ -109,7 +110,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
-  it('installs the exact 31-command inventory and dispatches a remote-safe preflight query', async () => {
+  it('installs the exact 32-command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }
     serviceMethod('getPreflight').mockResolvedValue(preflight)
@@ -181,7 +182,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })
 
-  it('rejects all ten local-only commands before an owner can run', async () => {
+  it('rejects all eleven local-only commands before an owner can run', async () => {
     const { appearance, dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
@@ -195,6 +196,7 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.installOpencode, [{ source: 'managed' }]],
       [settingsCoreApplicationCommands.setAppIconVariant, [{ variant: 'dark' }]],
       [settingsCoreApplicationCommands.setClosePreference, [{ preference: 'quit' }]],
+      [settingsCoreApplicationCommands.setDefaultPermissionProfile, [{ profile: 'auto' }]],
       [settingsCoreApplicationCommands.setNotificationsEnabled, [{ enabled: true }]],
       [settingsCoreApplicationCommands.setPackageMirror, [{}]]
     ] as const
@@ -212,6 +214,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('installOpencode')).not.toHaveBeenCalled()
     expect(appearance).not.toHaveBeenCalled()
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
+    expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
     expect(serviceMethod('setPackageMirror')).not.toHaveBeenCalled()
   })
@@ -271,6 +274,10 @@ describe('Settings core application commands', () => {
       invocation([{}] as const)
     )
     await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setDefaultPermissionProfile,
+      invocation([{ profile: 'auto' }] as const)
+    )
+    await router.dispatcher.invoke(
       settingsCoreApplicationCommands.setNotificationsEnabled,
       invocation([{ enabled: false }] as const)
     )
@@ -300,6 +307,7 @@ describe('Settings core application commands', () => {
     expect(emitInstallEvent.mock.calls[1]?.[0]).toBe(installProgressEvent)
     expect(appearance).toHaveBeenCalledWith('dark')
     expect(serviceMethod('setClosePreference')).toHaveBeenCalledWith(undefined)
+    expect(serviceMethod('setDefaultPermissionProfile')).toHaveBeenCalledWith('auto')
     expect(serviceMethod('setNotificationsEnabled')).toHaveBeenCalledWith(false)
     expect(serviceMethod('setPackageMirror')).toHaveBeenCalledWith(mirror)
   })
@@ -323,6 +331,12 @@ describe('Settings core application commands', () => {
     ).rejects.toThrow('Invalid close preference: close')
     await expect(
       router.dispatcher.invoke(
+        settingsCoreApplicationCommands.setDefaultPermissionProfile,
+        invocation([{ profile: 'always' } as never] as const)
+      )
+    ).rejects.toThrow('Unknown default permission profile: always')
+    await expect(
+      router.dispatcher.invoke(
         settingsCoreApplicationCommands.setNotificationsEnabled,
         invocation([{ enabled: 'yes' } as never] as const)
       )
@@ -330,6 +344,7 @@ describe('Settings core application commands', () => {
 
     expect(appearance).not.toHaveBeenCalled()
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
+    expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
   })
 })

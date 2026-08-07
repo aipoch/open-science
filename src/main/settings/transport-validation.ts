@@ -5,6 +5,7 @@ import {
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 
 const readField = (value: unknown, field: string): unknown =>
   typeof value === 'object' && value !== null
@@ -51,6 +52,14 @@ const readAppIconVariant = (request: unknown): AppIconVariant => {
   return variant
 }
 
+const readDefaultPermissionProfile = (request: unknown): PermissionProfileId => {
+  const profile = readField(request, 'profile')
+  if (!isPermissionProfileId(profile)) {
+    throw new Error(`Unknown default permission profile: ${String(profile)}`)
+  }
+  return profile
+}
+
 const readIsolatedClaudeToken = (token: unknown): string => {
   if (typeof token !== 'string') {
     throw new Error('Claude sign-in token must be a string.')
@@ -62,6 +71,7 @@ export {
   readAppIconVariant,
   readClosePreference,
   readConversationSkillImportEnabled,
+  readDefaultPermissionProfile,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
   readReasoningEffort

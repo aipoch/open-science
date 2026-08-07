@@ -38,6 +38,7 @@ import {
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
   type SetClosePreferenceRequest,
+  type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
   type SetNotificationsEnabledRequest,
   type SetReasoningEffortRequest,
@@ -55,6 +56,7 @@ import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   readAppIconVariant,
   readClosePreference,
+  readDefaultPermissionProfile,
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
@@ -175,6 +177,14 @@ const registerSettingsIpcHandlers = ({
       const preference = readClosePreference(request)
       log.info('set close preference requested', { preference: preference ?? 'ask' })
       return service.setClosePreference(preference)
+    }
+  )
+  ipcMainHandle(
+    'settings:set-default-permission-profile',
+    async (_event, request: SetDefaultPermissionProfileRequest) => {
+      const profile = readDefaultPermissionProfile(request)
+      log.info('set default permission profile requested', { profile })
+      return service.setDefaultPermissionProfile(profile)
     }
   )
   ipcMainHandle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
