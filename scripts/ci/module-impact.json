@@ -154,6 +154,7 @@
         "src/main/artifacts/provenance-repository.ts",
         "src/main/artifacts/provenance-staging-recovery.ts",
         "src/main/artifacts/provenance-storage.ts",
+        "src/main/artifacts/provenance-unindexed-recovery.ts",
         "src/main/artifacts/provenance-version-writer.ts"
       ],
       "interfacePaths": [
