@@ -12,6 +12,7 @@ import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
+const figureImageClassName = 'block max-h-[32rem] w-auto max-w-none shrink-0 object-contain'
 
 // Drops a single trailing newline so streamed text doesn't render an extra blank line.
 const trimTrailingNewline = (text: string): string => text.replace(/\n$/u, '')
@@ -302,7 +303,7 @@ const WorkingFileImage = ({ figure }: { figure: WorkingFileNotebookFigure }): Re
       data-testid="notebook-output-image"
       src={state.resource.url}
       alt={figure.name}
-      className="max-h-[32rem] w-full object-contain"
+      className={figureImageClassName}
       draggable={false}
     />
   )
@@ -356,15 +357,18 @@ const NotebookRunFigureOutputs = ({
         <div
           key={figure.key}
           data-testid="notebook-figure-output"
-          className="rounded-xl border border-border-100 bg-bg-000 p-2 shadow-sm"
+          role="region"
+          aria-label={`Scrollable figure preview: ${figure.name}`}
+          tabIndex={0}
+          className="overflow-x-auto overflow-y-hidden rounded-lg border border-border-200 bg-bg-100"
         >
-          <div className="flex min-h-24 items-center justify-center overflow-hidden rounded-lg border border-border-200 bg-bg-100">
+          <div className="flex min-h-24 w-max min-w-full items-center justify-center">
             {figure.source === 'captured' ? (
               <img
                 data-testid="notebook-output-image"
                 src={`data:${figure.mimeType};base64,${figure.payload}`}
                 alt={figure.name}
-                className="max-h-[32rem] w-full object-contain"
+                className={figureImageClassName}
                 draggable={false}
               />
             ) : (
