@@ -124,7 +124,7 @@ export type AgentBackendProviderPort = Pick<
 
 export type AgentBackendConnectorPort = Pick<
   ConnectorSettingsModule,
-  'provisionedConnectorSkillNames'
+  'enabledConnectorIds' | 'provisionedConnectorSkillNames'
 >
 
 type BridgeBasePort = Pick<
@@ -579,9 +579,11 @@ export class AgentBackendResolver {
       ? [...new Set(target.reasoningEffortProfile.slots)]
       : undefined
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const connectorInstructions = renderConnectorInstructions(
-      await this.connectors.provisionedConnectorSkillNames()
-    )
+    const connectorSkillNames =
+      framework.id === 'claude-code'
+        ? await this.connectors.provisionedConnectorSkillNames()
+        : this.connectors.enabledConnectorIds(settings.connectors).map((id) => `mcp-${id}`)
+    const connectorInstructions = renderConnectorInstructions(connectorSkillNames)
     if (framework.id === 'claude-code') {
       const { envOverrides, executablePath, sessionOptions, contextWindow } =
         await this.resolveClaudeSpawnConfig(settings, target, forcedSkillIds)

@@ -142,6 +142,7 @@ const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDoub
 type HarnessOptions = {
   settings?: StoredSettings
   frameworkOverride?: string
+  connectorIds?: string[]
   connectorSkillNames?: string[]
   rejectRequiredModels?: ReadonlySet<string>
   targetOverride?: (
@@ -239,6 +240,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexProxyEnvironment: vi.fn(async () => undefined)
   } satisfies AgentBackendRuntimePort
   const connectors = {
+    enabledConnectorIds: vi.fn(() => options.connectorIds ?? []),
     provisionedConnectorSkillNames: vi.fn(async () => options.connectorSkillNames ?? [])
   } satisfies AgentBackendConnectorPort
 
@@ -338,6 +340,7 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.readFrameworkOverride).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeReasoningEffortProfile).not.toHaveBeenCalled()
+    expect(harness.connectors.enabledConnectorIds).not.toHaveBeenCalled()
     expect(harness.connectors.provisionedConnectorSkillNames).not.toHaveBeenCalled()
     expect(harness.createResponsesBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
@@ -1123,6 +1126,7 @@ describe('AgentBackendResolver bridge predicates', () => {
     }
   ])('advertises exact enabled Connector Skill names to $name', async (testCase) => {
     const harness = makeHarness({
+      connectorIds: ['pubmed', 'literature'],
       connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
       targetOverride: () => testCase.target
     })
@@ -1139,9 +1143,14 @@ describe('AgentBackendResolver bridge predicates', () => {
         : backend.persistentSystemPrompt
 
     expect(instructions).toContain(
-      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
+      testCase.frameworkId === 'claude-code'
+        ? 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
+        : 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.'
     )
     expect(instructions).toContain('Allowed Specialist Skills for this session')
+    if (testCase.frameworkId !== 'claude-code') {
+      expect(instructions).not.toContain('`mcp-custom-chemistry`')
+    }
     expect(instructions).not.toContain('`mcp-openalex`')
     await backend.anthropicBridgeLease?.release()
     await backend.responsesBridgeLease?.release()
@@ -1159,7 +1168,7 @@ describe('AgentBackendResolver bridge predicates', () => {
     }
   ])('persists skill-first connector guidance for Codex $name', async (testCase) => {
     const harness = makeHarness({
-      connectorSkillNames: ['mcp-pubmed'],
+      connectorIds: ['pubmed'],
       targetOverride: () => ({
         needsChatResponsesBridge: testCase.chat,
         needsNativeResponsesCompatibility: testCase.native,
