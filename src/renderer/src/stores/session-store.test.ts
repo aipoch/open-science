@@ -3413,7 +3413,8 @@ describe('truncateSessionFromMessage', () => {
       sessionId: 'session-1',
       content: 'edited user-2'
     })
-    const beforeReplay = useSessionStore.getState().sessions[0]
+    const beforeReplayState = useSessionStore.getState()
+    const beforeReplay = beforeReplayState.sessions[0]
 
     const replayed = useSessionStore.getState().appendAgentMessageChunk({
       sessionId: 'session-1',
@@ -3425,6 +3426,7 @@ describe('truncateSessionFromMessage', () => {
 
     const afterReplay = useSessionStore.getState().sessions[0]
     expect(replayed?.messageId).toBe('agent-2')
+    expect(useSessionStore.getState()).toBe(beforeReplayState)
     expect(afterReplay).toBe(beforeReplay)
     expect(afterReplay.messages.map((message) => message.id)).toEqual([
       'user-1',

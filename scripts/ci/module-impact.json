@@ -6,7 +6,11 @@
         "src/renderer/src/stores/session-store.ts",
         "src/renderer/src/stores/session-store-persistence-owner.ts",
         "src/renderer/src/stores/session-store-message-graph-owner.ts",
-        "src/renderer/src/stores/session-store-message-graph-helpers.ts"
+        "src/renderer/src/stores/session-store-message-graph-helpers.ts",
+        "src/renderer/src/stores/session-store-run-projection-owner.ts",
+        "src/renderer/src/stores/session-store-run-output-helpers.ts",
+        "src/renderer/src/stores/session-store-run-activity-helpers.ts",
+        "src/renderer/src/stores/session-store-run-terminal-helpers.ts"
       ],
       "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
       "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
