@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolActivity } from '@/stores/session-store'
 import type { ConversationItem } from './workspace-conversation-items'
 import {
+  formatActivityGroupElapsed,
   formatActivityGroupTitle,
   formatStepCount,
+  getActivityGroupElapsedMs,
   getRenderableActivityEntries,
   groupConversationItems,
   isSearchActivity
@@ -285,5 +287,37 @@ describe('formatStepCount', () => {
     expect(formatStepCount([createActivity({ id: 's1' }), createActivity({ id: 's2' })])).toBe(
       '2 steps'
     )
+  })
+})
+
+describe('activity group elapsed time', () => {
+  it('uses milliseconds for short work and compact larger units', () => {
+    expect(formatActivityGroupElapsed(412.9)).toBe('412ms')
+    expect(formatActivityGroupElapsed(12_900)).toBe('12s')
+    expect(formatActivityGroupElapsed(192_000)).toBe('3m 12s')
+    expect(formatActivityGroupElapsed(3_723_000)).toBe('1h 2m 3s')
+  })
+
+  it('adds completed work and keeps counting the active tool', () => {
+    const activities = [
+      createActivity({ id: 's1', createdAt: 1_000, updatedAt: 1_400 }),
+      createActivity({
+        id: 's2',
+        status: 'in_progress',
+        createdAt: 1_500,
+        updatedAt: 1_500
+      })
+    ]
+
+    expect(getActivityGroupElapsedMs(activities, 2_750)).toBe(1_650)
+  })
+
+  it('excludes idle gaps between completed tools', () => {
+    const activities = [
+      createActivity({ id: 's1', createdAt: 1_000, updatedAt: 1_400 }),
+      createActivity({ id: 's2', createdAt: 1_500, updatedAt: 2_600 })
+    ]
+
+    expect(getActivityGroupElapsedMs(activities, 9_000)).toBe(1_500)
   })
 })

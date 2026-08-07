@@ -1,4 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
+import type { WebContents } from 'electron'
 
 import {
   type AppIconPreview,
@@ -6,6 +7,8 @@ import {
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
+  type ExportSkillRequest,
+  type ExportSkillResult,
   type ImportAgentHomeSkillsRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
@@ -47,6 +50,7 @@ import {
 import { SettingsService } from './service'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
+import type { SkillExportArchive } from '../skills/export'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   readAppIconVariant,
@@ -73,7 +77,10 @@ export type SettingsIpcOptions = {
     select(): Promise<
       { cancelled: true } | { cancelled: false; fileName: string; contents: string }
     >
-    save(suggestedFileName: string, contents: string): Promise<boolean>
+    save(suggestedFileName: string, contents: string, sender: WebContents): Promise<boolean>
+  }
+  skillExportFiles?: {
+    save(archive: SkillExportArchive, sender: WebContents): Promise<ExportSkillResult>
   }
 }
 
@@ -88,7 +95,8 @@ const registerSettingsIpcHandlers = ({
   service,
   workflows,
   listAppIconPreviews,
-  connectorTemplateFiles
+  connectorTemplateFiles,
+  skillExportFiles
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => service.getSettingsView())
@@ -210,6 +218,10 @@ const registerSettingsIpcHandlers = ({
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMainHandle('settings:export-skill', async (event, request: ExportSkillRequest) => {
+    if (!skillExportFiles) throw new Error('Skill export is unavailable')
+    return skillExportFiles.save(await service.buildSkillExport(request.id), event.sender)
+  })
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
     workflows.skills.setSkillEnabled(request)
   )
@@ -283,7 +295,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:export-custom-server-template',
     async (
-      _event,
+      event,
       request: ExportCustomServerTemplateRequest
     ): Promise<ExportCustomServerTemplateResult> => {
       if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
@@ -300,7 +312,11 @@ const registerSettingsIpcHandlers = ({
         throw new Error('Connector configuration changed after preview; review it again')
       }
       return {
-        saved: await connectorTemplateFiles.save(result.preview.suggestedFileName, result.contents)
+        saved: await connectorTemplateFiles.save(
+          result.preview.suggestedFileName,
+          result.contents,
+          event.sender
+        )
       }
     }
   )

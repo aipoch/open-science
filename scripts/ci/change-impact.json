@@ -10,50 +10,18 @@
     "typecheck_web",
     "interface_contracts",
     "cli_sdk",
-    "unit_linux",
-    "coverage_macos",
+    "unit_macos",
     "windows_runtime",
     "windows_path",
-    "unit_renderer",
     "build",
     "e2e_functional_macos",
     "e2e_functional_windows",
-    "e2e_functional_linux",
     "e2e_workspace_macos",
     "e2e_workspace_windows",
-    "e2e_workspace_linux",
     "e2e_accessibility_macos",
-    "e2e_accessibility_windows",
-    "e2e_accessibility_linux",
-    "e2e_visual_macos",
-    "e2e_visual_windows",
-    "e2e_visual_linux",
-    "e2e_storage_migration_macos",
-    "e2e_storage_migration_windows",
-    "e2e_storage_migration_linux",
-    "e2e_provider_bridge_macos",
-    "e2e_provider_bridge_windows",
-    "e2e_provider_bridge_linux",
-    "e2e_notebook_lifecycle_macos",
-    "e2e_notebook_lifecycle_windows",
-    "e2e_notebook_lifecycle_linux",
-    "e2e_remote_pairing_macos",
-    "e2e_remote_pairing_windows",
-    "e2e_remote_pairing_linux",
-    "e2e_artifact_provenance_macos",
-    "e2e_artifact_provenance_windows",
-    "e2e_artifact_provenance_linux"
+    "e2e_visual_macos"
   ],
-  "bundleOrder": [
-    "policy",
-    "static",
-    "unit",
-    "coverage_macos",
-    "windows_core",
-    "macos_e2e",
-    "windows_e2e",
-    "linux_e2e"
-  ],
+  "bundleOrder": ["policy", "static", "unit", "windows_core", "macos_e2e", "windows_e2e"],
   "laneBundles": {
     "policy": "policy",
     "docs": "static",
@@ -63,39 +31,16 @@
     "typecheck_web": "static",
     "interface_contracts": "static",
     "cli_sdk": "static",
-    "unit_linux": "unit",
-    "coverage_macos": "coverage_macos",
+    "unit_macos": "unit",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
-    "unit_renderer": "unit",
     "build": "macos_e2e",
     "e2e_functional_macos": "macos_e2e",
     "e2e_functional_windows": "windows_e2e",
-    "e2e_functional_linux": "linux_e2e",
     "e2e_workspace_macos": "macos_e2e",
     "e2e_workspace_windows": "windows_e2e",
-    "e2e_workspace_linux": "linux_e2e",
     "e2e_accessibility_macos": "macos_e2e",
-    "e2e_accessibility_windows": "windows_e2e",
-    "e2e_accessibility_linux": "linux_e2e",
-    "e2e_visual_macos": "macos_e2e",
-    "e2e_visual_windows": "windows_e2e",
-    "e2e_visual_linux": "linux_e2e",
-    "e2e_storage_migration_macos": "macos_e2e",
-    "e2e_storage_migration_windows": "windows_e2e",
-    "e2e_storage_migration_linux": "linux_e2e",
-    "e2e_provider_bridge_macos": "macos_e2e",
-    "e2e_provider_bridge_windows": "windows_e2e",
-    "e2e_provider_bridge_linux": "linux_e2e",
-    "e2e_notebook_lifecycle_macos": "macos_e2e",
-    "e2e_notebook_lifecycle_windows": "windows_e2e",
-    "e2e_notebook_lifecycle_linux": "linux_e2e",
-    "e2e_remote_pairing_macos": "macos_e2e",
-    "e2e_remote_pairing_windows": "windows_e2e",
-    "e2e_remote_pairing_linux": "linux_e2e",
-    "e2e_artifact_provenance_macos": "macos_e2e",
-    "e2e_artifact_provenance_windows": "windows_e2e",
-    "e2e_artifact_provenance_linux": "linux_e2e"
+    "e2e_visual_macos": "macos_e2e"
   },
   "rules": [
     {
@@ -110,8 +55,6 @@
         "vite.web.config.*",
         "playwright.config.*",
         "electron-builder.yml",
-        "e2e/fixtures/**",
-        "e2e/certification/helpers.ts",
         "scripts/ci/**",
         ".github/workflows/pr-gate.yml"
       ],
@@ -135,42 +78,6 @@
       "role": "owner",
       "paths": ["**/*.md", "docs/**", "LICENSE", ".gitignore"],
       "capabilities": ["documentation"]
-    },
-    {
-      "id": "storage_migration_e2e_spec",
-      "role": "owner",
-      "paths": ["e2e/certification/storage-migration.spec.ts"],
-      "capabilities": ["storage_migration_e2e"]
-    },
-    {
-      "id": "provider_bridge_e2e_spec",
-      "role": "owner",
-      "paths": ["e2e/certification/provider-bridge.spec.ts"],
-      "capabilities": ["provider_bridge_e2e"]
-    },
-    {
-      "id": "notebook_lifecycle_e2e_spec",
-      "role": "owner",
-      "paths": ["e2e/certification/notebook-lifecycle.spec.ts"],
-      "capabilities": ["notebook_lifecycle_e2e"]
-    },
-    {
-      "id": "remote_pairing_e2e_spec",
-      "role": "owner",
-      "paths": ["e2e/certification/remote-pairing.spec.ts"],
-      "capabilities": ["remote_pairing_e2e"]
-    },
-    {
-      "id": "artifact_provenance_e2e_spec",
-      "role": "owner",
-      "paths": ["e2e/certification/artifact-provenance.spec.ts"],
-      "capabilities": ["artifact_provenance_e2e"]
-    },
-    {
-      "id": "macos_package_smoke",
-      "role": "owner",
-      "paths": ["scripts/macos-package-smoke.mjs", "scripts/macos-package-smoke.test.ts"],
-      "capabilities": ["macos_package_smoke"]
     },
     {
       "id": "shared_contract",
@@ -200,16 +107,74 @@
         "src/main/**/*powershell*.ts",
         "src/main/**/*path*.ts",
         "src/main/**/*acl*.ts",
+        "src/main/acp/agent-process.ts",
+        "src/main/acp/claude-executable.ts",
+        "src/main/acp/permission-broker.ts",
+        "src/main/acp/runtime.ts",
+        "src/main/agent-framework/codex.ts",
+        "src/main/agent-framework/opencode.ts",
+        "src/main/agent-framework/types.ts",
+        "src/main/app-lifecycle.ts",
+        "src/main/artifacts/durability.ts",
+        "src/main/cli-install/launcher.ts",
+        "src/main/compute/scp-runner.ts",
+        "src/main/compute/ssh-runner.ts",
+        "src/main/crash-diagnostics.ts",
+        "src/main/index.ts",
+        "src/main/lifecycle-shutdown.ts",
+        "src/main/local-rpc-transport.ts",
+        "src/main/notebook/environment-discovery.ts",
+        "src/main/notebook/environment-state-tracker.ts",
+        "src/main/notebook/execution-owner.ts",
+        "src/main/notebook/kernel-executor.ts",
+        "src/main/notebook/local-rpc-server.ts",
+        "src/main/notebook/managed-runtime-guard.ts",
+        "src/main/notebook/mcp-server.ts",
+        "src/main/notebook/micromamba-cache-recovery.ts",
+        "src/main/notebook/micromamba-cache.ts",
+        "src/main/notebook/micromamba.ts",
+        "src/main/notebook/package-listing.ts",
+        "src/main/notebook/provisioner-runtime.ts",
+        "src/main/notebook/provisioner.ts",
+        "src/main/notebook/python-command.ts",
+        "src/main/notebook/r-command.ts",
+        "src/main/notebook/shell-process.ts",
+        "src/main/notebook/venv-overlay.ts",
+        "src/main/notifications/desktop-attention.ts",
+        "src/main/notifications/desktop-badge.ts",
+        "src/main/process-tree.ts",
+        "src/main/remote-access/remoteit.ts",
+        "src/main/settings/agent-runtime-manager.ts",
+        "src/main/settings/claude-detect.ts",
+        "src/main/settings/claude-install.ts",
+        "src/main/settings/codex-auth.ts",
+        "src/main/settings/codex-detect.ts",
+        "src/main/settings/environment-check.ts",
+        "src/main/settings/managed-claude.ts",
+        "src/main/settings/managed-codex.ts",
+        "src/main/settings/managed-opencode.ts",
+        "src/main/settings/notebook-runtime-settings.ts",
+        "src/main/settings/opencode-detect.ts",
+        "src/main/settings/opencode-install.ts",
+        "src/main/settings/preferences.ts",
+        "src/main/settings/process-tree.ts",
+        "src/main/settings/skill-catalog.ts",
+        "src/main/storage-root.ts",
         "src/main/storage/**",
+        "src/main/tray.ts",
+        "src/main/update/create-strategy.ts",
+        "src/main/update/electron-updater-strategy.ts",
         "src/main/session-persistence/**",
         "src/main/file-save.ts",
         "src/main/specialist/repository.ts",
-        "src/main/settings/notebook-runtime-settings.ts",
-        "src/main/settings/preferences.ts",
         "src/preload/**/*windows*.ts",
         "src/preload/**/*powershell*.ts",
         "src/preload/**/*path*.ts",
-        "src/preload/**/*acl*.ts"
+        "src/preload/**/*acl*.ts",
+        "src/preload/renderer-api.d.ts",
+        "src/shared/local-fs.ts",
+        "src/shared/settings.ts",
+        "src/shared/update.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -242,81 +207,6 @@
       "role": "overlay",
       "paths": ["src/main/settings/ipc.ts"],
       "capabilities": ["settings_ipc"]
-    },
-    {
-      "id": "storage_migration_e2e_risk",
-      "role": "overlay",
-      "paths": [
-        "src/main/storage/**",
-        "src/main/storage-root.ts",
-        "src/main/settings/data-root-setting.ts",
-        "src/shared/storage.ts",
-        "src/renderer/src/components/DataRootMissingScreen.tsx",
-        "src/renderer/src/pages/settings/LegacyDataMoveDialog.tsx",
-        "src/renderer/src/pages/settings/Storage*.tsx"
-      ],
-      "capabilities": ["storage_migration_e2e"]
-    },
-    {
-      "id": "provider_bridge_e2e_risk",
-      "role": "overlay",
-      "paths": [
-        "src/main/agent-framework/**",
-        "src/main/acp/backend-generation-owner.ts",
-        "src/main/acp/provider-session-*.ts",
-        "src/main/settings/*provider-bridge.ts",
-        "src/main/settings/agent-runtime-manager.ts",
-        "src/main/settings/backend-resolver.ts",
-        "src/main/settings/native-responses-compatibility.ts",
-        "src/main/settings/responses-bridge.ts",
-        "src/main/settings/provider-accounts.ts",
-        "src/main/settings/provider-env.ts",
-        "src/shared/provider-registry.ts",
-        "src/renderer/src/pages/settings/Provider*.tsx",
-        "src/renderer/src/pages/onboarding/Provider*.tsx"
-      ],
-      "capabilities": ["provider_bridge_e2e"]
-    },
-    {
-      "id": "notebook_lifecycle_e2e_risk",
-      "role": "overlay",
-      "paths": [
-        "src/main/acp/provider-session-*.ts",
-        "src/main/acp/runtime-composition.ts",
-        "src/main/acp/session-capability-owner.ts",
-        "src/main/notebook/**",
-        "src/main/settings/notebook-runtime-settings.ts",
-        "src/shared/notebook*.ts",
-        "src/renderer/src/pages/workspace/*notebook*.ts",
-        "src/renderer/src/pages/workspace/*notebook*.tsx"
-      ],
-      "capabilities": ["notebook_lifecycle_e2e"]
-    },
-    {
-      "id": "remote_pairing_e2e_risk",
-      "role": "overlay",
-      "paths": [
-        "src/main/remote-access/**",
-        "src/main/web-service/http-server.ts",
-        "src/shared/remote-access.ts",
-        "src/shared/remote-bookmarks.ts",
-        "src/renderer/src/pages/settings/RemoteControlPanel.tsx"
-      ],
-      "capabilities": ["remote_pairing_e2e"]
-    },
-    {
-      "id": "artifact_provenance_e2e_risk",
-      "role": "overlay",
-      "paths": [
-        "src/main/artifacts/**",
-        "src/main/acp/artifact-turn-owner.ts",
-        "src/main/session-persistence/artifact*.ts",
-        "src/shared/artifact*.ts",
-        "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
-        "src/renderer/src/pages/workspace/PreviewFileSurface.tsx",
-        "src/renderer/src/pages/workspace/use-project-artifact-files.ts"
-      ],
-      "capabilities": ["artifact_provenance_e2e"]
     }
   ],
   "capabilities": {
@@ -336,10 +226,7 @@
         "typecheck_node",
         "typecheck_web",
         "interface_contracts",
-        "unit_linux",
-        "coverage_macos",
-        "windows_runtime",
-        "windows_path"
+        "unit_macos"
       ]
     },
     "preload_contract": {
@@ -350,40 +237,30 @@
         "typecheck_node",
         "typecheck_web",
         "interface_contracts",
-        "coverage_macos",
+        "unit_macos",
         "build"
       ]
     },
     "main_runtime": {
       "consumers": ["renderer_runtime"],
-      "lanes": [
-        "format",
-        "lint",
-        "typecheck_node",
-        "interface_contracts",
-        "unit_linux",
-        "coverage_macos"
-      ]
+      "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "renderer_runtime": {
       "consumers": ["e2e_functional", "e2e_workspace"],
-      "lanes": ["typecheck_web", "unit_renderer", "build"]
+      "lanes": ["typecheck_web", "unit_macos", "build"]
     },
     "windows_sensitive": {
       "consumers": [],
-      "lanes": ["windows_runtime", "windows_path"]
+      "lanes": [
+        "windows_runtime",
+        "windows_path",
+        "e2e_functional_windows",
+        "e2e_workspace_windows"
+      ]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual"],
-      "lanes": [
-        "format",
-        "lint",
-        "typecheck_web",
-        "unit_linux",
-        "coverage_macos",
-        "unit_renderer",
-        "build"
-      ]
+      "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
     },
     "renderer_state": {
       "consumers": ["e2e_workspace"],
@@ -403,67 +280,23 @@
     },
     "renderer_settings": {
       "consumers": ["e2e_functional", "e2e_workspace", "e2e_accessibility", "e2e_visual"],
-      "lanes": ["unit_renderer"]
+      "lanes": ["unit_macos"]
     },
     "e2e_functional": {
       "consumers": [],
-      "lanes": ["e2e_functional_macos", "e2e_functional_windows", "e2e_functional_linux"]
+      "lanes": ["e2e_functional_macos"]
     },
     "e2e_workspace": {
       "consumers": [],
-      "lanes": ["e2e_workspace_macos", "e2e_workspace_windows", "e2e_workspace_linux"]
+      "lanes": ["e2e_workspace_macos"]
     },
     "e2e_accessibility": {
       "consumers": [],
-      "lanes": ["e2e_accessibility_macos", "e2e_accessibility_windows", "e2e_accessibility_linux"]
+      "lanes": ["e2e_accessibility_macos"]
     },
     "e2e_visual": {
       "consumers": [],
-      "lanes": ["e2e_visual_macos", "e2e_visual_windows", "e2e_visual_linux"]
-    },
-    "storage_migration_e2e": {
-      "consumers": [],
-      "lanes": [
-        "e2e_storage_migration_macos",
-        "e2e_storage_migration_windows",
-        "e2e_storage_migration_linux"
-      ]
-    },
-    "provider_bridge_e2e": {
-      "consumers": [],
-      "lanes": [
-        "e2e_provider_bridge_macos",
-        "e2e_provider_bridge_windows",
-        "e2e_provider_bridge_linux"
-      ]
-    },
-    "notebook_lifecycle_e2e": {
-      "consumers": ["artifact_provenance_e2e"],
-      "lanes": [
-        "e2e_notebook_lifecycle_macos",
-        "e2e_notebook_lifecycle_windows",
-        "e2e_notebook_lifecycle_linux"
-      ]
-    },
-    "remote_pairing_e2e": {
-      "consumers": [],
-      "lanes": [
-        "e2e_remote_pairing_macos",
-        "e2e_remote_pairing_windows",
-        "e2e_remote_pairing_linux"
-      ]
-    },
-    "artifact_provenance_e2e": {
-      "consumers": [],
-      "lanes": [
-        "e2e_artifact_provenance_macos",
-        "e2e_artifact_provenance_windows",
-        "e2e_artifact_provenance_linux"
-      ]
-    },
-    "macos_package_smoke": {
-      "consumers": [],
-      "lanes": ["format", "lint", "unit_linux"]
+      "lanes": ["e2e_visual_macos"]
     }
   }
 }

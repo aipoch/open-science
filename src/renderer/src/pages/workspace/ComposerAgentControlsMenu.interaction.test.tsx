@@ -596,6 +596,39 @@ describe('ComposerAgentControlsMenu', () => {
     expect(revokeButton?.disabled).toBe(true)
   })
 
+  it('keeps only permission mode editable when other agent controls are read-only', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly={true}
+          permissionProfileReadOnly={false}
+          enabledComputeHosts={[]}
+          showSpecialist
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(
+      findButton(
+        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
+      ).disabled
+    ).toBe(false)
+    expect(
+      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
+    ).toBe(true)
+    expect(findButton('cluster-1').disabled).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="specialist-submenu-stub"]')
+        ?.getAttribute('data-read-only')
+    ).toBe('true')
+  })
+
   it('keeps conversation grant actions available while profile controls are read-only', () => {
     const onRevokeGrant = vi.fn()
     const onClearGrants = vi.fn()
@@ -857,7 +890,7 @@ describe('ComposerAgentControlsMenu', () => {
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
-          readOnly // session running -> mutating controls frozen
+          readOnly
           showSpecialist
           specialistId="uuid-1"
           onSpecialistChange={vi.fn()}

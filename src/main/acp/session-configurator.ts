@@ -87,9 +87,10 @@ export class AcpSessionConfigurator {
   }
 
   async configurePermissionProfile(
-    input: StartupConfiguration
+    input: StartupConfiguration,
+    forcePermissionMode = false
   ): Promise<Readonly<SessionPermissionProfileState>> {
-    return deepFreeze(structuredClone(await this.applyPermissionMode(input)))
+    return deepFreeze(structuredClone(await this.applyPermissionMode(input, forcePermissionMode)))
   }
 
   async applyLiveEffort(input: LiveEffortConfiguration): Promise<AcpLiveEffortConfigurationFacts> {
@@ -123,13 +124,17 @@ export class AcpSessionConfigurator {
   }
 
   private async applyPermissionMode(
-    input: StartupConfiguration
+    input: StartupConfiguration,
+    forcePermissionMode = false
   ): Promise<SessionPermissionProfileState> {
     const application = input.backend.framework.mapPermissionProfile(
       input.permissionProfile,
       input.session.modes
     )
-    if (application.modeId && application.modeId !== input.session.modes?.currentModeId) {
+    if (
+      application.modeId &&
+      (forcePermissionMode || application.modeId !== input.session.modes?.currentModeId)
+    ) {
       this.deps.assertCurrentConnection(input.connection)
       await input.connection.agent.request(acp.methods.agent.session.setMode, {
         sessionId: input.session.sessionId,

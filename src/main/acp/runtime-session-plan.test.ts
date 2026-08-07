@@ -41,7 +41,7 @@ const projection = (
 })
 
 type PlanServiceMock = Record<
-  'generate' | 'respond' | 'getProjection' | 'updateStepStatus' | 'checkTurnCompletion',
+  'generate' | 'respond' | 'getProjection' | 'updateStepStatus',
   ReturnType<typeof vi.fn>
 >
 
@@ -103,8 +103,7 @@ const createRuntimeHarness = (options: {
           : current
       }
     ),
-    updateStepStatus,
-    checkTurnCompletion: vi.fn(async () => ({ allow: true }))
+    updateStepStatus
   }
   let currentInteraction = {
     kind: 'prompt' as const,

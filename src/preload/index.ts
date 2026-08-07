@@ -12,6 +12,7 @@ import type {
   ExportCustomServerTemplateRequest,
   CreateSkillRequest,
   DeleteSkillRequest,
+  ExportSkillRequest,
   ImportAgentHomeSkillsRequest,
   ImportSkillRequest,
   ImportSkillZipBatchRequest,
@@ -214,6 +215,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setPackageMirror', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
     getSkillDetail: (id: string) => electronRendererContracts.invoke('settings.getSkillDetail', id),
+    exportSkill: (request: ExportSkillRequest) =>
+      electronRendererContracts.invoke('settings.exportSkill', request),
     setSkillEnabled: (request: SetSkillEnabledRequest) =>
       electronRendererContracts.invoke('settings.setSkillEnabled', request),
     createSkill: (request: CreateSkillRequest) =>
@@ -511,6 +514,10 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('artifacts.getVersionMessages', request),
     getVersionReview: (request) =>
       electronRendererContracts.invoke('artifacts.getVersionReview', request),
+    getCodeReconstruction: (request) =>
+      electronRendererContracts.invoke('artifacts.getCodeReconstruction', request),
+    generateCodeReconstruction: (request) =>
+      electronRendererContracts.invoke('artifacts.generateCodeReconstruction', request),
     resolveVersionDescriptors: (request) =>
       electronRendererContracts.invoke('artifacts.resolveVersionDescriptors', request)
   },
@@ -596,8 +603,10 @@ const api: OpenScienceAPI = {
   },
   notebookEnv: {
     getStatus: () => electronRendererContracts.invoke('notebookEnv.getStatus'),
-    provision: (lang) => electronRendererContracts.invoke('notebookEnv.provision', lang),
-    repair: (lang) => electronRendererContracts.invoke('notebookEnv.repair', lang),
+    provision: (lang, operationId) =>
+      electronRendererContracts.invoke('notebookEnv.provision', lang, operationId),
+    repair: (lang, operationId) =>
+      electronRendererContracts.invoke('notebookEnv.repair', lang, operationId),
     cancel: (lang?: NotebookLanguage) =>
       electronRendererContracts.invoke('notebookEnv.cancel', lang),
     onProgress: (listener) =>

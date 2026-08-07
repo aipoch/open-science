@@ -300,7 +300,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('mx-auto w-full max-w-4xl')
   })
 
-  it('matches the reference page chat background and assistant progress surfaces', () => {
+  it('matches the reference page chat background and transparent assistant progress', () => {
     if (!existsSync(workspaceMessageScrollerPath)) {
       expect(existsSync(workspaceMessageScrollerPath)).toBe(true)
       return
@@ -320,7 +320,10 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('bg-bg-10')
     expect(workspaceMessageScrollerSource).toContain('pb-[56px]')
     expect(workspaceMessageScrollerSource).toContain('bg-gradient-to-b from-bg-10 to-bg-10/0')
-    expect(workspaceAgentLoadingRowSource).toContain('rounded-2xl bg-bg-200 px-3 py-2')
+    expect(workspaceAgentLoadingRowSource).toContain(
+      "cn(assistantMessageSurfaceClassName, 'px-0 py-2')"
+    )
+    expect(workspaceAgentLoadingRowSource).not.toContain('rounded-2xl bg-bg-200')
   })
 
   it('uses compact prose spacing for agent markdown', () => {
@@ -442,7 +445,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
     expect(workspaceMessageItemSource).toContain('content={message.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
-    expect(workspaceAgentLoadingRowSource).toContain('Agent is responding')
+    expect(workspaceAgentLoadingRowSource).toContain('thinking')
   })
 
   // Non-search tool calls render an expandable details row backed by a dedicated parser module.
@@ -512,15 +515,15 @@ describe('conversation message scroller integration', () => {
     const workspaceMessageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
 
     expect(workspaceMessageScrollerSource).toContain(
-      "import { shouldShowAgentLoadingMessage } from './agent-loading-message'"
+      "import { getAgentLoadingPhase } from './agent-loading-message'"
     )
     expect(workspaceMessageScrollerSource).toContain(
-      'const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)'
+      'const agentLoadingPhase = getAgentLoadingPhase(activeSession)'
     )
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')
     expect(workspaceAgentLoadingRowSource).toContain('aria-live="polite"')
-    expect(workspaceAgentLoadingRowSource).toContain('Agent is responding')
+    expect(workspaceAgentLoadingRowSource).toContain('thinking')
     expect(workspaceMessageItemSource).toContain("isAnimating={message.status === 'streaming'}")
   })
 })

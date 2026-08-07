@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { ContextUsageTracker } from './context-usage-tracker'
@@ -26,7 +28,7 @@ describe('ACP Runtime session composition', () => {
     expect(first.reviewerSessions).not.toBe(second.reviewerSessions)
     expect(first.sessionUpdateProjector).not.toBe(second.sessionUpdateProjector)
     expect(first.publication.getSnapshot()).toMatchObject({
-      cwd: '/workspace',
+      cwd: resolve('/workspace'),
       sessionIds: [],
       contextUsageBySession: {}
     })

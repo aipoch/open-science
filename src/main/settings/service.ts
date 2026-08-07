@@ -87,11 +87,13 @@ import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-ma
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
-  type AgentBackendSelection
+  type AgentBackendSelection,
+  type ExplicitAgentBackendTarget
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import type { SkillExportArchive } from '../skills/export'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
@@ -458,6 +460,10 @@ class SettingsService {
   // Compatibility facade: Skill state and filesystem rules live in SkillCatalogModule.
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
+  }
+
+  async buildSkillExport(id: string): Promise<SkillExportArchive> {
+    return this.skills.buildSkillExport(id)
   }
 
   // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
@@ -944,6 +950,17 @@ class SettingsService {
   // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
   async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
     return this.backendResolver.captureConfiguredSelection()
+  }
+
+  async captureActiveExplicitAgentBackendTarget(): Promise<ExplicitAgentBackendTarget> {
+    return this.backendResolver.captureExplicitTarget()
+  }
+
+  async resolveExplicitAgentBackend(
+    target: ExplicitAgentBackendTarget,
+    context: AgentBackendResolutionContext = {}
+  ): Promise<ResolvedAgentBackend> {
+    return this.backendResolver.resolveExplicitTarget(target, context)
   }
 
   async resolveAgentBackend(

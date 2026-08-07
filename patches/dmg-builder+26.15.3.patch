@@ -1,0 +1,12 @@
+diff --git a/node_modules/dmg-builder/out/dmgUtil.js b/node_modules/dmg-builder/out/dmgUtil.js
+--- a/node_modules/dmg-builder/out/dmgUtil.js
++++ b/node_modules/dmg-builder/out/dmgUtil.js
+@@ -191,7 +191,7 @@ async function customizeDmg({ appPath, artifactPath, volumeName, specification,
+     const settingsFile = await packager.getTempFile(".json");
+     await (0, fs_extra_1.writeFile)(settingsFile, JSON.stringify(settings, null, 2));
+     const dmgbuild = await getDmgVendorPath();
+-    await (0, toolsetLock_1.withToolsetLock)(() => (0, builder_util_1.exec)(dmgbuild, ["-s", settingsFile, path.basename(volumePath), artifactPath], {
++    await (0, toolsetLock_1.withToolsetLock)(() => (0, builder_util_1.exec)(dmgbuild, ["--detach-retries", "30", "-s", settingsFile, path.basename(volumePath), artifactPath], {
+         env: {
+             ...process.env,
+             PYTHONIOENCODING: "utf8",

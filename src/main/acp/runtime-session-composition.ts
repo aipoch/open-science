@@ -26,6 +26,11 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       ...interactions.filter(({ kind }) => kind === 'compaction')
     ].map(({ sessionId }) => sessionId)
   }
+  const agentPromptInFlightSessionIds = (): string[] =>
+    base.sessionInteractions
+      .snapshot()
+      .filter(({ kind }) => kind === 'prompt')
+      .map(({ sessionId }) => sessionId)
   const snapshotProjection = (): RuntimeSnapshotProjection => {
     const sessionIds = activeSessionIds()
     const promptInFlightIds = promptInFlightSessionIds()
@@ -49,6 +54,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
           ? sessionIds
           : [],
       promptInFlight: promptInFlightIds.length > 0,
+      agentPromptInFlightSessionIds: agentPromptInFlightSessionIds(),
       promptInFlightSessionIds: promptInFlightIds
     }
   }
@@ -168,6 +174,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     reconnectPending: () => base.connectionTransitions.providerReconnectPending,
     mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
     nextEventId: () => publication.nextEventId(),
+    setProviderPermissionProfile: (sessionId, profile) =>
+      permissionContext.setProviderPermissionProfile(sessionId, profile),
     emitState: () => publication.emitState(),
     pushEvent: (event) => publication.pushEvent(event),
     reportToolFailure: (effect) =>

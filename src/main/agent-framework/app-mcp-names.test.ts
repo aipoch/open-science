@@ -42,6 +42,14 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     )
   })
 
+  it('keeps Conversation Turn completion independent from Session Plan status', () => {
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('Do not call `end_turn`')
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('do not end the turn')
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'If an irreversible blocker makes later steps unreachable'
+    )
+  })
+
   it.each([
     [
       'claude-code',

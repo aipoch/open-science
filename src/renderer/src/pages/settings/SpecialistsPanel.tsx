@@ -156,6 +156,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     void load()
 
     // Subscribe to catalog-changed push events so the list stays in sync.
+    if (typeof window.api?.specialist?.onCatalogChanged !== 'function') return
     const unsub = window.api.specialist.onCatalogChanged(() => void load())
     return unsub
   }, [load])
@@ -270,8 +271,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       setTemplateSaving(true)
       setTemplateSaveError(undefined)
       try {
+        if (typeof window.api?.specialist?.exportContributionTemplate !== 'function') {
+          setTemplateSaveError('Contribution templates are only available in the desktop app.')
+          return
+        }
         const result = await window.api.specialist.exportContributionTemplate()
-        if (result.saved) setTemplateSaved(true)
+        if (result?.saved) setTemplateSaved(true)
       } catch {
         setTemplateSaveError('Could not save contribution template. Try again.')
       } finally {

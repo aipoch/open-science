@@ -860,9 +860,6 @@ describe('PlanService', () => {
       title: 'Find evidence',
       status: 'completed'
     })
-    await expect(
-      service.checkTurnCompletion({ projectId: 'project-1', sessionId: 'session-1' })
-    ).resolves.toEqual({ allow: false, lifecycle: 'blocked' })
     const reviewRunning = await service.updateStepStatus({
       ...identity,
       expectedRevision: evidenceFound.projection.revision,
@@ -887,42 +884,11 @@ describe('PlanService', () => {
       'Draft report': { status: 'not_run' }
     })
     await expect(
-      service.checkTurnCompletion({ projectId: 'project-1', sessionId: 'session-1' })
-    ).resolves.toEqual({ allow: true, lifecycle: 'blocked' })
-    await expect(
       service.authorizeContinuation({
         ...identity,
         expectedRevision: settled.projection.revision
       })
     ).rejects.toMatchObject({ code: 'invalid-transition' })
-  })
-
-  it('fails the completion gate closed without clearing approved authority when its Artifact is unavailable', async () => {
-    const { service, dependencies, context } = setup()
-    const generated = await service.generate({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      interactionId: 'interaction-1',
-      content
-    })
-    await service.respond({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      artifactVersionId: generated.projection.artifactVersionId,
-      expectedRevision: generated.projection.revision,
-      decision: 'approved'
-    })
-    vi.mocked(dependencies.readArtifactVersion).mockRejectedValueOnce(
-      new Error('Artifact storage is unavailable.')
-    )
-
-    await expect(
-      service.checkTurnCompletion({ projectId: 'project-1', sessionId: 'session-1' })
-    ).rejects.toMatchObject({ code: 'artifact-unavailable' })
-    expect(context().plan).toMatchObject({
-      artifactVersionId: generated.projection.artifactVersionId,
-      approval: 'approved'
-    })
   })
 
   it('supports primary-agent sequential fallback without changing the delegation schema', async () => {

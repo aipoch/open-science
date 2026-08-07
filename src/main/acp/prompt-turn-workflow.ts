@@ -93,11 +93,6 @@ type AcpPromptTurnPlanWorkflow = Readonly<{
     interaction: AcpPromptSessionInteractionScope,
     plan: AcpPromptTurnPlanContext
   ) => AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext>
-  beforeStop: (
-    sessionId: string,
-    interaction: AcpPromptSessionInteractionScope,
-    response: PromptResponse
-  ) => Promise<void>
   beforeRelease: (sessionId: string, interaction: AcpPromptSessionInteractionScope) => void
   afterRelease: (sessionId: string) => Promise<void>
 }>
@@ -370,7 +365,6 @@ class AcpPromptTurnWorkflow {
             skillFinalized = true
           }
         },
-        beforeStop: (response) => plan.beforeStop(sessionId, interaction, response),
         routeNotification: (notification) => env.routeNotification(notification, sessionId),
         reportBestEffortFailure: (stage, error) =>
           log.warn('provider prompt observation failed', {

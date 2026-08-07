@@ -178,6 +178,34 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
 }
 
 describe('WorkspaceMessageScroller loading render', () => {
+  it('renders elapsed time beside the activity step count', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [
+          createActivity({
+            id: 'tool-read-1',
+            title: 'Read file',
+            toolKind: 'read',
+            createdAt: 1_000,
+            updatedAt: 1_250
+          }),
+          createActivity({
+            id: 'tool-read-2',
+            title: 'Read file',
+            toolKind: 'read',
+            sortIndex: 3,
+            createdAt: 1_300,
+            updatedAt: 2_650
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('2 steps · 1s')
+  })
+
   it('renders a coordinator-owned handoff status in the original turn timeline', async () => {
     const source: HandoffLifecycleEventSource = {
       getEvents: (): readonly HandoffLifecycleEvent[] => [
@@ -243,8 +271,64 @@ describe('WorkspaceMessageScroller loading render', () => {
 
     expect(html).toContain('role="status"')
     expect(html).toContain('aria-live="polite"')
-    expect(html).toContain('Agent is responding')
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
     expect(html).toContain('data-message-id="session-1-agent-loading"')
+    const loadingSurfaceClassName = html.match(
+      /<div class="([^"]*max-w-\[56rem\][^"]*)"><div class="flex min-h-5/
+    )?.[1]
+    expect(loadingSurfaceClassName).toContain('px-0')
+    expect(loadingSurfaceClassName).not.toContain('px-3')
+  })
+
+  it('shows tool interaction while a tool is running before the first agent token', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [createActivity({ status: 'in_progress' })]
+      })
+    )
+
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Interacting with tools</span>')
+    expect(html).not.toContain('>0:00</span>')
+  })
+
+  it('restores the loading row after a completed tool while the next agent token is pending', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-1',
+          startedAt: 1710000000100
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-before-tool',
+            role: 'agent',
+            content: 'I will save the file now.',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'tool-write-1',
+            title: 'Saved a file',
+            status: 'completed',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="open-science-thinking-indicator"')
+    expect(html).toContain('>Thinking</span>')
   })
 
   it('does not render loading after current-run agent text arrives', async () => {
@@ -394,7 +478,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
-  it('keeps the loading row during permission waits and hides it without an active run', async () => {
+  it('shows tool interaction during permission waits and hides it without an active run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -403,11 +487,10 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // A permission wait is still mid-run, so the transcript keeps the working indicator — even
-    // when the agent already streamed visible text before asking.
+    // Permission remains a tool interaction before and after visible assistant output.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.toContain('role="status"')
+    ).resolves.toContain('>Interacting with tools</span>')
     await expect(
       renderScroller({
         ...runningSession,
@@ -424,7 +507,7 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('role="status"')
+    ).resolves.toContain('>Interacting with tools</span>')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
@@ -455,7 +538,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('role="status"')
-    expect(html).toContain('Agent is responding')
+    expect(html).toContain('>Thinking</span>')
   })
 
   it('renders generated artifact gallery cards under agent messages', async () => {
@@ -789,6 +872,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
 
     expect(html).toContain('data-testid="tool-group"')
+    expect(html).toContain('class="px-4 pb-0.5 pt-2.5 md:px-6"')
     expect(html).toContain('data-testid="tool-group-header"')
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('Ran 2 searches')

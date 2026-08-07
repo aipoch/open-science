@@ -549,6 +549,48 @@ describe('artifact IPC handlers', () => {
     expect(drained).toBe(true)
   })
 
+  it('keeps migration drain pending until code reconstruction generation finishes', async () => {
+    let releaseGeneration: (() => void) | undefined
+    const codeReconstruction = {
+      get: vi.fn(),
+      generate: vi.fn(
+        () =>
+          new Promise<{ state: 'ready'; language: 'python'; sourceTruncated: false }>((resolve) => {
+            releaseGeneration = () =>
+              resolve({ state: 'ready', language: 'python', sourceTruncated: false })
+          })
+      )
+    }
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      codeReconstruction
+    })
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+
+    const generationPromise = handlers.generateCodeReconstruction(request)
+    beginMigration()
+    let drained = false
+    const drainPromise = waitForDataRootWriters().then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+
+    releaseGeneration?.()
+    await expect(generationPromise).resolves.toEqual({
+      state: 'ready',
+      language: 'python',
+      sourceTruncated: false
+    })
+    await drainPromise
+    expect(drained).toBe(true)
+    expect(codeReconstruction.generate).toHaveBeenCalledWith(request)
+  })
+
   it('opens only files inside the managed artifact root', async () => {
     const repository = new ArtifactRepository(await createStorageRoot())
     const openPath = vi.fn().mockResolvedValue('')
@@ -791,6 +833,8 @@ describe('artifact IPC handler registration', () => {
     // the renderer — a regression we want to catch.
     expect([...ipcHandlers.keys()].sort()).toEqual([
       'artifacts:finalize-run',
+      'artifacts:generate-code-reconstruction',
+      'artifacts:get-code-reconstruction',
       'artifacts:get-lineage',
       'artifacts:get-version-execution',
       'artifacts:get-version-messages',
@@ -850,6 +894,8 @@ describe('artifact IPC handler registration', () => {
       getVersionExecution: vi.fn(),
       getVersionMessages: vi.fn(),
       getVersionReview: vi.fn(),
+      getCodeReconstruction: vi.fn(),
+      generateCodeReconstruction: vi.fn(),
       resolveVersionDescriptors: vi.fn()
     }
     registrationFailure.channel = 'artifacts:finalize-run'
@@ -949,6 +995,46 @@ describe('artifact IPC handler registration', () => {
       path: '/managed/inside.txt',
       maxBytes: 16
     })
+  })
+
+  it('delegates code reconstruction cache and generation through separate channels', async () => {
+    const request = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    }
+    const get = vi.fn().mockResolvedValue({
+      state: 'ready',
+      language: 'python',
+      sourceTruncated: false
+    })
+    const generate = vi.fn().mockResolvedValue({
+      state: 'cached',
+      value: {
+        code: 'print(1)',
+        language: 'python',
+        generatedAt: '2026-08-06T00:00:00.000Z',
+        frameworkId: 'codex',
+        model: 'model-a',
+        sourceTruncated: false
+      }
+    })
+    const repository = {} as ArtifactRepository
+    const runRegistry = new ArtifactRunRegistry()
+    const handlers = createArtifactHandlers(repository, runRegistry, {
+      codeReconstruction: { get, generate }
+    })
+    registerArtifactIpcHandlers(repository, runRegistry, undefined, undefined, undefined, handlers)
+
+    await expect(
+      ipcHandlers.get('artifacts:get-code-reconstruction')?.({}, request)
+    ).resolves.toMatchObject({ state: 'ready' })
+    await expect(
+      ipcHandlers.get('artifacts:generate-code-reconstruction')?.({}, request)
+    ).resolves.toMatchObject({ state: 'cached' })
+    expect(get).toHaveBeenCalledWith(request)
+    expect(generate).toHaveBeenCalledWith(request)
   })
 
   it('returns only the ownership persistence race as a stable IPC failure result', async () => {

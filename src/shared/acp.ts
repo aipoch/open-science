@@ -455,6 +455,9 @@ export type AcpStateSnapshot = {
   // from an older main process during a rolling dev reload.
   nativeContextCompactionSessionIds?: string[]
   promptInFlight: boolean
+  // Prompt-only ownership for first-output UI. `promptInFlightSessionIds` remains the broader
+  // interaction lock and also contains framework compaction control turns.
+  agentPromptInFlightSessionIds?: string[]
   promptInFlightSessionIds: string[]
 }
 

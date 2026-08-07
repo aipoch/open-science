@@ -36,7 +36,6 @@ const admittedTarget = (
   },
   repairRuntimeId: 'analysis',
   repairMarkerKey: 'analysis::python',
-  repairRegistryKeys: ['analysis', 'analysis::python'],
   journalTarget: join(runtimeRoot, 'envs', 'analysis'),
   ...overrides
 })
@@ -74,8 +73,11 @@ const ownerHarness = (
       log: 'installed',
       method: 'conda'
     }),
-    quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
-    completeInterruptedInstallRepair: vi.fn().mockResolvedValue(undefined),
+    recheckRepair: vi.fn(() => undefined),
+    runtimeRepair: {
+      quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
+      completeInterruptedInstall: vi.fn().mockResolvedValue(undefined)
+    },
     blockUnconfirmedChild: vi.fn(),
     ...optionOverrides
   }
@@ -86,6 +88,41 @@ const pending = (runtimeRoot: string): ReturnType<RuntimeOperationJournal['pendi
   RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
 
 describe('NotebookPackageMutationOwner', () => {
+  it('rechecks repair policy after acquiring the mutation lock', async () => {
+    const refusal = {
+      status: 'refused' as const,
+      result: {
+        ok: false,
+        needsRestart: false,
+        repairRequired: true,
+        log: '',
+        error: 'RUNTIME_REPAIR_REQUIRED'
+      }
+    }
+    const order: string[] = []
+    const { owner, options, target, runtimeRoot } = ownerHarness({
+      environmentOperations: {
+        runMutation: async <T>(_environment: string, operation: () => Promise<T>): Promise<T> => {
+          order.push('lock')
+          return operation()
+        },
+        logPackageFailure: vi.fn(),
+        logPackageResult: vi.fn()
+      },
+      recheckRepair: vi.fn(() => {
+        order.push('repair-check')
+        return refusal
+      })
+    })
+
+    await expect(owner.mutate({ target, mirror: {} })).resolves.toEqual(refusal.result)
+
+    expect(order).toEqual(['lock', 'repair-check'])
+    expect(options.installPackages).not.toHaveBeenCalled()
+    expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
+    expect(await pending(runtimeRoot)).toEqual([])
+  })
+
   it('owns lock, journal, child evidence, verification and successful repair completion', async () => {
     const order: string[] = []
     let operationId = ''
@@ -157,11 +194,14 @@ describe('NotebookPackageMutationOwner', () => {
         expect(readOperationChild(runtimeRoot, operationId)).toMatchObject({ spawning: true })
         return { ok: true, needsRestart: false, log: 'installed', method: 'conda' as const }
       }),
-      completeInterruptedInstallRepair: vi.fn(async () => {
-        expect(await pending(runtimeRoot)).toEqual([])
-        expect(readOperationChild(runtimeRoot, operationId)).toBeUndefined()
-        order.push('repair-complete')
-      })
+      runtimeRepair: {
+        quarantineProtectedIdentity: vi.fn().mockResolvedValue(undefined),
+        completeInterruptedInstall: vi.fn(async () => {
+          expect(await pending(runtimeRoot)).toEqual([])
+          expect(readOperationChild(runtimeRoot, operationId)).toBeUndefined()
+          order.push('repair-complete')
+        })
+      }
     })
 
     const result = await owner.mutate({
@@ -188,7 +228,7 @@ describe('NotebookPackageMutationOwner', () => {
       'unlock',
       'repair-complete'
     ])
-    expect(options.quarantineProtectedIdentity).not.toHaveBeenCalled()
+    expect(options.runtimeRepair.quarantineProtectedIdentity).not.toHaveBeenCalled()
   })
 
   it('fails closed without dirtying or spawning when the journal cannot begin', async () => {
@@ -204,7 +244,7 @@ describe('NotebookPackageMutationOwner', () => {
     })
     expect(options.environmentStateTracker.markPackageMutationDirty).not.toHaveBeenCalled()
     expect(options.installPackages).not.toHaveBeenCalled()
-    expect(options.completeInterruptedInstallRepair).not.toHaveBeenCalled()
+    expect(options.runtimeRepair.completeInterruptedInstall).not.toHaveBeenCalled()
   })
 
   it('clears journal evidence after a pre-spawn dirty-marker failure', async () => {
@@ -260,7 +300,7 @@ describe('NotebookPackageMutationOwner', () => {
     expect(options.environmentOperations.logPackageResult).toHaveBeenCalledWith(
       expect.objectContaining({ result })
     )
-    expect(options.completeInterruptedInstallRepair).not.toHaveBeenCalled()
+    expect(options.runtimeRepair.completeInterruptedInstall).not.toHaveBeenCalled()
   })
 
   it('upgrades evidence before quarantining a protected identity', async () => {
@@ -271,20 +311,23 @@ describe('NotebookPackageMutationOwner', () => {
         repairRequired: true,
         log: 'protected interpreter changed'
       }),
-      quarantineProtectedIdentity: vi.fn(async () => {
-        expect(await pending(runtimeRoot)).toEqual([
-          expect.objectContaining({
-            runtimeId: 'analysis',
-            repairReason: 'protected-identity-change'
-          })
-        ])
-      })
+      runtimeRepair: {
+        completeInterruptedInstall: vi.fn().mockResolvedValue(undefined),
+        quarantineProtectedIdentity: vi.fn(async () => {
+          expect(await pending(runtimeRoot)).toEqual([
+            expect.objectContaining({
+              runtimeId: 'analysis',
+              repairReason: 'protected-identity-change'
+            })
+          ])
+        })
+      }
     })
 
     const result = await owner.mutate({ target, mirror: {} })
 
     expect(result).toMatchObject({ ok: false, repairRequired: true })
-    expect(options.quarantineProtectedIdentity).toHaveBeenCalledWith(target)
+    expect(options.runtimeRepair.quarantineProtectedIdentity).toHaveBeenCalledWith(target)
     expect(await pending(runtimeRoot)).toEqual([])
   })
 
@@ -297,7 +340,10 @@ describe('NotebookPackageMutationOwner', () => {
         repairRequired: true,
         log: 'protected interpreter changed'
       }),
-      quarantineProtectedIdentity: vi.fn().mockRejectedValue(quarantineFailure)
+      runtimeRepair: {
+        completeInterruptedInstall: vi.fn().mockResolvedValue(undefined),
+        quarantineProtectedIdentity: vi.fn().mockRejectedValue(quarantineFailure)
+      }
     })
 
     await expect(owner.mutate({ target, mirror: {} })).rejects.toBe(quarantineFailure)
@@ -322,7 +368,7 @@ describe('NotebookPackageMutationOwner', () => {
       /could not be upgraded.*journal update denied/
     )
 
-    expect(options.quarantineProtectedIdentity).toHaveBeenCalledWith(target)
+    expect(options.runtimeRepair.quarantineProtectedIdentity).toHaveBeenCalledWith(target)
     expect(await pending(runtimeRoot)).toEqual([
       expect.objectContaining({ repairReason: 'interrupted-install' })
     ])

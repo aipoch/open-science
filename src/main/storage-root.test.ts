@@ -152,12 +152,21 @@ describe('computeDefaultDataRoot', () => {
 
   afterEach(async () => {
     appMock.isPackaged = false
+    vi.unstubAllEnvs()
     await rm(homeDir, { recursive: true, force: true })
   })
 
   it('defaults to <home>/OpenScience for a fresh config root', () => {
     // resolveConfigRoot() resolves under homeDir but nothing has been created there.
     expect(computeDefaultDataRoot()).toBe(join(homeDir, 'OpenScience'))
+  })
+
+  it('keeps packaged E2E config and data under the disposable certification root', () => {
+    const e2eRoot = join(homeDir, 'certification')
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', e2eRoot)
+
+    expect(resolveConfigRoot()).toBe(e2eRoot)
+    expect(computeDefaultDataRoot()).toBe(join(e2eRoot, 'OpenScience'))
   })
 
   it('stays at the config root when it already has legacy data and no OpenScience subdir', async () => {
@@ -340,6 +349,22 @@ describe('resolveStorageRoot', () => {
 
     expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-preview/storage'))
     expect(appMock.getPath).not.toHaveBeenCalled()
+  })
+
+  it('uses an absolute disposable E2E root in packaged builds', () => {
+    appMock.isPackaged = true
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', '/tmp/open-science-certification/storage')
+
+    expect(resolveStorageRoot()).toBe(normalize('/tmp/open-science-certification/storage'))
+    expect(appMock.getPath).not.toHaveBeenCalled()
+  })
+
+  it('rejects an ambiguous relative E2E root', () => {
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', 'certification/storage')
+
+    expect(() => resolveStorageRoot()).toThrow(
+      'OPEN_SCIENCE_E2E_STORAGE_ROOT must be an absolute path'
+    )
   })
 
   it('rejects an ambiguous relative preview override', () => {

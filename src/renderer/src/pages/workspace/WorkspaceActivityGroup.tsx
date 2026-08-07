@@ -1,6 +1,8 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { ChevronRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import type { JobSummary } from '../../../../shared/compute'
 import { RemoteJobRow } from '@/components/RemoteJobRow'
@@ -10,8 +12,10 @@ import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import {
+  formatActivityGroupElapsed,
   formatActivityGroupTitle,
   formatStepCount,
+  getActivityGroupElapsedMs,
   getRenderableActivityEntries,
   isSearchActivity
 } from './workspace-tool-activity-groups'
@@ -19,6 +23,7 @@ import type {
   ActivityExpansionOverrides,
   ConversationActivityGroupItem
 } from './workspace-tool-activity-groups'
+import { isActivityActive } from './workspace-conversation-items'
 import { formatWebSearchDetails } from './workspace-web-search-details'
 
 type WorkspaceActivityGroupProps = {
@@ -32,6 +37,27 @@ type WorkspaceActivityGroupProps = {
   // Map of job_id → JobSummary for jobs bound to activities in this group.
   jobsByActivityId?: Map<string, JobSummary>
   onOpenJobDetail?: (job: JobSummary) => void
+}
+
+const ACTIVE_ELAPSED_TICK_MS = 100
+
+// Isolates the ticking clock so active tools do not re-render the group's expanded detail rows.
+const ActivityGroupElapsed = ({
+  activities
+}: {
+  activities: ConversationActivityGroupItem['activities']
+}): React.JSX.Element => {
+  const isActive = activities.some(isActivityActive)
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!isActive) return undefined
+
+    const timer = setInterval(() => setNow(Date.now()), ACTIVE_ELAPSED_TICK_MS)
+    return () => clearInterval(timer)
+  }, [isActive])
+
+  return <>{formatActivityGroupElapsed(getActivityGroupElapsedMs(activities, now))}</>
 }
 
 // Renders adjacent tool calls as one collapsible transcript row group.
@@ -51,7 +77,7 @@ const WorkspaceActivityGroup = ({
 
   return (
     <MessageScrollerItem key={group.id} messageId={group.id} className="min-w-0">
-      <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
+      <div className={cn('px-4 pb-0.5 pt-2.5 md:px-6', contentPaddingClassName)}>
         <div
           className="w-full overflow-hidden rounded-[14px] bg-bg-200/70 px-1.5 py-1"
           data-testid="tool-group"
@@ -75,7 +101,8 @@ const WorkspaceActivityGroup = ({
               {formatActivityGroupTitle(group.activities, group.title)}
             </span>
             <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-100">
-              {formatStepCount(visibleActivities)}
+              {formatStepCount(visibleActivities)} ·{' '}
+              <ActivityGroupElapsed activities={visibleActivities} />
             </span>
           </button>
           {isExpanded ? (

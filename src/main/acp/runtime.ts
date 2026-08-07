@@ -330,6 +330,10 @@ class AcpRuntime {
   private readonly providerSessionResumer: AcpProviderSessionResumer
   private readonly sessionReplacement: AcpSessionReplacementWorkflow
   private readonly sessionDeletion: AcpSessionDeletionWorkflow
+  private readonly permissionProfileChanges = new Map<
+    string,
+    { revision: number; tail: Promise<void> }
+  >()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -513,10 +517,6 @@ class AcpRuntime {
     ].map(({ sessionId }) => sessionId)
   }
 
-  private hasSessionInteractionInFlight(sessionId: string): boolean {
-    return this.sessionInteractions.current(sessionId) !== undefined
-  }
-
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
   // handoff, which survives a crash). The artifact orphan scan uses this to exclude files a running
   // turn is still writing, while a crashed run — absent here — correctly surfaces as orphaned.
@@ -598,33 +598,111 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
-  // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
-  // next prompt guarantees Full access cannot show a first-tool permission race.
+  // Serializes changes per Session and coalesces queued requests so only the latest selection can
+  // commit or release a pending provider request. The operation lease covers time spent in the queue.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
-    return this.withOperationLease(() => this.setPermissionProfileOperation(request))
+    return this.withOperationLease(() => this.enqueuePermissionProfileChange(request))
+  }
+
+  private enqueuePermissionProfileChange(
+    request: AcpSetPermissionProfileRequest
+  ): Promise<AcpStateSnapshot> {
+    const state = this.permissionProfileChanges.get(request.sessionId) ?? {
+      revision: 0,
+      tail: Promise.resolve()
+    }
+    const revision = ++state.revision
+    const operation = state.tail.then(() =>
+      this.setPermissionProfileOperation(request, state, revision)
+    )
+    state.tail = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    this.permissionProfileChanges.set(request.sessionId, state)
+    void state.tail.then(() => {
+      if (
+        this.permissionProfileChanges.get(request.sessionId) === state &&
+        state.revision === revision
+      ) {
+        this.permissionProfileChanges.delete(request.sessionId)
+      }
+    })
+
+    return operation
   }
 
   private async setPermissionProfileOperation(
-    request: AcpSetPermissionProfileRequest
+    request: AcpSetPermissionProfileRequest,
+    state: { revision: number },
+    revision: number
   ): Promise<AcpStateSnapshot> {
+    if (state.revision !== revision) return this.getSnapshot()
+
     const session = this.activeSessionFor(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    if (this.hasSessionInteractionInFlight(request.sessionId)) {
-      throw new Error('Permission profile cannot be changed while the Agent is running.')
-    }
-    if (this.permissionContext.hasPendingForSession(request.sessionId)) {
-      throw new Error('Resolve the pending permission request before changing profiles.')
+    if (this.sessionInteractions.current(request.sessionId)?.kind === 'compaction') {
+      throw new Error('Permission profile cannot be changed while the Agent is compacting.')
     }
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')
-    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
-      backend: this.backend,
-      connection,
-      session,
-      permissionProfile: request.profile
-    })
+    const backend = this.backend
+    const aggregate = this.sessionRegistry.lookup(request.sessionId)?.aggregate
+    const previousPermissionProfile = aggregate?.snapshot().permissionProfile
+    const requestedPermissionProfile = backend.framework.mapPermissionProfile(
+      request.profile,
+      session.modes
+    ).state
+    const isCurrent = (): boolean =>
+      state.revision === revision &&
+      this.connection === connection &&
+      this.activeSessionFor(request.sessionId) === session
+
+    // Make the requested posture authoritative before the provider mode request can yield. A
+    // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
+    this.permissionContext.beginPermissionProfileTransition(
+      request.sessionId,
+      requestedPermissionProfile,
+      isCurrent
+    )
+
+    let permissionProfile
+    try {
+      permissionProfile = await this.sessionConfigurator.configurePermissionProfile(
+        {
+          backend,
+          connection,
+          session,
+          permissionProfile: request.profile
+        },
+        true
+      )
+    } catch (error) {
+      if (previousPermissionProfile && isCurrent()) {
+        this.permissionContext.setLivePermissionProfile(
+          request.sessionId,
+          {
+            ...previousPermissionProfile,
+            availableModeIds: [...previousPermissionProfile.availableModeIds]
+          },
+          isCurrent
+        )
+      }
+      throw error
+    }
+    if (state.revision !== revision) return this.getSnapshot()
+    if (this.activeSessionFor(request.sessionId) !== session) {
+      throw new Error('ACP session startup was superseded.')
+    }
+    this.assertCurrentConnectedConnection(connection)
+    await this.permissionContext.applyPermissionProfile(
+      request.sessionId,
+      permissionProfile,
+      () => state.revision === revision
+    )
+    if (state.revision !== revision) return this.getSnapshot()
     if (this.activeSessionFor(request.sessionId) !== session) {
       throw new Error('ACP session startup was superseded.')
     }
@@ -632,6 +710,7 @@ class AcpRuntime {
     this.sessionRegistry
       .lookup(request.sessionId)
       ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    this.permissionContext.setLivePermissionProfile(request.sessionId, permissionProfile)
     this.emitState()
 
     return this.getSnapshot()

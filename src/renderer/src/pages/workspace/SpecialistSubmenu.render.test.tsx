@@ -150,6 +150,15 @@ const renderSubmenu = (props: React.ComponentProps<typeof SpecialistSubmenu>): v
 }
 
 describe('SpecialistSubmenu — trigger', () => {
+  it('does not load the catalog when the specialist list API is unavailable', () => {
+    const load = vi.fn().mockResolvedValue(undefined)
+    mockStore([], { isLoaded: false, load })
+
+    renderSubmenu({ selectedId: undefined, onChange: vi.fn() })
+
+    expect(load).not.toHaveBeenCalled()
+  })
+
   it('renders a submenu trigger', () => {
     mockStore([])
     renderSubmenu({ selectedId: undefined, onChange: vi.fn() })

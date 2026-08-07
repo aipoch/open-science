@@ -8,6 +8,7 @@ import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
 import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
+import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
@@ -468,7 +469,10 @@ const App = (): React.JSX.Element | null => {
         role="status"
         className="flex min-h-svh items-center justify-center bg-background text-foreground"
       >
-        <span className="text-sm text-muted-foreground">Loading settings…</span>
+        <div className="flex flex-col items-center gap-14">
+          <OpenScienceLogoLoader />
+          <span className="text-sm text-muted-foreground">Loading settings…</span>
+        </div>
       </main>
     )
   }

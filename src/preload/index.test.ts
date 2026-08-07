@@ -86,6 +86,7 @@ type PreloadApi = {
     logoutIsolatedClaude: () => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
+    exportSkill: (request: unknown) => unknown
     selectCustomServerTemplate: (request?: unknown) => unknown
   }
   acp: {
@@ -96,6 +97,8 @@ type PreloadApi = {
   }
   notebookEnv: {
     cancel: (language?: unknown) => unknown
+    provision: (language: unknown, operationId?: unknown) => unknown
+    repair: (language: unknown, operationId?: unknown) => unknown
   }
   notifications: {
     peekPendingOpenSession: () => unknown
@@ -233,6 +236,8 @@ describe('preload bridge — public surface inventory', () => {
       'acp.sendPrompt',
       'acp.setPermissionProfile',
       'artifacts.finalizeRunArtifacts',
+      'artifacts.generateCodeReconstruction',
+      'artifacts.getCodeReconstruction',
       'artifacts.getLineage',
       'artifacts.getVersionExecution',
       'artifacts.getVersionMessages',
@@ -398,6 +403,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectCodex',
       'settings.detectOpencode',
       'settings.exportCustomServerTemplate',
+      'settings.exportSkill',
       'settings.getConnectorDetail',
       'settings.getPackageMirror',
       'settings.getPreflight',
@@ -548,7 +554,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes all 178 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(178)
+    expect(runtimeContracts).toHaveLength(179)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -586,21 +592,35 @@ describe('preload bridge — runtime renderer contract catalog', () => {
     }
   })
 
-  it('preserves ACP defaults and the notebook cancellation argument slot', async () => {
+  it('preserves ACP defaults and notebook environment operation arguments', async () => {
     await api.acp.connect()
     await api.acp.connect(undefined)
     await api.notebookEnv.cancel()
     await api.notebookEnv.cancel(undefined)
+    await api.notebookEnv.provision('r', 'provision-operation')
+    await api.notebookEnv.repair('python', 'repair-operation')
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'acp:connect', {})
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'acp:connect', {})
     expect(invokeMock).toHaveBeenNthCalledWith(3, 'notebook-env:cancel', undefined)
     expect(invokeMock).toHaveBeenNthCalledWith(4, 'notebook-env:cancel', undefined)
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      5,
+      'notebook-env:provision',
+      'r',
+      'provision-operation'
+    )
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      6,
+      'notebook-env:repair',
+      'python',
+      'repair-operation'
+    )
   })
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 21-group, 135-callable T1d complement', () => {
+  it('pins the exact 21-group, 137-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -624,7 +644,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(135)
+    expect(coreContracts).toHaveLength(137)
 
     expect({
       requests: coreContracts.filter(
@@ -637,16 +657,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 99, events: 25, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 101, events: 25, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 99 request methods through their cataloged Electron channels', async () => {
+  it('routes all 101 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(99)
+    expect(requestContracts).toHaveLength(101)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -894,6 +914,12 @@ const sampleSessionArtifactSelection = {
 }
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'settings.exportSkill → settings:export-skill',
+    invoke: (a) => a.settings.exportSkill({ id: 'personal-my-skill' }),
+    channel: 'settings:export-skill',
+    args: [{ id: 'personal-my-skill' }]
+  },
   {
     name: 'specialist.previewDelete → specialist:delete-preview',
     invoke: (a) => a.specialist.previewDelete({ id: 'research-synth' }),

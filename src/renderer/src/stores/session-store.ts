@@ -107,6 +107,12 @@ export type ChatSession = Omit<
   // Transient: latest agent status/stderr line for the in-flight turn, shown in the waiting indicator
   // so a long silent wait (e.g. the agent retrying a slow request) isn't a blank spinner. Not persisted.
   agentStatus?: string
+  // Transient: the current foreground prompt is in a silent gap before visible assistant output.
+  // Tool completion re-arms this flag so each new Thinking phase receives a fresh timer.
+  awaitingFirstAgentOutput?: boolean
+  // Transient: the workspace Agent runtime still owns the foreground prompt. Unlike the first-output
+  // flag, this remains set after visible output so current tool activity cannot be confused with history.
+  agentPromptInFlight?: boolean
   // Transient: the durable active Branch changed while the Agent/Notebook still hold the previous
   // Branch's volatile state. The next continuation must rebuild both contexts before prompting.
   branchContextResetRequired?: boolean
@@ -197,6 +203,7 @@ type UpsertToolActivityInput = {
   sessionId: string
   toolCallId: string
   eventId: string
+  timestamp?: number
   promptMessageId?: string
   title?: string
   status?: string
@@ -268,6 +275,8 @@ type SessionStore = SessionStoreData & {
   bindPendingSession: (input: BindPendingSessionInput) => AppendMessageResult | undefined
   clearPendingContextReplay: (sessionId: string, messageId: string) => void
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
+  setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
+  setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
@@ -378,6 +387,8 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
     fixLoopActive,
     compacting,
     agentStatus,
+    awaitingFirstAgentOutput,
+    agentPromptInFlight,
     branchContextResetRequired,
     specialistSwitchResetRequired,
     branchSwitchBlocked,
@@ -395,6 +406,8 @@ const stripTransientSessionState = (session: ChatSession): PersistedChatSession 
   void fixLoopActive
   void compacting
   void agentStatus
+  void awaitingFirstAgentOutput
+  void agentPromptInFlight
   void branchContextResetRequired
   void specialistSwitchResetRequired
   void branchSwitchBlocked
@@ -482,6 +495,8 @@ const withTransientSessionState = (
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
     agentStatus: source.agentStatus,
+    awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
+    agentPromptInFlight: source.agentPromptInFlight,
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,
@@ -609,6 +624,17 @@ const synchronizeSessionGraph = (
   return synchronizeActiveConversationActivities(withMessages, persistedActivities, persistedGroups)
 }
 
+const CLEARED_AGENT_RUN_STATE = {
+  activeRun: undefined,
+  agentStatus: undefined,
+  awaitingFirstAgentOutput: undefined,
+  agentPromptInFlight: undefined,
+  compacting: undefined
+} satisfies Pick<
+  ChatSession,
+  'activeRun' | 'agentStatus' | 'awaitingFirstAgentOutput' | 'agentPromptInFlight' | 'compacting'
+>
+
 const settleConversationGraphSyncFailure = (
   session: ChatSession,
   input: {
@@ -628,9 +654,7 @@ const settleConversationGraphSyncFailure = (
   return {
     ...session,
     status: 'error',
-    activeRun: undefined,
-    agentStatus: undefined,
-    compacting: undefined,
+    ...CLEARED_AGENT_RUN_STATE,
     error: input.runError
       ? `${input.runError}\n\n${CONVERSATION_GRAPH_SYNC_ERROR}`
       : CONVERSATION_GRAPH_SYNC_ERROR,
@@ -1618,6 +1642,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sanitizedImage = undefined
       if (content.length === 0) return undefined
     }
+    const hasVisibleOutput = content.trim().length > 0 || Boolean(sanitizedImage)
 
     const existingMessage = session.messages.find(
       (message) => message.role === 'agent' && message.streamId === streamId
@@ -1646,6 +1671,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return {
             ...item,
             status: item.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+            awaitingFirstAgentOutput: hasVisibleOutput ? undefined : item.awaitingFirstAgentOutput,
             messages: item.messages.map((message) =>
               message.id === existingMessage.id
                 ? {
@@ -1684,6 +1710,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         return {
           ...item,
           status: item.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+          awaitingFirstAgentOutput: hasVisibleOutput ? undefined : item.awaitingFirstAgentOutput,
           messages: [...item.messages, agentMessage],
           updatedAt: now
         }
@@ -1691,6 +1718,33 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
 
     return { sessionId, messageId }
+  },
+
+  // Tracks the silent gap before the next visible assistant chunk.
+  setAwaitingFirstAgentOutput: (sessionId, waiting) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              awaitingFirstAgentOutput: waiting ? true : undefined
+            }
+          : session
+      )
+    }))
+  },
+
+  // Tracks foreground runtime ownership independently from whether visible output has started.
+  setAgentPromptInFlight: (sessionId, inFlight) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const agentPromptInFlight = inFlight ? true : undefined
+        return session.agentPromptInFlight === agentPromptInFlight
+          ? session
+          : { ...session, agentPromptInFlight }
+      })
+    }))
   },
 
   // Attaches a runtime artifact event to the best local assistant message before file finalization.
@@ -2098,6 +2152,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     sessionId,
     toolCallId,
     eventId,
+    timestamp,
     promptMessageId,
     title,
     status,
@@ -2114,6 +2169,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     const nextStatus = normalizeToolActivityStatus(status)
     const now = Date.now()
+    const eventTimestamp = timestamp ?? now
 
     set((state) => ({
       sessions: state.sessions.map((session) => {
@@ -2127,6 +2183,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           if (existingActivity.eventIds.includes(eventId)) {
             return session
           }
+
+          const activityWasTerminal = isTerminalToolActivityStatus(existingActivity.status)
 
           return {
             ...session,
@@ -2147,7 +2205,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                     terminalOutput: terminalOutput ?? activity.terminalOutput,
                     terminalExitCode: terminalExitCode ?? activity.terminalExitCode,
                     eventIds: [...activity.eventIds, eventId],
-                    updatedAt: now
+                    updatedAt: activityWasTerminal ? activity.updatedAt : eventTimestamp
                   }
                 : activity
             ),
@@ -2183,8 +2241,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           rawOutput,
           terminalOutput,
           terminalExitCode,
-          createdAt: now,
-          updatedAt: now
+          createdAt: eventTimestamp,
+          updatedAt: eventTimestamp
         }
 
         return {
@@ -2315,10 +2373,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
         return {
           ...session,
+          ...CLEARED_AGENT_RUN_STATE,
           status: keepArtifactError ? 'error' : 'idle',
-          activeRun: undefined,
-          agentStatus: undefined,
-          compacting: undefined,
           error: keepArtifactError ? session.error : undefined,
           errorReportable: keepArtifactError ? session.errorReportable : undefined,
           messages,
@@ -2371,10 +2427,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
         return {
           ...session,
+          ...CLEARED_AGENT_RUN_STATE,
           status: 'error',
-          activeRun: undefined,
-          agentStatus: undefined,
-          compacting: undefined,
           error: message,
           errorReportable,
           messages,
@@ -2413,9 +2467,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === sessionId && (!session.activeRun || options?.supersedeActiveRun)
           ? {
               ...session,
+              ...CLEARED_AGENT_RUN_STATE,
               status: 'idle',
-              activeRun: undefined,
-              agentStatus: undefined,
               error: undefined,
               errorReportable: undefined,
               compacting: true,
@@ -2494,10 +2547,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         session.id === sessionId
           ? {
               ...session,
+              ...CLEARED_AGENT_RUN_STATE,
               status: 'error',
-              activeRun: undefined,
               interrupted: true,
-              compacting: undefined,
               error,
               // Cleared so a prior run's report flag can't bleed onto this disconnect (the interrupted
               // banner owns this path anyway; the report button never shows for it).

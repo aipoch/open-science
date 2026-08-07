@@ -296,6 +296,8 @@ export type ResolvedAgentBackend = {
     ) => Promise<ResponsesBridgeSkillInput[]>
     registerReviewerSession: (promptCacheKey: string) => void
     unregisterReviewerSession: (promptCacheKey: string) => boolean
+    registerToolLessSession?: (promptCacheKey: string) => void
+    unregisterToolLessSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void

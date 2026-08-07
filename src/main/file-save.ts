@@ -150,6 +150,12 @@ const extensionForMime = (mimeType: string): string | undefined => {
       return 'png'
     case 'text/plain':
       return 'txt'
+    case 'text/x-python':
+      return 'py'
+    case 'text/x-r':
+      return 'R'
+    case 'text/x-sh':
+      return 'sh'
     case 'text/csv':
       return 'csv'
     case 'text/tab-separated-values':

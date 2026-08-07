@@ -13,10 +13,11 @@ import {
   removeOperationChildSync,
   RuntimeOperationJournal
 } from './operation-journal'
-import type { NotebookPackageAdmittedTarget } from './package-admission'
+import type { NotebookPackageAdmission, NotebookPackageAdmittedTarget } from './package-admission'
 import type { InstallDeps, InstallResult } from './package-manager'
 import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
+import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 
@@ -43,8 +44,13 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
-  quarantineProtectedIdentity: (target: NotebookPackageAdmittedTarget) => Promise<void>
-  completeInterruptedInstallRepair: (target: NotebookPackageAdmittedTarget) => Promise<void>
+  recheckRepair: (
+    target: NotebookPackageAdmittedTarget
+  ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
+  runtimeRepair: Pick<
+    NotebookRuntimeRepairOwner,
+    'quarantineProtectedIdentity' | 'completeInterruptedInstall'
+  >
   blockUnconfirmedChild: (target: NotebookPackageAdmittedTarget) => void
 }
 
@@ -72,6 +78,8 @@ class NotebookPackageMutationOwner {
       // The journal begins inside the environment lock so Reset cannot clear this new operation
       // between intent recording and the first installer spawn.
       result = await this.options.environmentOperations.runMutation(environmentName, async () => {
+        const repairRefusal = this.options.recheckRepair(target)
+        if (repairRefusal) return repairRefusal.result
         await journal.begin({
           operationId,
           kind: 'install',
@@ -187,7 +195,7 @@ class NotebookPackageMutationOwner {
             } catch (error) {
               journalUpdateError = error
             }
-            await this.options.quarantineProtectedIdentity(target)
+            await this.options.runtimeRepair.quarantineProtectedIdentity(target)
             if (journalUpdateError) {
               deferredQuarantineError = new Error(
                 `${REPAIR_QUARANTINE_FAILED}: the runtime was quarantined, but its operation journal ` +
@@ -243,7 +251,7 @@ class NotebookPackageMutationOwner {
         await journal.complete(operationId).catch(() => undefined)
       }
     }
-    if (result.ok) await this.options.completeInterruptedInstallRepair(target)
+    if (result.ok) await this.options.runtimeRepair.completeInterruptedInstall(target)
     return result
   }
 }

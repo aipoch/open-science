@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import { NotebookPackageAdmissionOwner } from './package-admission'
-import { managedRepairRegistryKey, repairRegistryPath } from './runtime-paths'
+import { envPrefix, managedRepairRegistryKey, repairRegistryPath } from './runtime-paths'
+import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type AdmissionOptions = ConstructorParameters<typeof NotebookPackageAdmissionOwner>[0]
@@ -45,8 +46,9 @@ const ownerHarness = (
   options: AdmissionOptions
 } => {
   const session = { runtimeBinding: vi.fn(() => binding) }
+  const runtimeRoot = overrides.runtimeRoot ?? '/runtime'
   const options: AdmissionOptions = {
-    runtimeRoot: '/runtime',
+    runtimeRoot,
     loadSession: vi.fn(async () => session),
     findSession: vi.fn(() => undefined),
     resolveRuntimeEnablement: vi.fn(async () => ({
@@ -54,11 +56,7 @@ const ownerHarness = (
       installAuthorized: binding ? { [binding.runtimeId]: true } : {}
     })),
     isDefaultEnvironmentDisabled: vi.fn(async () => false),
-    repairRegistryKeys: vi.fn((language, environment, selectedBinding) =>
-      selectedBinding?.source === 'external'
-        ? [selectedBinding.runtimeId]
-        : [environment, managedRepairRegistryKey(environment, language)]
-    ),
+    repairPolicy: new NotebookRuntimeRepairPolicy(runtimeRoot),
     environmentOperations: { isRepairBlocked: vi.fn(() => false) },
     recovery: {
       isGloballyBlocked: vi.fn(() => false),
@@ -100,7 +98,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         }),
         repairRuntimeId: 'default-python',
         repairMarkerKey: managedRepairRegistryKey('default-python', 'python'),
-        journalTarget: '/runtime/envs/default-python'
+        journalTarget: envPrefix('/runtime', 'default-python')
       })
     })
   })
@@ -131,7 +129,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         binding: { runtimeId: binding.runtimeId },
         repairRuntimeId: 'analysis',
         repairMarkerKey: managedRepairRegistryKey('analysis', 'python'),
-        journalTarget: '/runtime/envs/analysis'
+        journalTarget: envPrefix('/runtime', 'analysis')
       }
     })
   })
@@ -154,8 +152,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         interpreter: { command: '/usr/local/bin/python' },
         environmentCaptureTarget: { runtimeSource: 'external' },
         repairRuntimeId: binding.runtimeId,
-        repairMarkerKey: binding.runtimeId,
-        repairRegistryKeys: [binding.runtimeId]
+        repairMarkerKey: binding.runtimeId
       }
     })
     expect(admission.status === 'admitted' && admission.target.journalTarget).toBeUndefined()
@@ -339,11 +336,11 @@ describe('NotebookPackageAdmissionOwner', () => {
       )
       const managedOwner = ownerHarness(managed, {
         runtimeRoot,
-        repairRegistryKeys: vi.fn(() => [managed.runtimeId])
+        repairPolicy: new NotebookRuntimeRepairPolicy(runtimeRoot)
       }).owner
       const externalOwner = ownerHarness(external, {
         runtimeRoot,
-        repairRegistryKeys: vi.fn(() => [external.runtimeId])
+        repairPolicy: new NotebookRuntimeRepairPolicy(runtimeRoot)
       }).owner
       const request = {
         packages: ['package'],

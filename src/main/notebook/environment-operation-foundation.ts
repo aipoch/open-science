@@ -97,6 +97,18 @@ const runLoggedRuntimeOperation = async (
       lastPhase
     })
   } catch (error) {
+    if (lastPhase !== 'error') {
+      try {
+        report({
+          phase: 'error',
+          message: redactRuntimeLogText(error instanceof Error ? error.message : String(error)),
+          progress: 0,
+          language
+        })
+      } catch {
+        // Progress projection is best-effort and must never replace the operation failure.
+      }
+    }
     try {
       log.error('runtime operation failed', {
         ...runtimeErrorLogFields(error),

@@ -27,8 +27,9 @@ const NotebookCodeBlock = ({
     <div className="group relative w-full bg-bg-200">
       <button
         type="button"
-        className="absolute right-2 top-2 z-10 rounded bg-bg-300/80 p-1.5 text-text-300 opacity-60 backdrop-blur-sm transition-all duration-150 hover:bg-bg-300 hover:text-text-100 focus-visible:opacity-100 group-hover:opacity-100"
+        className="absolute right-2 top-2 z-10 rounded bg-bg-300/80 p-1.5 text-text-300 opacity-60 backdrop-blur-sm transition-[background-color,color,opacity] duration-150 hover:bg-bg-300 hover:text-text-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 active:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none group-hover:opacity-100"
         aria-label={copied ? 'Copied' : 'Copy to clipboard'}
+        disabled={!navigator.clipboard?.writeText}
         onClick={copyCode}
       >
         {copied ? (

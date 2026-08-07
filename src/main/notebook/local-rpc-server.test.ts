@@ -89,18 +89,22 @@ describe('notebook local RPC server', () => {
     })
     const connection = await server.issuePlanConnection('session-1', 'project-1')
     const request = (token: string): Promise<Response> =>
-      fetch(connection.endpoint, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          method: 'planCall',
-          params: {
-            projectId: 'forged-project',
-            sessionId: 'forged-session',
-            operation: 'approve'
-          }
-        })
-      })
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: {
+              projectId: 'forged-project',
+              sessionId: 'forged-session',
+              operation: 'approve'
+            }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
 
     try {
       expect((await request('master-token')).status).toBe(401)
@@ -148,17 +152,21 @@ describe('notebook local RPC server', () => {
     const connection = await server.issuePlanConnection('session-1', 'project-1')
 
     try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: { operation: 'updateStepStatus', input: { title: 'Old step' } }
+          })
         },
-        body: JSON.stringify({
-          method: 'planCall',
-          params: { operation: 'updateStepStatus', input: { title: 'Old step' } }
-        })
-      })
+        'Notebook Plan capability RPC'
+      )
 
       expect(response.status).toBe(500)
       await expect(response.json()).resolves.toEqual({

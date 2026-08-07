@@ -47,6 +47,10 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   reconnectPending: () => boolean
   mcpServerNamesFor: (sessionId: string) => readonly string[]
   nextEventId: () => string
+  setProviderPermissionProfile: (
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ) => boolean
   emitState: () => void
   pushEvent: (event: Readonly<AcpRuntimeEvent>) => void
   reportToolFailure: (
@@ -263,12 +267,12 @@ class AcpSessionUpdateProjector {
         const aggregate = this.options.registry.lookup(effect.sessionId)?.aggregate
         const profileState = aggregate?.snapshot().permissionProfile
         if (profileState) {
-          aggregate.setPermissionProfile(
-            applyCurrentModeUpdate(
-              profileState as SessionPermissionProfileState,
-              effect.currentModeId
-            )
+          const nextProfile = applyCurrentModeUpdate(
+            profileState as SessionPermissionProfileState,
+            effect.currentModeId
           )
+          if (!this.options.setProviderPermissionProfile(effect.sessionId, nextProfile)) break
+          aggregate.setPermissionProfile(nextProfile)
           emitState()
         }
         break

@@ -15,7 +15,7 @@ import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 
-import { shouldShowAgentLoadingMessage } from './agent-loading-message'
+import { getAgentLoadingPhase } from './agent-loading-message'
 import {
   createPreviewFileItemFromArtifact,
   createPreviewFileItemFromLocal,
@@ -450,7 +450,7 @@ const WorkspaceMessageScrollerImpl = ({
 
     return footerIds
   }, [conversationItems])
-  const showAgentLoadingMessage = shouldShowAgentLoadingMessage(activeSession)
+  const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
   )
@@ -899,8 +899,11 @@ const WorkspaceMessageScrollerImpl = ({
                   </MessageScrollerItem>
                 ))}
 
-                {showAgentLoadingMessage && activeSession ? (
-                  <WorkspaceAgentLoadingRow sessionId={activeSession.id} />
+                {agentLoadingPhase !== 'hidden' && activeSession ? (
+                  <WorkspaceAgentLoadingRow
+                    sessionId={activeSession.id}
+                    phase={agentLoadingPhase}
+                  />
                 ) : null}
               </div>
             </MessageScrollerContent>

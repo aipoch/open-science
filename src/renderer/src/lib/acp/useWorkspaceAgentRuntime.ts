@@ -43,7 +43,11 @@ import {
   resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
 } from './history-preamble'
-import { applyWorkspaceRuntimeEvent, syncWorkspacePermissionState } from './workspace-events'
+import {
+  applyWorkspaceRuntimeEvent,
+  syncWorkspaceAgentFirstOutputState,
+  syncWorkspacePermissionState
+} from './workspace-events'
 
 type SendWorkspaceMessageInput = {
   sessionId?: string
@@ -178,6 +182,10 @@ type WorkspaceMessageRuntime = Pick<
 
 type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
+type WorkspacePermissionProfileRuntime = Pick<
+  ReturnType<typeof useAcpRuntime>,
+  'state' | 'setPermissionProfile'
+>
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
@@ -192,6 +200,24 @@ type WorkspaceRuntimeEventProcessor = {
 // premature activeRun that a draining runtime's terminal event could settle.
 const sessionSendPreparationsInFlight = new Set<string>()
 
+const setWorkspacePermissionProfile = async (
+  runtime: WorkspacePermissionProfileRuntime,
+  sessionId: string,
+  profile: PermissionProfileId
+): Promise<boolean> => {
+  let persistedProfile = profile
+  if (runtime.state.sessionIds.includes(sessionId)) {
+    const snapshot = await runtime.setPermissionProfile(sessionId, profile)
+    const committedProfile = snapshot?.permissionProfiles[sessionId]?.selectedProfile
+
+    if (!committedProfile) return false
+    persistedProfile = committedProfile
+  }
+
+  useSessionStore.getState().setPermissionProfile(sessionId, persistedProfile)
+  return true
+}
+
 // Strips the Electron IPC wrapper ("Error invoking remote method '…': Error: <cause>") and any
 // leading "Error:" (or a lone "Error" type label) so the underlying agent message can be shown to the
 // user on its own. Used by both resume and createSession failure paths, since either arrives wrapped.
@@ -202,6 +228,7 @@ const unwrapIpcErrorDetail = (message: string): string =>
     .trim()
 
 const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error'
+const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
 
 // Turns a createSession (conversation-start) failure into the message persisted on the session. The
 // error crosses IPC wrapped, so it is unwrapped first — this keeps the app-authored setup guidance
@@ -1977,10 +2004,15 @@ const useWorkspaceAgentRuntime = (): {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
   }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsImageInput])
 
-  // Applies each visible runtime event once and trims ids that fell out of the runtime window.
+  const agentPromptInFlightSessionIds =
+    runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
+
+  // Publish ownership before processing the same snapshot's events. A first visible chunk then clears
+  // the wait monotonically instead of a later effect rearming it from that snapshot.
   useEffect(() => {
+    syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
     void liveWorkspaceRuntimeEventProcessor.process(runtime.state.events)
-  }, [runtime.state.events])
+  }, [agentPromptInFlightSessionIds, runtime.state.events])
 
   // Mirrors pending permission requests into per-session store status.
   useEffect(() => {
@@ -2135,16 +2167,8 @@ const useWorkspaceAgentRuntime = (): {
   // Applies attached-session mode changes before persisting the selection. Detached sessions store
   // the preference now and reapply it during resume before their next prompt.
   const setPermissionProfile = useCallback(
-    async (sessionId: string, profile: PermissionProfileId): Promise<boolean> => {
-      if (runtime.state.sessionIds.includes(sessionId)) {
-        const snapshot = await runtime.setPermissionProfile(sessionId, profile)
-
-        if (!snapshot) return false
-      }
-
-      useSessionStore.getState().setPermissionProfile(sessionId, profile)
-      return true
-    },
+    (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>
+      setWorkspacePermissionProfile(runtime, sessionId, profile),
     [runtime]
   )
 
@@ -2196,6 +2220,7 @@ export {
   resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
   sendWorkspaceMessage,
+  setWorkspacePermissionProfile,
   syncWorkspaceContextUsage,
   useWorkspaceAgentRuntime
 }

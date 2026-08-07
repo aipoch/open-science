@@ -1146,12 +1146,14 @@ describe('AcpRuntimeCoordinator', () => {
     const session = await coordinator.createSession()
     created[0].emitState({
       promptInFlight: true,
-      promptInFlightSessionIds: [session.sessionId]
+      promptInFlightSessionIds: [session.sessionId],
+      agentPromptInFlightSessionIds: [session.sessionId]
     })
     created[0].requestRetirement.mockReturnValue(retirement.promise)
     const reloadRequest = coordinator.requestSkillsReload()
 
     expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+    expect(coordinator.getSnapshot().agentPromptInFlightSessionIds).toEqual([session.sessionId])
 
     const resumeRequest = coordinator.resumeSession({
       sessionId: session.sessionId,
@@ -1162,7 +1164,11 @@ describe('AcpRuntimeCoordinator', () => {
 
     // Adoption cannot publish the new owner until the prior turn clears its terminal state.
     expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
-    created[0].emitState({ promptInFlight: false, promptInFlightSessionIds: [] })
+    created[0].emitState({
+      promptInFlight: false,
+      promptInFlightSessionIds: [],
+      agentPromptInFlightSessionIds: []
+    })
     await resumeRequest
 
     // Once the old turn settles, only the fresh runtime may publish prompt ownership.
@@ -1173,6 +1179,7 @@ describe('AcpRuntimeCoordinator', () => {
       promptInFlightSessionIds: [session.sessionId]
     })
     expect(coordinator.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+    expect(coordinator.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
 
     retirement.resolve()
     await reloadRequest

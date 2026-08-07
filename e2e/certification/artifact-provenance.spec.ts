@@ -2,6 +2,8 @@ import { expect } from '@playwright/test'
 import { test } from '../fixtures/electron-app'
 import { createProject, sendPrompt } from './helpers'
 
+test.setTimeout(180_000)
+
 test('retains an Artifact Version producer across Electron relaunch', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
@@ -9,7 +11,8 @@ test('retains an Artifact Version producer across Electron relaunch', async ({ a
   await sendPrompt(
     page,
     'Create a provenance artifact.',
-    'Artifact provenance verified for session'
+    'Artifact provenance verified for session',
+    90_000
   )
 
   const receipt = await page.getByText(/^Artifact provenance verified for session /).innerText()

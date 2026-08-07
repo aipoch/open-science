@@ -44,6 +44,28 @@ const manifest = JSON.parse(
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
 describe('PR Gate workflow', () => {
+  it('keeps release certification and Linux E2E out of ordinary pull requests', () => {
+    expect(workflow.jobs).not.toHaveProperty('linux_e2e')
+    expect(manifest.bundleOrder).not.toContain('linux_e2e')
+    expect(
+      manifest.laneOrder.some((lane) => lane.startsWith('e2e_') && lane.endsWith('_linux'))
+    ).toBe(false)
+    expect(
+      manifest.laneOrder.some((lane) =>
+        /^e2e_(storage_migration|provider_bridge|notebook_lifecycle|remote_pairing|artifact_provenance)_/.test(
+          lane
+        )
+      )
+    ).toBe(false)
+
+    const windowsRuns = workflow.jobs.windows_e2e.steps?.map(({ run }) => run).filter(Boolean) ?? []
+    expect(windowsRuns).not.toContain('npm run test:e2e:visual')
+    expect(windowsRuns).not.toContain('node scripts/ci/run-selected-release-e2e.mjs')
+
+    const macosRuns = workflow.jobs.macos_e2e.steps?.map(({ run }) => run).filter(Boolean) ?? []
+    expect(macosRuns).not.toContain('node scripts/ci/run-selected-release-e2e.mjs')
+  })
+
   it('is the only repository-owned pull request quality workflow', () => {
     for (const legacyWorkflow of [
       'pr-check.yml',
@@ -122,7 +144,9 @@ describe('PR Gate workflow', () => {
 
     expect(gate.name).toBe('PR Gate')
     expect(gate.if).toBe('${{ always() }}')
-    expect(gate.needs).toEqual(['preflight', ...manifest.bundleOrder])
+    expect(gate.needs).toEqual(
+      expect.arrayContaining(['preflight', ...manifest.bundleOrder, 'coverage_macos'])
+    )
     expect(gate.env).toEqual({
       PR_GATE_EXECUTION_MODE: 'bundles',
       PR_GATE_NEEDS: '${{ toJSON(needs) }}',
@@ -169,16 +193,76 @@ describe('PR Gate workflow', () => {
     }
   })
 
+  it('runs one dependency-aware macOS Module-test job without duplicate full suites', () => {
+    const unit = workflow.jobs.unit
+    const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
+    const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
+    const fallback = unit.steps?.find(({ name }) => name === 'Test complete suite fallback')
+    const coverageUpload = unit.steps?.find(({ name }) => name === 'Upload Module coverage report')
+
+    const legacyCoverage = workflow.jobs.coverage_macos
+    const coverageOnly = legacyCoverage.steps?.find(
+      ({ name }) => name === 'Test coverage-only legacy plan'
+    )
+    const consolidated = legacyCoverage.steps?.find(
+      ({ name }) => name === 'Confirm coverage consolidated into Module tests'
+    )
+
+    expect(legacyCoverage).toMatchObject({
+      name: 'Legacy coverage plan compatibility',
+      'runs-on': 'macos-14'
+    })
+    expect(coverageOnly).toMatchObject({
+      if: "${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}",
+      run: 'npm run test:coverage'
+    })
+    expect(consolidated).toMatchObject({
+      if: "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+    })
+    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(
+      1
+    )
+    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm ci')).toHaveLength(1)
+    expect(unit).toMatchObject({
+      name: 'Module tests (macOS)',
+      'runs-on': 'macos-14'
+    })
+    expect(checkout?.with).toMatchObject({ 'fetch-depth': 0 })
+    expect(related).toMatchObject({
+      id: 'unit_macos_related',
+      'continue-on-error': true,
+      env: { BASE_SHA: '${{ needs.preflight.outputs.base }}' },
+      run: 'npx vitest run --coverage --changed "$BASE_SHA"'
+    })
+    expect(related?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'selective'")
+    expect(fallback).toMatchObject({
+      id: 'unit_macos_full',
+      'continue-on-error': true,
+      run: 'npm run test:coverage'
+    })
+    expect(fallback?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
+    expect(fallback?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit')"
+    )
+    expect(fallback?.if).toContain(
+      "!contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')"
+    )
+    expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
+    expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(1)
+    expect(coverageUpload).toMatchObject({
+      if: "${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}",
+      'continue-on-error': true,
+      with: {
+        name: 'coverage-report',
+        path: 'coverage/',
+        'retention-days': 5,
+        'if-no-files-found': 'warn'
+      }
+    })
+  })
+
   it('shares dependency installation and Electron builds inside platform bundles', () => {
-    for (const bundle of [
-      'static',
-      'unit',
-      'coverage_macos',
-      'windows_core',
-      'macos_e2e',
-      'windows_e2e',
-      'linux_e2e'
-    ]) {
+    for (const bundle of ['static', 'unit', 'windows_core', 'macos_e2e', 'windows_e2e']) {
       expect(
         workflow.jobs[bundle].steps?.filter(({ run }) => run === 'npm ci'),
         `${bundle} must install dependencies exactly once`
@@ -192,8 +276,7 @@ describe('PR Gate workflow', () => {
         'npm run test:e2e:journey',
         'npm run test:e2e:workspace',
         'npm run test:e2e:accessibility',
-        'npm run test:e2e:visual',
-        'node scripts/ci/run-selected-release-e2e.mjs'
+        'npm run test:e2e:visual'
       ])
     )
 
@@ -203,55 +286,36 @@ describe('PR Gate workflow', () => {
       expect.arrayContaining([
         'npm run test:e2e:journey',
         'npm run test:e2e:workspace',
-        'npm run test:e2e:accessibility',
-        'npm run test:e2e:visual',
-        'node scripts/ci/run-selected-release-e2e.mjs'
-      ])
-    )
-
-    const linuxRuns = workflow.jobs.linux_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(linuxRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(linuxRuns).toEqual(
-      expect.arrayContaining([
-        'xvfb-run -a npm run test:e2e:journey',
-        'xvfb-run -a npm run test:e2e:workspace',
-        'xvfb-run -a npm run test:e2e:accessibility',
-        'xvfb-run -a npm run test:e2e:visual',
-        'xvfb-run -a node scripts/ci/run-selected-release-e2e.mjs'
+        'npm run test:e2e:accessibility'
       ])
     )
   })
 
-  it('runs selected P0 journeys independently without starting unrelated platform bundles', () => {
-    for (const [bundle, platform] of [
-      ['macos_e2e', 'macos'],
-      ['windows_e2e', 'windows'],
-      ['linux_e2e', 'linux']
-    ] as const) {
-      const step = workflow.jobs[bundle].steps?.find(({ id }) => id === `e2e_release_${platform}`)
+  it('runs Windows accessibility only for a legacy selected lane', () => {
+    const compatibility = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Run legacy Windows accessibility compatibility'
+    )
+    const enforce = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Enforce selected Windows E2E checks'
+    )
 
-      expect(step?.env).toEqual({ PR_GATE_LANES: '${{ needs.preflight.outputs.lanes }}' })
-      for (const journey of [
-        'storage_migration',
-        'provider_bridge',
-        'notebook_lifecycle',
-        'remote_pairing',
-        'artifact_provenance'
-      ]) {
-        expect(step?.if).toContain(`'e2e_${journey}_${platform}'`)
-      }
-    }
+    expect(manifest.laneOrder).not.toContain('e2e_accessibility_windows')
+    expect(compatibility).toMatchObject({
+      id: 'e2e_accessibility_windows',
+      'continue-on-error': true,
+      run: 'npm run test:e2e:accessibility'
+    })
+    expect(compatibility?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows')"
+    )
+    expect(enforce?.env).toMatchObject({
+      E2E_ACCESSIBILITY_OUTCOME: '${{ steps.e2e_accessibility_windows.outcome }}'
+    })
+    expect(enforce?.run).toContain('check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"')
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {
-    for (const bundle of [
-      'static',
-      'unit',
-      'windows_core',
-      'macos_e2e',
-      'windows_e2e',
-      'linux_e2e'
-    ]) {
+    for (const bundle of ['static', 'unit', 'windows_core', 'macos_e2e', 'windows_e2e']) {
       const enforce = workflow.jobs[bundle].steps?.find(({ name }) => name?.startsWith('Enforce'))
       expect(enforce, `${bundle} must enforce collected step outcomes`).toMatchObject({
         if: '${{ always() }}'
@@ -259,7 +323,7 @@ describe('PR Gate workflow', () => {
       expect(enforce?.run).toContain('exit "$failed"')
     }
 
-    for (const bundle of ['macos_e2e', 'windows_e2e', 'linux_e2e']) {
+    for (const bundle of ['macos_e2e', 'windows_e2e']) {
       for (const upload of workflow.jobs[bundle].steps?.filter(({ name }) =>
         name?.startsWith('Upload')
       ) ?? []) {
@@ -269,32 +333,34 @@ describe('PR Gate workflow', () => {
       }
     }
 
-    const portable = workflow.jobs.unit.steps?.find(
-      ({ name }) => name === 'Test complete portable suite (blocking)'
-    )
-    const renderer = workflow.jobs.unit.steps?.find(
-      ({ name }) => name === 'Test Renderer (blocking)'
+    const related = workflow.jobs.unit.steps?.find(({ name }) => name === 'Test affected Modules')
+    const full = workflow.jobs.unit.steps?.find(
+      ({ name }) => name === 'Test complete suite fallback'
     )
     const enforceUnit = workflow.jobs.unit.steps?.find(
       ({ name }) => name === 'Enforce selected unit checks'
     )
-    expect(portable?.['continue-on-error']).toBe(true)
-    expect(renderer?.['continue-on-error']).toBe(true)
+    expect(related?.['continue-on-error']).toBe(true)
+    expect(full?.['continue-on-error']).toBe(true)
     expect(enforceUnit?.env).toEqual({
-      UNIT_LINUX_OUTCOME: '${{ steps.unit_linux.outcome }}',
-      UNIT_RENDERER_OUTCOME: '${{ steps.unit_renderer.outcome }}'
+      UNIT_MACOS_FULL_OUTCOME: '${{ steps.unit_macos_full.outcome }}',
+      UNIT_MACOS_RELATED_OUTCOME: '${{ steps.unit_macos_related.outcome }}'
     })
-    expect(enforceUnit?.run).toContain('check unit_linux "$UNIT_LINUX_OUTCOME"')
-    expect(enforceUnit?.run).toContain('check unit_renderer "$UNIT_RENDERER_OUTCOME"')
+    expect(enforceUnit?.run).toContain('check unit_macos_related "$UNIT_MACOS_RELATED_OUTCOME"')
+    expect(enforceUnit?.run).toContain('check unit_macos_full "$UNIT_MACOS_FULL_OUTCOME"')
+    expect(enforceUnit?.run).toContain(
+      '[[ "$UNIT_MACOS_RELATED_OUTCOME" == "skipped" && "$UNIT_MACOS_FULL_OUTCOME" == "skipped" ]]'
+    )
+    expect(enforceUnit?.run).toContain('Selected unit bundle did not execute a Module-test path')
   })
 
   it('preserves the complete portable suite and hard Windows contracts', () => {
     const portable = workflow.jobs.unit.steps?.find(
-      ({ name }) => name === 'Test complete portable suite (blocking)'
+      ({ name }) => name === 'Test complete suite fallback'
     )
     expect(portable).toMatchObject({
       'continue-on-error': true,
-      run: 'npm test'
+      run: 'npm run test:coverage'
     })
 
     expect(workflow.jobs.windows_core).toMatchObject({

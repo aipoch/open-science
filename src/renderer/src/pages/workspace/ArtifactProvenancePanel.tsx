@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Circle, Copy, Download, LoaderCircle, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,10 @@ import type {
   ProvenanceNotebookRun,
   ProvenanceMessage
 } from '../../../../shared/artifact-provenance'
+import type {
+  ArtifactCodeReconstruction,
+  ArtifactCodeReconstructionState
+} from '../../../../shared/artifact-code-reconstruction'
 import type { PersistedToolActivity } from '../../../../shared/session-persistence'
 import type { GoToTranscriptIntent, ReviewUpdateEvent } from '../../../../shared/reviewer'
 import {
@@ -34,6 +38,7 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
@@ -50,6 +55,16 @@ type DeferredSection =
 type DeferredSectionResult =
   { state: 'loaded'; section: DeferredSection } | { state: 'error'; message: string }
 
+type CodeReconstructionPanelState =
+  | { status: 'loading' }
+  | { status: 'loaded'; value: ArtifactCodeReconstructionState }
+  | { status: 'generating'; previous: ArtifactCodeReconstructionState }
+  | {
+      status: 'error'
+      message: string
+      previous?: ArtifactCodeReconstructionState
+    }
+
 type ArtifactProvenancePanelProps = {
   item: PreviewFileItem
   projectId: string
@@ -64,6 +79,15 @@ const tabs: Array<{ id: ProvenanceTab; label: string }> = [
   { id: 'environment', label: 'Environment' },
   { id: 'review', label: 'Review' }
 ]
+
+const tabActionBarClassName = 'flex items-center gap-3 border-b border-border-300/50 px-4 py-2'
+
+const scriptDownloadFormats = {
+  python: { extension: 'py', mimeType: 'text/x-python' },
+  r: { extension: 'R', mimeType: 'text/x-r' },
+  bash: { extension: 'sh', mimeType: 'text/x-sh' },
+  repl: { extension: 'txt', mimeType: 'text/plain' }
+} satisfies Record<ArtifactCodeReconstruction['language'], { extension: string; mimeType: string }>
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -118,6 +142,19 @@ const toNotebookRun = (
 const statusReason = (value: unknown): string | undefined => {
   const status = asRecord(value)
   return asString(status?.reason)
+}
+
+const codeReconstructionUnavailableLabel = (
+  reason: Extract<ArtifactCodeReconstructionState, { state: 'unavailable' }>['reason']
+): string => {
+  switch (reason) {
+    case 'execution-unavailable':
+      return 'A reconstruction needs an immutable Execution Log for this version.'
+    case 'producer-unavailable':
+      return 'The producer run could not be identified from the captured evidence.'
+    case 'producer-script-missing':
+      return 'The producer run did not retain a script to reconstruct.'
+  }
 }
 
 const packageKey = (value: string): string =>
@@ -387,6 +424,7 @@ const ArtifactProvenancePanel = ({
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
+  const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
   const [lineageResult, setLineageResult] = useState<{
     key: string
     value?: ArtifactLineageProvenance
@@ -406,6 +444,9 @@ const ArtifactProvenancePanel = ({
   const [deferredSectionResults, setDeferredSectionResults] = useState<
     Record<string, DeferredSectionResult>
   >({})
+  const [codeReconstructionResults, setCodeReconstructionResults] = useState<
+    Record<string, CodeReconstructionPanelState>
+  >({})
   const [reviewRevision, setReviewRevision] = useState(0)
   const [showAllPackagesKey, setShowAllPackagesKey] = useState<string>()
   const [exportingNotebook, setExportingNotebook] = useState(false)
@@ -417,8 +458,9 @@ const ArtifactProvenancePanel = ({
     key: string
     message: string
   }>()
-  const lineage = lineageResult?.key === lineageKey ? lineageResult.value : undefined
-  const lineageUnavailable = lineageResult?.key === lineageKey && lineageResult.unavailable === true
+  const lineage = lineageResult?.key === lineageRequestKey ? lineageResult.value : undefined
+  const lineageUnavailable =
+    lineageResult?.key === lineageRequestKey && lineageResult.unavailable === true
   const requestedVersionId =
     selectedVersion && selectedVersion.artifactId === item.artifactId
       ? selectedVersion.versionId
@@ -436,9 +478,10 @@ const ArtifactProvenancePanel = ({
     notebookExportFailure?.key === provenanceKey ? notebookExportFailure.message : undefined
   const codeActionError =
     codeActionFailure?.key === provenanceKey ? codeActionFailure.message : undefined
+  const codeReconstructionResult = codeReconstructionResults[provenanceKey]
   const error =
     (selectedVersionUnavailable ? 'The selected Artifact version is unavailable.' : undefined) ??
-    (lineageResult?.key === lineageKey ? lineageResult.error : undefined) ??
+    (lineageResult?.key === lineageRequestKey ? lineageResult.error : undefined) ??
     (provenanceResult?.key === provenanceKey ? provenanceResult.error : undefined)
 
   useEffect(() => {
@@ -456,12 +499,12 @@ const ArtifactProvenancePanel = ({
       .getLineage({ projectId, appSessionId: item.sessionId, artifactId: item.artifactId })
       .then((value) => {
         if (!active) return
-        setLineageResult({ key: lineageKey, value, unavailable: value === undefined })
+        setLineageResult({ key: lineageRequestKey, value, unavailable: value === undefined })
       })
       .catch((failure: unknown) => {
         if (active) {
           setLineageResult({
-            key: lineageKey,
+            key: lineageRequestKey,
             error: failure instanceof Error ? failure.message : String(failure)
           })
         }
@@ -469,7 +512,7 @@ const ArtifactProvenancePanel = ({
     return () => {
       active = false
     }
-  }, [item.artifactId, item.sessionId, lineageKey, projectId])
+  }, [item.artifactId, item.sessionId, lineageRequestKey, projectId])
 
   useEffect(() => {
     let active = true
@@ -496,6 +539,54 @@ const ArtifactProvenancePanel = ({
       active = false
     }
   }, [item.artifactId, item.sessionId, lineage, projectId, provenanceKey, selectedVersionId])
+
+  useEffect(() => {
+    if (
+      activeTab !== 'code' ||
+      !item.artifactId ||
+      !selectedVersionId ||
+      !coreProvenance ||
+      codeReconstructionResult
+    ) {
+      return
+    }
+    const request = {
+      projectId,
+      appSessionId: item.sessionId,
+      artifactId: item.artifactId,
+      versionId: selectedVersionId
+    }
+    setCodeReconstructionResults((current) => ({
+      ...current,
+      [provenanceKey]: { status: 'loading' }
+    }))
+    void window.api.artifacts
+      .getCodeReconstruction(request)
+      .then((value) => {
+        setCodeReconstructionResults((current) => ({
+          ...current,
+          [provenanceKey]: { status: 'loaded', value }
+        }))
+      })
+      .catch((failure: unknown) => {
+        setCodeReconstructionResults((current) => ({
+          ...current,
+          [provenanceKey]: {
+            status: 'error',
+            message: failure instanceof Error ? failure.message : String(failure)
+          }
+        }))
+      })
+  }, [
+    activeTab,
+    codeReconstructionResult,
+    coreProvenance,
+    item.artifactId,
+    item.sessionId,
+    projectId,
+    provenanceKey,
+    selectedVersionId
+  ])
 
   const reviewReloadKey = activeTab === 'review' ? reviewRevision : 0
   const deferredTab = (
@@ -739,10 +830,24 @@ const ArtifactProvenancePanel = ({
     }
   }
 
-  const copyProducerCode = async (): Promise<void> => {
-    if (!reproductionCode || !navigator.clipboard?.writeText) return
+  const downloadScript = async (
+    code: string,
+    language: ArtifactCodeReconstruction['language']
+  ): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(reproductionCode)
+      const bytes = new TextEncoder().encode(code)
+      const data = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength
+      ) as ArrayBuffer
+      const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
+      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
+      const format = scriptDownloadFormats[language]
+      await window.api.saveBlobFile({
+        suggestedName: `${baseName}-v${versionNumber}.${format.extension}`,
+        mimeType: format.mimeType,
+        data
+      })
       setCodeActionFailure(undefined)
     } catch (failure) {
       setCodeActionFailure({
@@ -754,31 +859,65 @@ const ArtifactProvenancePanel = ({
 
   const downloadProducerCode = async (): Promise<void> => {
     if (!reproductionCode) return
+    const evidenceProducer = provenance?.evidence.producer
+    const language = evidenceProducer?.state === 'available' ? evidenceProducer.kernel_kind : 'repl'
+    await downloadScript(reproductionCode, language)
+  }
+
+  const generateCodeReconstruction = async (): Promise<void> => {
+    if (!item.artifactId || !selectedVersionId) return
+    const previous =
+      codeReconstructionResult?.status === 'loaded'
+        ? codeReconstructionResult.value
+        : codeReconstructionResult?.status === 'error'
+          ? codeReconstructionResult.previous
+          : undefined
+    if (!previous || previous.state !== 'ready') return
+    setCodeReconstructionResults((current) => ({
+      ...current,
+      [provenanceKey]: { status: 'generating', previous }
+    }))
     try {
-      const bytes = new TextEncoder().encode(reproductionCode)
-      const data = bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength
-      ) as ArrayBuffer
-      const baseName = item.name.replace(/\.[^.]+$/u, '') || 'artifact'
-      const versionNumber = lineage?.versions[selectedIndex]?.versionNumber ?? 1
-      const evidenceProducer = provenance?.evidence.producer
-      const kernelKind =
-        evidenceProducer?.state === 'available' ? evidenceProducer.kernel_kind : undefined
-      const extension = kernelKind === 'python' ? 'py' : kernelKind === 'r' ? 'R' : 'txt'
-      await window.api.saveBlobFile({
-        suggestedName: `${baseName}-v${versionNumber}.${extension}`,
-        mimeType: 'text/plain',
-        data
+      const value = await window.api.artifacts.generateCodeReconstruction({
+        projectId,
+        appSessionId: item.sessionId,
+        artifactId: item.artifactId,
+        versionId: selectedVersionId
       })
-      setCodeActionFailure(undefined)
+      setCodeReconstructionResults((current) => ({
+        ...current,
+        [provenanceKey]: { status: 'loaded', value }
+      }))
     } catch (failure) {
-      setCodeActionFailure({
-        key: provenanceKey,
-        message: failure instanceof Error ? failure.message : String(failure)
-      })
+      setCodeReconstructionResults((current) => ({
+        ...current,
+        [provenanceKey]: {
+          status: 'error',
+          message: failure instanceof Error ? failure.message : String(failure),
+          previous
+        }
+      }))
     }
   }
+
+  const retryCodeReconstructionLookup = (): void => {
+    setCodeReconstructionResults((current) => {
+      const next = { ...current }
+      delete next[provenanceKey]
+      return next
+    })
+  }
+
+  const codeReconstructionState =
+    codeReconstructionResult?.status === 'loaded'
+      ? codeReconstructionResult.value
+      : codeReconstructionResult?.status === 'generating'
+        ? codeReconstructionResult.previous
+        : codeReconstructionResult?.status === 'error'
+          ? codeReconstructionResult.previous
+          : undefined
+  const generatedCode =
+    codeReconstructionState?.state === 'cached' ? codeReconstructionState.value : undefined
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-bg-000" data-testid="artifact-provenance">
@@ -879,54 +1018,170 @@ const ArtifactProvenancePanel = ({
           <p className="p-5 text-sm text-danger-000">{deferredSectionResult.message}</p>
         ) : null}
         {provenance && activeTab === 'code' ? (
-          <section className="space-y-3 p-4">
+          <section>
             {provenance.contentStatus.state === 'unavailable' ? (
-              <p className="rounded-md bg-warning-100 px-3 py-2 text-xs text-warning-900">
+              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-warning-900">
                 Artifact content is {provenance.contentStatus.reason}; captured provenance remains
                 available.
               </p>
             ) : null}
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-text-000">Executed producer block</h3>
-              {reproductionCode ? (
-                <div className="flex items-center gap-1">
+            <div className={tabActionBarClassName}>
+              {generatedCode ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 whitespace-nowrap"
+                  onClick={() => void downloadScript(generatedCode.code, generatedCode.language)}
+                >
+                  <Download aria-hidden="true" />
+                  Download script
+                </Button>
+              ) : codeReconstructionResult?.status === 'generating' ? (
+                <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
+                  <LoaderCircle
+                    className="animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  Generating…
+                </Button>
+              ) : codeReconstructionState?.state === 'ready' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 whitespace-nowrap"
+                  onClick={() => void generateCodeReconstruction()}
+                >
+                  Generate script
+                </Button>
+              ) : codeReconstructionResult?.status === 'error' ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 whitespace-nowrap"
+                  onClick={() =>
+                    codeReconstructionResult.previous?.state === 'ready'
+                      ? void generateCodeReconstruction()
+                      : retryCodeReconstructionLookup()
+                  }
+                >
+                  Retry
+                </Button>
+              ) : codeReconstructionState?.state === 'unavailable' ? (
+                <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
+                  Generate script
+                </Button>
+              ) : (
+                <LoaderCircle
+                  className="size-4 animate-spin text-text-300 motion-reduce:animate-none"
+                  aria-label="Checking for a generated script"
+                />
+              )}
+              {generatedCode ? (
+                <div className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  <span>LLM-generated reconstruction · see </span>
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="link"
                     size="sm"
-                    disabled={!navigator.clipboard?.writeText}
-                    onClick={() => void copyProducerCode()}
+                    className="h-auto whitespace-nowrap px-0 py-0 text-sm"
+                    onClick={() => setActiveTab('execution')}
                   >
-                    <Copy aria-hidden="true" />
-                    Copy
+                    Execution Log
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void downloadProducerCode()}
-                  >
-                    <Download aria-hidden="true" />
-                    Download
-                  </Button>
+                  <span> for the raw record</span>
                 </div>
-              ) : null}
+              ) : codeReconstructionResult?.status === 'error' ? (
+                <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
+                  {codeReconstructionResult.message}
+                </p>
+              ) : codeReconstructionState?.state === 'unavailable' ? (
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
+                </p>
+              ) : codeReconstructionResult?.status === 'generating' ? (
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  Using the provider and model selected when generation started.
+                </p>
+              ) : codeReconstructionState?.state === 'ready' ? (
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  Generate a standalone script from the immutable Execution Log with your current
+                  provider and model.
+                </p>
+              ) : (
+                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                  Checking for a previously generated script…
+                </p>
+              )}
             </div>
-            <NotebookInputDataStrip
-              inputFiles={producerInputs}
-              label="Inputs"
-              className="-mx-4 border-y border-border-300/50 px-4 py-2"
-            />
-            {reproductionCode ? (
-              <pre className="overflow-x-auto rounded-md bg-bg-200 p-3 font-mono text-xs text-text-100">
-                {reproductionCode}
-              </pre>
-            ) : (
-              <p className="text-sm text-text-300">
-                No producer block was recorded for this version. {statusReason(producer)}
+            {producerInputs.length > 0 ? (
+              <NotebookInputDataStrip
+                inputFiles={producerInputs}
+                label="Inputs"
+                className="border-b border-border-300/50 px-4 py-2"
+              />
+            ) : null}
+            {generatedCode?.sourceTruncated ||
+            (codeReconstructionState?.state === 'ready' &&
+              codeReconstructionState.sourceTruncated) ? (
+              <p className="border-b border-warning-100/50 bg-warning-100/10 px-4 py-2 text-xs text-text-200">
+                The immutable Execution Log was bounded; the reconstruction may include a
+                provenance-gap comment.
               </p>
+            ) : null}
+            {codeReconstructionResult?.status === 'generating' ? (
+              <div
+                className="flex min-h-48 items-center justify-center gap-2 px-4 py-8 text-sm text-text-300"
+                role="status"
+                aria-live="polite"
+                aria-label="Generating reconstructed script"
+              >
+                <LoaderCircle
+                  className="size-5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                <span>Generating script…</span>
+              </div>
+            ) : generatedCode ? (
+              <NotebookCodeBlock code={generatedCode.code} language={generatedCode.language} />
+            ) : (
+              <div className="space-y-3 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-text-000">Captured producer block</h3>
+                  {reproductionCode ? (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void downloadProducerCode()}
+                      >
+                        <Download aria-hidden="true" />
+                        Download
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                {reproductionCode ? (
+                  <NotebookCodeBlock
+                    code={reproductionCode}
+                    language={
+                      provenance.evidence.producer.state === 'available'
+                        ? provenance.evidence.producer.kernel_kind
+                        : undefined
+                    }
+                  />
+                ) : (
+                  <p className="text-sm text-text-300">
+                    No producer block was recorded for this version. {statusReason(producer)}
+                  </p>
+                )}
+              </div>
             )}
-            {codeActionError ? <p className="text-xs text-danger-000">{codeActionError}</p> : null}
+            {codeActionError ? (
+              <p className="px-4 py-2 text-xs text-danger-000" role="alert">
+                {codeActionError}
+              </p>
+            ) : null}
           </section>
         ) : null}
         {provenance && activeTab === 'execution' && deferredSectionReady ? (
@@ -940,7 +1195,7 @@ const ArtifactProvenancePanel = ({
                   {executionTruncation.omittedInputCount} inputs.
                 </p>
               ) : null}
-              <div className="flex items-center border-b border-border-300/50 px-4 py-2">
+              <div className={tabActionBarClassName}>
                 <Button
                   type="button"
                   size="sm"

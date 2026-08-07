@@ -54,7 +54,6 @@ type Harness = {
   >
   owner: AcpSessionInteractionOwner
   planLifecycle: {
-    beforeStop: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeStop']>
     beforeRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['beforeRelease']>
     afterRelease: Mock<AcpPromptTurnWorkflowOptions['plan']['afterRelease']>
   }
@@ -216,9 +215,6 @@ const createHarness = (
     return input.prepare?.(request) ?? prepared
   })
   const planLifecycle: Harness['planLifecycle'] = {
-    beforeStop: vi.fn(async () => {
-      journal.push('plan:before-stop')
-    }),
     beforeRelease: vi.fn(() => {
       journal.push('plan:before-release')
     }),
@@ -234,7 +230,6 @@ const createHarness = (
     if (input.execute) return input.execute(request)
     request.onAccepted()
     const response: PromptResponse = { stopReason: 'end_turn' }
-    await request.beforeStop?.(response)
     request.captureStop()
     return { kind: 'stopped' as const, response, facts: {} }
   })
@@ -395,7 +390,6 @@ describe('AcpPromptTurnWorkflow', () => {
       'execute',
       'accepted',
       'skills:completed',
-      'plan:before-stop',
       'finalize'
     ])
     const [handles, outcome] = harness.finalizer.mock.calls[0]
@@ -605,7 +599,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
   })
 
-  it('passes protected Plan guidance through the interaction-scoped completion gate', async () => {
+  it('passes protected Plan guidance through the interaction-scoped lifecycle', async () => {
     const projection = planProjection()
     const harness = createHarness({ admitPlan: () => ({ authorized: projection }) })
     const prompt = request()
@@ -621,9 +615,6 @@ describe('AcpPromptTurnWorkflow', () => {
     )
     const handles = harness.finalizer.mock.calls[0][0]
     const interaction = handles.interaction
-    expect(harness.planLifecycle.beforeStop).toHaveBeenCalledWith('s1', interaction, {
-      stopReason: 'end_turn'
-    })
     handles.beforeInteractionRelease()
     await handles.afterInteractionRelease()
     expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)

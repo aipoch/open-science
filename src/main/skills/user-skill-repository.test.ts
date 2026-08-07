@@ -171,6 +171,44 @@ describe('frontmatterBlock', () => {
 })
 
 describe('UserSkillRepository', () => {
+  it('holds the mutation lock throughout a caller-controlled Skill read', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const id = await repo.createPersonal({
+      name: 'Locked',
+      description: 'Original.',
+      body: '# Original'
+    })
+    let releaseRead!: () => void
+    const readReleased = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve
+    })
+
+    const read = repo.withSkillReadLock(id, async (skill) => {
+      markReadStarted()
+      await readReleased
+      return skill.name
+    })
+    await readStarted
+
+    let updateFinished = false
+    const update = repo
+      .updatePersonal(id, { name: 'Locked', description: 'Updated.', body: '# Updated' })
+      .finally(() => {
+        updateFinished = true
+      })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(updateFinished).toBe(false)
+
+    releaseRead()
+    await expect(read).resolves.toBe('Locked')
+    await update
+    expect(updateFinished).toBe(true)
+  })
+
   it('creates, lists, reads, updates, and deletes a personal skill', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 

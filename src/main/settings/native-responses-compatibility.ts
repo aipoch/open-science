@@ -330,6 +330,8 @@ export class NativeResponsesCompatibilityProxy {
   private connection: ResponsesBridgeConnection | undefined
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
+  private readonly toolLessSessionKeys = new Set<string>()
+  private readonly scopedToolLessSessionKeys = new Set<string>()
 
   constructor(
     private target: NativeResponsesCompatibilityTarget,
@@ -492,12 +494,24 @@ export class NativeResponsesCompatibilityProxy {
     return this.scopedReviewerSessionKeys.delete(promptCacheKey)
   }
 
+  registerToolLessSession(promptCacheKey: string): void {
+    this.toolLessSessionKeys.add(promptCacheKey)
+    this.scopedToolLessSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterToolLessSession(promptCacheKey: string): boolean {
+    this.toolLessSessionKeys.delete(promptCacheKey)
+    return this.scopedToolLessSessionKeys.delete(promptCacheKey)
+  }
+
   async close(): Promise<void> {
     const server = this.server
     this.server = undefined
     this.connection = undefined
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
+    this.toolLessSessionKeys.clear()
+    this.scopedToolLessSessionKeys.clear()
     if (!server) return
     const closing = new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
@@ -537,17 +551,23 @@ export class NativeResponsesCompatibilityProxy {
         typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
       const reviewerScoped =
         promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+      const toolLessScoped =
+        promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
       if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
+      if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
       // Codex currently advertises built-in tools even when reviewer session metadata disables them.
       // Replace the full declaration set at this boundary so reviewer turns can reach only their
       // scope-bounded reviewer MCP, matching the Chat bridge's fail-closed contract.
-      const scopedBody = reviewerScoped
-        ? {
-            ...body,
-            tools: namespaceToolDeclarations(this.target.reviewerScope?.namespacedTools ?? []),
-            tool_choice: 'auto'
-          }
-        : body
+      const scopedBody =
+        reviewerScoped || toolLessScoped
+          ? {
+              ...body,
+              tools: namespaceToolDeclarations(
+                reviewerScoped ? (this.target.reviewerScope?.namespacedTools ?? []) : []
+              ),
+              tool_choice: 'auto'
+            }
+          : body
       const routedBody = this.target.model
         ? { ...scopedBody, model: this.target.model }
         : scopedBody
@@ -556,7 +576,8 @@ export class NativeResponsesCompatibilityProxy {
         requestId,
         namespaceToolCount: aliases.size,
         stream: body.stream === true,
-        reviewerScoped
+        reviewerScoped,
+        toolLessScoped
       })
       phase = 'upstream-fetch'
       const upstream = await this.fetchImpl(responsesUrl(this.target.baseUrl), {

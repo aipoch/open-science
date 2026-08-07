@@ -148,6 +148,7 @@ type ConversationPanelProps = {
   canCompactContext?: boolean
   compactContextDisabledReason?: string
   onCompactContext?: () => void
+  canChangeAgentControls: boolean
   canChangePermissionProfile: boolean
   // Auto-review toggle: whether the current session has auto-review enabled (default false).
   autoReviewEnabled: boolean
@@ -230,6 +231,7 @@ const ConversationPanel = ({
   canCompactContext = false,
   compactContextDisabledReason,
   onCompactContext,
+  canChangeAgentControls,
   canChangePermissionProfile,
   autoReviewEnabled,
   onDraftDocChange,
@@ -926,7 +928,8 @@ const ConversationPanel = ({
                           profileState={permissionProfileState}
                           grants={permissionGrants}
                           autoReviewEnabled={autoReviewEnabled}
-                          readOnly={!canChangePermissionProfile}
+                          readOnly={!canChangeAgentControls}
+                          permissionProfileReadOnly={!canChangePermissionProfile}
                           grantActionsReadOnly={false}
                           autoReviewDisabled={!canEditDraft}
                           enabledComputeHosts={enabledComputeHosts}

@@ -16,6 +16,8 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.sendPrompt': 'acp:send-prompt',
   'acp.setPermissionProfile': 'acp:set-permission-profile',
   'artifacts.finalizeRunArtifacts': 'artifacts:finalize-run',
+  'artifacts.generateCodeReconstruction': 'artifacts:generate-code-reconstruction',
+  'artifacts.getCodeReconstruction': 'artifacts:get-code-reconstruction',
   'artifacts.getLineage': 'artifacts:get-lineage',
   'artifacts.getVersionExecution': 'artifacts:get-version-execution',
   'artifacts.getVersionMessages': 'artifacts:get-version-messages',

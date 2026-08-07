@@ -390,8 +390,44 @@ class AcpPermissionContext {
     return this.broker.getPendingRequests()
   }
 
-  hasPendingForSession(sessionId: string): boolean {
-    return this.broker.hasPendingForSession(sessionId)
+  async applyPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
+  ): Promise<void> {
+    const resolvedRequestIds = await this.broker.applyPermissionProfile(
+      sessionId,
+      profile,
+      isCurrent
+    )
+    for (const requestId of resolvedRequestIds) this.humanOnlyRequestIds.delete(requestId)
+  }
+
+  setLivePermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
+  ): void {
+    this.broker.setLivePermissionProfile(sessionId, profile, isCurrent)
+  }
+
+  beginPermissionProfileTransition(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
+  ): void {
+    this.broker.beginPermissionProfileTransition(sessionId, profile, isCurrent)
+  }
+
+  setProviderPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): boolean {
+    return this.broker.setProviderPermissionProfile(sessionId, profile)
+  }
+
+  clearLivePermissionProfile(sessionId: string): void {
+    this.broker.clearLivePermissionProfile(sessionId)
   }
 
   listGrants(sessionId: string): AcpPermissionGrant[] {

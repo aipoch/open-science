@@ -198,6 +198,31 @@ describe('Connector configuration transfer views', () => {
     expect(document.body.textContent).toContain('Configuration saved.')
   })
 
+  it('re-enables Connector export after the user cancels Save As', async () => {
+    const previewCustomServerTemplateExport = vi.fn().mockResolvedValue({
+      connectorId: 'server-id',
+      ready: true,
+      diagnostics: [],
+      definition,
+      digest: 'preview-digest',
+      suggestedFileName: 'open-science-connector-example-research.json'
+    })
+    const exportCustomServerTemplate = vi.fn().mockResolvedValue({ saved: false })
+    window.api = {
+      settings: { previewCustomServerTemplateExport, exportCustomServerTemplate }
+    } as unknown as Window['api']
+    act(() => {
+      root.render(<ConnectorExportView id="server-id" onDone={vi.fn()} />)
+    })
+    await act(async () => undefined)
+
+    await act(async () => buttonNamed('Save configuration')?.click())
+
+    expect(buttonNamed('Save configuration')?.disabled).toBe(false)
+    await act(async () => buttonNamed('Save configuration')?.click())
+    expect(exportCustomServerTemplate).toHaveBeenCalledTimes(2)
+  })
+
   it('uses the Settings danger banner for export failures', async () => {
     window.api = {
       settings: {

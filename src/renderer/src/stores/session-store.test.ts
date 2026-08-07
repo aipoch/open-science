@@ -87,6 +87,150 @@ describe('session store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 
+  it('tracks the first Agent output wait as transient session state', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', false)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('clears the first Agent output wait atomically with a visible chunk', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'First visible token'
+    })
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('keeps waiting through whitespace-only Agent chunks', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-whitespace',
+      content: '   '
+    })
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-visible',
+      content: 'First visible token'
+    })
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('does not persist the first Agent output wait', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    const session = {
+      ...useSessionStore.getState().sessions[0],
+      awaitingFirstAgentOutput: true
+    }
+
+    expect(toPersistedSession(session)).not.toHaveProperty('awaitingFirstAgentOutput')
+  })
+
+  it('tracks runtime prompt ownership as transient state and clears it when the run settles', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAgentPromptInFlight('transport-session-1', true)
+
+    const running = useSessionStore.getState().sessions[0]
+    expect(running.agentPromptInFlight).toBe(true)
+    expect(toPersistedSession(running)).not.toHaveProperty('agentPromptInFlight')
+
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry the foreground request'
+    })
+    useSessionStore.getState().setAgentPromptInFlight('transport-session-1', true)
+    useSessionStore.getState().failRun('transport-session-1', 'Provider failed')
+    expect(useSessionStore.getState().sessions[0].agentPromptInFlight).toBeUndefined()
+  })
+
+  it('clears the first Agent output wait when the request settles without output', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+
+    useSessionStore.getState().finishRun('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry the request'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        awaitingFirstAgentOutput: true
+      }))
+    }))
+    useSessionStore.getState().failRun('transport-session-1', 'Provider failed')
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
+  it('clears the first Agent output wait when disconnect or compaction takes ownership', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Continue the foreground request'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+
+    useSessionStore.getState().markDisconnected('transport-session-1')
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Retry after reconnect'
+    })
+    useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
+    useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
+
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+  })
+
   it('hydrates runtime context as a read projection but never authors it in a renderer save', () => {
     useSessionStore.getState().hydrateSessions(
       [
@@ -1142,6 +1286,34 @@ describe('session store', () => {
     ])
   })
 
+  it('preserves the terminal tool timestamp when later metadata arrives', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Search the literature'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-1',
+      status: 'completed'
+    })
+    const completedAt = useSessionStore.getState().sessions[0].activities?.[0].updatedAt
+    vi.setSystemTime(new Date(Date.now() + 1_000))
+
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-2',
+      status: 'completed',
+      rawOutput: { result: 'ok' }
+    })
+
+    expect(useSessionStore.getState().sessions[0].activities?.[0]).toMatchObject({
+      updatedAt: completedAt,
+      rawOutput: { result: 'ok' }
+    })
+  })
+
   it('assigns real tool activities to the declared activity group and persists the group', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1338,8 +1510,16 @@ describe('session store', () => {
       sessionId: 'transport-session-1',
       toolCallId: 'tool-web-1',
       eventId: 'event-1',
+      timestamp: 10,
       toolKind: 'fetch',
       title: '"open science repositories"',
+      status: 'in_progress'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'tool-web-1',
+      eventId: 'event-terminal',
+      timestamp: 20,
       status: 'completed'
     })
     useSessionStore.getState().finishRun('transport-session-1')
@@ -1348,6 +1528,7 @@ describe('session store', () => {
       sessionId: 'transport-session-1',
       toolCallId: 'tool-web-1',
       eventId: 'event-2',
+      timestamp: 30,
       status: 'pending'
     })
 
@@ -1356,7 +1537,9 @@ describe('session store', () => {
       activities: [
         expect.objectContaining({
           status: 'completed',
-          eventIds: ['event-1', 'event-2']
+          eventIds: ['event-1', 'event-terminal', 'event-2'],
+          createdAt: 10,
+          updatedAt: 20
         })
       ]
     })
@@ -2980,6 +3163,7 @@ describe('truncateSessionFromMessage', () => {
           ? {
               ...session,
               status: 'running',
+              awaitingFirstAgentOutput: true,
               activeRun: { promptMessageId: 'user-2', startedAt: baseTime + 400 },
               messages: [...session.messages, createMessage('user-2', 'user', baseTime + 200)]
             }
@@ -2993,6 +3177,7 @@ describe('truncateSessionFromMessage', () => {
     expect(settled).toMatchObject({
       status: 'error',
       activeRun: undefined,
+      awaitingFirstAgentOutput: undefined,
       errorReportable: true,
       conversationGraphSyncBlocked: true
     })

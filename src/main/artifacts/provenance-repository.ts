@@ -3682,6 +3682,64 @@ class ArtifactProvenanceRepository {
     return { review: value.review }
   }
 
+  async readCodeReconstructionCache(
+    request: GetArtifactVersionProvenanceRequest
+  ): Promise<string | undefined> {
+    const path = await this.resolveVersionDerivedPath(request, 'code-reconstruction.json')
+    return readFile(path, 'utf8').catch((error: unknown) => {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code?: unknown }).code === 'ENOENT'
+      ) {
+        return undefined
+      }
+      throw error
+    })
+  }
+
+  async writeCodeReconstructionCache(
+    request: GetArtifactVersionProvenanceRequest,
+    serialized: string
+  ): Promise<void> {
+    const path = await this.resolveVersionDerivedPath(request, 'code-reconstruction.json')
+    const temporaryPath = `${path}.${this.createId()}.tmp`
+    try {
+      await writeFile(temporaryPath, serialized, { encoding: 'utf8', flag: 'wx' })
+      await this.durability.syncFile(temporaryPath)
+      await rename(temporaryPath, path)
+      await this.durability.syncDirectory(dirname(path))
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined)
+    }
+  }
+
+  private async resolveVersionDerivedPath(
+    request: GetArtifactVersionProvenanceRequest,
+    filename: string
+  ): Promise<string> {
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
+    const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
+    const versionId = assertSafeSegment(request.versionId, 'version id')
+    const client = await this.options.getClient()
+    const version = await client.artifactVersion.findFirst({
+      where: {
+        id: versionId,
+        artifactId,
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId, sessionId: appSessionId } }
+      },
+      select: { contentStorageKey: true }
+    })
+    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    return join(
+      dirname(resolveStorageKey(this.options.storageRoot, version.contentStorageKey)),
+      filename
+    )
+  }
+
   // Resolves reviewer/preview reads through the Version authority rather than reconstructing a
   // legacy session path from an id. The checksum is verified before the caller receives the path.
   async resolveVersionContent(request: {

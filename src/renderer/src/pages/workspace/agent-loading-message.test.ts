@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { describe, expect, it } from 'vitest'
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -24,13 +24,28 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const createActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Saved a file',
+  status: 'completed',
+  eventIds: ['tool-event-1'],
+  sortIndex: 2,
+  promptMessageId: 'prompt-1',
+  createdAt: 1710000000200,
+  updatedAt: 1710000000300,
+  ...overrides
+})
+
 const loadAgentLoadingMessageModule = async (): Promise<{
-  shouldShowAgentLoadingMessage: (session: ChatSession | undefined) => boolean
+  getAgentLoadingPhase: (
+    session: ChatSession | undefined
+  ) => 'hidden' | 'thinking' | 'interacting-with-tools'
 }> => import('./agent-loading-message')
 
 describe('agent loading message state', () => {
   it('shows loading after the active prompt until agent text arrives', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -45,11 +60,73 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
+  })
+
+  it('shows loading when the foreground runtime owns a request without a local active run', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      status: 'idle',
+      activeRun: undefined,
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true,
+      messages: [createMessage({ id: 'prompt-1' })]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
+  })
+
+  it('shows tool interaction while any current-run tool is active', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      awaitingFirstAgentOutput: true,
+      activeRun: {
+        promptMessageId: 'prompt-1',
+        startedAt: 1710000000100
+      },
+      messages: [createMessage({ id: 'prompt-1', sortIndex: 1 })],
+      activities: [
+        createActivity({ id: 'tool-completed', status: 'completed', sortIndex: 2 }),
+        createActivity({
+          id: 'tool-running',
+          status: 'in_progress',
+          sortIndex: 3,
+          updatedAt: 1710000000400
+        })
+      ]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
+  })
+
+  it('shows runtime-owned tool interaction without a local run', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      status: 'idle',
+      activeRun: undefined,
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true,
+      messages: [createMessage({ id: 'prompt-1', sortIndex: 1 })],
+      activities: [createActivity({ status: 'in_progress' })]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
+  })
+
+  it('ignores active tools from a historical run when no prompt is in flight', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      status: 'idle',
+      activeRun: undefined,
+      messages: [createMessage({ id: 'prompt-1', sortIndex: 1 })],
+      activities: [createActivity({ status: 'in_progress' })]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('hidden')
   })
 
   it('hides loading once the active prompt has an agent response', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -72,11 +149,46 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(false)
+    expect(getAgentLoadingPhase(session)).toBe('hidden')
+  })
+
+  it('tracks the latest tool or token update when one stream spans a tool call', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      activeRun: {
+        promptMessageId: 'prompt-1',
+        startedAt: 1710000000100
+      },
+      messages: [
+        createMessage({ id: 'prompt-1', sortIndex: 1 }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'I saved the file.',
+          status: 'streaming',
+          streamId: 'assistant-message-1',
+          responseToMessageId: 'prompt-1',
+          sortIndex: 3,
+          createdAt: 1710000000250,
+          updatedAt: 1710000000250
+        })
+      ],
+      activities: [createActivity()]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
+    expect(
+      getAgentLoadingPhase({
+        ...session,
+        messages: session.messages.map((message) =>
+          message.id === 'reply-1' ? { ...message, updatedAt: 1710000000400 } : message
+        )
+      })
+    ).toBe('hidden')
   })
 
   it('hides loading once an image-only agent response arrives', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -95,11 +207,11 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(false)
+    expect(getAgentLoadingPhase(session)).toBe('hidden')
   })
 
   it('ignores previous replies when a follow-up prompt starts a new run', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-2',
@@ -127,11 +239,11 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
   })
 
   it('keeps loading when an agent message after the active prompt belongs to an older run', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-2',
@@ -159,11 +271,11 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
   })
 
   it('keeps loading for empty agent placeholders and missing active prompts', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -182,20 +294,20 @@ describe('agent loading message state', () => {
       ]
     })
 
-    expect(shouldShowAgentLoadingMessage(session)).toBe(true)
+    expect(getAgentLoadingPhase(session)).toBe('thinking')
     expect(
-      shouldShowAgentLoadingMessage({
+      getAgentLoadingPhase({
         ...session,
         activeRun: {
           promptMessageId: 'missing-prompt',
           startedAt: 1710000000100
         }
       })
-    ).toBe(false)
+    ).toBe('hidden')
   })
 
-  it('keeps loading during permission waits and hides it only without an active run', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+  it('shows tool interaction during permission waits and hides it without a current run', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -204,29 +316,28 @@ describe('agent loading message state', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // A permission wait is still mid-run: the row stays so the transcript keeps a working indicator.
+    // Permission is part of tool interaction even when the provider has not emitted a tool row yet.
     expect(
-      shouldShowAgentLoadingMessage({
+      getAgentLoadingPhase({
         ...runningSession,
         status: 'waiting-permission'
       })
-    ).toBe(true)
+    ).toBe('interacting-with-tools')
     expect(
-      shouldShowAgentLoadingMessage({
+      getAgentLoadingPhase({
         ...runningSession,
         status: 'running',
         activeRun: undefined
       })
-    ).toBe(false)
+    ).toBe('hidden')
   })
 
-  it('keeps loading during a permission wait even after visible agent content arrives', async () => {
-    const { shouldShowAgentLoadingMessage } = await loadAgentLoadingMessageModule()
+  it('shows tool interaction during a permission wait after visible agent content', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
 
-    // The agent streamed text, then paused on a tool permission: the wait is on the user's
-    // decision, not on agent output, so the indicator stays.
+    // A permission pause takes over from body output until the user answers it.
     expect(
-      shouldShowAgentLoadingMessage(
+      getAgentLoadingPhase(
         createSession({
           status: 'waiting-permission',
           activeRun: {
@@ -246,6 +357,6 @@ describe('agent loading message state', () => {
           ]
         })
       )
-    ).toBe(true)
+    ).toBe('interacting-with-tools')
   })
 })

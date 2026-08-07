@@ -36,7 +36,7 @@ export type LenientExtractLimits = {
 const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
 
 // Rejects paths that would escape the extraction root (zip-slip) or aren't real bundle files.
-const isUnsafePath = (path: string): boolean => {
+export const isUnsafeSkillArchivePath = (path: string): boolean => {
   if (path.length === 0) return true
   // ZIP entry names are required to use forward slashes. A backslash is never legitimate and is a
   // known zip-slip vector on Windows (where `\` is a real separator), so reject the raw name rather
@@ -87,7 +87,7 @@ const extractZip = (buffer: Buffer): ExtractedZipFile[] => {
     pointer += 46 + nameLength + extraLength + commentLength
 
     if (name.endsWith('/')) continue
-    if (isUnsafePath(name)) continue
+    if (isUnsafeSkillArchivePath(name)) continue
     if (method !== 0 && method !== 8) continue
 
     // Bound directory nesting the same way the GitHub walk does. Depth counts directory levels, not
@@ -165,7 +165,7 @@ const extractZipLenient = (buffer: Buffer, limits: LenientExtractLimits): Lenien
 
     // Directory records and archive metadata carry no importable content — drop them silently.
     if (name.endsWith('/')) continue
-    if (isUnsafePath(name)) {
+    if (isUnsafeSkillArchivePath(name)) {
       // Metadata entries were never part of a skill. Real unsafe paths, though, must be recorded so a
       // loose skill root that owned one is rejected instead of imported silently incomplete.
       if (!name.startsWith('__MACOSX/') && !name.startsWith('.')) {

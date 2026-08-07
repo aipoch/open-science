@@ -9,12 +9,11 @@ import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
-  isRepairRequired,
-  managedRepairRegistryKey,
   pythonBin,
   rBin,
   resolveEnvName
 } from './runtime-paths'
+import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
@@ -32,7 +31,6 @@ type NotebookDataExecutionAdmission = Readonly<{
   binding?: NotebookSessionRuntimeBinding
   resolvedInterpreter?: NotebookSessionResolvedInterpreter
   rejection?: unknown
-  repairKeys: readonly string[]
 }>
 
 type NotebookDataExecutionAdmissionOwnerOptions = {
@@ -47,6 +45,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
   >
   ensureRecovered: () => Promise<void>
   resolveRuntimeEnablement: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
+  repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'blockKey' | 'requirement'>
 }
 
 const defaultEnvironment = (language: NotebookLanguage): string =>
@@ -54,15 +53,6 @@ const defaultEnvironment = (language: NotebookLanguage): string =>
 
 const processKey = (language: NotebookLanguage, environment: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
-
-const repairBlockKey = (
-  language: NotebookLanguage,
-  environment: string,
-  binding: NotebookSessionRuntimeBinding | undefined
-): string =>
-  binding?.source === 'external'
-    ? `external:${language}:${binding.runtimeId}`
-    : processKey(language, environment)
 
 const repairRequiredError = (language: NotebookLanguage): Error =>
   new Error(
@@ -91,7 +81,7 @@ class NotebookDataExecutionAdmissionOwner {
     const runtimeRoot = this.options.runtimeRoot
     await this.options.ensureRecovered()
     const binding = session.runtimeBinding(cell.language)
-    const repairKeys = this.repairRegistryKeys(cell.language, route.environment, binding)
+    const repair = this.options.repairPolicy.requirement(cell.language, route.environment, binding)
     let resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined
     let rejection: unknown
     const isExternal = binding?.source === 'external'
@@ -102,8 +92,8 @@ class NotebookDataExecutionAdmissionOwner {
       (isExternal && this.options.recovery.isGloballyBlocked())
     const repairRequired =
       this.options.environmentOperations.isRepairBlocked(
-        repairBlockKey(cell.language, route.environment, binding)
-      ) || repairKeys.some((key) => isRepairRequired(runtimeRoot, key))
+        this.options.repairPolicy.blockKey(cell.language, route.environment, binding)
+      ) || repair.required
 
     if (recoveryBlocked) {
       rejection = new Error(
@@ -150,7 +140,7 @@ class NotebookDataExecutionAdmissionOwner {
     if (blockedMutation && rejection === undefined) {
       rejection = new Error(`MANAGED_RUNTIME_MUTATION_BLOCKED: ${blockedMutation.message}`)
     }
-    return { language: cell.language, route, binding, resolvedInterpreter, rejection, repairKeys }
+    return { language: cell.language, route, binding, resolvedInterpreter, rejection }
   }
 
   runShared<Result>(
@@ -161,10 +151,19 @@ class NotebookDataExecutionAdmissionOwner {
       'execution',
       admission.route.environment,
       () => {
+        const repair = this.options.repairPolicy.requirement(
+          admission.language,
+          admission.route.environment,
+          admission.binding
+        )
         const postLockRepairRequired =
           this.options.environmentOperations.isRepairBlocked(
-            repairBlockKey(admission.language, admission.route.environment, admission.binding)
-          ) || admission.repairKeys.some((key) => isRepairRequired(this.options.runtimeRoot, key))
+            this.options.repairPolicy.blockKey(
+              admission.language,
+              admission.route.environment,
+              admission.binding
+            )
+          ) || repair.required
         return operation(
           postLockRepairRequired ? repairRequiredError(admission.language) : admission.rejection
         )
@@ -211,25 +210,6 @@ class NotebookDataExecutionAdmissionOwner {
         }
       }
     })
-  }
-
-  private repairRegistryKeys(
-    language: NotebookLanguage,
-    environment: string,
-    binding: NotebookSessionRuntimeBinding | undefined
-  ): string[] {
-    if (binding?.source === 'external') return [binding.runtimeId]
-    const keys = new Set([environment, managedRepairRegistryKey(environment, language)])
-    if (binding?.source === 'managed') keys.add(binding.runtimeId)
-    const prefix = envPrefix(this.options.runtimeRoot, environment)
-    const interpreter = language === 'r' ? rBin(prefix) : pythonBin(prefix)
-    keys.add(interpreter)
-    try {
-      keys.add(realpathSync(interpreter))
-    } catch {
-      // The raw path still covers repair markers for an unmaterialized runtime.
-    }
-    return [...keys]
   }
 }
 

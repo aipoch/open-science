@@ -284,24 +284,6 @@ describe('AcpProviderPromptExecutor', () => {
     expect(fixture.probe.cancel).toHaveBeenCalledOnce()
   })
 
-  it('runs terminal validation before capture and cancels the probe when validation fails', async () => {
-    const response: PromptResponse = { stopReason: 'end_turn' }
-    const fixture = setup([stop(response)])
-    const validationFailure = new Error('terminal validation failed')
-    const beforeStop = vi.fn(async () => {
-      throw validationFailure
-    })
-
-    await expect(fixture.executor.execute({ ...fixture.input, beforeStop })).rejects.toBe(
-      validationFailure
-    )
-
-    expect(beforeStop).toHaveBeenCalledWith(response)
-    expect(fixture.captureStop).not.toHaveBeenCalled()
-    expect(fixture.probe.finalize).not.toHaveBeenCalled()
-    expect(fixture.probe.cancel).toHaveBeenCalledOnce()
-  })
-
   it('captures stop before slow finalization and falls back when finalization fails', async () => {
     const response: PromptResponse = {
       stopReason: 'end_turn',

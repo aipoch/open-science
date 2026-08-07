@@ -670,12 +670,14 @@ class TaskRunner {
     for (const event of events) {
       if (event.kind !== 'tool' || !event.toolCallId) continue
       const existing = activities.get(event.toolCallId)
+      const isTerminal = existing?.status === 'completed' || existing?.status === 'failed'
       activities.set(event.toolCallId, {
         id: event.toolCallId,
         kind: 'tool',
         title: event.title?.trim() || existing?.title || 'Tool call',
-        status:
-          event.status === 'failed'
+        status: isTerminal
+          ? existing.status
+          : event.status === 'failed'
             ? 'failed'
             : event.status === 'completed'
               ? 'completed'
@@ -690,8 +692,8 @@ class TaskRunner {
         rawOutput: event.rawOutput ?? existing?.rawOutput,
         terminalOutput: event.terminalOutput ?? existing?.terminalOutput,
         terminalExitCode: event.terminalExitCode ?? existing?.terminalExitCode,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now
+        createdAt: existing?.createdAt ?? event.timestamp,
+        updatedAt: isTerminal ? existing.updatedAt : event.timestamp
       })
     }
     return [...activities.values()]

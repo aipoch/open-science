@@ -44,6 +44,7 @@ type ResumerHarness = {
   assertCurrentConnection: ReturnType<typeof vi.fn>
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
+  clearLivePermissionProfile: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   configurePermissionProfile: ReturnType<typeof vi.fn>
   connection: ClientConnection
@@ -173,6 +174,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return {} as ReturnType<typeof setTimeout>
   })
   const assertCurrentConnection = vi.fn()
+  const clearLivePermissionProfile = vi.fn()
   const resumer = new AcpProviderSessionResumer({
     defaultCwd: '/default',
     defaultProjectName: 'default-project',
@@ -216,6 +218,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     },
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
+    clearLivePermissionProfile,
     updateCwd: () => order.push('cwd callback'),
     pushEvent: () => {
       order.push('event callback')
@@ -245,6 +248,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     assertCurrentConnection,
     attachSession,
     commit,
+    clearLivePermissionProfile,
     configure,
     configurePermissionProfile,
     connection,
@@ -292,6 +296,7 @@ describe('AcpProviderSessionResumer', () => {
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
+    expect(harness.clearLivePermissionProfile).toHaveBeenCalledWith('stable-app-session')
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()

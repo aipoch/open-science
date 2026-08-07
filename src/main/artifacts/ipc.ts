@@ -19,6 +19,11 @@ import type {
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest
 } from '../../shared/artifact-provenance'
+import type {
+  ArtifactCodeReconstructionState,
+  GenerateArtifactCodeReconstructionRequest,
+  GetArtifactCodeReconstructionRequest
+} from '../../shared/artifact-code-reconstruction'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type {
   FinalizeRunArtifactsRequest,
@@ -60,6 +65,12 @@ type ArtifactHandlers = {
   getVersionReview: (
     request: GetArtifactVersionProvenanceRequest
   ) => Promise<ArtifactVersionReviewProvenance>
+  getCodeReconstruction: (
+    request: GetArtifactCodeReconstructionRequest
+  ) => Promise<ArtifactCodeReconstructionState>
+  generateCodeReconstruction: (
+    request: GenerateArtifactCodeReconstructionRequest
+  ) => Promise<ArtifactCodeReconstructionState>
   resolveVersionDescriptors: (
     request: ResolveArtifactVersionDescriptorsRequest
   ) => Promise<ArtifactVersionDescriptor[]>
@@ -88,6 +99,12 @@ type ArtifactHandlerDependencies = {
     | 'resolveVersionDescriptors'
     | 'resolveVersionContent'
   >
+  codeReconstruction?: {
+    get(request: GetArtifactCodeReconstructionRequest): Promise<ArtifactCodeReconstructionState>
+    generate(
+      request: GenerateArtifactCodeReconstructionRequest
+    ): Promise<ArtifactCodeReconstructionState>
+  }
 }
 
 // Serializes finalization per claim so duplicate renderer event processing cannot move files twice.
@@ -199,6 +216,21 @@ const createArtifactHandlers = (
     getVersionReview: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
       return dependencies.provenance.getVersionReview(request)
+    },
+    getCodeReconstruction: (request) => {
+      if (!dependencies.codeReconstruction) {
+        throw new Error('Artifact code reconstruction is not configured.')
+      }
+      return dependencies.codeReconstruction.get(request)
+    },
+    generateCodeReconstruction: (request) => {
+      const codeReconstruction = dependencies.codeReconstruction
+      if (!codeReconstruction) {
+        throw new Error('Artifact code reconstruction is not configured.')
+      }
+      // Hold one migration lease across evidence reads, model work, and the cache commit so a data
+      // root move cannot switch beneath an in-flight reconstruction.
+      return withDataRootWrite(() => codeReconstruction.generate(request))
     },
     resolveVersionDescriptors: (request) => {
       if (!dependencies.provenance) throw new Error('Artifact Provenance is not configured.')
@@ -406,6 +438,16 @@ const registerArtifactIpcHandlers = (
   ipcMainHandle(
     'artifacts:get-version-review',
     (_event, request: GetArtifactVersionProvenanceRequest) => handlers.getVersionReview(request)
+  )
+  ipcMainHandle(
+    'artifacts:get-code-reconstruction',
+    (_event, request: GetArtifactCodeReconstructionRequest) =>
+      handlers.getCodeReconstruction(request)
+  )
+  ipcMainHandle(
+    'artifacts:generate-code-reconstruction',
+    (_event, request: GenerateArtifactCodeReconstructionRequest) =>
+      handlers.generateCodeReconstruction(request)
   )
   ipcMainHandle(
     'artifacts:resolve-version-descriptors',

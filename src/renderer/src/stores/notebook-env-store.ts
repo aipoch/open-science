@@ -76,6 +76,58 @@ const RECOVERY_BLOCKED_MESSAGE =
 const subscribedBridges = new WeakSet<object>()
 
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
+  type ExplicitRun = { operationId: string; startProgressRevision: number }
+  type ProgressCursor = { revision: number; operationId?: string; terminal: boolean }
+  const latestProgress = new Map<NotebookLanguage, ProgressCursor>()
+  const explicitRuns = new Map<NotebookLanguage, ExplicitRun[]>()
+  const localOperationIds = new Map<NotebookLanguage, Set<string>>()
+  const beginExplicitRun = (language: NotebookLanguage): ExplicitRun => {
+    const run = {
+      operationId: crypto.randomUUID(),
+      startProgressRevision: latestProgress.get(language)?.revision ?? 0
+    }
+    explicitRuns.set(language, [...(explicitRuns.get(language) ?? []), run])
+    const operationIds = localOperationIds.get(language) ?? new Set<string>()
+    operationIds.add(run.operationId)
+    localOperationIds.set(language, operationIds)
+    return run
+  }
+  const trackLanguageProgress = (
+    language: NotebookLanguage,
+    operationId: string | undefined,
+    terminal: boolean
+  ): void => {
+    latestProgress.set(language, {
+      revision: (latestProgress.get(language)?.revision ?? 0) + 1,
+      operationId,
+      terminal
+    })
+  }
+  const endExplicitRun = (
+    language: NotebookLanguage,
+    run: ExplicitRun
+  ): { last: boolean; ownsLatestProgress: boolean; newerProgressTerminal: boolean } => {
+    const remaining = (explicitRuns.get(language) ?? []).filter((candidate) => candidate !== run)
+    if (remaining.length > 0) explicitRuns.set(language, remaining)
+    else explicitRuns.delete(language)
+    const latest = latestProgress.get(language)
+    const completion = {
+      last: remaining.length === 0,
+      newerProgressTerminal:
+        latest?.terminal === true && latest.revision > run.startProgressRevision,
+      // An unchanged cursor or another locally queued explicit operation owns the visible state once
+      // this renderer's queue drains. Newer automatic or another window's progress must survive.
+      ownsLatestProgress:
+        !latest ||
+        latest.revision === run.startProgressRevision ||
+        latest.operationId === run.operationId ||
+        (latest.operationId !== undefined &&
+          (localOperationIds.get(language)?.has(latest.operationId) ?? false))
+    }
+    if (completion.last) localOperationIds.delete(language)
+    return completion
+  }
+
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
   // progress/error so every consumer of `ui` (onboarding step, launch banner, notebook gate) sees a
   // view that always matches the latest mirrored state (reuses provisioning-view's pure reducer).
@@ -146,11 +198,13 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
             error: progress.phase === 'error' ? progress.message : undefined
           })
           // Route a language-tagged event into that language's slot so its card advances/settles on its
-          // own. A run is done when it reports 'done' or 'error'; language-agnostic events (upgrade/
-          // restore) carry no language and only feed the single-slot ui above.
+          // own. Explicit UI runs stay preparing until their IPC call returns; `done` can arrive before
+          // that boundary. Automatic runs have no awaiting caller, so their terminal event settles them.
           const language = progress.language
           if (language) {
-            const settled = progress.phase === 'done' || progress.phase === 'error'
+            const terminal = progress.phase === 'done' || progress.phase === 'error'
+            trackLanguageProgress(language, progress.operationId, terminal)
+            const settled = terminal && !explicitRuns.has(language)
             applyLang(language, {
               progress,
               error: progress.phase === 'error' ? progress.message : undefined,
@@ -164,7 +218,9 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
               byLang: Object.fromEntries(
                 Object.entries(s.byLang).map(([lang, state]) => [
                   lang,
-                  { ...(state as LangProvisionState), preparing: false }
+                  explicitRuns.has(lang as NotebookLanguage)
+                    ? state
+                    : { ...(state as LangProvisionState), preparing: false }
                 ])
               )
             }))
@@ -191,19 +247,30 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
+      const run = beginExplicitRun(lang)
+      let status: ProvisionStatus | undefined
+      let failure: string | undefined
       try {
-        await bridge.provision(lang)
-        const status = await bridge.getStatus()
+        await bridge.provision(lang, run.operationId)
+        status = await bridge.getStatus()
         applyUi({ status })
-        // Clear preparing BEFORE applyRecoveryBlocks: it skips setting the block message while preparing
-        // is true (so it never stomps a LIVE rebuild's progress) — but this run has already finished, so
-        // the stale optimistic preparing:true set at entry must clear first or a lingering block would
-        // never surface.
-        applyLang(lang, { preparing: false })
-        applyRecoveryBlocks(status)
       } catch (e) {
-        applyUi({ error: errorText(e) })
-        applyLang(lang, { preparing: false, error: errorText(e) })
+        failure = errorText(e)
+      } finally {
+        const completion = endExplicitRun(lang, run)
+        if (
+          completion.last &&
+          (completion.ownsLatestProgress || completion.newerProgressTerminal)
+        ) {
+          const error = completion.ownsLatestProgress
+            ? failure
+            : (get().byLang[lang]?.error ?? failure)
+          applyUi({ error })
+          // Only the last overlapping request settles the shared language card. Clear preparing before
+          // applying recovery state so a completed rebuild can surface a still-active quarantine.
+          applyLang(lang, { preparing: false, error })
+          if (status) applyRecoveryBlocks(status)
+        }
       }
     },
 
@@ -244,15 +311,28 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
         applyLang(lang, { preparing: false })
         return
       }
+      const run = beginExplicitRun(lang)
+      let status: ProvisionStatus | undefined
+      let failure: string | undefined
       try {
-        await bridge.repair(lang)
-        const status = await bridge.getStatus()
+        await bridge.repair(lang, run.operationId)
+        status = await bridge.getStatus()
         applyUi({ status })
-        applyLang(lang, { preparing: false })
-        applyRecoveryBlocks(status)
       } catch (e) {
-        applyUi({ error: errorText(e) })
-        applyLang(lang, { preparing: false, error: errorText(e) })
+        failure = errorText(e)
+      } finally {
+        const completion = endExplicitRun(lang, run)
+        if (
+          completion.last &&
+          (completion.ownsLatestProgress || completion.newerProgressTerminal)
+        ) {
+          const error = completion.ownsLatestProgress
+            ? failure
+            : (get().byLang[lang]?.error ?? failure)
+          applyUi({ error })
+          applyLang(lang, { preparing: false, error })
+          if (status) applyRecoveryBlocks(status)
+        }
       }
     }
   }

@@ -26,7 +26,7 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
     publishedAppSessionId?: string
   ) => AcpPrimarySessionIdentityReservationResult
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
-  permission: Pick<AcpPermissionContext, 'cancelForSession'>
+  permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearLivePermissionProfile'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
   interactions: Pick<AcpSessionInteractionOwner, 'current' | 'supersedeCurrent'>
@@ -70,6 +70,7 @@ export class AcpSessionReplacementWorkflow {
       }
 
       this.deps.permission.cancelForSession(request.sessionId)
+      this.deps.permission.clearLivePermissionProfile(request.sessionId)
       const attachment = this.deps.registry.lookup(request.sessionId)?.attachment
       if (attachment) {
         attachment.session.dispose()

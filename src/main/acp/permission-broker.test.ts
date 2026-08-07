@@ -171,6 +171,195 @@ describe('ACP permission broker', () => {
     await expect(declined).resolves.toBe(false)
   })
 
+  it('re-evaluates pending tool requests after a live profile change without approving app actions', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+
+    const read = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'Read notes.md',
+        providerToolName: 'Read',
+        kind: 'read',
+        locations: [{ path: 'notes.md' }]
+      }),
+      policy
+    )
+    const shell = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python train.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python train.py' }
+      }),
+      policy
+    )
+    const appApproval = broker.requestAppApproval({
+      sessionId: 'session-1',
+      title: 'Switch specialist?',
+      rawInput: { specialistApproval: { kind: 'switch' } }
+    })
+
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'auto',
+      effectiveProfile: 'auto',
+      availableModeIds: [],
+      autoReviewStrategy: 'conservative',
+      fullAccessAvailable: true
+    })
+    await expect(read).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual([
+      'python train.py',
+      'Switch specialist?'
+    ])
+
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    await expect(shell).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['Switch specialist?'])
+
+    const appRequest = emitted.find(({ title }) => title === 'Switch specialist?')!
+    await broker.respond({
+      requestId: appRequest.requestId,
+      optionId: appRequest.options.find(({ kind }) => kind === 'reject_once')?.optionId
+    })
+    await expect(appApproval).resolves.toBe(false)
+  })
+
+  it('applies a live profile to new provider requests after the pending snapshot', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+    const existing = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python existing.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python existing.py' }
+      }),
+      policy
+    )
+
+    const profileChange = broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    const capabilityLess = broker.requestPermission(
+      createToolPermissionRequest({ title: 'Unclassified provider tool', kind: 'other' }),
+      policy
+    )
+    const legacyCategory = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python late.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python late.py' }
+      }),
+      policy
+    )
+
+    await expect(capabilityLess).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    await expect(legacyCategory).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    await profileChange
+    await expect(existing).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emitted.map(({ title }) => title)).toEqual(['python existing.py'])
+    expect(broker.getPendingRequests()).toEqual([])
+  })
+
+  it('uses a live Ask profile for a delayed request carrying a stale Full policy', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+
+    const profileChange = broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    const delayed = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python delayed.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python delayed.py' }
+      }),
+      { profile: 'full', cwd: '/workspace' }
+    )
+
+    await profileChange
+    expect(emitted.map(({ title }) => title)).toEqual(['python delayed.py'])
+    expect(broker.getPendingRequests()).toHaveLength(1)
+    broker.cancelAllPending()
+    await expect(delayed).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
+  it('stops releasing pending requests when a live profile change is superseded', async () => {
+    const broker = new AcpPermissionBroker(() => undefined)
+    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+    const first = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python first.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python first.py' }
+      }),
+      policy
+    )
+    const second = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python second.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python second.py' }
+      }),
+      policy
+    )
+    let current = true
+    void first.then(() => {
+      current = false
+    })
+
+    await broker.applyPermissionProfile(
+      'session-1',
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        availableModeIds: [],
+        fullAccessAvailable: true
+      },
+      () => current
+    )
+
+    await expect(first).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['python second.py'])
+    broker.cancelAllPending()
+    await expect(second).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
   it('keeps session grants app-owned while the Agent receives one-shot approvals', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))

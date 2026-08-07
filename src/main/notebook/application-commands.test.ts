@@ -268,15 +268,18 @@ describe('Notebook application commands', () => {
     await expect(
       router.dispatcher.invoke(notebookEnvironmentStatusCommand, invocation([] as const))
     ).resolves.toMatchObject({ pythonReady: true })
-    await router.dispatcher.invoke(notebookEnvironmentProvisionCommand, invocation(['r'] as const))
+    await router.dispatcher.invoke(
+      notebookEnvironmentProvisionCommand,
+      invocation(['r', 'provision-operation'] as const)
+    )
     await router.dispatcher.invoke(
       notebookEnvironmentRepairCommand,
-      invocation(['python'] as const)
+      invocation(['python', 'repair-operation'] as const)
     )
     await router.dispatcher.invoke(notebookEnvironmentCancelCommand, invocation([] as const))
 
-    expect(provision).toHaveBeenCalledWith('r')
-    expect(repair).toHaveBeenCalledWith('python')
+    expect(provision).toHaveBeenCalledWith('r', 'provision-operation')
+    expect(repair).toHaveBeenCalledWith('python', 'repair-operation')
     expect(cancel).toHaveBeenCalledWith(undefined)
     expect(lifecycle.startup).not.toHaveBeenCalled()
     expect(router.dispatcher.commandNames()).toEqual(

@@ -30,6 +30,8 @@ let conversationProps: {
   canEditDraft: boolean
   canSendMessage: boolean
   canEditMessage: boolean
+  canChangeAgentControls: boolean
+  canChangePermissionProfile: boolean
   canCompactContext: boolean
   compactContextDisabledReason?: string
   onDraftDocChange: (doc: ComposerDoc) => void
@@ -247,6 +249,21 @@ describe('WorkspacePage send gate while compacting', () => {
     })
     expect(conversationProps.canSendMessage).toBe(true)
   })
+
+  it.each(['running', 'waiting-permission'] as const)(
+    'keeps permission mode editable while the Session is %s',
+    async (status) => {
+      useSessionStore.setState({
+        sessions: [createSession({ status })],
+        selectedSessionId: 'sess-a'
+      })
+
+      await renderPage()
+
+      expect(conversationProps.canChangeAgentControls).toBe(false)
+      expect(conversationProps.canChangePermissionProfile).toBe(true)
+    }
+  )
 
   it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
     useSessionStore.setState({
@@ -531,6 +548,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.canEditDraft).toBe(false)
     expect(conversationProps.canSendMessage).toBe(false)
     expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangePermissionProfile).toBe(false)
   })
 
   it('blocks new prompts after terminal conversation graph synchronization fails', async () => {

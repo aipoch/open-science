@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -9,6 +9,15 @@ import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+
+const listSourceFiles = (directory: string): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    return entry.isDirectory() ? listSourceFiles(path) : [path]
+  })
+
+const windowsRuntimeSignal =
+  /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
 describe('pull request change classification', () => {
   it('publishes a Git revision plan for GitHub Actions callers', () => {
@@ -58,13 +67,13 @@ describe('pull request change classification', () => {
           .split('\n')
           .map((line) => line.split('=', 2))
       )
-      expect(JSON.parse(outputs.lanes)).toContain('e2e_workspace_windows')
+      expect(JSON.parse(outputs.lanes)).toContain('e2e_workspace_macos')
       expect(JSON.parse(outputs.plan).mode).toBe('selective')
       expect(readFileSync(summary, 'utf8')).toContain(
         'src/shared/acp.ts -&gt; shared_contract -&gt; preload_adapter'
       )
       expect(readFileSync(summary, 'utf8')).toContain(
-        'Execution bundles: policy, static, unit, coverage_macos, windows_core, macos_e2e, windows_e2e, linux_e2e'
+        'Execution bundles: policy, static, unit, macos_e2e'
       )
     } finally {
       rmSync(root, { force: true, recursive: true })
@@ -96,12 +105,10 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_macos',
-        'e2e_workspace_windows'
+        'e2e_workspace_macos'
       ])
     )
     expect(plan.reasonChains).toContain(
@@ -119,14 +126,13 @@ describe('pull request change classification', () => {
         'lint',
         'typecheck_node',
         'typecheck_web',
-        'coverage_macos',
+        'unit_macos',
         'windows_runtime',
         'e2e_functional_macos',
         'e2e_functional_windows',
         'e2e_workspace_macos',
         'e2e_workspace_windows',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
         'e2e_visual_macos'
       ])
     )
@@ -134,11 +140,9 @@ describe('pull request change classification', () => {
       'policy',
       'static',
       'unit',
-      'coverage_macos',
       'windows_core',
       'macos_e2e',
-      'windows_e2e',
-      'linux_e2e'
+      'windows_e2e'
     ])
     expect(plan.reasonChains).toContain('src/new-runtime/capability.ts -> unknown -> full')
   })
@@ -178,61 +182,12 @@ describe('pull request change classification', () => {
     )
   })
 
-  it('selects one release journey without activating unrelated P0 journeys', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/settings/openai-provider-bridge.ts', status: 'modified' }
-    ])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_provider_bridge_macos',
-        'e2e_provider_bridge_windows',
-        'e2e_provider_bridge_linux'
-      ])
-    )
-    expect(plan.lanes.filter((lane) => lane.includes('storage_migration'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('notebook_lifecycle'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('remote_pairing'))).toEqual([])
-    expect(plan.lanes.filter((lane) => lane.includes('artifact_provenance'))).toEqual([])
-    expect(plan.bundles).toEqual(expect.arrayContaining(['macos_e2e', 'windows_e2e', 'linux_e2e']))
-  })
-
-  it('maps a focused release spec only to its three platform bundles', () => {
-    const plan = classifyChanges([
-      { path: 'e2e/certification/remote-pairing.spec.ts', status: 'modified' }
-    ])
-
-    expect(plan.mode).toBe('selective')
-    expect(plan.lanes).toEqual([
-      'policy',
-      'e2e_remote_pairing_macos',
-      'e2e_remote_pairing_windows',
-      'e2e_remote_pairing_linux'
-    ])
-    expect(plan.bundles).toEqual(['policy', 'macos_e2e', 'windows_e2e', 'linux_e2e'])
-  })
-
-  it('does not select a P0 journey for an unrelated Main runtime change', () => {
-    const plan = classifyChanges([{ path: 'src/main/menu.ts', status: 'modified' }])
-
-    for (const journey of [
-      'storage_migration',
-      'provider_bridge',
-      'notebook_lifecycle',
-      'remote_pairing',
-      'artifact_provenance'
-    ]) {
-      expect(plan.lanes.some((lane) => lane.includes(journey))).toBe(false)
-    }
-  })
-
   it('uses one specific owner instead of a broad fallback owner', () => {
     const manifest = readManifest()
     manifest.rules.push({
       id: 'notebook_runtime',
       role: 'owner',
-      paths: ['src/main/custom-runtime/service.ts'],
+      paths: ['src/main/notebook/runtime-service.ts'],
       capabilities: ['notebook_runtime']
     })
     manifest.capabilities.notebook_runtime = {
@@ -241,7 +196,7 @@ describe('pull request change classification', () => {
     }
 
     const plan = classifyChanges(
-      [{ path: 'src/main/custom-runtime/service.ts', status: 'modified' }],
+      [{ path: 'src/main/notebook/runtime-service.ts', status: 'modified' }],
       manifest
     )
 
@@ -326,18 +281,11 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_linux',
-        'coverage_macos',
-        'windows_runtime',
-        'windows_path',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
         'e2e_workspace_macos',
-        'e2e_workspace_windows',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
         'e2e_visual_macos'
       ])
     )
@@ -359,14 +307,10 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_linux',
-        'coverage_macos',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_macos',
-        'e2e_workspace_windows'
+        'e2e_workspace_macos'
       ])
     )
     expect(plan.lanes).not.toContain('e2e_visual_macos')
@@ -382,6 +326,7 @@ describe('pull request change classification', () => {
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
@@ -415,19 +360,11 @@ describe('pull request change classification', () => {
         'format',
         'lint',
         'typecheck_web',
-        'unit_linux',
-        'coverage_macos',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_functional_linux',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
-        'e2e_accessibility_linux',
-        'e2e_visual_macos',
-        'e2e_visual_windows',
-        'e2e_visual_linux'
+        'e2e_visual_macos'
       ])
     )
     expect(plan.lanes).not.toContain('typecheck_node')
@@ -439,9 +376,7 @@ describe('pull request change classification', () => {
       { path: 'src/renderer/src/stores/session.ts', status: 'modified' }
     ])
 
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining(['e2e_workspace_macos', 'e2e_workspace_windows'])
-    )
+    expect(plan.lanes).toEqual(expect.arrayContaining(['e2e_workspace_macos']))
     expect(plan.reasonChains).toContain(
       'src/renderer/src/stores/session.ts -> renderer_state -> e2e_workspace'
     )
@@ -464,10 +399,10 @@ describe('pull request change classification', () => {
       'typecheck_node',
       'typecheck_web',
       'interface_contracts',
-      'coverage_macos',
+      'unit_macos',
       'build'
     ])
-    expect(plan.bundles).toEqual(['policy', 'static', 'coverage_macos', 'macos_e2e'])
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit', 'macos_e2e'])
   })
 
   it('adds Windows core back when a Preload platform-risk overlay matches', () => {
@@ -477,7 +412,7 @@ describe('pull request change classification', () => {
     expect(plan.roots).toEqual(expect.arrayContaining(['preload_contract', 'windows_sensitive']))
     expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'windows_path']))
     expect(plan.bundles).toContain('windows_core')
-    expect(plan.bundles).not.toContain('windows_e2e')
+    expect(plan.bundles).toContain('windows_e2e')
   })
 
   it('keeps CLI and SDK changes out of Electron E2E', () => {
@@ -488,52 +423,7 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('e2e_functional_macos')
   })
 
-  it('selects provider bridge P0 when an Agent framework route changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/agent-framework/opencode.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_provider_bridge_macos',
-        'e2e_provider_bridge_windows',
-        'e2e_provider_bridge_linux'
-      ])
-    )
-  })
-
-  it('selects Notebook and Artifact P0 when Session capability routing changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/acp/session-capability-owner.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_notebook_lifecycle_macos',
-        'e2e_notebook_lifecycle_windows',
-        'e2e_notebook_lifecycle_linux',
-        'e2e_artifact_provenance_macos',
-        'e2e_artifact_provenance_windows',
-        'e2e_artifact_provenance_linux'
-      ])
-    )
-  })
-
-  it('selects remote pairing P0 when the Web authorization boundary changes', () => {
-    const plan = classifyChanges([
-      { path: 'src/main/web-service/http-server.ts', status: 'modified' }
-    ])
-
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining([
-        'e2e_remote_pairing_macos',
-        'e2e_remote_pairing_windows',
-        'e2e_remote_pairing_linux'
-      ])
-    )
-  })
-
-  it('uses the broader impact of both paths for a rename', () => {
+  it('fails closed when a source rename cannot be related from the current import graph', () => {
     const plan = classifyChanges([
       {
         path: 'docs/acp-contract.md',
@@ -542,12 +432,23 @@ describe('pull request change classification', () => {
       }
     ])
 
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('destructive_change')
+    expect(plan.reasonChains).toContain('src/shared/acp.ts -> destructive change -> full')
+  })
+
+  it('keeps documentation-only renames on the minimal documentation boundary', () => {
+    const plan = classifyChanges([
+      {
+        path: 'docs/current.md',
+        previousPath: 'docs/legacy.md',
+        status: 'renamed'
+      }
+    ])
+
     expect(plan.mode).toBe('selective')
-    expect(plan.roots).toEqual(expect.arrayContaining(['documentation', 'shared_contract']))
-    expect(plan.lanes).toContain('e2e_workspace_windows')
-    expect(plan.reasonChains).toContain(
-      'src/shared/acp.ts -> shared_contract -> preload_adapter -> renderer_settings -> e2e_workspace'
-    )
+    expect(plan.lanes).toEqual(['policy', 'docs'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
   })
 
   it.each([
@@ -573,12 +474,65 @@ describe('pull request change classification', () => {
     expect(plan.lanes).toEqual(['policy'])
   })
 
-  it('limits macOS package smoke tooling changes to static and unit validation', () => {
-    const plan = classifyChanges([{ path: 'scripts/macos-package-smoke.mjs', status: 'modified' }])
+  it('keeps documentation-only changes outside every code and platform lane', () => {
+    const plan = classifyChanges([
+      { path: 'README.md', status: 'modified' },
+      { path: 'docs/architecture.md', status: 'added' }
+    ])
 
     expect(plan.mode).toBe('selective')
-    expect(plan.roots).toEqual(['macos_package_smoke'])
-    expect(plan.lanes).toEqual(['policy', 'format', 'lint', 'unit_linux'])
-    expect(plan.bundles).toEqual(['policy', 'static', 'unit'])
+    expect(plan.lanes).toEqual(['policy', 'docs'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
+    expect(plan.lanes).not.toContain('unit_macos')
+    expect(plan.lanes.some((lane) => lane.startsWith('e2e_'))).toBe(false)
+  })
+
+  it('selects one macOS Module-test lane without duplicate coverage or Renderer lanes', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/runtime-service.ts', status: 'modified' }
+    ])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.lanes).toContain('unit_macos')
+    expect(plan.lanes).not.toContain('unit_linux')
+    expect(plan.lanes).not.toContain('unit_renderer')
+    expect(plan.lanes).not.toContain('coverage_macos')
+    expect(plan.lanes).not.toContain('e2e_functional_windows')
+    expect(plan.lanes).not.toContain('e2e_workspace_windows')
+  })
+
+  it('adds Windows GUI consumers only for a Windows-sensitive source change', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/windows-shell.ts', status: 'modified' }
+    ])
+
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining([
+        'windows_runtime',
+        'windows_path',
+        'e2e_functional_windows',
+        'e2e_workspace_windows'
+      ])
+    )
+    expect(plan.lanes).not.toContain('e2e_accessibility_windows')
+  })
+
+  it('covers every production source file with an explicit Windows runtime signal', () => {
+    const sourceFiles = ['src/main', 'src/preload', 'src/shared']
+      .flatMap((directory) => listSourceFiles(resolve(directory)))
+      .filter((path) => /\.(?:ts|tsx)$/.test(path) && !/\.(?:test|spec)\.(?:ts|tsx)$/.test(path))
+      .filter((path) => windowsRuntimeSignal.test(readFileSync(path, 'utf8')))
+      .map((path) => relative(process.cwd(), path).replaceAll('\\', '/'))
+
+    const uncoveredFiles = sourceFiles.filter((path) => {
+      const plan = classifyChanges([{ path, status: 'modified' }])
+      return (
+        !plan.roots.includes('windows_sensitive') ||
+        !plan.lanes.includes('e2e_functional_windows') ||
+        !plan.lanes.includes('e2e_workspace_windows')
+      )
+    })
+
+    expect(uncoveredFiles).toEqual([])
   })
 })

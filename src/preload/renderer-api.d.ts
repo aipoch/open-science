@@ -37,6 +37,11 @@ import type {
   GetArtifactVersionProvenanceRequest
 } from '../shared/artifact-provenance'
 import type {
+  ArtifactCodeReconstructionState,
+  GenerateArtifactCodeReconstructionRequest,
+  GetArtifactCodeReconstructionRequest
+} from '../shared/artifact-code-reconstruction'
+import type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
@@ -204,6 +209,8 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   DeleteSkillRequest,
+  ExportSkillRequest,
+  ExportSkillResult,
   ImportSkillRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
@@ -423,6 +430,7 @@ export interface OpenScienceAPI {
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
     getSkillDetail(id: string): Promise<SkillDetailView>
+    exportSkill(request: ExportSkillRequest): Promise<ExportSkillResult>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
     createSkill(request: CreateSkillRequest): Promise<SkillView[]>
     updateSkill(request: UpdateSkillRequest): Promise<SkillView[]>
@@ -652,6 +660,12 @@ export interface OpenScienceAPI {
     getVersionReview(
       request: GetArtifactVersionProvenanceRequest
     ): Promise<ArtifactVersionReviewProvenance>
+    getCodeReconstruction(
+      request: GetArtifactCodeReconstructionRequest
+    ): Promise<ArtifactCodeReconstructionState>
+    generateCodeReconstruction(
+      request: GenerateArtifactCodeReconstructionRequest
+    ): Promise<ArtifactCodeReconstructionState>
     resolveVersionDescriptors(
       request: ResolveArtifactVersionDescriptorsRequest
     ): Promise<ArtifactVersionDescriptor[]>
@@ -729,8 +743,8 @@ export interface OpenScienceAPI {
   }
   notebookEnv: {
     getStatus(): Promise<ProvisionStatus>
-    provision(lang: NotebookLanguage): Promise<void>
-    repair(lang: NotebookLanguage): Promise<void>
+    provision(lang: NotebookLanguage, operationId?: string): Promise<void>
+    repair(lang: NotebookLanguage, operationId?: string): Promise<void>
     cancel(lang?: NotebookLanguage): Promise<void>
     onProgress(listener: (progress: ProvisionProgress) => void): RemoveListener
   }

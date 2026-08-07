@@ -40,6 +40,7 @@ import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/material
 import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
+import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import {
   provisionAppClaudeConfigDir,
@@ -236,6 +237,15 @@ class SkillCatalogModule {
       ),
       references: await this.listReferences(skill.sourceDir)
     }
+  }
+
+  async buildSkillExport(id: string): Promise<SkillExportArchive> {
+    if ((await this.skillRegistry.list()).some((entry) => entry.id === id)) {
+      throw new Error('Built-in Skills cannot be exported.')
+    }
+    const archive = await this.userSkills.withSkillReadLock(id, buildSkillExportArchive)
+    if (!archive) throw new Error(`Unknown skill: ${id}`)
+    return archive
   }
 
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {

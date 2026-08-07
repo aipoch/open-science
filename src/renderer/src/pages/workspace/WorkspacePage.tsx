@@ -1108,12 +1108,14 @@ const WorkspacePage = ({
     useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
     return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
   }, [activeSession?.id, canEditMessage])
-  const canChangePermissionProfile =
+  const canChangeAgentControls =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-permission' &&
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting
+  const canChangePermissionProfile =
+    isSessionPersistenceReady && !activeSessionHasSendPreparation && !activeSession?.compacting
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&
@@ -2199,8 +2201,8 @@ const WorkspacePage = ({
 
   // Subscribe to specialist catalog changes so unavailability state stays fresh.
   useEffect(() => {
-    // Guard: window.api.specialist may be absent in test/headless environments.
-    if (!window.api?.specialist) return
+    // Guard: specialist.list is Electron-only and unavailable in the web gateway.
+    if (typeof window.api?.specialist?.list !== 'function') return
     void loadSpecialists()
     const remove = window.api.specialist.onCatalogChanged(() => {
       void loadSpecialists()
@@ -2486,6 +2488,7 @@ const WorkspacePage = ({
             canCompactContext={canCompactContext}
             compactContextDisabledReason={compactContextDisabledReason}
             onCompactContext={compactActiveContext}
+            canChangeAgentControls={canChangeAgentControls}
             canChangePermissionProfile={canChangePermissionProfile}
             autoReviewEnabled={activeAutoReviewEnabled}
             onDraftDocChange={changeComposerDraftDoc}

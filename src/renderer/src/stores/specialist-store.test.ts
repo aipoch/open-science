@@ -18,6 +18,15 @@ beforeEach(() => {
   })
 })
 
+describe('specialist store catalog', () => {
+  it('treats a missing specialist list API as an unavailable catalog', async () => {
+    setSpecialistApi({})
+
+    await expect(useSpecialistStore.getState().load()).resolves.toBeUndefined()
+    expect(useSpecialistStore.getState()).toMatchObject({ items: [], isLoaded: true })
+  })
+})
+
 describe('specialist store package export', () => {
   it('keeps overlapping previews bound to their own Specialist export identity', async () => {
     let resolveFirst: ((value: SpecialistExportPreview) => void) | undefined

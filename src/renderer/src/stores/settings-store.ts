@@ -2,313 +2,134 @@ import { create, type StoreApi } from 'zustand'
 
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
-  codexSubscriptionProviderIdentity,
-  claudeSharedProviderIdentity,
-  claudeIsolatedProviderIdentity,
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
   providerValidationFailed,
   selectClaudeSubscriptionProvider
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
-import type { SettingsPanelId } from '../pages/settings/settings-navigation'
 import {
   createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator,
-  type SettingsWriteKey
+  type SettingsWriteCoordinator
 } from './settings-write-coordinator'
 import {
+  createInitialSettingsNavigationState,
+  createSettingsNavigationSlice,
+  type SettingsNavigationActions,
+  type SettingsNavigationState
+} from './settings-navigation-slice'
+import {
+  createInitialSettingsConnectorsState,
+  createSettingsConnectorsSlice,
+  type SettingsConnectorsActions,
+  type SettingsConnectorsState
+} from './settings-connectors-slice'
+import {
+  createSettingsPreferencesSlice,
+  type SettingsPreferencesActions
+} from './settings-preferences-slice'
+import {
+  createInitialSettingsSkillsState,
+  createSettingsSkillsSlice,
+  type SettingsSkillsActions,
+  type SettingsSkillsState
+} from './settings-skills-slice'
+import {
+  createProviderAuthSlice,
+  type ProviderAuthActions,
+  type SaveProviderResult
+} from './settings-provider-auth-slice'
+import {
   createInitialRuntimeSetupState,
+  createRuntimeSetupLoadPatch,
   createRuntimeSetupSlice,
   type RuntimeSetupActions,
   type RuntimeSetupState
 } from './settings-runtime-slice'
 export { selectAnyInstalling } from './settings-runtime-slice'
 import type {
-  ClaudeDetectResult,
   ClaudeInfo,
   ClaudeSubscriptionProviderId,
   CodexInfo,
-  EnvironmentCheckResult,
-  Preflight,
   AgentFrameworkId,
   AgentFrameworkView,
   ChatApiEndpoint,
   OpencodeInfo,
   ProviderType,
   ProviderView,
-  RefreshProviderModelsResult,
   ReasoningEffort,
   SettingsSnapshot,
-  AppIconVariant,
-  SkillView,
-  AgentHomeSkillRef,
-  AgentHomeSkillView,
-  ImportAgentHomeSkillsResult,
-  CreateSkillRequest,
-  UpdateSkillRequest,
-  ImportSkillResult,
-  ImportSkillZipBatchResult,
-  SkillBundlePreviewResult,
-  SkillImportPreviewContent,
-  ScanRepoResult,
-  UpsertProviderRequest,
-  ValidateProviderRequest,
-  ValidateProviderResult,
-  ConnectorView,
-  ConnectorDetailView,
-  CustomServerView,
-  NcbiCredentialsView,
-  ToolPermission,
-  SetNcbiCredentialsRequest,
-  AddCustomServerRequest,
-  AuthenticateCustomServerRequest,
-  UpdateCustomServerRequest,
-  ConnectorApprovalRequest,
-  ApprovalDecision
+  AppIconVariant
 } from '../../../shared/settings'
 
-// Result of the combined onboarding save flow (create/edit -> validate -> activate).
-type SaveProviderResult = {
-  providerId: string
-  validation: ValidateProviderResult
-}
+type SettingsStoreData = RuntimeSetupState &
+  SettingsNavigationState &
+  SettingsSkillsState &
+  SettingsConnectorsState & {
+    isLoaded: boolean
+    isLoading: boolean
+    loadError: string | undefined
+    // Latest failed Settings write, shown by the dialog until dismissed or another write starts.
+    settingsWriteError: string | undefined
+    settingsLoadGeneration: number
+    claude: ClaudeInfo
+    activeProviderId: string | undefined
+    claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
+    // Active model within the active provider; undefined means the provider's own default.
+    activeModel: string | undefined
+    providers: ProviderView[]
+    // Selected agent backend and the frameworks available to choose from.
+    agentFrameworkId: AgentFrameworkId
+    agentFrameworks: AgentFrameworkView[]
+    // Detected opencode executable, for the framework-aware detection card.
+    opencode: OpencodeInfo
+    codex: CodexInfo
+    // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
+    // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
+    claudeManaged: boolean
+    opencodeManaged: boolean
+    codexManaged: boolean
+    onboardingCompletedAt: number | undefined
+    encryptionAvailable: boolean
+    // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
+    packageMirror?: PackageMirror
+    // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
+    reasoningEffort: ReasoningEffort
+    // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
+    notificationsEnabled: boolean
+    // Whether conversations receive the app-owned Skill package import tool and instructions.
+    conversationSkillImportEnabled: boolean
+    // Saved Windows titlebar-close behavior. Undefined means ask every time.
+    closePreference: CloseActionPreference | undefined
+    // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
+    appIconVariant: AppIconVariant
+  }
 
-type SettingsStoreData = RuntimeSetupState & {
-  isLoaded: boolean
-  isLoading: boolean
-  loadError: string | undefined
-  // Latest failed Settings write, shown by the dialog until dismissed or another write starts.
-  settingsWriteError: string | undefined
-  settingsLoadGeneration: number
-  claude: ClaudeInfo
-  activeProviderId: string | undefined
-  claudeSubscriptionProviderId: ClaudeSubscriptionProviderId | undefined
-  // Active model within the active provider; undefined means the provider's own default.
-  activeModel: string | undefined
-  providers: ProviderView[]
-  // Selected agent backend and the frameworks available to choose from.
-  agentFrameworkId: AgentFrameworkId
-  agentFrameworks: AgentFrameworkView[]
-  // Detected opencode executable, for the framework-aware detection card.
-  opencode: OpencodeInfo
-  codex: CodexInfo
-  // Whether each framework's detected runtime is the app-managed install (only these can be uninstalled
-  // in-app). Mirrored from the main-process snapshot; a PATH/npm binary reads false.
-  claudeManaged: boolean
-  opencodeManaged: boolean
-  codexManaged: boolean
-  onboardingCompletedAt: number | undefined
-  // Bundled skills with their enabled state, loaded lazily when the Skills panel opens.
-  skills: SkillView[]
-  // Bundled connectors with their enabled/auto-allow state, loaded lazily when the Connectors panel opens.
-  connectors: ConnectorView[]
-  // User-added custom MCP servers, reconciled alongside the connectors list.
-  customServers: CustomServerView[]
-  // Pending per-call connector approval requests (external data-egress gate), oldest first.
-  pendingApprovals: ConnectorApprovalRequest[]
-  // Shared NCBI credential state (never the plaintext key), reconciled alongside the connectors list.
-  ncbi: NcbiCredentialsView
-  preflight: Preflight
-  encryptionAvailable: boolean
-  npmAvailable: boolean
-  environmentCheck: EnvironmentCheckResult | undefined
-  environmentCheckError: string | undefined
-  // Transient UI state for the wizard/settings page.
-  isCheckingEnvironment: boolean
-  // Framework the in-flight environment check was issued for. Used ONLY for the React Strict Mode
-  // de-dup: a same-framework duplicate mount reuses the running pass instead of double-probing.
-  // Staleness/ownership is decided by envCheckGeneration, never by this field.
-  checkingFramework: AgentFrameworkId | undefined
-  // Monotonic token stamped by each checkEnvironment call. The success/catch/finally branches only
-  // mutate shared state when their captured generation is still current, so an older pass (even one
-  // for the same framework, as in a Claude -> OpenCode -> Claude ABA sequence) can never overwrite,
-  // fail, or clear the loading flags of a newer pass.
-  envCheckGeneration: number
-  isDetectingClaude: boolean
-  isDetectingOpencode: boolean
-  isDetectingCodex: boolean
-  // Whether the settings dialog is open (rendered at the app root, over Home/Workspace).
-  isSettingsOpen: boolean
-  // Panel requested by an external entry point; Settings consumes it after seeding navigation.
-  pendingSettingsPanel?: SettingsPanelId
-  // Skill to land on when the dialog opens from a skill mention; consumed once its detail is seeded.
-  pendingSkillId?: string
-  // Specialist to land on when the dialog opens from the switch approval card; consumed once its
-  // editor is seeded. Uses the stable profile id, never the renameable public name.
-  pendingSpecialistId?: string
-  // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
-  packageMirror?: PackageMirror
-  // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
-  reasoningEffort: ReasoningEffort
-  // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
-  notificationsEnabled: boolean
-  // Whether conversations receive the app-owned Skill package import tool and instructions.
-  conversationSkillImportEnabled: boolean
-  // Saved Windows titlebar-close behavior. Undefined means ask every time.
-  closePreference: CloseActionPreference | undefined
-  // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
-  appIconVariant: AppIconVariant
-}
+type SettingsStoreCore = SettingsStoreData &
+  ProviderAuthActions &
+  SettingsPreferencesActions &
+  SettingsNavigationActions &
+  SettingsSkillsActions &
+  SettingsConnectorsActions &
+  SettingsStoreActions
 
-type SettingsStoreCore = SettingsStoreData & {
+type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
-  refreshPreflight: () => Promise<Preflight>
-  checkEnvironment: (options?: { force?: boolean }) => Promise<EnvironmentCheckResult | undefined>
-  detectClaude: () => Promise<ClaudeDetectResult>
-  // Detects the opencode executable and refreshes its status card.
-  detectOpencode: () => Promise<void>
-  detectCodex: () => Promise<void>
-  // Persists the draft (create/update) without testing it, returning the affected provider id. The
-  // Settings page uses this to return to the list immediately, then tests in the background.
-  persistProvider: (request: UpsertProviderRequest) => Promise<string>
-  // Persists the draft and validates it, without changing the active provider.
-  saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
-  // Combined onboarding flow: persist + validate + activate only on success.
-  saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
-  validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
-  cancelCodexLogin: () => Promise<void>
-  // The explicit isolated sign-in — the only flow that opens the browser login. Resolves with the
-  // recorded outcome so callers can react (onboarding advances only on success).
-  loginIsolatedCodex: () => Promise<ValidateProviderResult>
-  // The explicit isolated sign-out. Resolves with the outcome so callers can surface a failure
-  // (e.g. a timeout where the credential may still be in place) rather than silently succeeding.
-  logoutIsolatedCodex: () => Promise<ValidateProviderResult>
-  // The Claude subscription's browser OAuth login (claude-shared mode). Opens the browser for sign-in
-  // via `claude auth login --claudeai`. Resolves with the recorded outcome.
-  loginSharedClaude: () => Promise<ValidateProviderResult>
-  // Cancels an in-flight claude-shared browser sign-in (mirrors cancelIsolatedClaudeLogin).
-  cancelSharedClaudeLogin: () => Promise<void>
-  // The Claude subscription's browser OAuth sign-out (claude-shared mode).
-  logoutSharedClaude: () => Promise<ValidateProviderResult>
-  // The Claude subscription's setup-token paste (claude-isolated mode). Resolves with the recorded
-  // outcome; the renderer is responsible for collecting the token from the user (copy command + paste input).
-  loginIsolatedClaude: (token: string) => Promise<ValidateProviderResult>
-  // The Claude subscription's browser OAuth for claude-isolated mode: the app runs `claude setup-token`
-  // (opens the browser) under the isolated config dir and captures the token — no manual paste.
-  loginIsolatedClaudeBrowser: () => Promise<ValidateProviderResult>
-  // Cancels an in-flight claude-isolated browser sign-in.
-  cancelIsolatedClaudeLogin: () => Promise<void>
-  // The Claude subscription's sign-out. Same failure semantics as logoutIsolatedCodex: a failed
-  // sign-out is surfaced rather than silently swallowed.
-  logoutIsolatedClaude: () => Promise<ValidateProviderResult>
-  // Fetches a saved provider's live model list from the vendor and refreshes the cache on success.
-  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
-  // Activates a provider and, optionally, a specific model within it (composer model switch). An
-  // omitted model lets main fall back to the provider's default.
-  setActiveProvider: (providerId: string, model?: string) => Promise<void>
-  // Switches the agent backend (main reconnects so the next prompt uses it).
-  setAgentFramework: (id: AgentFrameworkId) => Promise<void>
-  // Sets the reasoning-effort level (main reconnects so subsequent requests run at it).
-  setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
-  // Toggles desktop notifications for finished/failed agent tasks; applies immediately.
-  setNotificationsEnabled: (enabled: boolean) => Promise<void>
-  setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
-  setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
-  // Sets the app-icon look; main applies it live to the window and dock/taskbar.
-  setAppIconVariant: (variant: AppIconVariant) => Promise<void>
   clearSettingsWriteError: () => void
-  deleteProvider: (providerId: string) => Promise<void>
-  openSettings: () => void
-  openSettingsToPanel: (panel: SettingsPanelId) => void
-  closeSettings: () => void
-  // Opens the dialog straight onto a skill's detail page (used by clickable skill mentions).
-  openSettingsToSkill: (skillId: string) => void
-  // Opens the dialog straight onto one specialist's editor (used by the switch approval card).
-  openSettingsToSpecialist: (specialistId: string) => void
-  // Opens the dialog straight to the Compute panel (used by Files panel "Add SSH host…" link).
-  openSettingsToCompute: () => void
-  // Clears the requested panel after Settings has seeded its local navigation history.
-  consumePendingSettingsPanel: () => void
-  // Clears the pending skill once its detail view has been seeded, so a later open starts fresh.
-  consumePendingSkill: () => void
-  consumePendingSpecialist: () => void
-  // Loads the bundled-skill list (enabled state included) from the main process.
-  loadSkills: () => Promise<void>
-  // Toggles one skill; optimistic, then reconciled with the authoritative list from main.
-  setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Creates a personal skill, returning its refreshed list.
-  createSkill: (request: CreateSkillRequest) => Promise<void>
-  // Updates a personal skill in place.
-  updateSkill: (request: UpdateSkillRequest) => Promise<void>
-  // Deletes a personal or imported skill.
-  deleteSkill: (id: string) => Promise<void>
-  // Imports a skill from a public GitHub URL, returning the import outcome.
-  importSkill: (url: string) => Promise<ImportSkillResult>
-  // Imports a skill from an uploaded .zip / .skill bundle (base64), returning the outcome.
-  // Imports a skill from an uploaded .zip / .skill bundle (base64). With `replaceId`, the bundle
-  // overwrites that already-imported skill in place instead of creating a new one.
-  importSkillZip: (
-    dataBase64: string,
-    opts?: { subPath?: string; replaceId?: string }
-  ) => Promise<ImportSkillResult>
-  // Imports several skills from ONE uploaded bundle in a single call (decoded/unpacked once), returning
-  // a per-item outcome. Per-item failures are reported inline without aborting the rest.
-  importSkillZipBatch: (
-    dataBase64: string,
-    items: { subPath: string; replaceId?: string }[]
-  ) => Promise<ImportSkillZipBatchResult>
-  // Parses an uploaded bundle without importing it, for a confirm-before-import preview. Returns the
-  // importable skills plus any the bundle contained that were skipped and why.
-  previewSkillZip: (dataBase64: string) => Promise<SkillBundlePreviewResult>
-  previewGitHubSkill: (url: string) => Promise<SkillImportPreviewContent>
-  // Scans a GitHub repo for importable skill directories (does not mutate state).
-  scanRepoSkills: (repo: string) => Promise<ScanRepoResult>
-  // Lists the shared global skills plus the active framework's installed skills.
-  listAgentHomeSkills: () => Promise<AgentHomeSkillView[]>
-  previewAgentHomeSkill: (skill: AgentHomeSkillRef) => Promise<SkillImportPreviewContent>
-  // Copies checked installed skills into the imported-skill store in one batch.
-  importAgentHomeSkills: (skills: AgentHomeSkillRef[]) => Promise<ImportAgentHomeSkillsResult>
-  // Loads the bundled-connector list (enabled/auto-allow + NCBI credential state) from main.
-  loadConnectors: () => Promise<void>
-  // Toggles one connector; optimistic, then reconciled with the authoritative snapshot from main.
-  setConnectorEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Toggles a connector's "skip approvals" flag; optimistic, then reconciled from main.
-  setConnectorAutoAllow: (id: string, autoAllow: boolean) => Promise<void>
-  // Sets one tool's permission, returning the affected connector's refreshed detail view (held
-  // locally by the component, so nothing is stored here).
-  setToolPermission: (toolId: string, permission: ToolPermission) => Promise<ConnectorDetailView>
-  // Persists NCBI credentials and reconciles the connectors list + credential state from main.
-  setNcbiCredentials: (request: SetNcbiCredentialsRequest) => Promise<void>
-  // Adds a custom MCP server (add-time trust is confirmed in the UI), reconciling from main.
-  addCustomServer: (request: AddCustomServerRequest) => Promise<void>
-  // Edits an existing custom MCP server (name is immutable), reconciling from main.
-  updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
-  authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
-  cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
-  // Enables/disables one custom MCP server; optimistic, then reconciled from main.
-  setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
-  // Removes one custom MCP server, reconciling from main.
-  removeCustomServer: (id: string) => Promise<void>
-  // Queues an incoming approval request (from the main-process connector gate).
-  enqueueApproval: (request: ConnectorApprovalRequest) => void
-  // Sends the user's decision to main and drops the request from the queue.
-  respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
-  // Persists the first-run completion marker and caches it so the startup gate falls through to Home.
-  completeOnboarding: () => Promise<void>
-  // Persists the package mirror config; caches it as undefined when cleared back to unconfigured.
-  setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
 
-const createInitialPreflight = (): Preflight => ({
-  claudeReady: false,
-  opencodeReady: false,
-  codexReady: false,
-  agentFrameworkId: 'claude-code',
-  agentReady: false,
-  activeProviderReady: false
-})
-
 export const createInitialSettingsState = (): SettingsStoreData => ({
   ...createInitialRuntimeSetupState(),
+  ...createInitialSettingsNavigationState(),
+  ...createInitialSettingsSkillsState(),
+  ...createInitialSettingsConnectorsState(),
   isLoaded: false,
   isLoading: false,
   loadError: undefined,
@@ -327,26 +148,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   opencodeManaged: false,
   codexManaged: false,
   onboardingCompletedAt: undefined,
-  skills: [],
-  connectors: [],
-  customServers: [],
-  pendingApprovals: [],
-  ncbi: { hasApiKey: false },
-  preflight: createInitialPreflight(),
   encryptionAvailable: true,
-  npmAvailable: true,
-  environmentCheck: undefined,
-  environmentCheckError: undefined,
-  isCheckingEnvironment: false,
-  checkingFramework: undefined,
-  envCheckGeneration: 0,
-  isDetectingClaude: false,
-  isDetectingOpencode: false,
-  isDetectingCodex: false,
-  isSettingsOpen: false,
-  pendingSettingsPanel: undefined,
-  pendingSkillId: undefined,
-  pendingSpecialistId: undefined,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
@@ -435,44 +237,12 @@ export const selectProviderModelOptions = (
     })
 }
 
-// Finds the provider id affected by an upsert: the edited id, or the one new since `before`.
-const resolveUpsertedProviderId = (
-  request: UpsertProviderRequest,
-  before: ProviderView[],
-  after: ProviderView[]
-): string | undefined => {
-  if (isCodexSubscriptionProvider(request.type)) {
-    return codexSubscriptionProviderIdentity().id
-  }
-  // Both Claude subscription modes use fixed builtin ids; return the correct one for the new type
-  // so mode switches (shared→isolated or vice versa) resolve to the incoming record, not the old one.
-  if (request.type === 'claude-shared') return claudeSharedProviderIdentity().id
-  if (request.type === 'claude-isolated') return claudeIsolatedProviderIdentity().id
-
-  if (request.id) return request.id
-
-  const beforeIds = new Set(before.map((provider) => provider.id))
-
-  return after.find((provider) => !beforeIds.has(provider.id))?.id
-}
-
 let settingsLoadPromise: Promise<boolean> | undefined
 const SAFE_SETTINGS_LOAD_ERROR = 'Open Science could not load settings. Retry to continue.'
 
 // Keep raw IPC diagnostics in the developer channel while renderer state remains path-safe.
 const reportSettingsLoadError = (error: unknown): void => {
   console.warn('Settings startup loading failed', error)
-}
-
-// Visible copy stays stable and path-safe; raw IPC failures remain in the console for diagnostics.
-const SETTINGS_WRITE_ERRORS: Record<SettingsWriteKey, string> = {
-  activeProvider: 'Could not switch active provider or model. Try again.',
-  agentFramework: 'Could not switch agent framework. Try again.',
-  reasoningEffort: 'Could not save reasoning effort. Try again.',
-  notifications: 'Could not save notification preference. Try again.',
-  conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
-  closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.'
 }
 
 // Renderer cache of the main-process settings service. The main process stays the source of truth
@@ -486,18 +256,50 @@ const createSettingsStoreState = (
   ...createRuntimeSetupSlice({
     set,
     get,
-    // Keep browser globals lazy so importing the store remains safe in node-based renderer tests.
-    commands: {
-      getSettings: () => window.api.settings.getSettings(),
-      installClaude: (request) => window.api.settings.installClaude(request),
-      installOpencode: (request) => window.api.settings.installOpencode(request),
-      installCodex: (request) => window.api.settings.installCodex(request),
-      uninstallClaude: () => window.api.settings.uninstallClaude(),
-      uninstallOpencode: () => window.api.settings.uninstallOpencode(),
-      uninstallCodex: () => window.api.settings.uninstallCodex(),
-      onInstallLog: (listener) => window.api.settings.onInstallLog(listener)
+    // Resolve browser globals only when an action runs; node-based renderer tests import this store.
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot, runtimePatch = {}) =>
+      set({ ...applySnapshot(snapshot), ...runtimePatch }),
+    reconcileClaudeDetection: (result, npmAvailable) =>
+      set(
+        result.found && result.path
+          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
+          : { npmAvailable }
+      )
+  }),
+  ...createProviderAuthSlice({
+    get,
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
+    refreshPreflight: () => get().refreshPreflight(),
+    refreshFrameworkStatus: async (id) => {
+      if (id === 'opencode') {
+        await get().detectOpencode()
+      } else if (id === 'codex') {
+        await get().detectCodex()
+      } else {
+        await get().detectClaude()
+      }
+      await get().refreshPreflight()
     },
-    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot))
+    writeCoordinator
+  }),
+  ...createSettingsPreferencesSlice({
+    getState: get,
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings,
+    reconcileSnapshot: (snapshot) => set(applySnapshot(snapshot)),
+    writeCoordinator
+  }),
+  ...createSettingsNavigationSlice({ setState: (patch) => set(patch) }),
+  ...createSettingsSkillsSlice({
+    getState: get,
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings
+  }),
+  ...createSettingsConnectorsSlice({
+    setState: (patch) => set(patch),
+    getCommands: () => window.api.settings
   }),
 
   // Loads settings, preflight, and encryption availability in one startup pass.
@@ -523,9 +325,8 @@ const createSettingsStoreState = (
 
         set({
           ...applySnapshot(snapshot),
-          preflight,
+          ...createRuntimeSetupLoadPatch(preflight, npmAvailable),
           encryptionAvailable,
-          npmAvailable,
           isLoaded: true,
           isLoading: false,
           loadError: undefined
@@ -550,699 +351,7 @@ const createSettingsStoreState = (
     return loadPromise
   },
 
-  // Re-checks the two startup gates without reloading the whole snapshot.
-  refreshPreflight: async () => {
-    const preflight = await window.api.settings.getPreflight()
-
-    set({ preflight })
-
-    return preflight
-  },
-
-  // Full startup inspection: main owns filesystem/network/runtime probes; the renderer caches only
-  // their structured, non-secret result. Refresh settings/preflight afterwards because detection may
-  // have discovered and persisted a Claude installation that appeared since the previous launch.
-  checkEnvironment: async (options) => {
-    // React Strict Mode intentionally re-runs mount effects in development. Reuse the in-flight pass
-    // only when it targets the currently-selected framework: an auto-switch (e.g. Claude -> a detected
-    // OpenCode) changes the target mid-flight, and that call must issue its own probe rather than reuse
-    // the previous framework's, or Continue stays disabled on a result that no longer matches.
-    const framework = get().agentFrameworkId
-    if (!options?.force && get().isCheckingEnvironment && get().checkingFramework === framework) {
-      return get().environmentCheck
-    }
-
-    // Stamp a fresh generation; only the branch whose captured token is still current may mutate
-    // shared state. This defeats an ABA sequence (Claude -> OpenCode -> Claude) where an older pass
-    // shares the framework id of the newest one and would otherwise pass a framework-only staleness
-    // check.
-    const generation = get().envCheckGeneration + 1
-
-    set({
-      envCheckGeneration: generation,
-      isCheckingEnvironment: true,
-      checkingFramework: framework,
-      isDetectingClaude: true,
-      environmentCheckError: undefined
-    })
-
-    try {
-      const environmentCheck = await window.api.settings.checkEnvironment()
-      const [snapshot, preflight, npmAvailable] = await Promise.all([
-        window.api.settings.getSettings(),
-        window.api.settings.getPreflight(),
-        window.api.settings.isNpmAvailable()
-      ])
-
-      // Discard a stale result: a newer pass has stamped a later generation and now owns the visible
-      // state, so this older probe must not overwrite it (defensively also require the result to
-      // still match the selected framework).
-      if (
-        get().envCheckGeneration !== generation ||
-        environmentCheck.agentFrameworkId !== get().agentFrameworkId
-      ) {
-        return environmentCheck
-      }
-
-      set({
-        ...applySnapshot(snapshot),
-        environmentCheck,
-        preflight,
-        npmAvailable
-      })
-
-      return environmentCheck
-    } catch (error) {
-      // A late failure from a superseded pass must not clobber a newer pass's successful result.
-      if (get().envCheckGeneration === generation) {
-        set({
-          environmentCheckError:
-            error instanceof Error ? error.message : 'Environment detection could not be completed.'
-        })
-      }
-      return undefined
-    } finally {
-      // Only clear the loading flags when this pass is still the current one; a newer pass may
-      // already be running and now owns them.
-      set((state) =>
-        state.envCheckGeneration === generation
-          ? { isCheckingEnvironment: false, checkingFramework: undefined, isDetectingClaude: false }
-          : {}
-      )
-    }
-  },
-
-  // Detects claude and folds the resolved path/version back into the cache.
-  detectClaude: async () => {
-    set({ isDetectingClaude: true })
-
-    try {
-      // Re-detect claude and npm together so a mid-onboarding Node.js install is picked up by the same
-      // Re-detect action. npm has no separate refresh; it was previously latched at load() only, so
-      // users who installed Node.js after opening onboarding were stuck until an app restart.
-      const [result, npmAvailable] = await Promise.all([
-        window.api.settings.detectClaude(),
-        window.api.settings.isNpmAvailable()
-      ])
-
-      set(() =>
-        result.found && result.path
-          ? { npmAvailable, claude: { resolvedPath: result.path, version: result.version } }
-          : { npmAvailable }
-      )
-
-      await get().refreshPreflight()
-
-      return result
-    } finally {
-      set({ isDetectingClaude: false })
-    }
-  },
-
-  // Persists a provider draft (create/update) and refreshes derived state, without testing it.
-  persistProvider: async (request) => {
-    const before = get().providers
-    const afterUpsert = await window.api.settings.upsertProvider(request)
-
-    set(applySnapshot(afterUpsert))
-    await get().refreshPreflight()
-
-    return resolveUpsertedProviderId(request, before, afterUpsert.providers) ?? ''
-  },
-
-  // Persists a provider draft and validates it (without activating), refreshing derived state.
-  saveProvider: async (request) => {
-    const before = get().providers
-    const afterUpsert = await window.api.settings.upsertProvider(request)
-
-    set(applySnapshot(afterUpsert))
-
-    const providerId = resolveUpsertedProviderId(request, before, afterUpsert.providers)
-
-    if (!providerId) {
-      return { providerId: '', validation: { ok: false, category: 'unknown' } }
-    }
-
-    const validation = await window.api.settings.validateProvider({ providerId })
-
-    // Refresh so the validated-at time / recorded failure / masked key reflect the latest stored
-    // state. A failed test keeps the provider (flagged as unverified in the list and excluded from the
-    // model pickers); it is not rolled back, so the user can fix the key and retry.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return { providerId, validation }
-  },
-
-  // Persists a provider draft, validates it, and activates it. The connectivity probe is advisory,
-  // not a gate: a provider that saved is activated even if the probe failed (e.g. a custom Responses
-  // gateway the probe can't reach or that rejects the minimal ping), so it can be configured in and
-  // tested live. The validation result is still recorded and surfaced as an "unverified" warning.
-  saveAndActivateProvider: async (request) => {
-    const result = await get().saveProvider(request)
-
-    if (result.providerId) {
-      await get().setActiveProvider(result.providerId)
-    }
-
-    return result
-  },
-
-  // Validates a saved provider or draft without changing the active selection.
-  validateProvider: async (request) => {
-    const result = await window.api.settings.validateProvider(request)
-
-    // Refresh whenever a saved provider was tested, pass or fail: success stamps lastValidatedAt, a
-    // failure records the reason and surfaces the "unverified" warning. Draft validations (no
-    // providerId) change nothing stored, so they skip the refresh.
-    if (request.providerId) {
-      set(applySnapshot(await window.api.settings.getSettings()))
-      await get().refreshPreflight()
-    }
-
-    return result
-  },
-
-  cancelCodexLogin: () => window.api.settings.cancelCodexLogin(),
-
-  // Mirrors validateProvider's refresh: the recorded outcome (validated-at or failure) lives on the
-  // stored provider, so the snapshot and derived readiness are re-applied either way.
-  loginIsolatedCodex: async () => {
-    const result = await window.api.settings.loginIsolatedCodex()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  logoutIsolatedCodex: async () => {
-    const result = await window.api.settings.logoutIsolatedCodex()
-    // Refresh the snapshot regardless of outcome: a failed sign-out preserves the verified markers
-    // on the provider (credential still in place), a successful one clears them. Either way the
-    // store must reflect the true stored state rather than a stale cached view.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Claude subscription's paste-token sign-in. The renderer owns the modal that captures the
-  // setup-token output; this action forwards it to main, where it lands encrypted on the fixed
-  // builtin-claude-isolated provider record.
-  loginIsolatedClaude: async (token: string) => {
-    const result = await window.api.settings.loginIsolatedClaude(token)
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  // Claude subscription's browser OAuth for claude-isolated mode. The app runs `claude setup-token`
-  // under the isolated config dir (opens the browser, captures the token) so there's no manual paste.
-  loginIsolatedClaudeBrowser: async () => {
-    const result = await window.api.settings.loginIsolatedClaudeBrowser()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  cancelIsolatedClaudeLogin: async () => {
-    await window.api.settings.cancelIsolatedClaudeLogin()
-  },
-
-  logoutIsolatedClaude: async () => {
-    const result = await window.api.settings.logoutIsolatedClaude()
-    // Same refresh rule as the codex path: a failed sign-out keeps the verified markers, so the
-    // store must reflect the real stored state regardless of the outcome.
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Claude subscription's browser OAuth sign-in (claude-shared mode). Opens the browser via
-  // `claude auth login --claudeai`. The CLI stores credentials in ~/.claude.
-  loginSharedClaude: async () => {
-    const result = await window.api.settings.loginSharedClaude()
-
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-
-    return result
-  },
-
-  cancelSharedClaudeLogin: async () => {
-    await window.api.settings.cancelClaudeLogin()
-  },
-
-  logoutSharedClaude: async () => {
-    const result = await window.api.settings.logoutSharedClaude()
-    set(applySnapshot(await window.api.settings.getSettings()))
-    await get().refreshPreflight()
-    return result
-  },
-
-  // Fetches a provider's live models from the vendor; on success the persisted list is reflected here.
-  refreshProviderModels: async (providerId) => {
-    const result = await window.api.settings.refreshProviderModels({ providerId })
-
-    if (result.ok) {
-      set(applySnapshot(await window.api.settings.getSettings()))
-    }
-
-    return result
-  },
-
-  // Switches the active provider/model (main drops the agent connection so the next prompt reconnects).
-  // An empty model string is treated as "no specific model" so main uses the provider default.
-  setActiveProvider: async (providerId, model) => {
-    const write = writeCoordinator.begin('activeProvider')
-    let snapshot: SettingsSnapshot
-    try {
-      snapshot = await window.api.settings.setActiveProvider({
-        id: providerId,
-        model: model || undefined
-      })
-    } catch (error) {
-      write.fail(SETTINGS_WRITE_ERRORS.activeProvider)
-      console.error('Failed to set active provider', error)
-      throw error
-    }
-
-    if (!write.isCurrent()) return
-    set(applySnapshot(snapshot))
-    write.succeed()
-    await get().refreshPreflight()
-  },
-
-  // Switches the agent backend; main reconnects so the choice applies on the next prompt. A failed
-  // write leaves the previous framework selected and feeds the shared Settings error banner.
-  setAgentFramework: async (id) => {
-    const write = writeCoordinator.begin('agentFramework')
-
-    let snapshot: SettingsSnapshot
-    try {
-      snapshot = await window.api.settings.setAgentFramework({ id })
-    } catch (error) {
-      write.fail(SETTINGS_WRITE_ERRORS.agentFramework)
-      console.error('Failed to switch agent framework', error)
-      throw error
-    }
-
-    if (!write.isCurrent()) return
-    set(applySnapshot(snapshot))
-    write.succeed()
-
-    try {
-      // Live-detect the newly-selected framework so a binary installed (or deleted) since the last
-      // check is reflected right away, then refresh the readiness gate the install prompt keys off.
-      if (id === 'opencode') {
-        await get().detectOpencode()
-      } else if (id === 'codex') {
-        await get().detectCodex()
-      } else {
-        await get().detectClaude()
-      }
-      await get().refreshPreflight()
-    } catch (error) {
-      // The preference is already saved. Keep the new selection and avoid relabelling a follow-up
-      // detection problem as a write failure; the next explicit/full environment check can retry.
-      console.error('Failed to refresh agent framework status', error)
-    }
-  },
-
-  // Sets the reasoning-effort level; main reconnects so subsequent requests run at it. The IPC round
-  // trip includes that reconnect, which is too slow to gate the selector on — apply the pick
-  // optimistically, reconcile from the returned snapshot, and revert if the write fails.
-  setReasoningEffort: async (effort) => {
-    const previous = get().reasoningEffort
-    const write = writeCoordinator.beginOptimistic('reasoningEffort', previous)
-    set({ reasoningEffort: effort })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setReasoningEffort({ effort }))
-      write.complete({ value: snapshot.reasoningEffort })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ reasoningEffort: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.reasoningEffort)
-      console.error('Failed to set reasoning effort', error)
-    }
-  },
-
-  // Toggles desktop notifications. Optimistic like the other preference setters: apply the pick,
-  // reconcile from the returned snapshot, and revert if the write fails.
-  setNotificationsEnabled: async (enabled) => {
-    const previous = get().notificationsEnabled
-    const write = writeCoordinator.beginOptimistic('notifications', previous)
-    set({ notificationsEnabled: enabled })
-
-    try {
-      const snapshot = await write.run(() =>
-        window.api.settings.setNotificationsEnabled({ enabled })
-      )
-      write.complete({ value: snapshot.notificationsEnabled })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ notificationsEnabled: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.notifications)
-      console.error('Failed to set notifications enabled', error)
-    }
-  },
-
-  setConversationSkillImportEnabled: async (enabled) => {
-    const previous = get().conversationSkillImportEnabled
-    const write = writeCoordinator.beginOptimistic('conversationSkillImport', previous)
-    set({ conversationSkillImportEnabled: enabled })
-
-    try {
-      const snapshot = await write.run(() =>
-        window.api.settings.setConversationSkillImportEnabled({ enabled })
-      )
-      write.complete({ value: snapshot.conversationSkillImportEnabled })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) {
-        set({ conversationSkillImportEnabled: confirmedValue })
-      }
-      write.fail(SETTINGS_WRITE_ERRORS.conversationSkillImport)
-      console.error('Failed to set conversation Skill import enabled', error)
-    }
-  },
-
-  setClosePreference: async (preference) => {
-    const previous = get().closePreference
-    const write = writeCoordinator.beginOptimistic('closePreference', previous)
-    set({ closePreference: preference })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setClosePreference({ preference }))
-      write.complete({ value: snapshot.closePreference })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ closePreference: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.closePreference)
-      console.error('Failed to set close preference', error)
-    }
-  },
-
-  // Sets the app-icon look. Optimistic like the other preference setters: apply the pick, reconcile
-  // from the returned snapshot, and revert if the write fails.
-  setAppIconVariant: async (variant) => {
-    const previous = get().appIconVariant
-    const write = writeCoordinator.beginOptimistic('appIcon', previous)
-    set({ appIconVariant: variant })
-
-    try {
-      const snapshot = await write.run(() => window.api.settings.setAppIconVariant({ variant }))
-      write.complete({ value: snapshot.appIconVariant })
-      if (!write.isCurrent()) return
-      set(applySnapshot(snapshot))
-      write.succeed()
-    } catch (error) {
-      const confirmedValue = write.complete()
-      if (write.isCurrent()) set({ appIconVariant: confirmedValue })
-      write.fail(SETTINGS_WRITE_ERRORS.appIcon)
-      console.error('Failed to set app icon variant', error)
-    }
-  },
-
-  clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-
-  // Detects the opencode executable and refreshes its status card.
-  detectOpencode: async () => {
-    set({ isDetectingOpencode: true })
-
-    try {
-      set(applySnapshot(await window.api.settings.detectOpencode()))
-    } finally {
-      set({ isDetectingOpencode: false })
-    }
-  },
-
-  detectCodex: async () => {
-    set({ isDetectingCodex: true })
-
-    try {
-      set(applySnapshot(await window.api.settings.detectCodex()))
-    } finally {
-      set({ isDetectingCodex: false })
-    }
-  },
-
-  deleteProvider: async (providerId) => {
-    const snapshot = await window.api.settings.deleteProvider({ id: providerId })
-
-    set(applySnapshot(snapshot))
-    await get().refreshPreflight()
-  },
-
-  openSettings: () => set({ isSettingsOpen: true }),
-
-  openSettingsToPanel: (panel) =>
-    set({
-      isSettingsOpen: true,
-      pendingSettingsPanel: panel,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
-    }),
-
-  // Clearing the pending targets on close stops a later normal open from jumping back to stale state.
-  closeSettings: () =>
-    set({
-      isSettingsOpen: false,
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  openSettingsToSkill: (skillId) =>
-    set({
-      isSettingsOpen: true,
-      pendingSkillId: skillId,
-      pendingSpecialistId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  // Deep-link straight to one specialist's editor (used by the specialist switch approval card).
-  openSettingsToSpecialist: (specialistId) =>
-    set({
-      isSettingsOpen: true,
-      pendingSpecialistId: specialistId,
-      pendingSkillId: undefined,
-      pendingSettingsPanel: undefined
-    }),
-
-  // Keep the domain-specific caller API while routing it through the shared panel target.
-  openSettingsToCompute: () =>
-    set({
-      isSettingsOpen: true,
-      pendingSettingsPanel: 'compute',
-      pendingSkillId: undefined,
-      pendingSpecialistId: undefined
-    }),
-
-  consumePendingSettingsPanel: () => set({ pendingSettingsPanel: undefined }),
-
-  consumePendingSkill: () => set({ pendingSkillId: undefined }),
-
-  consumePendingSpecialist: () => set({ pendingSpecialistId: undefined }),
-
-  loadSkills: async () => {
-    const skills = await window.api.settings.listSkills()
-    set({ skills })
-  },
-
-  // Optimistically flips the toggle, then reconciles with the authoritative list from main.
-  setSkillEnabled: async (id, enabled) => {
-    set((state) => ({
-      skills: state.skills.map((skill) => (skill.id === id ? { ...skill, enabled } : skill))
-    }))
-    const skills = await window.api.settings.setSkillEnabled({ id, enabled })
-    set({ skills })
-  },
-
-  createSkill: async (request) => {
-    const skills = await window.api.settings.createSkill(request)
-    set({ skills })
-  },
-
-  updateSkill: async (request) => {
-    const skills = await window.api.settings.updateSkill(request)
-    set({ skills })
-  },
-
-  deleteSkill: async (id) => {
-    const skills = await window.api.settings.deleteSkill({ id })
-    set({ skills })
-  },
-
-  importSkill: async (url) => {
-    const result = await window.api.settings.importSkill({ url })
-    set({ skills: result.skills })
-    return result
-  },
-
-  importSkillZip: async (dataBase64, opts) => {
-    const result = await window.api.settings.importSkillZip({
-      dataBase64,
-      subPath: opts?.subPath,
-      replaceId: opts?.replaceId
-    })
-    set({ skills: result.skills })
-    return result
-  },
-
-  importSkillZipBatch: async (dataBase64, items) => {
-    const result = await window.api.settings.importSkillZipBatch({ dataBase64, items })
-    set({ skills: result.skills })
-    return result
-  },
-
-  previewSkillZip: async (dataBase64) => window.api.settings.previewSkillZip({ dataBase64 }),
-
-  previewGitHubSkill: async (url) => window.api.settings.previewGitHubSkill({ url }),
-
-  scanRepoSkills: async (repo) => window.api.settings.scanRepoSkills({ repo }),
-
-  // Installed-skill discovery is read-only. Batch import returns the refreshed catalog directly.
-  listAgentHomeSkills: async () => window.api.settings.listAgentHomeSkills(),
-  previewAgentHomeSkill: async (skill) => window.api.settings.previewAgentHomeSkill(skill),
-  importAgentHomeSkills: async (skills) => {
-    const result = await window.api.settings.importAgentHomeSkills({ skills })
-    set({ skills: result.skills })
-
-    return result
-  },
-
-  loadConnectors: async () => {
-    const { connectors, customServers, ncbi } = await window.api.settings.listConnectors()
-    set({ connectors, customServers, ncbi })
-  },
-
-  // Optimistically flips the toggle, then reconciles with the authoritative snapshot from main.
-  setConnectorEnabled: async (id, enabled) => {
-    set((state) => ({
-      connectors: state.connectors.map((connector) =>
-        connector.id === id ? { ...connector, enabled } : connector
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setConnectorEnabled({
-      id,
-      enabled
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  // Optimistically flips "skip approvals", then reconciles from main.
-  setConnectorAutoAllow: async (id, autoAllow) => {
-    set((state) => ({
-      connectors: state.connectors.map((connector) =>
-        connector.id === id ? { ...connector, autoAllow } : connector
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setConnectorAutoAllow({
-      id,
-      autoAllow
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  setToolPermission: async (toolId, permission) =>
-    window.api.settings.setToolPermission({ toolId, permission }),
-
-  setNcbiCredentials: async (request) => {
-    const { connectors, customServers, ncbi } =
-      await window.api.settings.setNcbiCredentials(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  addCustomServer: async (request) => {
-    const { connectors, customServers, ncbi } = await window.api.settings.addCustomServer(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  updateCustomServer: async (request) => {
-    const { connectors, customServers, ncbi } =
-      await window.api.settings.updateCustomServer(request)
-    set({ connectors, customServers, ncbi })
-  },
-
-  authenticateCustomServer: async (request) => {
-    try {
-      const { connectors, customServers, ncbi } =
-        await window.api.settings.authenticateCustomServer(request)
-      set({ connectors, customServers, ncbi })
-    } catch (error) {
-      // Authentication can invalidate stale tokens before failing. Refresh the projection so the
-      // connector does not remain visibly "Connected" after main has cleared its credentials.
-      await get()
-        .loadConnectors()
-        .catch(() => undefined)
-      throw error
-    }
-  },
-
-  cancelCustomServerAuthentication: (request) =>
-    window.api.settings.cancelCustomServerAuthentication(request),
-
-  // Optimistically flips the server toggle, then reconciles from main.
-  setCustomServerEnabled: async (id, enabled) => {
-    set((state) => ({
-      customServers: state.customServers.map((server) =>
-        server.id === id ? { ...server, enabled } : server
-      )
-    }))
-    const { connectors, customServers, ncbi } = await window.api.settings.setCustomServerEnabled({
-      id,
-      enabled
-    })
-    set({ connectors, customServers, ncbi })
-  },
-
-  removeCustomServer: async (id) => {
-    const { connectors, customServers, ncbi } = await window.api.settings.removeCustomServer({ id })
-    set({ connectors, customServers, ncbi })
-  },
-
-  enqueueApproval: (request) => {
-    set((state) =>
-      state.pendingApprovals.some((r) => r.id === request.id)
-        ? state
-        : { pendingApprovals: [...state.pendingApprovals, request] }
-    )
-  },
-
-  respondApproval: async (id, decision) => {
-    // Drop it from the queue immediately so the card can't be double-answered, then notify main.
-    set((state) => ({ pendingApprovals: state.pendingApprovals.filter((r) => r.id !== id) }))
-    await window.api.settings.respondConnectorApproval({ id, decision })
-  },
-
-  completeOnboarding: async () => {
-    const snapshot = await window.api.settings.markOnboardingComplete()
-
-    set(applySnapshot(snapshot))
-  },
-
-  setPackageMirror: async (mirror) => {
-    const saved = await window.api.settings.setPackageMirror(mirror)
-    set({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
-  }
+  clearSettingsWriteError: () => writeCoordinator.clearFailures()
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

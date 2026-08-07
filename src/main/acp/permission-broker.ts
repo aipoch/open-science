@@ -6,6 +6,7 @@ import type {
   AcpPermissionRequest,
   AcpPermissionResponse
 } from '../../shared/acp'
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type {
   PermissionCapability,
   PermissionGrantRecord,
@@ -35,6 +36,8 @@ import type { PermissionGrantRegistry } from '../permission-grants/registry'
 
 type PendingPermission = {
   request: AcpPermissionRequest
+  automaticRequest?: RequestPermissionRequest
+  policyContext?: PermissionPolicyContext
   categoryKey?: string
   capability?: PermissionCapability
   projectId?: string
@@ -669,6 +672,14 @@ class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
   private cancellationGeneration = 0
   private readonly sessionCancellationGenerations = new Map<string, number>()
+  private readonly livePermissionProfiles = new Map<
+    string,
+    {
+      profile: Readonly<SessionPermissionProfileState>
+      isCurrent: () => boolean
+      providerUpdatesBlocked: boolean
+    }
+  >()
 
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(
@@ -686,6 +697,68 @@ class AcpPermissionBroker {
     return Array.from(this.pendingRequests.values()).some(
       ({ request }) => request.sessionId === sessionId
     )
+  }
+
+  // Publishes the committed Session posture used by new provider permission requests.
+  setLivePermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
+  ): void {
+    this.livePermissionProfiles.set(sessionId, {
+      profile,
+      isCurrent,
+      providerUpdatesBlocked: false
+    })
+  }
+
+  beginPermissionProfileTransition(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean
+  ): void {
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked: true })
+  }
+
+  // A user-requested transition remains authoritative until its runtime operation commits or rolls
+  // back, so a delayed provider mode notification cannot restore stale Full access in the meantime.
+  setProviderPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): boolean {
+    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return false
+    this.setLivePermissionProfile(sessionId, profile)
+    return true
+  }
+
+  clearLivePermissionProfile(sessionId: string): void {
+    this.livePermissionProfiles.delete(sessionId)
+  }
+
+  async applyPermissionProfile(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>,
+    isCurrent: () => boolean = () => true
+  ): Promise<string[]> {
+    const providerUpdatesBlocked =
+      this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked ?? false
+    this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked })
+    const resolvedRequestIds: string[] = []
+    for (const [requestId, pending] of Array.from(this.pendingRequests)) {
+      if (!isCurrent()) break
+      if (pending.request.sessionId !== sessionId || !pending.automaticRequest) continue
+
+      const optionId = resolveAutomaticPermission(pending.automaticRequest, {
+        ...pending.policyContext,
+        profile: profile.selectedProfile,
+        autoReviewStrategy: profile.autoReviewStrategy
+      })
+      if (!optionId) continue
+      if (!isCurrent()) break
+
+      if (await this.respond({ requestId, optionId })) resolvedRequestIds.push(requestId)
+    }
+    return resolvedRequestIds
   }
 
   // Lists the app conversation's grants so the composer can show and revoke them.
@@ -851,8 +924,9 @@ class AcpPermissionBroker {
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     // Resolve against the projected options so a stripped policy amendment can never be an automatic
     // outcome — the "amendments are never selectable" invariant must hold on the auto path too.
-    const automaticOptionId = resolveAutomaticPermission(
-      { ...params, options: providerPermissionOptions },
+    const automaticRequest = { ...params, options: providerPermissionOptions }
+    const automaticOptionId = this.resolveCurrentAutomaticPermission(
+      automaticRequest,
       policyContext
     )
 
@@ -881,9 +955,11 @@ class AcpPermissionBroker {
               outcome: { outcome: 'selected' as const, optionId: providerAllowOnceOption.optionId }
             }
           }
-          return this.enqueuePermissionRequest({
+          return this.resolveOrEnqueuePermissionRequest({
             requestId,
             request,
+            automaticRequest,
+            policyContext,
             categoryKey,
             capability,
             projectId: policyContext?.projectId,
@@ -904,11 +980,44 @@ class AcpPermissionBroker {
     }
 
     // The returned promise is held open until the UI selects or cancels an option.
-    return this.enqueuePermissionRequest({
+    return this.resolveOrEnqueuePermissionRequest({
       requestId,
       request,
+      automaticRequest,
+      policyContext,
       categoryKey,
       providerAllowOnceOptionId: providerAllowOnceOption?.optionId
+    })
+  }
+
+  private resolveOrEnqueuePermissionRequest(
+    pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
+  ): Promise<RequestPermissionResponse> {
+    const liveAutomaticOptionId = pending.automaticRequest
+      ? this.resolveCurrentAutomaticPermission(pending.automaticRequest, pending.policyContext)
+      : undefined
+
+    if (liveAutomaticOptionId) {
+      return Promise.resolve({
+        outcome: { outcome: 'selected', optionId: liveAutomaticOptionId }
+      })
+    }
+
+    return this.enqueuePermissionRequest(pending)
+  }
+
+  private resolveCurrentAutomaticPermission(
+    request: RequestPermissionRequest,
+    policyContext?: PermissionPolicyContext
+  ): string | undefined {
+    const liveProfile = this.livePermissionProfiles.get(request.sessionId)
+    if (!liveProfile) return resolveAutomaticPermission(request, policyContext)
+    if (!liveProfile.isCurrent()) return undefined
+
+    return resolveAutomaticPermission(request, {
+      ...policyContext,
+      profile: liveProfile.profile.selectedProfile,
+      autoReviewStrategy: liveProfile.profile.autoReviewStrategy
     })
   }
 
@@ -1029,6 +1138,7 @@ class AcpPermissionBroker {
   // Cancels every pending request while preserving conversation grants across Agent reconnects.
   cancelAllPending(): void {
     this.cancellationGeneration += 1
+    this.livePermissionProfiles.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
 
     for (const requestId of pendingRequests) {
@@ -1054,6 +1164,7 @@ class AcpPermissionBroker {
   // Ends one Agent session: cancel its outstanding prompts and discard its non-persistent grants.
   clearSession(sessionId: string): void {
     this.cancelForSession(sessionId)
+    this.livePermissionProfiles.delete(sessionId)
     this.conversationGrants.clear(sessionId)
   }
 }

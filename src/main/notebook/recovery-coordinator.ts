@@ -9,7 +9,8 @@ import {
   RuntimeOperationJournal
 } from './operation-journal'
 import { defaultOperationChildLiveness, reconcileInterruptedOperations } from './operation-recovery'
-import { addRepairRequired, managedRepairRegistryKey } from './runtime-paths'
+import { addRepairRequired } from './runtime-paths'
+import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 
 export type NotebookRecoveryReadiness =
   'not-started' | 'recovering' | 'ready' | 'failed' | 'disposed'
@@ -39,7 +40,13 @@ export class NotebookRecoveryCoordinator {
   private recoveryCorrupt = false
   private disposed = false
 
-  constructor(private readonly runtimeRoot: string) {}
+  constructor(
+    private readonly runtimeRoot: string,
+    private readonly repairPolicy: Pick<
+      NotebookRuntimeRepairPolicy,
+      'recoveryMarker'
+    > = new NotebookRuntimeRepairPolicy(runtimeRoot)
+  ) {}
 
   async recover(): Promise<void> {
     if (this.disposed) throw new Error('Notebook recovery coordinator is disposed.')
@@ -186,19 +193,8 @@ export class NotebookRecoveryCoordinator {
       },
       markRepairRequired: async (record) => {
         if (!record.runtimeId) return
-        const reason = record.repairReason ?? 'interrupted-install'
-        const language =
-          record.phase === 'install-r'
-            ? 'r'
-            : record.phase === 'install-python'
-              ? 'python'
-              : undefined
-        const alreadyScoped = /^managed:(?:python|r):/u.test(record.runtimeId)
-        const repairKey =
-          reason === 'protected-identity-change' || !record.targetPath || !language || alreadyScoped
-            ? record.runtimeId
-            : managedRepairRegistryKey(record.runtimeId, language)
-        addRepairRequired(this.runtimeRoot, repairKey, reason)
+        const marker = this.repairPolicy.recoveryMarker(record)
+        addRepairRequired(this.runtimeRoot, marker.key, marker.reason)
       },
       blockUnknownChildTarget: async (record) => {
         if (record.kind === 'install') nextStartupBlockedRuntimeIds.add(record.runtimeId)

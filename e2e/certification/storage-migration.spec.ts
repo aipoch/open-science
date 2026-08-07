@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 import { test } from '../fixtures/electron-app'
-import { createProject, sendPrompt } from './helpers'
+import { createProject, openRecentSession, sendPrompt } from './helpers'
 
 test('stages a verified data-root move and recovers on discard', async ({ app }) => {
   let page = await app.completeOnboarding()
@@ -31,9 +31,5 @@ test('stages a verified data-root move and recovers on discard', async ({ app })
   expect(result.discarded.kind).toBe('move')
 
   page = await app.restart()
-  await expect(
-    page
-      .getByRole('region', { name: 'Recent sessions' })
-      .getByRole('button', { name: 'Persist the migration fixture.' })
-  ).toBeVisible()
+  await openRecentSession(page, 'Persist the migration fixture.')
 })

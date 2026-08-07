@@ -803,6 +803,10 @@ export type SkillDetailView = SkillView & {
   references: SkillReferenceInfo[]
 }
 
+export type ExportSkillRequest = { id: string }
+
+export type ExportSkillResult = { saved: boolean }
+
 // A reference file's name (basename under `references/`), without its content.
 export type SkillReferenceInfo = {
   path: string

@@ -18,7 +18,12 @@ import {
   getActivityGroupTitleFromToolEvent,
   isActivityGroupToolEvent
 } from '../../../../shared/activity-groups'
-import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import {
+  toPersistedSession,
+  useSessionStore,
+  type ChatSession,
+  type ToolActivity
+} from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
@@ -31,6 +36,9 @@ import {
 
 // Remembers which sessions were marked as waiting during the previous permission sync.
 const pendingPermissionSessionIds = new Set<string>()
+// Tracks runtime prompt-ownership entry edges. A first visible chunk clears the store flag without
+// removing this id, so repeated snapshots for the same prompt cannot re-arm the indicator.
+const firstOutputWaitingSessionIds = new Set<string>()
 
 // Sessions whose next triggerAutoReview call should be skipped exactly once.
 // Used to suppress the re-review that would otherwise be triggered by the [Auditor] correction turn:
@@ -65,6 +73,7 @@ const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 const resetDeferredArtifactEventsForTests = (): void => {
   deferredArtifactEventsBySession.clear()
   pendingArtifactTurnUsageBySession.clear()
+  firstOutputWaitingSessionIds.clear()
   for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
   scheduledAutoReviewsBySession.clear()
   autoReviewsSuppressedForQuit = false
@@ -81,6 +90,44 @@ const isActivityGroupControlEvent = (event: AcpRuntimeEvent): boolean => {
   }
 
   return activityGroupToolCallIdsBySession.get(event.sessionId)?.has(event.toolCallId) === true
+}
+
+const isTerminalToolActivity = (activity: ToolActivity | undefined): boolean =>
+  activity?.status === 'completed' || activity?.status === 'failed'
+
+const getCurrentPromptMessageId = (session: ChatSession): string | undefined =>
+  session.activeRun?.promptMessageId ??
+  session.messages.findLast((message) => message.role === 'user')?.id
+
+const ownsForegroundPrompt = (session: ChatSession): boolean =>
+  Boolean(
+    session.agentPromptInFlight ||
+    (session.activeRun && (session.status === 'running' || session.status === 'waiting-permission'))
+  )
+
+// Only a newly accepted terminal transition for the current foreground prompt opens a new silent gap.
+const didCurrentToolBecomeTerminal = (
+  before: ChatSession | undefined,
+  after: ChatSession | undefined,
+  toolCallId: string,
+  eventId: string
+): boolean => {
+  if (!after || !ownsForegroundPrompt(after)) return false
+
+  const beforeActivity = before?.activities?.find((activity) => activity.id === toolCallId)
+  const afterActivity = after.activities?.find((activity) => activity.id === toolCallId)
+  if (
+    !afterActivity ||
+    beforeActivity?.eventIds.includes(eventId) ||
+    isTerminalToolActivity(beforeActivity) ||
+    !isTerminalToolActivity(afterActivity) ||
+    !afterActivity.eventIds.includes(eventId)
+  ) {
+    return false
+  }
+
+  const promptMessageId = getCurrentPromptMessageId(after)
+  return Boolean(promptMessageId && afterActivity.promptMessageId === promptMessageId)
 }
 
 // Marks the next triggerAutoReview call for a session as suppressed. Cleared on use (one-shot).
@@ -449,10 +496,12 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
+    const sessionBeforeToolEvent = store.sessions.find((session) => session.id === event.sessionId)
     store.upsertToolActivity({
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
       eventId: event.id,
+      timestamp: event.timestamp,
       promptMessageId: event.promptMessageId,
       title: event.title,
       status: event.status,
@@ -465,6 +514,19 @@ const applyWorkspaceRuntimeEvent = async (
       terminalOutput: event.terminalOutput,
       terminalExitCode: event.terminalExitCode
     })
+    const sessionAfterToolEvent = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === event.sessionId)
+    if (
+      didCurrentToolBecomeTerminal(
+        sessionBeforeToolEvent,
+        sessionAfterToolEvent,
+        event.toolCallId,
+        event.id
+      )
+    ) {
+      useSessionStore.getState().setAwaitingFirstAgentOutput(event.sessionId, true)
+    }
     return true
   }
 
@@ -696,9 +758,32 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
   }
 }
 
+// Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
+// ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
+const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
+  const nextSessionIds = new Set(sessionIds)
+  const store = useSessionStore.getState()
+  const workspaceSessionIds = new Set(store.sessions.map((session) => session.id))
+
+  for (const sessionId of nextSessionIds) {
+    if (!workspaceSessionIds.has(sessionId) || firstOutputWaitingSessionIds.has(sessionId)) continue
+    store.setAgentPromptInFlight(sessionId, true)
+    store.setAwaitingFirstAgentOutput(sessionId, true)
+    firstOutputWaitingSessionIds.add(sessionId)
+  }
+
+  for (const sessionId of firstOutputWaitingSessionIds) {
+    if (nextSessionIds.has(sessionId)) continue
+    store.setAgentPromptInFlight(sessionId, false)
+    store.setAwaitingFirstAgentOutput(sessionId, false)
+    firstOutputWaitingSessionIds.delete(sessionId)
+  }
+}
+
 export {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
+  syncWorkspaceAgentFirstOutputState,
   syncWorkspacePermissionState,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,

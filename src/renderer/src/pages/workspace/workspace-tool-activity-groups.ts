@@ -282,9 +282,35 @@ const formatStepCount = (activities: ToolActivity[]): string => {
   return failedCount > 0 ? `${stepLabel} · ${failedCount} failed` : stepLabel
 }
 
+// Adds each tool's own runtime, excluding idle gaps between tools in the same group.
+const getActivityGroupElapsedMs = (activities: ToolActivity[], now: number): number =>
+  activities.reduce(
+    (total, activity) =>
+      total +
+      Math.max(0, (isActivityActive(activity) ? now : activity.updatedAt) - activity.createdAt),
+    0
+  )
+
+// Keeps short work precise, then switches to compact clock units as the elapsed span grows.
+const formatActivityGroupElapsed = (elapsedMs: number): string => {
+  const milliseconds = Math.max(0, Math.floor(elapsedMs))
+  if (milliseconds < 1000) return `${milliseconds}ms`
+
+  const totalSeconds = Math.floor(milliseconds / 1000)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 export {
+  formatActivityGroupElapsed,
   formatActivityGroupTitle,
   formatStepCount,
+  getActivityGroupElapsedMs,
   getRenderableActivityEntries,
   groupConversationItems,
   isSearchActivity

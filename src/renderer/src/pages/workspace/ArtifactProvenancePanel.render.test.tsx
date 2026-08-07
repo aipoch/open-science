@@ -369,6 +369,8 @@ let getVersionProvenance: ReturnType<typeof vi.fn>
 let getVersionExecution: ReturnType<typeof vi.fn>
 let getVersionMessages: ReturnType<typeof vi.fn>
 let getVersionReview: ReturnType<typeof vi.fn>
+let getCodeReconstruction: ReturnType<typeof vi.fn>
+let generateCodeReconstruction: ReturnType<typeof vi.fn>
 let saveBlobFile: ReturnType<typeof vi.fn>
 
 const flush = async (): Promise<void> => {
@@ -402,6 +404,22 @@ beforeEach(async () => {
   getVersionExecution = vi.fn().mockResolvedValue({ execution: completeProvenance.execution })
   getVersionMessages = vi.fn().mockResolvedValue({ messages: completeProvenance.messages })
   getVersionReview = vi.fn().mockResolvedValue({ review: completeProvenance.review })
+  getCodeReconstruction = vi.fn().mockResolvedValue({
+    state: 'ready',
+    language: 'python',
+    sourceTruncated: false
+  })
+  generateCodeReconstruction = vi.fn().mockResolvedValue({
+    state: 'cached',
+    value: {
+      code: 'import numpy as np\nnp.sin(0)',
+      language: 'python',
+      generatedAt: '2026-07-27T20:05:00.000Z',
+      frameworkId: 'codex',
+      model: 'model-a',
+      sourceTruncated: false
+    }
+  })
   saveBlobFile = vi.fn().mockResolvedValue({ saved: true, filePath: '/tmp/session.ipynb' })
   Object.defineProperty(window, 'api', {
     configurable: true,
@@ -416,7 +434,9 @@ beforeEach(async () => {
         getVersionProvenance,
         getVersionExecution,
         getVersionMessages,
-        getVersionReview
+        getVersionReview,
+        getCodeReconstruction,
+        generateCodeReconstruction
       },
       reviewer: { onUpdated: vi.fn().mockReturnValue(() => undefined) },
       saveBlobFile
@@ -482,6 +502,43 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
+  it('refreshes lineage when an open preview targets a newly finalized Version', async () => {
+    const thirdDescriptor = {
+      ...secondDescriptor,
+      id: 'version-3',
+      versionId: 'version-3',
+      versionNumber: 3,
+      checksum: 'checksum-3',
+      path: '/data/sin-v3.png',
+      fileUrl: 'file:///data/sin-v3.png',
+      mtimeMs: 3
+    }
+    vi.mocked(window.api.artifacts.getLineage).mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
+      versions: [descriptor, secondDescriptor, thirdDescriptor]
+    })
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-3', versionNumber: 3 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await flush()
+
+    expect(window.api.artifacts.getLineage).toHaveBeenCalledTimes(2)
+    expect(getVersionProvenance).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'version-3' })
+    )
+    expect(container.textContent).toContain('v3')
+    expect(container.textContent).not.toContain('The selected Artifact version is unavailable.')
+  })
+
   it('loads tab-specific evidence only when that tab is opened', async () => {
     expect(getVersionExecution).not.toHaveBeenCalled()
     expect(getVersionMessages).not.toHaveBeenCalled()
@@ -492,6 +549,119 @@ describe('ArtifactProvenancePanel', () => {
     expect(getVersionMessages).toHaveBeenCalledOnce()
     expect(getVersionExecution).not.toHaveBeenCalled()
     expect(getVersionReview).not.toHaveBeenCalled()
+  })
+
+  it('checks the reconstruction cache on Code open without calling the model', async () => {
+    expect(getCodeReconstruction).toHaveBeenCalledOnce()
+    expect(getCodeReconstruction).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
+    expect(generateCodeReconstruction).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('Generate script')
+    expect(container.textContent).toContain('Captured producer block')
+
+    const reconstructionStatus = [...container.querySelectorAll('p')].find((paragraph) =>
+      paragraph.textContent?.includes('Generate a standalone script')
+    )
+    expect(reconstructionStatus?.className).toContain('truncate')
+    expect(reconstructionStatus?.parentElement?.className).not.toContain('flex-wrap')
+  })
+
+  it('keeps the Code and Execution Log action bars aligned', async () => {
+    const codeAction = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    const codeActionBarClassName = codeAction?.parentElement?.className
+
+    await clickTab('Execution Log')
+    await flush()
+
+    const executionAction = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download notebook'
+    )
+    expect(codeActionBarClassName).toContain('py-2')
+    expect(executionAction?.parentElement?.className).toBe(codeActionBarClassName)
+  })
+
+  it('shows a content loading state while reconstruction is generating', async () => {
+    const generated = {
+      state: 'cached' as const,
+      value: {
+        code: 'import numpy as np\nnp.sin(0)',
+        language: 'python' as const,
+        generatedAt: '2026-07-27T20:05:00.000Z',
+        frameworkId: 'codex' as const,
+        model: 'model-a',
+        sourceTruncated: false
+      }
+    }
+    let resolveGeneration!: (value: typeof generated) => void
+    generateCodeReconstruction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGeneration = resolve
+        })
+    )
+
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+
+    const loading = container.querySelector('[aria-label="Generating reconstructed script"]')
+    expect(loading).not.toBeNull()
+    expect(loading?.textContent).toContain('Generating script…')
+    expect(loading?.querySelector('svg')?.className.baseVal).toContain('animate-spin')
+    expect(container.textContent).not.toContain('Captured producer block')
+
+    await act(async () => resolveGeneration(generated))
+    await flush()
+    expect(container.textContent).toContain('LLM-generated reconstruction')
+  })
+
+  it('generates only after the user clicks and links the result to Execution Log', async () => {
+    const generate = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Generate script'
+    )
+    await act(async () => generate?.click())
+    await flush()
+
+    expect(generateCodeReconstruction).toHaveBeenCalledOnce()
+    expect(generateCodeReconstruction).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: 'artifact-1',
+      versionId: 'version-1'
+    })
+    expect(container.textContent).toContain('Download script')
+    expect(container.textContent).toContain('LLM-generated reconstruction')
+    expect(container.textContent).toContain('Execution Log')
+    expect(container.textContent).not.toContain('Captured producer block')
+
+    const reconstructionCaption = [...container.querySelectorAll('span')].find(
+      (span) => span.textContent === 'LLM-generated reconstruction · see '
+    )?.parentElement
+    expect(reconstructionCaption?.className).toContain('truncate')
+    expect(reconstructionCaption?.parentElement?.className).not.toContain('flex-wrap')
+
+    const download = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Download script'
+    )
+    await act(async () => download?.click())
+    expect(saveBlobFile).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/x-python' })
+    )
+
+    const executionLinks = [...container.querySelectorAll('button')].filter(
+      (button) => button.textContent === 'Execution Log'
+    )
+    expect(executionLinks).toHaveLength(2)
+    await act(async () => executionLinks.at(-1)?.click())
+    await flush()
+    expect(getVersionExecution).toHaveBeenCalledOnce()
   })
 
   it('does not present Review absence while the lazy section is loading', async () => {
@@ -760,7 +930,7 @@ describe('ArtifactProvenancePanel', () => {
     await act(async () => download?.click())
 
     expect(saveBlobFile).toHaveBeenCalledWith(
-      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/plain' })
+      expect.objectContaining({ suggestedName: 'sin-v1.py', mimeType: 'text/x-python' })
     )
     const request = saveBlobFile.mock.calls[0]?.[0] as { data: ArrayBuffer }
     expect(new TextDecoder().decode(request.data)).toBe('import numpy as np\nnp.sin(0)')
@@ -857,7 +1027,7 @@ describe('ArtifactProvenancePanel', () => {
 
     await clickTab('Code')
 
-    expect(container.textContent).toContain('Executed producer block')
+    expect(container.textContent).toContain('Captured producer block')
     expect(container.textContent).not.toContain('execution snapshot unavailable')
   })
 

@@ -33,7 +33,9 @@ import { createAcpRuntime } from './acp/runtime-composition'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
+import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { ArchiveCoordinator } from './archive/coordinator'
+import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
 import {
   createArtifactHandlers,
   createDefaultArtifactRepository,
@@ -155,6 +157,7 @@ import { createDefaultSettingsService } from './settings/service'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createSettingsWorkflows } from './settings/workflows'
+import { showSettingsSaveDialog } from './settings/save-dialog'
 import { ProfileService } from './specialist/service'
 import { SpecialistRepository } from './specialist/repository'
 import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
@@ -167,6 +170,7 @@ import {
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
 import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
+import { saveSkillExport } from './skills/export'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -1172,6 +1176,36 @@ const createApplicationModules = async (
   runtime.setPromptAdmissionGuard((sessionId) =>
     archiveCoordinator.assertSessionAvailableById(sessionId)
   )
+  const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
+  const codeReconstructionRunner = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      configRoot,
+      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context)
+    },
+    (options) => {
+      const runner = new ArtifactCodeReconstructionRunner(options)
+      return {
+        name: 'artifact-code-reconstruction-runner',
+        capability: runner,
+        dispose: () => runner.shutdown()
+      }
+    }
+  )
+  void codeReconstructionRunner
+    .sweepStaleProfiles()
+    .catch((error) =>
+      codeReconstructionLog.error(
+        'stale reconstruction profile cleanup failed',
+        diagnosticErrorFields(error)
+      )
+    )
+  const codeReconstruction = new ArtifactCodeReconstructionService({
+    provenance: artifactProvenanceRepository,
+    runner: codeReconstructionRunner
+  })
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
     assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
   })
@@ -1364,8 +1398,8 @@ const createApplicationModules = async (
             contents: await readFile(filePath, 'utf8')
           }
         },
-        save: async (suggestedFileName, contents) => {
-          const selected = await dialog.showSaveDialog({
+        save: async (suggestedFileName, contents, sender) => {
+          const selected = await showSettingsSaveDialog(sender, {
             title: 'Export Connector configuration',
             defaultPath: suggestedFileName,
             filters: [{ name: 'Connector configuration', extensions: ['json'] }]
@@ -1374,6 +1408,16 @@ const createApplicationModules = async (
           await writeFile(selected.filePath, contents, 'utf8')
           return true
         }
+      },
+      skillExportFiles: {
+        save: (archive, sender) =>
+          saveSkillExport(
+            {
+              showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
+              writeFile: (filePath, bytes) => writeFile(filePath, bytes)
+            },
+            archive
+          )
       }
     })
   )
@@ -1643,6 +1687,7 @@ const createApplicationModules = async (
     getActiveArtifactRunIds: () =>
       runtimeRef.current ? runtimeRef.current.getActiveArtifactRunIds() : [],
     provenance: artifactProvenanceRepository,
+    codeReconstruction,
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
   })

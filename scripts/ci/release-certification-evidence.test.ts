@@ -216,8 +216,8 @@ describe('release certification evidence', () => {
     )
 
     await expect(
-      aggregateEvidence({ argv: [...args, '--require-stable-release-checks'] })
-    ).rejects.toThrow(/Windows full suite/)
+      aggregateEvidence({ argv: [...args, '--require-windows-update'] })
+    ).rejects.toThrow(/stable Windows update drill evidence/)
     await writeFile(
       join(root, 'certification-windows-update.json'),
       JSON.stringify({
@@ -255,11 +255,10 @@ describe('release certification evidence', () => {
     )
     await expect(
       aggregateEvidence({
-        argv: [...args, '--require-stable-release-checks', '--windows-full-suite', 'passed']
+        argv: [...args, '--require-windows-update']
       })
     ).resolves.toMatchObject({
       releaseChecks: {
-        windowsFullSuite: 'passed',
         windowsUpdate: { status: 'passed' }
       }
     })

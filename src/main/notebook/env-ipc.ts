@@ -16,11 +16,13 @@ export const broadcastNotebookEnvProgress = (progress: ProvisionProgress): void 
 // interface. An unavailable provisioner still yields registered handlers with actionable results.
 export const registerNotebookEnvIpcHandlers = (lifecycle: NotebookEnvironmentLifecycle): void => {
   ipcMainHandle('notebook-env:status', () => lifecycle.status())
-  ipcMainHandle('notebook-env:provision', (_event, language: NotebookLanguage) =>
-    lifecycle.provision(language)
+  ipcMainHandle(
+    'notebook-env:provision',
+    (_event, language: NotebookLanguage, operationId?: string) =>
+      lifecycle.provision(language, operationId)
   )
-  ipcMainHandle('notebook-env:repair', (_event, language: NotebookLanguage) =>
-    lifecycle.repair(language)
+  ipcMainHandle('notebook-env:repair', (_event, language: NotebookLanguage, operationId?: string) =>
+    lifecycle.repair(language, operationId)
   )
   ipcMainHandle('notebook-env:cancel', (_event, language?: NotebookLanguage) =>
     lifecycle.cancel(language)

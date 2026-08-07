@@ -1204,6 +1204,65 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it('removes all tool declarations for a registered one-shot session key', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const upstreamFetch = vi.fn(
+      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          id: 'chat-tool-less',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'print(1)' } }]
+        })
+      }
+    )
+    const bridge = new ResponsesBridge(
+      {
+        baseUrl: 'https://vendor.example/v1',
+        model: 'model-a',
+        namespacedTools: [
+          {
+            namespace: 'mcp__open_science_notebook',
+            name: 'notebook_execute',
+            parameters: { type: 'object' }
+          }
+        ]
+      },
+      upstreamFetch
+    )
+    const connection = await bridge.start()
+
+    try {
+      bridge.registerToolLessSession('reconstruction-session')
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'reconstruct',
+          prompt_cache_key: 'reconstruction-session',
+          stream: false,
+          tools: [
+            { type: 'function', name: 'exec_command', parameters: { type: 'object' } },
+            { type: 'local_shell' }
+          ],
+          tool_choice: { type: 'function', name: 'exec_command' }
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequest).not.toHaveProperty('tools')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('notebook_execute')
+      expect(bridge.unregisterToolLessSession('reconstruction-session')).toBe(true)
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('streams a clean, fully-readable body when the upstream emits reasoning_content', async () => {
     // Regression: a reasoning-model upstream interleaves reasoning_content deltas. The bridge must
     // drop them and finish the SSE stream instead of resetting the socket (which reaches the agent

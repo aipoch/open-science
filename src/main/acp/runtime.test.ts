@@ -660,6 +660,11 @@ const startPermissionProbeAgent = (
     announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
+    onSetMode?: (context: {
+      sessionId: string
+      modeId: string
+      notifyCurrentMode: (currentModeId: string) => Promise<void>
+    }) => Promise<void> | void
     permissionOptions?: Array<{
       optionId: string
       name: string
@@ -683,7 +688,18 @@ const startPermissionProbeAgent = (
       sessionId: options.newSessionId,
       modes: options.modes
     }))
-    .onRequest(acp.methods.agent.session.setMode, () => ({}))
+    .onRequest(acp.methods.agent.session.setMode, async (ctx) => {
+      await options.onSetMode?.({
+        sessionId: ctx.params.sessionId,
+        modeId: ctx.params.modeId,
+        notifyCurrentMode: async (currentModeId) =>
+          ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: { sessionUpdate: 'current_mode_update', currentModeId }
+          })
+      })
+      return {}
+    })
     .onRequest(acp.methods.agent.session.resume, (ctx) => {
       if (options.resume === 'notFound') {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
@@ -1713,10 +1729,8 @@ describe('ACP runtime session management', () => {
     const approved = restoredPlanProjection('approved', 5)
     const pending = restoredPlanProjection('pending', 4)
     const respond = vi.fn(async () => ({ projection: approved, changed: true }))
-    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     installPromptPlanTestWorkflow(runtime, {
       respond,
-      checkTurnCompletion,
       getProjection: vi.fn(async () => pending)
     })
 
@@ -1744,10 +1758,6 @@ describe('ACP runtime session management', () => {
       })
     )
     expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
-    expect(checkTurnCompletion).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 's1'
-    })
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'plan',
@@ -3597,6 +3607,9 @@ describe('ACP runtime session management', () => {
     await expect(
       runtime.sendPrompt({ sessionId: second.sessionId, text: 'blocked prompt' })
     ).rejects.toThrow(/already running/)
+    await expect(
+      runtime.setPermissionProfile({ sessionId: second.sessionId, profile: 'full' })
+    ).rejects.toThrow(/compacting/)
 
     const prompting = runtime.sendPrompt({ sessionId: first.sessionId, text: 'first prompt' })
     await vi.waitFor(() =>
@@ -3612,11 +3625,13 @@ describe('ACP runtime session management', () => {
       first.sessionId,
       second.sessionId
     ])
+    expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([first.sessionId])
 
     firstPromptGate.resolve({ stopReason: 'end_turn' })
     secondCompactionGate.resolve({ stopReason: 'end_turn' })
     await expect(Promise.all([prompting, compacting])).resolves.toHaveLength(2)
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    expect(runtime.getSnapshot().agentPromptInFlightSessionIds).toEqual([])
   })
 
   it('drops estimated pre-compaction categories when no fresh usage update arrives', async () => {
@@ -6304,6 +6319,267 @@ describe('ACP runtime session management', () => {
     expect(emittedUnknownPermission).toBe(false)
     expect(permissionError).toBeDefined()
     expect(runtime.getSnapshot().pendingPermissions).toEqual([])
+  })
+
+  it('changes permission profile while a prompt is waiting and releases the eligible request', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    await permissionSeen.promise
+    const snapshot = await runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'full'
+    })
+
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(snapshot.pendingPermissions).toEqual([])
+    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions'
+    })
+  })
+
+  it('enforces a requested downgrade while the provider mode change is in flight', async () => {
+    const process = new FakeAgentProcess()
+    const askModeEntered = createDeferred()
+    const releaseAskMode = createDeferred()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async ({ modeId, notifyCurrentMode }) => {
+        if (modeId === 'default') {
+          await notifyCurrentMode('bypassPermissions')
+          askModeEntered.resolve()
+          await releaseAskMode.promise
+        }
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    const selectingAsk = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'ask'
+    })
+    await askModeEntered.promise
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    const permission = await permissionSeen.promise
+
+    expect(permissionResponse).toBeUndefined()
+    releaseAskMode.resolve()
+    await expect(selectingAsk).resolves.toBeDefined()
+    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('restores the committed profile when the provider mode change fails', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = vi.fn()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: ({ modeId }) => {
+        if (modeId === 'default') throw new Error('set mode failed')
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: permissionSeen }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+
+    await expect(
+      runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'ask' })
+    ).rejects.toMatchObject({ data: { details: 'set mode failed' } })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(permissionSeen).not.toHaveBeenCalled()
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'full',
+      effectiveProfile: 'full'
+    })
+  })
+
+  it('uses the committed profile after replacing the provider session', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = vi.fn()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: permissionSeen }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'full' })
+
+    await runtime.resetSessionContext({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      permissionProfile: 'full'
+    })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(permissionSeen).not.toHaveBeenCalled()
+    expect(permissionResponse).toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+  })
+
+  it('refreshes the live profile when resuming an attached session', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'full' })
+
+    await runtime.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      permissionProfile: 'ask'
+    })
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    const permission = await permissionSeen.promise
+
+    expect(permissionResponse).toBeUndefined()
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask'
+    })
+    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+  })
+
+  it('lets the latest overlapping profile change commit without releasing pending permission', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    const fullModeEntered = createDeferred()
+    const releaseFullMode = createDeferred()
+    const modeChanges: string[] = []
+    let permissionResponse: unknown
+    startPermissionProbeAgent(process, {
+      newSessionId: 'live-permission-session',
+      toolCallId: 'live-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async ({ modeId }) => {
+        modeChanges.push(modeId)
+        if (modeId === 'bypassPermissions') {
+          fullModeEntered.resolve()
+          await releaseFullMode.promise
+        }
+      },
+      onPermissionResponse: (response) => {
+        permissionResponse = response
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+    const permission = await permissionSeen.promise
+
+    const selectingFull = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'full'
+    })
+    await fullModeEntered.promise
+    const selectingAsk = runtime.setPermissionProfile({
+      sessionId: session.sessionId,
+      profile: 'ask'
+    })
+    releaseFullMode.resolve()
+
+    await expect(selectingFull).resolves.toBeDefined()
+    const snapshot = await selectingAsk
+    expect(modeChanges).toEqual(['bypassPermissions', 'default'])
+    expect(permissionResponse).toBeUndefined()
+    expect(snapshot.pendingPermissions).toHaveLength(1)
+    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      currentModeId: 'default'
+    })
+
+    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
   it('audits OpenCode MCP calls with canonical identities without logging raw tool titles', async () => {
@@ -12771,7 +13047,6 @@ describe('ACP runtime session management', () => {
       const authorizeContinuation = vi.fn(async () => active)
       installPromptPlanTestWorkflow(runtime, {
         authorizeContinuation,
-        checkTurnCompletion: vi.fn(async () => ({ allow: true })),
         getProjection: vi.fn(async () => active)
       })
 
@@ -12843,7 +13118,7 @@ describe('ACP runtime session management', () => {
     ['Codex', codexFramework],
     ['OpenCode', opencodeFramework]
   ] as const)(
-    'routes %s normal terminal stops through the Session Plan completion gate',
+    'lets %s finish a Conversation Turn while its Session Plan remains incomplete',
     async (_name, framework) => {
       const process = new FakeAgentProcess()
       startFakeAgent(process, ['s1'], {
@@ -12859,10 +13134,6 @@ describe('ACP runtime session management', () => {
         spawnAgent: () => asAgentProcess(process),
         framework
       })
-      const checkTurnCompletion = vi.fn(async () => ({
-        allow: false,
-        lifecycle: 'in_progress' as const
-      }))
       const getProjection = vi.fn(async () => null)
       const authorized = {
         artifactId: 'artifact-1',
@@ -12896,7 +13167,6 @@ describe('ACP runtime session management', () => {
       } satisfies ActivePlanProjection
       installPromptPlanTestWorkflow(runtime, {
         authorizeContinuation: vi.fn(async () => authorized),
-        checkTurnCompletion,
         getProjection
       })
 
@@ -12904,7 +13174,7 @@ describe('ACP runtime session management', () => {
       await expect(
         runtime.sendPrompt({
           sessionId: 's1',
-          text: 'finish early',
+          text: 'finish this turn',
           planContinuation: {
             projectId: 'project-1',
             artifactVersionId: 'version-1',
@@ -12915,11 +13185,7 @@ describe('ACP runtime session management', () => {
             messageAncestry: ['plan-origin', 'completion-message']
           }
         })
-      ).rejects.toThrow('The active Session Plan is not complete (in_progress).')
-      expect(checkTurnCompletion).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        sessionId: 's1'
-      })
+      ).resolves.toMatchObject({ stopReason: 'end_turn' })
     }
   )
 
@@ -12932,12 +13198,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework
     })
-    const checkTurnCompletion = vi.fn(async () => ({
-      allow: false,
-      lifecycle: 'approved' as const
-    }))
     installPromptPlanTestWorkflow(runtime, {
-      checkTurnCompletion,
       getProjection: vi.fn(async () => null)
     })
 
@@ -12946,11 +13207,10 @@ describe('ACP runtime session management', () => {
       runtime.sendPrompt({ sessionId: 's1', text: 'What is the weather?' })
     ).resolves.toMatchObject({ stopReason: 'end_turn' })
 
-    expect(checkTurnCompletion).not.toHaveBeenCalled()
     expect(fakeAgent.prompts[0]?.text).not.toContain('<open_science_protected_plan_context>')
   })
 
-  it('projects an abnormal provider terminal stop as interrupted instead of checking normal completion', async () => {
+  it('projects an abnormal provider terminal stop as interrupted', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['s1'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
@@ -12964,21 +13224,19 @@ describe('ACP runtime session management', () => {
       framework: codexFramework,
       callbacks: { onEvent: (event) => events.push(event) }
     })
-    const checkTurnCompletion = vi.fn(async () => ({ allow: true }))
     const getProjection = vi.fn(
       async () =>
         ({
           lifecycle: 'interrupted'
         }) as ActivePlanProjection
     )
-    installPromptPlanTestWorkflow(runtime, { checkTurnCompletion, getProjection })
+    installPromptPlanTestWorkflow(runtime, { getProjection })
 
     await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     await expect(
       runtime.sendPrompt({ sessionId: 's1', text: 'run the plan' })
     ).resolves.toMatchObject({ stopReason: 'max_tokens' })
 
-    expect(checkTurnCompletion).not.toHaveBeenCalled()
     expect(getProjection).toHaveBeenCalledWith('project-1', 's1', {
       interactionIsLive: false
     })

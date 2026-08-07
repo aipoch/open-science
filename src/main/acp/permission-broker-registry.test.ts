@@ -108,6 +108,38 @@ const mcpRequest = (
   ]
 })
 
+const controlledEmptyGrantRegistry = (): {
+  registry: PermissionGrantRegistry
+  finishResolve: () => void
+} => {
+  let finish: (() => void) | undefined
+  const registry = {
+    resolve: vi.fn(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finish = () => resolve(undefined)
+        })
+    ),
+    remember: vi.fn(),
+    list: vi.fn().mockResolvedValue([]),
+    listCached: vi.fn().mockReturnValue([]),
+    revoke: vi.fn(),
+    extendUndo: vi.fn(),
+    restore: vi.fn(),
+    prune: vi.fn(),
+    finalizeOwnerDeletion: vi.fn(),
+    subscribe: vi.fn().mockReturnValue(() => undefined)
+  } satisfies PermissionGrantRegistry
+
+  return {
+    registry,
+    finishResolve: () => {
+      if (!finish) throw new Error('Grant lookup has not started.')
+      finish()
+    }
+  }
+}
+
 describe('ACP permission broker with durable grants', () => {
   it('cancels a request while its durable grant lookup is still pending', async () => {
     let finishResolve: (() => void) | undefined
@@ -141,6 +173,92 @@ describe('ACP permission broker with durable grants', () => {
     await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
     expect(emitted).toEqual([])
     expect(broker.hasPendingForSession('session-1')).toBe(false)
+  })
+
+  it('re-evaluates a request when grant lookup crosses a live profile change', async () => {
+    const { registry, finishResolve } = controlledEmptyGrantRegistry()
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const response = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1'
+    })
+    expect(emitted).toEqual([])
+
+    await broker.applyPermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: [],
+      fullAccessAvailable: true
+    })
+    finishResolve()
+
+    await expect(response).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(emitted).toEqual([])
+    expect(broker.getPendingRequests()).toEqual([])
+  })
+
+  it('does not use a superseded live profile after grant lookup', async () => {
+    const { registry, finishResolve } = controlledEmptyGrantRegistry()
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const response = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1'
+    })
+    let current = true
+    await broker.applyPermissionProfile(
+      'session-1',
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        availableModeIds: [],
+        fullAccessAvailable: true
+      },
+      () => current
+    )
+    current = false
+    finishResolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted).toHaveLength(1)
+    expect(broker.getPendingRequests()).toHaveLength(1)
+    broker.cancelAllPending()
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
+  it('re-evaluates a delayed grant lookup against a provider mode downgrade', async () => {
+    const { registry, finishResolve } = controlledEmptyGrantRegistry()
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+    const response = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1'
+    })
+
+    broker.setLivePermissionProfile('session-1', {
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      availableModeIds: ['default', 'bypassPermissions'],
+      currentModeId: 'bypassPermissions',
+      fullAccessAvailable: true
+    })
+    broker.setLivePermissionProfile('session-1', {
+      selectedProfile: 'ask',
+      effectiveProfile: 'ask',
+      availableModeIds: ['default', 'bypassPermissions'],
+      currentModeId: 'default',
+      fullAccessAvailable: true
+    })
+    finishResolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted).toHaveLength(1)
+    expect(broker.getPendingRequests()).toHaveLength(1)
+    broker.cancelAllPending()
+    await expect(response).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
   it('fails closed and reports when a remembered approval cannot be persisted', async () => {

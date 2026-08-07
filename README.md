@@ -10,7 +10,7 @@
 
 Open Science currently includes 18 featured research skills and 24 built-in scientific connectors, with its strongest coverage in bioinformatics, computational biology, biomedical research, genomics, structural biology, and computational drug discovery—and an extensible architecture designed to support more scientific disciplines over time.
 
-> 💡 **[Open Science v0.11.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 5, 2026)_. Highlights include review-gated session plans, hot-switching models and providers without reconnect, agent-aware context replay, prompt history navigation, and a settings keyboard shortcut. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
+> 💡 **[Open Science v0.11.1 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 6, 2026)_. Highlights include on-demand artifact code reconstruction, live permission profile changes during a running turn, project and session archiving, MCP connector OAuth and portable configuration sharing, tool-activity elapsed time, persistent plan call records, and branded loading indicators. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
@@ -231,6 +231,7 @@ Open Science is available as a released desktop application and is actively deve
 - **v0.10.0** adds a project-scoped command palette, code syntax highlighting in previews and notebook cells, read-only package inventories per runtime environment, conversational skill imports from GitHub URLs, direct file preview beside the session, and Bailian as a built-in model provider.
 - **v0.10.1** adds branching a conversation into a new session, GitHub skill search by keyword, specialist package import/export with contribution channels, and session-age metadata in the artifact list, while keeping oversized data files out of model context and hardening branch replay, reviewer correction provenance, and Codex prompt-runtime ownership.
 - **v0.11.0** adds review-gated session plans with durable execution contracts, hot-switching ACP models and providers without reconnecting the agent process, agent-aware context replay that respects each framework's context path, prompt history navigation in the composer, session link favicons, and a settings keyboard shortcut, while hardening Windows auto-update and local RPC, logger data redaction, artifact provenance binding, and notebook process-group cleanup.
+- **v0.11.1** adds on-demand artifact code reconstruction, live permission profile changes during a running turn, project and session archiving with undo, MCP connector OAuth and portable configuration import/export, tool-activity elapsed time in the transcript, persistent plan call records, and branded loading indicators, while hardening Windows runtime recovery, session-plan turn completion, and cross-platform release certification.
 
 Deterministic reconstruction, portable environment restoration, and full-fidelity session replay remain on the roadmap.
 

@@ -1,5 +1,5 @@
-// ReviewerCard: a compact card that appears in the conversation after a turn has been reviewed.
-// Shows "Reviewing..." while running, "No issues found" for a pass, or "N findings" for flagged.
+// ReviewerCard: a compact review surface that appears in the conversation after a turn is reviewed.
+// While running, it reduces to a transparent branded status row without mounting the review surface.
 //
 // v2 (issue 12): unified Checks list — all checks (pass/warn/fail) come from ReviewWithChecks.checks.
 // The header count = number of warn/fail checks. Expansion shows all checks with pass/warn/fail badges.
@@ -13,6 +13,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Loader } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIndicator'
 
 import type { ReviewWithChecks, ReviewCheck, GoToTranscriptIntent } from '../../../shared/reviewer'
 
@@ -31,9 +32,9 @@ type ReviewerCardProps = {
 
 // Status badge styles (pass/warn/fail).
 const STATUS_BADGE_STYLES: Record<string, string> = {
-  fail: 'text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/20 dark:border-red-800/50',
-  warn: 'text-yellow-700 bg-yellow-50 border border-yellow-200 dark:text-yellow-300 dark:bg-yellow-950/20 dark:border-yellow-800/50',
-  pass: 'text-green-700 bg-green-50 border border-green-200 dark:text-green-300 dark:bg-green-950/20 dark:border-green-800/50'
+  fail: 'bg-bg-200 text-red-700 dark:text-red-300',
+  warn: 'bg-bg-200 text-yellow-700 dark:text-yellow-300',
+  pass: 'bg-bg-200 text-green-700 dark:text-green-300'
 }
 
 // ── Shared item card layout ──────────────────────────────────────────────────
@@ -71,12 +72,12 @@ const ItemCard = ({
   onGoToTranscript,
   reflagCount
 }: ItemCardProps): React.JSX.Element => (
-  <div className="rounded-lg border border-border-200 bg-bg-000 p-3" data-testid={testId}>
+  <div className="rounded-lg bg-bg-000 p-3" data-testid={testId}>
     {/* Badge + title row */}
     <div className="flex items-start gap-2">
       <span
         className={cn(
-          'mt-0.5 shrink-0 rounded px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+          'mt-0.5 shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] font-semibold uppercase',
           badgeClassName
         )}
         data-testid="reviewer-item-badge"
@@ -89,7 +90,7 @@ const ItemCard = ({
       {/* Re-flag marker: shown when this claim was re-flagged in the fix loop. */}
       {reflagCount != null && reflagCount > 0 && (
         <span
-          className="shrink-0 rounded px-1 py-0.5 text-[11px] text-yellow-600 border border-yellow-200 bg-yellow-50 dark:text-yellow-400 dark:border-yellow-800/50 dark:bg-yellow-950/20"
+          className="shrink-0 rounded bg-bg-200 px-1 py-0.5 text-[11px] text-yellow-600 dark:text-yellow-400"
           data-testid="reviewer-reflag-marker"
         >
           re-flagged ×{reflagCount}
@@ -107,14 +108,14 @@ const ItemCard = ({
     {/* Footer row: model pill (left) + Go to transcript button (right) */}
     <div className="mt-3 flex items-center justify-between gap-2">
       <span
-        className="rounded border border-border-200 bg-bg-100 px-1.5 py-0.5 text-[11px] text-text-400"
+        className="rounded bg-bg-200 px-1.5 py-0.5 text-[11px] text-text-400"
         data-testid="reviewer-model-pill"
       >
         {model}
       </span>
       <button
         type="button"
-        className="rounded border border-border-200 px-2 py-0.5 text-[11px] text-text-300 hover:border-border-300 hover:text-text-000 transition-colors"
+        className="rounded bg-bg-200 px-2 py-0.5 text-[11px] text-text-300 transition-colors hover:bg-bg-300 hover:text-text-000"
         onClick={onGoToTranscript}
       >
         Go to transcript
@@ -187,6 +188,22 @@ export const ReviewerCard = ({
   }
 
   const isRunning = review.lifecycle === 'running'
+
+  // A live review is status, not a result card; keep completed-review controls out of the DOM.
+  if (isRunning) {
+    return (
+      <div
+        className={cn('mt-2 flex items-center gap-1.5 px-0 py-2 text-xs text-text-300', className)}
+        data-testid="reviewer-running-state"
+        role="status"
+        aria-live="polite"
+      >
+        <OpenScienceThinkingIndicator />
+        <span>Reviewing...</span>
+      </div>
+    )
+  }
+
   const isError = review.lifecycle === 'error'
   const isComplete = review.lifecycle === 'complete'
 
@@ -218,7 +235,6 @@ export const ReviewerCard = ({
 
   // Compact summary line.
   const summaryText = (): string => {
-    if (isRunning) return 'Reviewing…'
     if (isError) return 'Review error'
     if (isComplete && !hasWarnOrFail)
       return isStale ? 'No issues found (outdated)' : 'No issues found'
@@ -232,7 +248,6 @@ export const ReviewerCard = ({
   // Status icon. A stale complete review always shows the warning icon (amber), even a stale pass —
   // the point is "this verdict may not reflect the turn anymore", not the original outcome.
   const statusIcon = ((): React.JSX.Element => {
-    if (isRunning) return <Loader className="h-3 w-3 animate-spin text-text-400" />
     if (isError) return <AlertTriangle className="h-3 w-3 text-yellow-500" />
     if (isStale) return <AlertTriangle className="h-3 w-3 text-amber-500" />
     if (isComplete && !hasWarnOrFail)
@@ -243,10 +258,7 @@ export const ReviewerCard = ({
 
   return (
     <div
-      className={cn(
-        'mt-2 rounded-lg border border-border-200 bg-bg-100 px-3 py-2 text-xs',
-        className
-      )}
+      className={cn('mt-2 rounded-lg bg-bg-200 px-3 py-2 text-xs', className)}
       data-testid="reviewer-card"
     >
       {/* Header row */}
@@ -303,7 +315,7 @@ export const ReviewerCard = ({
           including earlier turns that the composer's "Request review" (last-turn only) cannot reach. */}
       {isStale && (
         <div
-          className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 dark:border-amber-800/50 dark:bg-amber-950/20"
+          className="mt-2 flex items-center justify-between gap-2 rounded-md bg-bg-300 px-2 py-1"
           data-testid="reviewer-stale-notice"
         >
           <span className="text-[11px] text-amber-800 dark:text-amber-300">
@@ -315,7 +327,7 @@ export const ReviewerCard = ({
               // Disable immediately on click so a double-click (or an impatient second click before the
               // review flips to 'running') can't launch two reviews; main also dedups concurrent runs.
               disabled={rerunRequested}
-              className="shrink-0 rounded border border-amber-300 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100 transition-colors disabled:cursor-default disabled:opacity-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/40"
+              className="shrink-0 rounded bg-bg-000 px-2 py-0.5 text-[11px] text-amber-800 transition-colors hover:bg-bg-300 disabled:cursor-default disabled:opacity-50 dark:text-amber-300"
               onClick={() => {
                 setRerunRequested(true)
                 // Release the latch if no review actually started (e.g. the session couldn't load), so
@@ -335,7 +347,7 @@ export const ReviewerCard = ({
       {hasErrorDetail && expanded && (
         <div className="mt-2">
           <div
-            className="max-h-48 overflow-auto rounded-lg border border-border-200 bg-bg-000 p-3"
+            className="max-h-48 overflow-auto rounded-lg bg-bg-000 p-3"
             data-testid="reviewer-error-detail"
           >
             <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-text-300">

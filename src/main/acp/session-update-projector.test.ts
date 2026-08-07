@@ -2,6 +2,8 @@ import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
@@ -24,7 +26,16 @@ type TestProjector = Readonly<{
   route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
 }>
 
-const createProjector = (): TestProjector => {
+const createProjector = (
+  initialPermissionProfile: SessionPermissionProfileState = {
+    selectedProfile: 'ask',
+    effectiveProfile: 'ask',
+    currentModeId: 'default',
+    availableModeIds: ['default', 'bypassPermissions'],
+    fullAccessAvailable: true
+  },
+  acceptProviderPermissionProfile = true
+): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
     visible: true,
@@ -32,6 +43,7 @@ const createProjector = (): TestProjector => {
     mcpServerNames: []
   }
   let effects: RecordedEffect[] = []
+  let permissionProfile = initialPermissionProfile
   const record = (effect: RecordedEffect): void => {
     effects.push(Object.freeze(effect))
   }
@@ -42,20 +54,17 @@ const createProjector = (): TestProjector => {
           aggregate: {
             snapshot: () => ({
               frameworkId: routing.framework,
-              permissionProfile: {
-                selectedProfile: 'ask',
-                effectiveProfile: 'ask',
-                currentModeId: 'default',
-                availableModeIds: ['default', 'bypassPermissions'],
-                fullAccessAvailable: true
-              }
+              permissionProfile
             }),
-            setPermissionProfile: (profile: { currentModeId?: string }) =>
+            setPermissionProfile: (profile: SessionPermissionProfileState) => {
+              permissionProfile = profile
               record({
                 kind: 'current-mode',
                 sessionId,
-                currentModeId: profile.currentModeId
+                currentModeId: profile.currentModeId,
+                selectedProfile: profile.selectedProfile
               })
+            }
           }
         }) as never
     },
@@ -79,6 +88,11 @@ const createProjector = (): TestProjector => {
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
     nextEventId: () => routing.eventId,
+    setProviderPermissionProfile: (sessionId, profile) => {
+      if (!acceptProviderPermissionProfile) return false
+      record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile })
+      return true
+    },
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
     reportToolFailure: (effect) => record(effect)
@@ -132,6 +146,7 @@ describe('AcpSessionUpdateProjector', () => {
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
       nextEventId,
+      setProviderPermissionProfile: () => true,
       emitState: () => journal.push('state:emit'),
       pushEvent: () => journal.push('event:push'),
       reportToolFailure: () => journal.push('diagnostic')
@@ -328,11 +343,17 @@ describe('AcpSessionUpdateProjector', () => {
     })
   })
 
-  it('projects hidden current-mode updates while a reconnect suppresses stale context effects', () => {
-    const projector = createProjector()
+  it('synchronizes hidden current-mode downgrades with the live permission profile', () => {
+    const projector = createProjector({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions',
+      availableModeIds: ['default', 'bypassPermissions'],
+      fullAccessAvailable: true
+    })
     const notification: SessionNotification = {
       sessionId: 'session-1',
-      update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+      update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
     }
     const routing = {
       eventId: 'event-mode',
@@ -343,11 +364,45 @@ describe('AcpSessionUpdateProjector', () => {
 
     expect(projector.route(notification, routing)).toMatchObject([
       {
+        kind: 'live-profile',
+        sessionId: 'session-1',
+        selectedProfile: 'ask'
+      },
+      {
         kind: 'current-mode',
         sessionId: 'session-1',
-        currentModeId: 'bypassPermissions'
+        currentModeId: 'default',
+        selectedProfile: 'ask'
       }
     ])
+  })
+
+  it('does not project provider modes while a user profile transition owns the state', () => {
+    const projector = createProjector(
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        currentModeId: 'bypassPermissions',
+        availableModeIds: ['default', 'bypassPermissions'],
+        fullAccessAvailable: true
+      },
+      false
+    )
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
+        },
+        {
+          eventId: 'event-mode',
+          visible: false,
+          reconnectPending: false,
+          mcpServerNames: []
+        }
+      )
+    ).toMatchObject([{ kind: 'context-observation', sessionId: 'session-1' }])
   })
 
   it('classifies MCP context and emits a bounded canonical failure diagnostic before the event', () => {

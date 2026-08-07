@@ -261,8 +261,12 @@ import App from './App'
 describe('App startup routing', () => {
   let container: HTMLDivElement
   let root: Root
+  let canvasContextSpy: { mockRestore: () => void }
 
   beforeEach(() => {
+    canvasContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(() => null)
     container = document.createElement('div')
     document.body.appendChild(container)
     mocks.settings.isLoaded = false
@@ -340,6 +344,7 @@ describe('App startup routing', () => {
 
   afterEach(async () => {
     await act(async () => root?.unmount())
+    canvasContextSpy.mockRestore()
     container.remove()
   })
 
@@ -560,6 +565,11 @@ describe('App startup routing', () => {
     expect(shell?.classList.contains('bg-background')).toBe(true)
     expect(shell?.classList.contains('text-foreground')).toBe(true)
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
+    const logo = shell?.querySelector<HTMLCanvasElement>(
+      'canvas[data-testid="open-science-logo-loader"]'
+    )
+    expect(logo).not.toBeNull()
+    expect(logo?.getAttribute('aria-hidden')).toBe('true')
     expect(container.textContent).toContain('Loading settings')
     expect(mocks.syncWindowFindAppearance).toHaveBeenCalledTimes(1)
   })

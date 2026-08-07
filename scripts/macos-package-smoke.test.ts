@@ -8,6 +8,7 @@ import {
   artifactVersion,
   findAppBundle,
   findArtifact,
+  packagedLaunchArguments,
   parseArguments,
   parsePackagedAppEndpoint
 } from './macos-package-smoke.mjs'
@@ -63,5 +64,13 @@ describe('macOS package smoke', () => {
       parsePackagedAppEndpoint('Open Science Web: http://127.0.0.1:3210/?token=abc_123')
     ).toEqual({ endpoint: 'http://127.0.0.1:3210', auth: 'token=abc_123' })
     expect(parsePackagedAppEndpoint('not ready')).toBeUndefined()
+  })
+
+  it('isolates Electron state without replacing the macOS home directory', () => {
+    expect(packagedLaunchArguments('/tmp/open-science-profile')).toEqual([
+      '--user-data-dir=/tmp/open-science-profile',
+      '--open-science-headless',
+      '--serve=0'
+    ])
   })
 })
