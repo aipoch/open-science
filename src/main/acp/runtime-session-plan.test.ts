@@ -690,6 +690,43 @@ describe('AcpRuntime Session Plan seam', () => {
     })
   })
 
+  it('preserves a successor execution binding when an older Agent approval commits late', async () => {
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    interactions.authorizeAgentDecision({
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    })
+    service.respond.mockImplementationOnce(async (input) => {
+      expect(input.beforeDecisionCommit?.()).toBe(true)
+      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
+      interactions.bindExecution({
+        sessionId: 'session-1',
+        interactionSequence: 8,
+        artifactVersionId: 'version-1'
+      })
+      return {
+        projection: {
+          ...projection('version-1'),
+          approval: 'approved' as const,
+          lifecycle: 'approved' as const
+        },
+        changed: true
+      }
+    })
+
+    await runtime.callSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'approve'
+    })
+
+    expect(interactions.executionBindingFor('session-1')).toEqual({
+      artifactVersionId: 'version-1',
+      interactionSequence: 8
+    })
+  })
+
   it('restores decision authorization after persistence fails so the same interaction can retry', async () => {
     const { runtime, interactions, service } = createRuntimeHarness({})
     const authorization = {

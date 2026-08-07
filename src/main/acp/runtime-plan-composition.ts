@@ -211,11 +211,17 @@ const composeAcpRuntimePlanWorkflow = (
       if (decision === 'approved') {
         if (requiresHumanFeedback && authorization) {
           if (result.changed) {
-            interactions.bindExecution({
-              sessionId: input.sessionId,
-              interactionSequence: authorization.interactionSequence,
-              artifactVersionId: result.projection.artifactVersionId
-            })
+            const currentExecution = interactions.executionBindingFor(input.sessionId)
+            if (
+              !currentExecution ||
+              currentExecution.interactionSequence <= authorization.interactionSequence
+            ) {
+              interactions.bindExecution({
+                sessionId: input.sessionId,
+                interactionSequence: authorization.interactionSequence,
+                artifactVersionId: result.projection.artifactVersionId
+              })
+            }
           } else {
             interactions.releaseAgentDecisionAuthorization(
               input.sessionId,

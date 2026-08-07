@@ -489,6 +489,10 @@ class SettingsService {
     return this.connectors.provisionedConnectorSkillNames()
   }
 
+  setMaterializedCustomSkillNamesProvider(provider: () => readonly string[]): void {
+    this.connectors.setMaterializedCustomSkillNamesProvider(provider)
+  }
+
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {

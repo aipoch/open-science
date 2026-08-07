@@ -169,6 +169,20 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
   })
 
+  it('advertises custom Connector Skills only from the successful materialization projection', async () => {
+    await service.addCustomServer({
+      name: 'custom-catalog',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+
+    expect(await service.provisionedConnectorSkillNames()).not.toContain('mcp-custom-catalog')
+
+    service.setMaterializedCustomSkillNamesProvider(() => ['mcp-custom-catalog'])
+
+    expect(await service.provisionedConnectorSkillNames()).toContain('mcp-custom-catalog')
+  })
+
   it('rejects duplicate and built-in custom connector names', async () => {
     await service.addCustomServer({
       name: 'example-server',

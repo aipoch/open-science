@@ -58,6 +58,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(listTools).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'server-id', command: 'mcp', transport: 'stdio' })
     )
+    expect(projection.materializedCustomSkillNames()).toEqual(['mcp-enabled'])
   })
 
   it('contains refresh errors while retaining the last snapshot reached by the refresh', async () => {
@@ -87,6 +88,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
 
     await projection.refresh()
     expect(projection.current()).toBe(second)
+    expect(projection.materializedCustomSkillNames()).toEqual([])
     expect(reportError).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ message: 'sync failed' })

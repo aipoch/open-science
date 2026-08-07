@@ -54,7 +54,13 @@ const normalizeOAuthConfig = (
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
 class ConnectorSettingsModule {
+  private materializedCustomSkillNamesProvider: () => readonly string[] = () => []
+
   constructor(private readonly repository: SettingsRepository) {}
+
+  setMaterializedCustomSkillNamesProvider(provider: () => readonly string[]): void {
+    this.materializedCustomSkillNamesProvider = provider
+  }
 
   // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
   // configuration, Skill provisioning, and renderer views all apply the same opt-out rule.
@@ -114,18 +120,8 @@ class ConnectorSettingsModule {
 
   async provisionedConnectorSkillNames(): Promise<string[]> {
     const connectors = await this.getConnectors()
-    const bundled = this.enabledConnectorIds(connectors)
-    const customServers = connectors?.customMcpServers ?? []
-    const custom = customServers
-      .filter(
-        (server) =>
-          server.enabled &&
-          isCustomMcpServerRouteSafe(server, customServers) &&
-          (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
-      )
-      .map(customConnectorSlug)
-
-    return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
+    const bundled = this.enabledConnectorIds(connectors).map((id) => `mcp-${id}`)
+    return Array.from(new Set([...bundled, ...this.materializedCustomSkillNamesProvider()]))
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {

@@ -1,6 +1,7 @@
 import { toCustomMcpConfig, selectEnabledCustomServers } from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
+import { customConnectorSlug } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import type { StoredConnectors } from '../settings/types'
 
@@ -18,6 +19,7 @@ type ConnectorRuntimeSettingsProjectionOptions = {
 // bootstrap and Settings mutations exactly as before.
 class ConnectorRuntimeSettingsProjection {
   private snapshot: StoredConnectors | undefined
+  private materializedCustomSkills: string[] = []
   private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
@@ -37,6 +39,10 @@ class ConnectorRuntimeSettingsProjection {
     return this.snapshot
   }
 
+  materializedCustomSkillNames(): string[] {
+    return [...this.materializedCustomSkills]
+  }
+
   async refresh(): Promise<void> {
     const queued = this.refreshQueue.then(() => this.refreshOnce())
     this.refreshQueue = queued
@@ -44,6 +50,7 @@ class ConnectorRuntimeSettingsProjection {
   }
 
   private async refreshOnce(): Promise<void> {
+    this.materializedCustomSkills = []
     try {
       const connectors = await this.options.readConnectors()
       this.snapshot = connectors
@@ -52,10 +59,12 @@ class ConnectorRuntimeSettingsProjection {
       const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
 
       await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds)
-      await this.syncCustomSkillDocs(
-        this.options.skillsDir,
-        selectEnabledCustomServers(connectors),
-        (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
+      const customServers = selectEnabledCustomServers(connectors)
+      await this.syncCustomSkillDocs(this.options.skillsDir, customServers, (server) =>
+        this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
+      )
+      this.materializedCustomSkills = customServers.map(
+        (server) => `mcp-${customConnectorSlug(server)}`
       )
     } catch (error) {
       this.reportError(error)
