@@ -1,6 +1,23 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, extname, relative, resolve } from 'node:path'
+
+import {
+  createSourceFile,
+  forEachChild,
+  isCallExpression,
+  isExportDeclaration,
+  isIdentifier,
+  isImportDeclaration,
+  isStringLiteralLike,
+  ScriptKind,
+  ScriptTarget,
+  SyntaxKind,
+  type Node
+} from 'typescript'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile } from '../../../shared/artifacts'
+import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
 import {
   INTERRUPTED_SESSION_ERROR,
   SESSION_MANIFEST_VERSION,
@@ -2425,6 +2442,338 @@ describe('session store', () => {
 
       expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
     })
+  })
+})
+
+describe('session store public contract', () => {
+  const projectRoot = resolve(__dirname, '../../../..')
+  const rendererRoot = resolve(__dirname, '..')
+  const storeModule = resolve(__dirname, 'session-store')
+  const normalizePath = (path: string): string => path.replace(/\\/g, '/')
+  const modulePath = (path: string): string => normalizePath(path.replace(/\.[cm]?[jt]sx?$/, ''))
+  const importSpecifiersFrom = (path: string): string[] => {
+    const specifiers: string[] = []
+    const sourceFile = createSourceFile(
+      path,
+      readFileSync(path, 'utf8'),
+      ScriptTarget.Latest,
+      true,
+      extname(path) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
+    )
+    const visit = (node: Node): void => {
+      if (
+        (isImportDeclaration(node) || isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        isStringLiteralLike(node.moduleSpecifier)
+      ) {
+        specifiers.push(node.moduleSpecifier.text)
+      } else if (isCallExpression(node)) {
+        const [argument] = node.arguments
+        const isRequire = isIdentifier(node.expression) && node.expression.text === 'require'
+        const isDynamicImport = node.expression.kind === SyntaxKind.ImportKeyword
+        if ((isRequire || isDynamicImport) && argument && isStringLiteralLike(argument)) {
+          specifiers.push(argument.text)
+        }
+      }
+      forEachChild(node, visit)
+    }
+    visit(sourceFile)
+    return specifiers
+  }
+
+  const productionSourcePaths = (): string[] => {
+    const paths: string[] = []
+    const visit = (directory: string): void => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = resolve(directory, entry.name)
+        if (entry.isDirectory()) {
+          visit(path)
+        } else if (
+          /\.[cm]?tsx?$/.test(entry.name) &&
+          !/\.(?:test|spec)\.[cm]?tsx?$/.test(entry.name)
+        ) {
+          paths.push(path)
+        }
+      }
+    }
+    visit(rendererRoot)
+    return paths
+  }
+
+  const directConsumerPaths = (): string[] =>
+    productionSourcePaths()
+      .filter((path) => {
+        return importSpecifiersFrom(path).some((specifier) => {
+          const target = specifier.startsWith('@/')
+            ? resolve(rendererRoot, specifier.slice(2))
+            : specifier.startsWith('@renderer/')
+              ? resolve(rendererRoot, specifier.slice('@renderer/'.length))
+              : specifier.startsWith('.')
+                ? resolve(dirname(path), specifier)
+                : undefined
+          return target !== undefined && modulePath(target) === modulePath(storeModule)
+        })
+      })
+      .map((path) => normalizePath(relative(projectRoot, path)))
+      .sort()
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
+    useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('keeps the initial data shape independent and empty', () => {
+    const first = createInitialSessionState()
+    const second = createInitialSessionState()
+
+    expect(first).toEqual({ sessions: [], selectedSessionId: undefined })
+    expect(Object.keys(first).sort()).toEqual(['selectedSessionId', 'sessions'])
+    expect(first.sessions).not.toBe(second.sessions)
+  })
+
+  it('keeps the public action surface stable', () => {
+    const actionNames = Object.entries(useSessionStore.getState())
+      .filter(([, value]) => typeof value === 'function')
+      .map(([name]) => name)
+      .sort()
+
+    expect(actionNames).toEqual(
+      [
+        'activateMessageBranch',
+        'appendAgentMessageChunk',
+        'appendPendingUserMessage',
+        'appendRoutedUserMessage',
+        'appendUserMessage',
+        'applyDurableSessionProjection',
+        'attachRunArtifacts',
+        'beginActivityGroup',
+        'beginCompaction',
+        'bindPendingSession',
+        'branchInNewSession',
+        'clearArtifactError',
+        'clearBranchContextReset',
+        'clearPendingContextReplay',
+        'clearPermissionPending',
+        'clearSelection',
+        'clearSpecialistSwitchResetRequired',
+        'completeActivityGroup',
+        'deleteSession',
+        'failCompaction',
+        'failRun',
+        'finishCompaction',
+        'finishRun',
+        'hydrateSessions',
+        'markDisconnected',
+        'markResumed',
+        'markSpecialistSwitchResetRequired',
+        'recordArtifactError',
+        'removeMessage',
+        'removeSessionsForProject',
+        'renameSession',
+        'replaceMessageArtifacts',
+        'replaceMessageUploads',
+        'selectSession',
+        'setActivePlanProjection',
+        'setAgentPromptInFlight',
+        'setAgentStatus',
+        'setAutoReviewEnabled',
+        'setAwaitingFirstAgentOutput',
+        'setBranchSwitchBlocked',
+        'setContextUsage',
+        'setEnabledComputeHosts',
+        'setFixLoopActive',
+        'setPermissionPending',
+        'setPermissionProfile',
+        'setSessionSpecialistId',
+        'togglePinned',
+        'truncateSessionFromMessage',
+        'updateSessionArchive',
+        'upsertPersistedSession',
+        'upsertToolActivity'
+      ].sort()
+    )
+  })
+
+  it('keeps production consumers on the public store facade', () => {
+    expect(directConsumerPaths()).toEqual([
+      'src/renderer/src/App.tsx',
+      'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
+      'src/renderer/src/components/job-binding-utils.ts',
+      'src/renderer/src/hooks/useLifecycleSync.ts',
+      'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
+      'src/renderer/src/lib/acp/history-preamble.ts',
+      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+      'src/renderer/src/lib/acp/workspace-events.ts',
+      'src/renderer/src/lib/active-session-display.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
+      'src/renderer/src/lib/deep-link.ts',
+      'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
+      'src/renderer/src/lib/session-persistence/session-persistence.ts',
+      'src/renderer/src/pages/home/HomePage.tsx',
+      'src/renderer/src/pages/settings/ArchivedPanel.tsx',
+      'src/renderer/src/pages/workspace/ArtifactProvenancePanel.tsx',
+      'src/renderer/src/pages/workspace/ConversationPanel.tsx',
+      'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
+      'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx',
+      'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
+      'src/renderer/src/pages/workspace/ProjectFilesView.tsx',
+      'src/renderer/src/pages/workspace/RenameSessionDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
+      'src/renderer/src/pages/workspace/WorkspacePage.tsx',
+      'src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceSidebar.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceToolActivityRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx',
+      'src/renderer/src/pages/workspace/agent-loading-message.ts',
+      'src/renderer/src/pages/workspace/artifact-preview-utils.ts',
+      'src/renderer/src/pages/workspace/artifact-preview.tsx',
+      'src/renderer/src/pages/workspace/composer/composer-history.ts',
+      'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
+      'src/renderer/src/pages/workspace/preview-file-item.ts',
+      'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
+      'src/renderer/src/pages/workspace/project-files-library.ts',
+      'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
+      'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
+      'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
+      'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
+      'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
+      'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
+      'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',
+      'src/renderer/src/pages/workspace/workspace-web-search-details.ts',
+      'src/renderer/src/stores/archive-undo-store.ts',
+      'src/renderer/src/stores/navigation-store.ts'
+    ])
+  })
+
+  it('hydrates newest-first while preserving manifest and explicit selection semantics', () => {
+    const older: PersistedChatSession = {
+      id: 'older-session',
+      projectId: 'project-a',
+      title: 'Older',
+      cwd: 'project-a',
+      status: 'idle',
+      messages: [],
+      createdAt: 10,
+      updatedAt: 20
+    }
+    const newer: PersistedChatSession = {
+      ...older,
+      id: 'newer-session',
+      title: 'Newer',
+      createdAt: 30,
+      updatedAt: 40
+    }
+
+    useSessionStore.getState().hydrateSessions([older, newer], {
+      version: SESSION_MANIFEST_VERSION,
+      lastSessionId: 'older-session'
+    })
+
+    expect(useSessionStore.getState().sessions.map(({ id }) => id)).toEqual([
+      'newer-session',
+      'older-session'
+    ])
+    expect(useSessionStore.getState().selectedSessionId).toBe('older-session')
+    expect(
+      useSessionStore.getState().sessions.map(({ permissionProfile }) => permissionProfile)
+    ).toEqual([DEFAULT_PERMISSION_PROFILE, DEFAULT_PERMISSION_PROFILE])
+
+    useSessionStore.getState().hydrateSessions([older, newer], undefined, {
+      sessionId: undefined
+    })
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('projects durable state without renderer-only hydration and runtime fields', () => {
+    const persistedInput: PersistedChatSession = {
+      id: 'persisted-session',
+      projectId: 'project-a',
+      title: 'Persisted',
+      cwd: 'project-a',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Persist this message',
+          status: 'complete',
+          eventIds: ['event-1'],
+          createdAt: 11,
+          updatedAt: 12
+        }
+      ],
+      runtimeContext: { version: 1, revision: 7 },
+      createdAt: 10,
+      updatedAt: 20
+    }
+    useSessionStore.getState().hydrateSessions([persistedInput])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        isPending: true,
+        interrupted: true,
+        fixLoopActive: true,
+        compacting: true,
+        agentStatus: 'Waiting',
+        awaitingFirstAgentOutput: true,
+        agentPromptInFlight: true,
+        branchContextResetRequired: true,
+        specialistSwitchResetRequired: true,
+        branchSwitchBlocked: true,
+        pendingContextReplayMessageId: 'message-1',
+        activePlanProjection: createPlanProjection('active-version'),
+        messages: session.messages.map((message) => ({ ...message, sortIndex: 99 }))
+      }))
+    }))
+
+    const durable = toPersistedSession(useSessionStore.getState().sessions[0])
+
+    expect(durable).toMatchObject({
+      id: 'persisted-session',
+      projectId: 'project-a',
+      title: 'Persisted',
+      cwd: 'project-a',
+      status: 'idle',
+      permissionProfile: DEFAULT_PERMISSION_PROFILE,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Persist this message',
+          status: 'complete',
+          eventIds: ['event-1'],
+          createdAt: 11,
+          updatedAt: 12
+        }
+      ],
+      createdAt: 10,
+      updatedAt: 20
+    })
+    expect(durable).not.toHaveProperty('activePlanProjection')
+    expect(durable.messages[0]).not.toHaveProperty('sortIndex')
+    for (const transientKey of [
+      'isPending',
+      'interrupted',
+      'fixLoopActive',
+      'compacting',
+      'agentStatus',
+      'awaitingFirstAgentOutput',
+      'agentPromptInFlight',
+      'branchContextResetRequired',
+      'specialistSwitchResetRequired',
+      'branchSwitchBlocked',
+      'pendingContextReplayMessageId',
+      'runtimeContext'
+    ]) {
+      expect(durable).not.toHaveProperty(transientKey)
+    }
   })
 })
 
