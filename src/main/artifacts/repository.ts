@@ -1,5 +1,4 @@
 import {
-  copyFile,
   mkdir,
   open,
   readFile,
@@ -11,7 +10,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type {
@@ -26,23 +25,28 @@ import type {
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
-import { createLogger } from '../logger'
-import { validateArtifactContentType } from './content-type'
 import {
   defaultArtifactDurability,
   type ArtifactDurability as ArtifactRepositoryDurability
 } from './durability'
-
-const log = createLogger('artifacts:repository')
-
-const ARTIFACTS_DIR = 'artifacts'
-const PENDING_DIR = '.pending'
-const METADATA_DIR = '.metadata'
-// Per-run publication markers: prepared ownership context, later upgraded with the final message id.
-const RUNS_DIR = '.runs'
-// Handoff file (directly under a session's .pending) naming the in-flight turn's run id for MCP writes.
-const CURRENT_RUN_FILE = 'current-run.json'
-const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+import {
+  ArtifactCompatibilityScanIncompleteError,
+  ArtifactPublicationOwner,
+  type ArtifactRunFinalizationMarker,
+  type BindPendingArtifactVersionRouting,
+  type PendingArtifactRunPublication,
+  type PendingArtifactVersionRoute,
+  type PendingArtifactVersionRouting,
+  type PendingArtifactVersionRoutingRequest,
+  type PrepareArtifactRunFinalizationRequest
+} from './publication-owner'
+import {
+  ARTIFACTS_DIR,
+  CURRENT_RUN_FILE,
+  METADATA_DIR,
+  PENDING_DIR,
+  SAFE_SEGMENT_PATTERN
+} from './storage-layout'
 
 type ArtifactMetadata = {
   mimeType?: string
@@ -54,49 +58,6 @@ type ArtifactMetadata = {
   kind?: 'plan'
 }
 
-export type PendingArtifactVersionRouting = Required<
-  Pick<
-    ArtifactMetadata,
-    'artifactId' | 'versionId' | 'versionNumber' | 'artifactRunId' | 'checksum'
-  >
-> &
-  Pick<ArtifactMetadata, 'mimeType'>
-
-export type PendingArtifactVersionRoute = PendingArtifactVersionRouting & {
-  storageSessionId: string
-  filename: string
-  path: string
-}
-
-export class ArtifactCompatibilityScanIncompleteError extends Error {
-  constructor(cause: unknown) {
-    super('Artifact compatibility storage could not be scanned completely.', { cause })
-    this.name = 'ArtifactCompatibilityScanIncompleteError'
-  }
-}
-
-export type ArtifactRunFinalizationMarker = {
-  sessionId: string
-  messageId?: string
-  artifactVersionIds?: string[]
-  provenanceContext?: NonNullable<MovePendingRunArtifactsRequest['provenanceContext']>
-}
-
-export type PendingArtifactRunPublication = {
-  sourceSessionId: string
-  runId: string
-  marker?: ArtifactRunFinalizationMarker
-}
-
-type PrepareArtifactRunFinalizationRequest = {
-  projectName: string
-  sourceSessionId: string
-  sessionId: string
-  runId: string
-  artifactVersionIds?: string[]
-  provenanceContext: NonNullable<MovePendingRunArtifactsRequest['provenanceContext']>
-}
-
 type ArtifactRepositoryWriteOptions = {
   allowedImportRoots?: string[]
   // Ordered base directories a RELATIVE localPath is resolved against — the notebook kernel's cwd
@@ -106,22 +67,6 @@ type ArtifactRepositoryWriteOptions = {
   // relative path is REJECTED — it is never resolved against the process cwd.
   relativeBaseDirs?: string[]
 }
-
-type PendingArtifactVersionRoutingRequest = {
-  projectName: string
-  sessionId: string
-  runId: string
-  filename: string
-  sourcePath: string
-  routing: PendingArtifactVersionRouting
-  allowRoutingReplacement?: boolean
-  replaceUnroutedBytes?: boolean
-}
-
-type BindPendingArtifactVersionRouting = (
-  routing: PendingArtifactVersionRouting,
-  sourcePath: string
-) => Promise<void>
 
 type ArtifactRepositoryStorage = ArtifactRepositoryDurability & {
   readMarkerFile?: (path: string) => Promise<string>
@@ -324,386 +269,81 @@ const getArtifactCurrentRunFilePath = (
 
 // Owns app-managed artifact paths so callers never concatenate user-controlled segments.
 class ArtifactRepository {
-  private readonly pendingFileWrites = new Map<string, Promise<void>>()
+  private readonly publicationOwner: ArtifactPublicationOwner
 
   constructor(
     private readonly storageRoot: string,
     private readonly durability: ArtifactRepositoryStorage = defaultArtifactRepositoryDurability
-  ) {}
+  ) {
+    this.publicationOwner = new ArtifactPublicationOwner({
+      durability,
+      assertSafePathSegment,
+      assertSafeFilename,
+      normalizeArtifactVersionIds,
+      getProjectArtifactDir: (projectName) => getProjectArtifactDir(storageRoot, projectName),
+      getPendingRunDir: (projectName, sessionId, runId) =>
+        this.getPendingRunDir(projectName, sessionId, runId),
+      getMessageDir: (projectName, sessionId, messageId) =>
+        this.getMessageDir(projectName, sessionId, messageId),
+      getArtifactMetadataPath,
+      resolveAllowedImportFilePath,
+      readFilePrefix,
+      renameIfPresent: (sourcePath, targetPath) => this.renameIfPresent(sourcePath, targetPath),
+      readSubdirectoryNames: (directory) => this.readSubdirectoryNames(directory),
+      readFileEntries: (directory) => this.readFileEntries(directory),
+      readArtifactMetadata: (directory, filename) => this.readArtifactMetadata(directory, filename),
+      writeArtifactMetadata: (directory, filename, metadata) =>
+        this.writeArtifactMetadata(directory, filename, metadata),
+      toPendingRouting: (metadata) => this.toPendingRouting(metadata),
+      moveArtifactMetadata: (sourceDirectory, targetDirectory, filename) =>
+        this.moveArtifactMetadata(sourceDirectory, targetDirectory, filename),
+      recoverMovedArtifactMetadata: (sourceDirectory, targetDirectory) =>
+        this.recoverMovedArtifactMetadata(sourceDirectory, targetDirectory),
+      createArtifactFile: (request) => this.createArtifactFile(request),
+      listMessageFiles: (request) => this.listMessageFiles(request),
+      sha256,
+      isMissingFileError
+    })
+  }
 
-  // Writes a generated file into the run's pending directory before it is attached to a message.
   async writePendingFile(
     request: WritePendingArtifactFileRequest,
     options: ArtifactRepositoryWriteOptions = {}
   ): Promise<ArtifactFile> {
-    return this.withPendingFileTransaction(request, options, async (artifact) => artifact)
+    return this.publicationOwner.writePendingFile(request, options)
   }
 
-  // Binds compatibility bytes to the app-owned immutable Version identity. Recovery can trust this
-  // small routing proof without treating filename or timestamp as lifecycle ownership evidence.
   async ensurePendingVersionRouting(request: PendingArtifactVersionRoutingRequest): Promise<void> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const filename = assertSafeFilename(request.filename)
-    const writeKey = `${projectName}\0${sessionId}\0${runId}\0${filename}`
-
-    await this.withPendingFileWriteLock(writeKey, () =>
-      this.publishPendingVersionRoutingLocked({
-        ...request,
-        projectName,
-        sessionId,
-        runId,
-        filename
-      })
-    )
+    return this.publicationOwner.ensurePendingVersionRouting(request)
   }
 
-  private async publishPendingVersionRoutingLocked(
-    request: PendingArtifactVersionRoutingRequest
-  ): Promise<void> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const filename = assertSafeFilename(request.filename)
-    const artifactId = assertSafePathSegment(request.routing.artifactId)
-    const versionId = assertSafePathSegment(request.routing.versionId)
-    const artifactRunId = assertSafePathSegment(request.routing.artifactRunId)
-    if (artifactRunId !== runId) throw new Error('Artifact routing run identity mismatch.')
-    if (!Number.isSafeInteger(request.routing.versionNumber) || request.routing.versionNumber < 1) {
-      throw new Error('Artifact routing version number is invalid.')
-    }
-    if (!/^[a-f0-9]{64}$/.test(request.routing.checksum)) {
-      throw new Error('Artifact routing checksum is invalid.')
-    }
-    const directory = this.getPendingRunDir(projectName, sessionId, runId)
-    const filePath = join(directory, filename)
-    await mkdir(directory, { recursive: true })
-    const existing = await this.readArtifactMetadata(directory, filename)
-    const existingRouting = this.toPendingRouting(existing)
-    if (
-      existingRouting &&
-      !request.allowRoutingReplacement &&
-      (existingRouting.artifactId !== artifactId ||
-        existingRouting.versionId !== versionId ||
-        existingRouting.versionNumber !== request.routing.versionNumber ||
-        existingRouting.artifactRunId !== artifactRunId ||
-        existingRouting.checksum !== request.routing.checksum)
-    ) {
-      throw new Error('Artifact pending routing conflicts with an existing Version.')
-    }
-    let bytes: Buffer
-    try {
-      bytes = await readFile(filePath)
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error
-      const temporaryPath = `${filePath}.${randomUUID()}.tmp`
-      try {
-        await copyFile(request.sourcePath, temporaryPath)
-        bytes = await readFile(temporaryPath)
-        if (sha256(bytes) !== request.routing.checksum) {
-          throw new Error('Artifact routing source checksum mismatch.')
-        }
-        await this.durability.syncFile(temporaryPath)
-        await rename(temporaryPath, filePath)
-        await this.durability.syncDirectory(directory)
-      } finally {
-        await rm(temporaryPath, { force: true }).catch(() => undefined)
-      }
-    }
-    if (sha256(bytes) !== request.routing.checksum) {
-      if (existingRouting || !request.replaceUnroutedBytes) {
-        throw new Error('Artifact pending bytes conflict with Version routing.')
-      }
-      const replacementPath = `${filePath}.${randomUUID()}.tmp`
-      try {
-        await copyFile(request.sourcePath, replacementPath)
-        const replacement = await readFile(replacementPath)
-        if (sha256(replacement) !== request.routing.checksum) {
-          throw new Error('Artifact routing source checksum mismatch.')
-        }
-        await this.durability.syncFile(replacementPath)
-        await rename(replacementPath, filePath)
-        await this.durability.syncDirectory(directory)
-      } finally {
-        await rm(replacementPath, { force: true }).catch(() => undefined)
-      }
-    }
-    await this.writeArtifactMetadata(directory, filename, {
-      artifactId,
-      versionId,
-      versionNumber: request.routing.versionNumber,
-      artifactRunId,
-      checksum: request.routing.checksum,
-      mimeType: request.routing.mimeType ?? existing.mimeType,
-      kind: existing.kind
-    })
-  }
-
-  // Startup-only lookup for an exact, unique pending routing proof. The sidecar and bytes must agree.
   async findPendingVersionRouting(request: {
     projectName: string
     artifactId: string
     versionId: string
   }): Promise<PendingArtifactVersionRoute | undefined> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const artifactId = assertSafePathSegment(request.artifactId)
-    const versionId = assertSafePathSegment(request.versionId)
-    const projectDirectory = getProjectArtifactDir(this.storageRoot, projectName)
-    const matches: PendingArtifactVersionRoute[] = []
-
-    try {
-      for (const storageSessionId of await this.readSubdirectoryNames(projectDirectory)) {
-        if (!SAFE_SEGMENT_PATTERN.test(storageSessionId)) continue
-        const pendingRoot = join(projectDirectory, storageSessionId, PENDING_DIR)
-        for (const runId of await this.readSubdirectoryNames(pendingRoot)) {
-          if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
-          const runDirectory = join(pendingRoot, runId)
-          for (const entry of await this.readFileEntries(runDirectory)) {
-            const routing = this.toPendingRouting(
-              await this.readArtifactMetadata(runDirectory, entry.name)
-            )
-            if (
-              !routing ||
-              routing.artifactId !== artifactId ||
-              routing.versionId !== versionId ||
-              routing.artifactRunId !== runId
-            ) {
-              continue
-            }
-            const path = join(runDirectory, entry.name)
-            if (sha256(await readFile(path)) !== routing.checksum) continue
-            matches.push({ ...routing, storageSessionId, filename: entry.name, path })
-          }
-        }
-      }
-    } catch (error) {
-      throw new ArtifactCompatibilityScanIncompleteError(error)
-    }
-    if (matches.length > 1) {
-      throw new Error('Artifact pending routing is ambiguous across compatibility storage.')
-    }
-    return matches[0]
+    return this.publicationOwner.findPendingVersionRouting(request)
   }
 
-  // A staging SQLite row already proves Version identity; this lookup only recovers the physical
-  // compatibility owner needed to repair its legacy sidecar after a crash.
   async findPendingFileForRun(request: {
     projectName: string
     runId: string
     filename: string
     checksum: string
   }): Promise<{ storageSessionId: string; path: string } | undefined> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const runId = assertSafePathSegment(request.runId)
-    const filename = assertSafeFilename(request.filename)
-    const projectDirectory = getProjectArtifactDir(this.storageRoot, projectName)
-    const matches: Array<{ storageSessionId: string; path: string }> = []
-    try {
-      for (const storageSessionId of await this.readSubdirectoryNames(projectDirectory)) {
-        if (!SAFE_SEGMENT_PATTERN.test(storageSessionId)) continue
-        const path = join(projectDirectory, storageSessionId, PENDING_DIR, runId, filename)
-        try {
-          if (sha256(await readFile(path)) === request.checksum) {
-            matches.push({ storageSessionId, path })
-          }
-        } catch (error) {
-          if (!isMissingFileError(error)) throw error
-        }
-      }
-    } catch (error) {
-      throw new ArtifactCompatibilityScanIncompleteError(error)
-    }
-    if (matches.length > 1) {
-      throw new Error('Artifact pending file owner is ambiguous across compatibility storage.')
-    }
-    return matches[0]
+    return this.publicationOwner.findPendingFileForRun(request)
   }
 
-  // Keeps the compatibility pending file and the durable Version RPC in one failure boundary. The
-  // caller's operation runs while the same run/filename is serialized; if it rejects, the previous
-  // bytes and metadata are restored so an idempotency conflict cannot mutate compatibility state.
-  async withPendingFileTransaction<T>(
+  async withPendingFileTransaction<Result>(
     request: WritePendingArtifactFileRequest,
     options: ArtifactRepositoryWriteOptions,
     operation: (
       artifact: ArtifactFile,
       sourceFileObservation: ArtifactSourceFileObservation | undefined,
       bindVersionRouting: BindPendingArtifactVersionRouting
-    ) => Promise<T>
-  ): Promise<T> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const filename = assertSafeFilename(request.filename)
-    const directory = this.getPendingRunDir(projectName, sessionId, runId)
-    const filePath = join(directory, filename)
-    const writeKey = `${projectName}\0${sessionId}\0${runId}\0${filename}`
-
-    return this.withPendingFileWriteLock(writeKey, async () => {
-      const suffix = `${Date.now()}-${randomUUID()}`
-      const temporaryPath = `${filePath}.${suffix}.tmp`
-      const backupPath = `${filePath}.${suffix}.backup`
-      const metadataPath = getArtifactMetadataPath(directory, filename)
-      const metadataBackupPath = `${metadataPath}.${suffix}.backup`
-      let fileBackedUp = false
-      let metadataBackedUp = false
-      let preserveFileBackup = false
-      let preserveMetadataBackup = false
-      let replacementPublished = false
-      let versionRoutingPublished = false
-      let sourceFileObservation: ArtifactSourceFileObservation | undefined
-
-      await mkdir(directory, { recursive: true })
-
-      try {
-        if (request.source.kind === 'localPath') {
-          const sourcePath = await resolveAllowedImportFilePath(
-            request.source.path,
-            options.allowedImportRoots ?? [],
-            options.relativeBaseDirs
-          )
-          const beforeCopy = await stat(sourcePath)
-          if (!beforeCopy.isFile()) {
-            throw new Error(`Artifact local source is not a regular file: "${sourcePath}".`)
-          }
-
-          await copyFile(sourcePath, temporaryPath)
-          const afterCopy = await stat(sourcePath)
-          if (afterCopy.size !== beforeCopy.size || afterCopy.mtimeMs !== beforeCopy.mtimeMs) {
-            throw new Error(
-              `Artifact local source changed while it was being imported: "${sourcePath}".`
-            )
-          }
-          sourceFileObservation = {
-            path: sourcePath,
-            sizeBytes: afterCopy.size,
-            mtimeMs: afterCopy.mtimeMs
-          }
-        } else {
-          await writeFile(
-            temporaryPath,
-            request.source.encoding === 'base64'
-              ? Buffer.from(request.source.content, 'base64')
-              : Buffer.from(request.source.content, 'utf8')
-          )
-        }
-
-        validateArtifactContentType({
-          filename,
-          declaredContentType: request.mimeType,
-          sample: await readFilePrefix(temporaryPath)
-        })
-
-        fileBackedUp = await this.renameIfPresent(filePath, backupPath)
-        metadataBackedUp = await this.renameIfPresent(metadataPath, metadataBackupPath)
-        await rename(temporaryPath, filePath)
-        replacementPublished = true
-        await this.writeArtifactMetadata(directory, filename, {
-          mimeType: request.mimeType,
-          kind: request.kind
-        })
-
-        const artifact = await this.createArtifactFile({
-          projectName,
-          sessionId,
-          runId,
-          filename,
-          filePath,
-          mimeType: request.mimeType,
-          metadata: { kind: request.kind }
-        })
-        const bindVersionRouting: BindPendingArtifactVersionRouting = async (
-          routing,
-          sourcePath
-        ) => {
-          await this.publishPendingVersionRoutingLocked({
-            projectName,
-            sessionId,
-            runId,
-            filename,
-            sourcePath,
-            routing
-          })
-          // The immutable Version and its exact compatibility route are now durable recovery state.
-          // If the later SQLite pending transition fails, rolling these bytes back would strand the
-          // staging row without enough information to reconstruct its physical owner on startup.
-          versionRoutingPublished = true
-        }
-        const result = await operation(artifact, sourceFileObservation, bindVersionRouting)
-
-        await Promise.all([
-          rm(backupPath, { force: true }).catch(() => undefined),
-          rm(metadataBackupPath, { force: true }).catch(() => undefined)
-        ])
-        return result
-      } catch (error) {
-        const recoveryErrors: unknown[] = []
-        await rm(temporaryPath, { force: true }).catch(() => undefined)
-        if (replacementPublished && !versionRoutingPublished) {
-          await Promise.all([
-            rm(filePath, { force: true }).catch(() => undefined),
-            rm(metadataPath, { force: true }).catch(() => undefined)
-          ])
-        }
-        if (fileBackedUp && !versionRoutingPublished) {
-          try {
-            await rename(backupPath, filePath)
-          } catch (recoveryError) {
-            preserveFileBackup = true
-            recoveryErrors.push(recoveryError)
-          }
-        }
-        if (metadataBackedUp && !versionRoutingPublished) {
-          try {
-            await mkdir(dirname(metadataPath), { recursive: true })
-            await rename(metadataBackupPath, metadataPath)
-          } catch (recoveryError) {
-            preserveMetadataBackup = true
-            recoveryErrors.push(recoveryError)
-          }
-        }
-        if (recoveryErrors.length > 0) {
-          throw new AggregateError(
-            [error, ...recoveryErrors],
-            `Artifact pending-file rollback failed; preserved backup files for recovery: ${recoveryErrors
-              .map((recoveryError) =>
-                recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-              )
-              .join('; ')}`
-          )
-        }
-        throw error
-      } finally {
-        await Promise.all([
-          rm(temporaryPath, { force: true }).catch(() => undefined),
-          preserveFileBackup
-            ? Promise.resolve()
-            : rm(backupPath, { force: true }).catch(() => undefined),
-          preserveMetadataBackup
-            ? Promise.resolve()
-            : rm(metadataBackupPath, { force: true }).catch(() => undefined)
-        ])
-      }
-    })
-  }
-
-  private async withPendingFileWriteLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.pendingFileWrites.get(key) ?? Promise.resolve()
-    let release = (): void => undefined
-    const current = new Promise<void>((resolveCurrent) => {
-      release = resolveCurrent
-    })
-    const tail = previous.then(() => current)
-    this.pendingFileWrites.set(key, tail)
-    await previous
-
-    try {
-      return await operation()
-    } finally {
-      release()
-      if (this.pendingFileWrites.get(key) === tail) this.pendingFileWrites.delete(key)
-    }
+    ) => Promise<Result>
+  ): Promise<Result> {
+    return this.publicationOwner.withPendingFileTransaction(request, options, operation)
   }
 
   private async renameIfPresent(sourcePath: string, targetPath: string): Promise<boolean> {
@@ -716,98 +356,16 @@ class ArtifactRepository {
     }
   }
 
-  // Moves all pending run files into the final message directory and returns the message file list.
   async finalizeRunArtifacts(request: MovePendingRunArtifactsRequest): Promise<ArtifactFile[]> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const sourceSessionId = assertSafePathSegment(request.sourceSessionId ?? request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const messageId = assertSafePathSegment(request.messageId)
-    const artifactVersionIds = request.artifactVersionIds
-      ? normalizeArtifactVersionIds(request.artifactVersionIds)
-      : undefined
-    const pendingDir = this.getPendingRunDir(projectName, sourceSessionId, runId)
-    const messageDir = this.getMessageDir(projectName, sessionId, messageId)
-    const entries = await this.readFileEntries(pendingDir)
-
-    // Record where this run finalized so a stale `.pending/<run>` path recovers to this exact message,
-    // not the newest same-named file in the session. Written on every finalize (idempotent).
-    await this.writeRunMarker(projectName, sourceSessionId, runId, {
-      sessionId,
-      messageId,
-      ...(artifactVersionIds ? { artifactVersionIds } : {}),
-      ...(request.provenanceContext ? { provenanceContext: request.provenanceContext } : {})
-    })
-
-    if (entries.length === 0) {
-      // A repeated finalize may find files already moved; recover metadata and return the final state.
-      await this.recoverMovedArtifactMetadata(pendingDir, messageDir)
-      await rm(pendingDir, { recursive: true, force: true })
-      return this.listMessageFiles({ projectName, sessionId, messageId })
-    }
-
-    await mkdir(messageDir, { recursive: true })
-
-    for (const entry of entries) {
-      await rename(join(pendingDir, entry.name), join(messageDir, entry.name))
-      await this.moveArtifactMetadata(pendingDir, messageDir, entry.name)
-    }
-
-    await this.recoverMovedArtifactMetadata(pendingDir, messageDir)
-    await rm(pendingDir, { recursive: true, force: true })
-
-    return this.listMessageFiles({ projectName, sessionId, messageId })
+    return this.publicationOwner.finalizeRunArtifacts(request)
   }
 
-  // Durably records that the runtime has ended this turn and chosen to publish its run. The renderer
-  // does not know the terminal message id yet, so finalization later upgrades this intent in place.
-  // Publishing the intent before the event closes the process-crash gap without treating every pending
-  // write (including a mid-turn crash) as a completed handoff.
   async prepareRunFinalization(request: PrepareArtifactRunFinalizationRequest): Promise<void> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sourceSessionId = assertSafePathSegment(request.sourceSessionId)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const artifactVersionIds = request.artifactVersionIds
-      ? normalizeArtifactVersionIds(request.artifactVersionIds)
-      : undefined
-    const provenanceContext = {
-      rootFrameId: assertSafePathSegment(request.provenanceContext.rootFrameId),
-      agentFrameId: assertSafePathSegment(request.provenanceContext.agentFrameId),
-      messageBranchId: assertSafePathSegment(request.provenanceContext.messageBranchId),
-      runtimeSegmentId: assertSafePathSegment(request.provenanceContext.runtimeSegmentId),
-      promptMessageId: assertSafePathSegment(request.provenanceContext.promptMessageId)
-    }
-
-    await this.writeRunMarker(projectName, sourceSessionId, runId, {
-      sessionId,
-      ...(artifactVersionIds ? { artifactVersionIds } : {}),
-      provenanceContext
-    })
+    return this.publicationOwner.prepareRunFinalization(request)
   }
 
-  // Lists files that have been written by the agent but not yet owned by a renderer message.
   async listPendingRunFiles(request: ListPendingRunArtifactsRequest): Promise<ArtifactFile[]> {
-    const projectName = assertSafePathSegment(request.projectName)
-    const sessionId = assertSafePathSegment(request.sessionId)
-    const runId = assertSafePathSegment(request.runId)
-    const pendingDir = this.getPendingRunDir(projectName, sessionId, runId)
-    const entries = await this.readFileEntries(pendingDir)
-
-    return Promise.all(
-      entries.map(async (entry) => {
-        const metadata = await this.readArtifactMetadata(pendingDir, entry.name)
-
-        return this.createArtifactFile({
-          projectName,
-          sessionId,
-          runId,
-          filename: entry.name,
-          filePath: join(pendingDir, entry.name),
-          metadata
-        })
-      })
-    )
+    return this.publicationOwner.listPendingRunFiles(request)
   }
 
   // Lists finalized artifacts for one message in renderer-friendly display order.
@@ -834,59 +392,13 @@ class ArtifactRepository {
     )
   }
 
-  // Re-finalizes artifacts a crash left in `.pending` after the in-memory run claim was lost: the
-  // session JSON persisted a `.pending/<run>/<file>` path, but the pending->message move never ran. Only
-  // the artifactSessionId + runId segments are read from each path; the pending directory is rebuilt
-  // from the storage root, so a corrupt stored path cannot point the move outside managed storage.
-  // Idempotent — finalizeRunArtifacts tolerates files already moved. Returns the message's final files.
   async reconcilePendingArtifactPaths(request: {
     projectName: string
     sessionId: string
     messageId: string
     pendingPaths: string[]
   }): Promise<ArtifactFile[]> {
-    const runs = new Map<string, { artifactSessionId: string; runId: string }>()
-
-    for (const pendingPath of request.pendingPaths) {
-      const parsed = this.parsePendingPath(pendingPath)
-      if (parsed) runs.set(`${parsed.artifactSessionId}/${parsed.runId}`, parsed)
-    }
-
-    for (const { artifactSessionId, runId } of runs.values()) {
-      await this.finalizeRunArtifacts({
-        projectName: request.projectName,
-        sessionId: request.sessionId,
-        sourceSessionId: artifactSessionId,
-        runId,
-        messageId: request.messageId
-      })
-    }
-
-    return this.listMessageFiles({
-      projectName: request.projectName,
-      sessionId: request.sessionId,
-      messageId: request.messageId
-    })
-  }
-
-  // Extracts the artifact session id and run id from a `.../<artifactSessionId>/.pending/<runId>/<file>`
-  // path. Returns undefined when the path is not a pending path or the segments are unsafe.
-  private parsePendingPath(
-    pendingPath: string
-  ): { artifactSessionId: string; runId: string } | undefined {
-    if (typeof pendingPath !== 'string' || pendingPath.length === 0) return undefined
-
-    const runDir = dirname(pendingPath)
-    const runId = basename(runDir)
-    const pendingDir = dirname(runDir)
-    if (basename(pendingDir) !== PENDING_DIR) return undefined
-
-    const artifactSessionId = basename(dirname(pendingDir))
-    if (!SAFE_SEGMENT_PATTERN.test(runId) || !SAFE_SEGMENT_PATTERN.test(artifactSessionId)) {
-      return undefined
-    }
-
-    return { artifactSessionId, runId }
+    return this.publicationOwner.reconcilePendingArtifactPaths(request)
   }
 
   // Enumerates every artifact on disk for one project, across all sessions — finalized files under
@@ -965,55 +477,8 @@ class ArtifactRepository {
     return files
   }
 
-  // Discovers only compatibility publications that still have direct artifact bytes or metadata
-  // sidecars under a run's `.pending` directory. A byte can already be in its message directory when
-  // a crash leaves its sidecar behind. The project scan establishes the unique source Session once,
-  // so recovery does not rescan every Session for every run. Missing markers remain ownerless;
-  // corrupt, duplicate, or unreadable publication state makes the scan incomplete instead of guessing.
-  async listPendingRunPublications(
-    projectNameValue: string
-  ): Promise<PendingArtifactRunPublication[]> {
-    const projectName = assertSafePathSegment(projectNameValue)
-    const projectDirectory = getProjectArtifactDir(this.storageRoot, projectName)
-    const publications: PendingArtifactRunPublication[] = []
-    const observedRunIds = new Set<string>()
-
-    try {
-      for (const sourceSessionId of await this.readSubdirectoryNames(projectDirectory)) {
-        if (!SAFE_SEGMENT_PATTERN.test(sourceSessionId)) continue
-        const pendingDirectory = join(projectDirectory, sourceSessionId, PENDING_DIR)
-        for (const runId of await this.readSubdirectoryNames(pendingDirectory)) {
-          if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
-          const runDirectory = join(pendingDirectory, runId)
-          const files = await this.readFileEntries(runDirectory)
-          const metadataFiles =
-            files.length === 0 ? await this.readFileEntries(join(runDirectory, METADATA_DIR)) : []
-          if (files.length === 0 && metadataFiles.length === 0) continue
-          if (observedRunIds.has(runId)) {
-            throw new Error(
-              `Artifact pending publication run is ambiguous across compatibility storage: ${runId}`
-            )
-          }
-          observedRunIds.add(runId)
-
-          const markerResult = await this.readRunMarker(
-            this.getRunMarkerPath(projectName, sourceSessionId, runId)
-          )
-          if (markerResult.present && !markerResult.marker) {
-            throw new Error(`Artifact pending publication marker is corrupt: ${runId}`)
-          }
-          publications.push({
-            sourceSessionId,
-            runId,
-            ...(markerResult.marker ? { marker: markerResult.marker } : {})
-          })
-        }
-      }
-    } catch (error) {
-      throw new ArtifactCompatibilityScanIncompleteError(error)
-    }
-
-    return publications
+  async listPendingRunPublications(projectName: string): Promise<PendingArtifactRunPublication[]> {
+    return this.publicationOwner.listPendingRunPublications(projectName)
   }
 
   // Resolves a renderer-provided artifact path only after canonical root and symlink checks pass.
@@ -1083,59 +548,8 @@ class ArtifactRepository {
     return resolvedFilePath
   }
 
-  // Given a now-missing `.pending/<run>/<file>` artifact path, finds the same file after finalize moved
-  // it, using ONLY the run marker written at finalize (`.runs/<run>.json`), which pins the exact app
-  // session + message the run produced. An unmarked run is never recovered by guessing among same-named
-  // files (that could cross-resolve to a different run's file); returns undefined instead. Also returns
-  // undefined when the path is not a pending path or the marker's target no longer exists. Path safety
-  // is still enforced by resolveManagedFilePath's root check on the returned path.
-  private async recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
-    // requestedPath = <project>/<sourceSessionId>/.pending/<runId>/<file>
-    const runDir = dirname(requestedPath)
-    const runId = basename(runDir)
-    const pendingDir = dirname(runDir)
-    if (basename(pendingDir) !== PENDING_DIR) return undefined
-    const sourceSessionDir = dirname(pendingDir)
-    const filename = basename(requestedPath)
-
-    // Marker path: resolve directly from the source-session dir the stale path already points into.
-    const markerResult = SAFE_SEGMENT_PATTERN.test(runId)
-      ? await this.readRunMarker(join(sourceSessionDir, RUNS_DIR, `${runId}.json`))
-      : { present: false }
-
-    // A marker file exists (the run WAS marked). Resolve ONLY to its pinned run→message target and
-    // never fall back to another run's same-named file. A missing target (artifact deleted) or a
-    // corrupt/unreadable marker both yield undefined — guessing here is the cross-run mis-read to avoid.
-    if (markerResult.present) {
-      if (!markerResult.marker) {
-        log.warn('artifact recovery skipped: run marker present but unreadable', { requestedPath })
-        return undefined
-      }
-      if (!markerResult.marker.messageId) {
-        // A prepared run has not been bound to a durable message yet. Only Provenance startup recovery
-        // may infer that owner from the conversation graph; path recovery must never guess it.
-        return undefined
-      }
-      const projectDir = dirname(sourceSessionDir)
-      const candidate = join(
-        projectDir,
-        markerResult.marker.sessionId,
-        markerResult.marker.messageId,
-        filename
-      )
-      const candidateStat = await stat(candidate).catch(() => undefined)
-      return candidateStat?.isFile() ? candidate : undefined
-    }
-
-    // No marker at all. This is a legacy artifact (finalized before markers existed) OR one whose
-    // best-effort marker write failed — the two are indistinguishable on disk. A same-name scan is
-    // therefore unsafe even with a single candidate: if the run's own file was deleted and a different
-    // run left an identically-named file, that lone candidate would be the WRONG run's file. So we do
-    // not guess at all — recovery of an unmarked stale pending path returns undefined (a real 404). New
-    // artifacts always carry a marker; the only loss is best-effort recovery of pre-marker legacy files,
-    // whose finalized paths are already what a reloaded session persists (it doesn't hold pending paths).
-    log.warn('artifact recovery skipped: stale pending path has no run marker', { requestedPath })
-    return undefined
+  private recoverFinalizedPendingPath(requestedPath: string): Promise<string | undefined> {
+    return this.publicationOwner.recoverFinalizedPendingPath(requestedPath)
   }
 
   // Reads a small text preview from a managed artifact without exposing arbitrary filesystem reads.
@@ -1146,230 +560,11 @@ class ArtifactRepository {
     return readBoundedManagedFilePreview(filePath, request, 'Invalid artifact preview encoding.')
   }
 
-  // Resolves the per-run marker path under the source (artifact) session, keyed by run id — the same
-  // scope a stale pending path carries, so recovery can find it without knowing the app session id.
-  private getRunMarkerPath(projectName: string, sourceSessionId: string, runId: string): string {
-    return join(
-      getProjectArtifactDir(this.storageRoot, projectName),
-      sourceSessionId,
-      RUNS_DIR,
-      `${runId}.json`
-    )
-  }
-
-  // Locates the single durable publication marker for a run across compatibility storage Sessions.
-  // It may be prepared (context only) or finalized (message-bound). ArtifactRun ids are process-
-  // generated and project-scoped; duplicate/corrupt markers fail closed.
   async findRunFinalizationMarker(
-    projectNameValue: string,
-    runIdValue: string
-  ): Promise<(ArtifactRunFinalizationMarker & { sourceSessionId: string }) | undefined> {
-    const projectName = assertSafePathSegment(projectNameValue)
-    const runId = assertSafePathSegment(runIdValue)
-    const projectDirectory = getProjectArtifactDir(this.storageRoot, projectName)
-    const sessions = await readdir(projectDirectory, { withFileTypes: true }).catch((error) => {
-      if (isMissingFileError(error)) return []
-      throw error
-    })
-    const matches: Array<ArtifactRunFinalizationMarker & { sourceSessionId: string }> = []
-    for (const session of sessions) {
-      if (!session.isDirectory() || !SAFE_SEGMENT_PATTERN.test(session.name)) continue
-      const result = await this.readRunMarker(
-        this.getRunMarkerPath(projectName, session.name, runId)
-      )
-      if (!result.present) continue
-      if (!result.marker) return undefined
-      matches.push({ ...result.marker, sourceSessionId: session.name })
-    }
-    return matches.length === 1 ? matches[0] : undefined
-  }
-
-  // Persists a prepared run intent or its later app-session/message binding. Written atomically (temp +
-  // rename) so a crash mid-write never leaves a half-written marker that would later read as corrupt.
-  // If a finalize upgrade fails, no file move begins, preserving a retryable pending run rather than
-  // creating an unprovable compatibility/provenance split-brain.
-  private async writeRunMarker(
     projectName: string,
-    sourceSessionId: string,
-    runId: string,
-    marker: ArtifactRunFinalizationMarker
-  ): Promise<void> {
-    const markerPath = this.getRunMarkerPath(projectName, sourceSessionId, runId)
-    const temporaryPath = `${markerPath}.${Date.now()}-${randomUUID()}.tmp`
-    let markerToWrite = marker
-    try {
-      const markerDirectory = dirname(markerPath)
-      await mkdir(markerDirectory, { recursive: true })
-      // The marker may create `.runs/` for the first time. Sync its parent before relying on the
-      // marker-directory barrier; otherwise a power loss can discard the directory and its witness.
-      await this.durability.syncDirectory(dirname(markerDirectory))
-      const existing = await this.readRunMarker(markerPath)
-      if (existing.present) {
-        if (!existing.marker) throw new Error('Existing Artifact run marker is corrupt.')
-        if (existing.marker.sessionId !== marker.sessionId) {
-          throw new Error('Artifact run marker is already owned by a different message.')
-        }
-        if (
-          existing.marker.messageId &&
-          marker.messageId &&
-          existing.marker.messageId !== marker.messageId
-        ) {
-          throw new Error('Artifact run marker is already owned by a different message.')
-        }
-        if (
-          existing.marker.provenanceContext &&
-          marker.provenanceContext &&
-          JSON.stringify(existing.marker.provenanceContext) !==
-            JSON.stringify(marker.provenanceContext)
-        ) {
-          throw new Error(
-            'Artifact run marker Provenance context conflicts with an existing commit.'
-          )
-        }
-        if (
-          existing.marker.artifactVersionIds &&
-          marker.artifactVersionIds &&
-          JSON.stringify(existing.marker.artifactVersionIds) !==
-            JSON.stringify(marker.artifactVersionIds)
-        ) {
-          throw new Error('Artifact run marker Version ids conflict with an existing commit.')
-        }
-        // Merge upgrades in either order so a generic pending-path replay retains the prepared context,
-        // while a late prepare replay can never erase an already-bound message id.
-        markerToWrite = {
-          sessionId: marker.sessionId,
-          ...(marker.messageId || existing.marker.messageId
-            ? { messageId: marker.messageId ?? existing.marker.messageId }
-            : {}),
-          ...(marker.provenanceContext || existing.marker.provenanceContext
-            ? {
-                provenanceContext: marker.provenanceContext ?? existing.marker.provenanceContext
-              }
-            : {}),
-          ...(marker.artifactVersionIds || existing.marker.artifactVersionIds
-            ? {
-                artifactVersionIds: marker.artifactVersionIds ?? existing.marker.artifactVersionIds
-              }
-            : {})
-        }
-        if (JSON.stringify(existing.marker) === JSON.stringify(markerToWrite)) {
-          await this.durability.syncFile(markerPath)
-          await this.durability.syncDirectory(markerDirectory)
-          return
-        }
-      }
-      await writeFile(temporaryPath, `${JSON.stringify(markerToWrite)}\n`, 'utf8')
-      await this.durability.syncFile(temporaryPath)
-      await rename(temporaryPath, markerPath)
-      await this.durability.syncDirectory(markerDirectory)
-    } catch (error) {
-      await rm(temporaryPath, { force: true }).catch(() => undefined)
-      throw error
-    }
-  }
-
-  // Reads a run marker, distinguishing three states so recovery can act safely:
-  //   { present: false }            — no marker file (legacy artifact, or a marker write that failed).
-  //   { present: true }             — marker contents are corrupt or invalid.
-  //   { present: true, marker }     — a valid prepared or message-bound marker.
-  // Storage I/O failures propagate so startup can mark reconciliation incomplete; only ENOENT is absent.
-  private async readRunMarker(
-    markerPath: string
-  ): Promise<{ present: boolean; marker?: ArtifactRunFinalizationMarker }> {
-    let raw: string
-    try {
-      raw = this.durability.readMarkerFile
-        ? await this.durability.readMarkerFile(markerPath)
-        : await readFile(markerPath, 'utf8')
-    } catch (error) {
-      if (isMissingFileError(error)) return { present: false }
-      throw error
-    }
-
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        typeof (parsed as { sessionId?: unknown }).sessionId === 'string'
-      ) {
-        const { sessionId, messageId, artifactVersionIds, provenanceContext } = parsed as {
-          sessionId: string
-          messageId?: unknown
-          artifactVersionIds?: unknown
-          provenanceContext?: unknown
-        }
-        if (
-          SAFE_SEGMENT_PATTERN.test(sessionId) &&
-          (messageId === undefined ||
-            (typeof messageId === 'string' && SAFE_SEGMENT_PATTERN.test(messageId)))
-        ) {
-          let normalizedArtifactVersionIds: string[] | undefined
-          if (artifactVersionIds !== undefined) {
-            if (!Array.isArray(artifactVersionIds)) return { present: true }
-            try {
-              normalizedArtifactVersionIds = normalizeArtifactVersionIds(
-                artifactVersionIds as string[]
-              )
-            } catch {
-              return { present: true }
-            }
-          }
-          if (
-            typeof provenanceContext === 'object' &&
-            provenanceContext !== null &&
-            !Array.isArray(provenanceContext)
-          ) {
-            const keys = [
-              'rootFrameId',
-              'agentFrameId',
-              'messageBranchId',
-              'runtimeSegmentId',
-              'promptMessageId'
-            ] as const
-            if (
-              keys.some(
-                (key) =>
-                  typeof (provenanceContext as Record<string, unknown>)[key] !== 'string' ||
-                  !SAFE_SEGMENT_PATTERN.test(
-                    (provenanceContext as Record<string, unknown>)[key] as string
-                  )
-              )
-            ) {
-              return { present: true }
-            }
-            return {
-              present: true,
-              marker: {
-                sessionId,
-                ...(typeof messageId === 'string' ? { messageId } : {}),
-                ...(normalizedArtifactVersionIds
-                  ? { artifactVersionIds: normalizedArtifactVersionIds }
-                  : {}),
-                provenanceContext: Object.fromEntries(
-                  keys.map((key) => [key, (provenanceContext as Record<string, unknown>)[key]])
-                ) as ArtifactRunFinalizationMarker['provenanceContext']
-              }
-            }
-          }
-          if (typeof messageId === 'string' && provenanceContext === undefined) {
-            return {
-              present: true,
-              marker: {
-                sessionId,
-                messageId,
-                ...(normalizedArtifactVersionIds
-                  ? { artifactVersionIds: normalizedArtifactVersionIds }
-                  : {})
-              }
-            }
-          }
-        }
-      }
-      return { present: true }
-    } catch {
-      return { present: true }
-    }
+    runId: string
+  ): Promise<(ArtifactRunFinalizationMarker & { sourceSessionId: string }) | undefined> {
+    return this.publicationOwner.findRunFinalizationMarker(projectName, runId)
   }
 
   // Builds the temporary directory for files generated during one active assistant turn.
@@ -1571,4 +766,15 @@ const isMissingFileError = (error: unknown): boolean =>
 
 const sha256 = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
 
-export { ArtifactRepository, getArtifactCurrentRunFilePath, getProjectArtifactDir }
+export {
+  ArtifactCompatibilityScanIncompleteError,
+  ArtifactRepository,
+  getArtifactCurrentRunFilePath,
+  getProjectArtifactDir
+}
+export type {
+  ArtifactRunFinalizationMarker,
+  PendingArtifactRunPublication,
+  PendingArtifactVersionRoute,
+  PendingArtifactVersionRouting
+}

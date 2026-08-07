@@ -57,7 +57,14 @@
       "fallbackCapability": "renderer_view"
     },
     "artifact_storage": {
-      "ownerPaths": ["src/main/artifacts/repository.ts"],
+      "ownerPaths": [
+        "src/main/artifacts/pending-file-transaction.ts",
+        "src/main/artifacts/publication-owner.ts",
+        "src/main/artifacts/publication-types.ts",
+        "src/main/artifacts/repository.ts",
+        "src/main/artifacts/run-marker-codec.ts",
+        "src/main/artifacts/storage-layout.ts"
+      ],
       "interfacePaths": ["src/main/artifacts/repository.ts"],
       "consumerModules": ["artifact_provenance"],
       "testFiles": {
