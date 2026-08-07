@@ -56,7 +56,10 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
 
   load: async () => {
     // Guard: specialist.list is Electron-only and unavailable in the web gateway.
-    if (typeof window.api?.specialist?.list !== 'function') return
+    if (typeof window.api?.specialist?.list !== 'function') {
+      set({ items: [], isLoaded: true })
+      return
+    }
     const items = await window.api.specialist.list()
     set({ items, isLoaded: true })
   },

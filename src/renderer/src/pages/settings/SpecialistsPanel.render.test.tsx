@@ -121,6 +121,23 @@ afterEach(() => {
 })
 
 describe('SpecialistsPanel', () => {
+  it('renders safely when the web surface omits the specialist API', async () => {
+    const specialistApi = window.api.specialist
+    delete (window.api as { specialist?: Window['api']['specialist'] }).specialist
+    useSpecialistStore.setState({ items: [], isLoaded: false })
+
+    try {
+      await act(async () => {
+        root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      })
+
+      expect(document.body.textContent).toContain('No specialists yet')
+      expect(useSpecialistStore.getState().isLoaded).toBe(true)
+    } finally {
+      window.api.specialist = specialistApi
+    }
+  })
+
   // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
   const exportPreviewFixture = (
     overrides: Partial<{

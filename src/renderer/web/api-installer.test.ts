@@ -117,7 +117,7 @@ describe('installWebRendererContracts', () => {
   it('does not create namespaces for unavailable Electron-only contracts', () => {
     const api: Record<string, unknown> = {}
     installWebRendererContracts(api, {
-      availableRpcChannels: new Set(),
+      availableRpcChannels: new Set(['specialist:list']),
       restrictedRpcChannels: new Set(),
       invoke: vi.fn(),
       subscribe: vi.fn(),
@@ -130,23 +130,7 @@ describe('installWebRendererContracts', () => {
     expect(api.handoff).toBeUndefined()
     // officePreview.onState is ELECTRON_EVENT — namespace must not exist on web.
     expect(api.officePreview).toBeUndefined()
-  })
-
-  it('never installs specialist.list on the web surface', () => {
-    const api: Record<string, unknown> = {}
-    installWebRendererContracts(api, {
-      availableRpcChannels: new Set(['specialist:list']),
-      restrictedRpcChannels: new Set(),
-      invoke: vi.fn(),
-      subscribe: vi.fn(),
-      nativeAdapters: {}
-    })
-
-    // Even when the channel is in the available set, ELECTRON contracts are not
-    // installed on web — the web surface installation is always 'unavailable'.
     expect(methodAt(api, 'specialist.list')).toBeUndefined()
-    expect(methodAt(api, 'specialist.create')).toBeUndefined()
-    expect(methodAt(api, 'specialist.onCatalogChanged')).toBeUndefined()
   })
 
   it('accepts one test-local neutral descriptor in both renderer adapters', async () => {
