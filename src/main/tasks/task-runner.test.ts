@@ -464,8 +464,28 @@ describe('TaskRunner', () => {
       })
       expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
       emitEvent?.({
-        id: 'assistant-1',
+        id: 'provider-warning',
         timestamp: 3,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'system',
+        level: 'warning',
+        text: 'Provider is retrying.'
+      })
+      emitEvent?.({
+        id: 'terminal-stop',
+        timestamp: 4,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'stop',
+        level: 'info',
+        title: 'Prompt stopped',
+        text: 'end_turn'
+      })
+      expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
+      emitEvent?.({
+        id: 'assistant-1',
+        timestamp: 5,
         sessionId: 'session-1',
         promptMessageId: 'generated-id',
         kind: 'message',

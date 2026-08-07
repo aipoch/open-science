@@ -156,10 +156,17 @@ class PartialTaskCompletionError extends Error {
 
 const MAX_RETAINED_RUNS = 200
 const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
+const VISIBLE_PROVIDER_EVENT_KINDS = new Set<AcpRuntimeEvent['kind']>([
+  'message',
+  'thought',
+  'tool',
+  'plan',
+  'artifact'
+])
 
 const isVisibleProviderEvent = (event: AcpRuntimeEvent): boolean =>
   event.role !== 'user' &&
-  event.kind !== 'raw' &&
+  VISIBLE_PROVIDER_EVENT_KINDS.has(event.kind) &&
   Boolean(event.text?.trim() || event.title?.trim() || getAcpRuntimeEventImage(event))
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
