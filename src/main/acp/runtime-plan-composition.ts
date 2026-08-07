@@ -348,21 +348,6 @@ const composeAcpRuntimePlanWorkflow = (
       publishProjection(input.sessionId, result.projection)
       return result
     }
-    try {
-      pushEvent({
-        id: `session-user-message-${result.message.id}`,
-        timestamp: result.message.createdAt,
-        kind: 'message',
-        level: 'info',
-        sessionId: input.sessionId,
-        promptMessageId: result.message.responseToMessageId,
-        messageId: result.message.id,
-        role: 'user',
-        text: result.message.content
-      })
-    } catch (error) {
-      safeLogError('Routed user Message projection callback failed', error)
-    }
     const currentInteraction = sessionInteractions.current(input.sessionId)
     if (
       !approvalInteractionId ||
@@ -382,6 +367,21 @@ const composeAcpRuntimePlanWorkflow = (
         )
       }
       throw new Error('The paused Session Plan interaction is no longer available.')
+    }
+    try {
+      pushEvent({
+        id: `session-user-message-${result.message.id}`,
+        timestamp: result.message.createdAt,
+        kind: 'message',
+        level: 'info',
+        sessionId: input.sessionId,
+        promptMessageId: result.message.responseToMessageId,
+        messageId: result.message.id,
+        role: 'user',
+        text: result.message.content
+      })
+    } catch (error) {
+      safeLogError('Routed user Message projection callback failed', error)
     }
     const authorization = {
       sessionId: input.sessionId,

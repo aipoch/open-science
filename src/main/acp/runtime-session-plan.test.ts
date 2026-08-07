@@ -805,7 +805,10 @@ describe('AcpRuntime Session Plan seam', () => {
   })
 
   it('rejects and settles feedback when its owning interaction is superseded during persistence', async () => {
-    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    const onEvent = vi.fn()
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({
+      onEvent
+    })
     const pendingApproval = runtime
       .callSessionPlan({
         projectId: 'project-1',
@@ -815,6 +818,7 @@ describe('AcpRuntime Session Plan seam', () => {
       })
       .catch((error: unknown) => error)
     await Promise.resolve()
+    onEvent.mockClear()
     let markRespondStarted!: () => void
     let finishRespond!: () => void
     const respondStarted = new Promise<void>((resolve) => {
@@ -864,6 +868,9 @@ describe('AcpRuntime Session Plan seam', () => {
         interactionSequence: 8
       })
     ).toBe(false)
+    expect(onEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'message', messageId: 'message-1' })
+    )
   })
 
   it('lets the resumed Agent explicitly approve after interpreting a user Message', async () => {
