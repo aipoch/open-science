@@ -38,13 +38,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>/dev/null || true)
-          if [ "$published" != "$SOURCE_SHA" ]; then
+          error_file="$RUNNER_TEMP/nightly-published-error.log"
+          if ! published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>"$error_file"); then
+            if grep -Eq 'HTTP (404|422)' "$error_file"; then
+              published=
+            else
+              cat "$error_file" >&2
+              exit 1
+            fi
+          fi
+          if [ -z "$published" ]; then
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          else
+            exit 0
+          fi
+          if [ "$published" = "$SOURCE_SHA" ]; then
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             echo "Nightly already points at $SOURCE_SHA; skipping duplicate publication."
+            exit 0
           fi
+
+          # This check runs after the workflow-level publication lock is acquired. GitHub does not
+          # guarantee concurrency queue ordering, so an older workflow may run after a newer one.
+          # Only move the rolling tag forward along the same history; never let that older run
+          # overwrite a newer publication.
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$published...$SOURCE_SHA" --jq .status)
+          case "$status" in
+            ahead)
+              echo "should_publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            identical|behind)
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              echo "Nightly at $published is not older than $SOURCE_SHA; skipping stale publication."
+              ;;
+            *)
+              echo "::error::Cannot safely advance nightly from $published to $SOURCE_SHA (comparison: $status)."
+              exit 1
+              ;;
+          esac
 
   publish:
     needs: plan

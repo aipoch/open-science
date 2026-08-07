@@ -129,9 +129,15 @@ describe('release and scheduled workflow topology', () => {
     expect(plan.if).toContain("github.event.workflow_run.conclusion == 'success'")
     expect(plan.if).toContain("github.event.workflow_run.event == 'schedule'")
     expect(plan.if).toContain("github.event.workflow_run.head_branch == 'main'")
-    expect(step(plan, 'Check for an unpublished build').run).toContain(
-      'repos/$GITHUB_REPOSITORY/commits/nightly'
-    )
+    const publicationPlan = step(plan, 'Check for an unpublished build').run
+    expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/commits/nightly')
+    expect(publicationPlan).toContain('repos/$GITHUB_REPOSITORY/compare/$published...$SOURCE_SHA')
+    expect(publicationPlan).toContain("grep -Eq 'HTTP (404|422)'")
+    expect(publicationPlan).toContain('cat "$error_file" >&2')
+    expect(publicationPlan).toContain('ahead)')
+    expect(publicationPlan).toContain('identical|behind)')
+    expect(publicationPlan).toContain('skipping stale publication')
+    expect(publicationPlan).toContain('Cannot safely advance nightly')
     expect(publish).toMatchObject({
       needs: 'plan',
       if: "needs.plan.outputs.should_publish == 'true'"
