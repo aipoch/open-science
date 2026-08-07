@@ -367,10 +367,36 @@ jobs:
     name: Legacy coverage plan compatibility
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'coverage_macos') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
+    runs-on: macos-14
+    timeout-minutes: 15
     steps:
-      - name: Satisfy trusted legacy plan
+      - name: Checkout coverage-only legacy plan
+        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node for coverage-only legacy plan
+        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies for coverage-only legacy plan
+        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        run: npm ci
+      - name: Test coverage-only legacy plan
+        if: ${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        run: npm run test:coverage
+      - name: Upload legacy coverage report
+        if: ${{ always() && !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 5
+          if-no-files-found: warn
+      - name: Confirm coverage consolidated into Module tests
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
         run: echo "Coverage thresholds are enforced by the macOS Module-test job."
 
   windows_core:

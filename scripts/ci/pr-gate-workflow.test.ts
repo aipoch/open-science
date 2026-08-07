@@ -201,13 +201,28 @@ describe('PR Gate workflow', () => {
     const coverageUpload = unit.steps?.find(({ name }) => name === 'Upload Module coverage report')
 
     const legacyCoverage = workflow.jobs.coverage_macos
+    const coverageOnly = legacyCoverage.steps?.find(
+      ({ name }) => name === 'Test coverage-only legacy plan'
+    )
+    const consolidated = legacyCoverage.steps?.find(
+      ({ name }) => name === 'Confirm coverage consolidated into Module tests'
+    )
 
     expect(legacyCoverage).toMatchObject({
       name: 'Legacy coverage plan compatibility',
-      'runs-on': 'ubuntu-latest'
+      'runs-on': 'macos-14'
     })
-    expect(legacyCoverage.steps?.some(({ run }) => run === 'npm run test:coverage')).toBe(false)
-    expect(legacyCoverage.steps?.some(({ run }) => run === 'npm ci')).toBe(false)
+    expect(coverageOnly).toMatchObject({
+      if: "${{ !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}",
+      run: 'npm run test:coverage'
+    })
+    expect(consolidated).toMatchObject({
+      if: "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+    })
+    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(
+      1
+    )
+    expect(legacyCoverage.steps?.filter(({ run }) => run === 'npm ci')).toHaveLength(1)
     expect(unit).toMatchObject({
       name: 'Module tests (macOS)',
       'runs-on': 'macos-14'
