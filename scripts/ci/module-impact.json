@@ -2,7 +2,12 @@
   "schemaVersion": 1,
   "modules": {
     "session_renderer": {
-      "ownerPaths": ["src/renderer/src/stores/session-store.ts"],
+      "ownerPaths": [
+        "src/renderer/src/stores/session-store.ts",
+        "src/renderer/src/stores/session-store-persistence-owner.ts",
+        "src/renderer/src/stores/session-store-message-graph-owner.ts",
+        "src/renderer/src/stores/session-store-message-graph-helpers.ts"
+      ],
       "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
       "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
       "testFiles": {
