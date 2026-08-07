@@ -60,12 +60,19 @@ class ConnectorRuntimeSettingsProjection {
 
       await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds)
       const customServers = selectEnabledCustomServers(connectors)
-      await this.syncCustomSkillDocs(this.options.skillsDir, customServers, (server) =>
-        this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
+      const customSync = await this.syncCustomSkillDocs(
+        this.options.skillsDir,
+        customServers,
+        (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
-      this.materializedCustomSkills = customServers.map(
-        (server) => `mcp-${customConnectorSlug(server)}`
-      )
+      this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
+      for (const { server, error } of customSync.failures) {
+        this.reportError(
+          new Error(`Failed to sync custom MCP server "${customConnectorSlug(server)}" skill docs`, {
+            cause: error
+          })
+        )
+      }
     } catch (error) {
       this.reportError(error)
     }

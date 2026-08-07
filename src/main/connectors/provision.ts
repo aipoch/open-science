@@ -62,6 +62,11 @@ export async function syncConnectorSkillDocs(
 
 export type CustomServerListTools = (server: StoredCustomMcpServer) => Promise<CustomSkillDocTool[]>
 
+export type CustomServerSkillSyncResult = {
+  materializedSlugs: string[]
+  failures: Array<{ server: StoredCustomMcpServer; error: unknown }>
+}
+
 const isSafeCustomServerSlug = (slug: string): boolean =>
   /^[a-z0-9-]+$/.test(slug) && !ALL_CONNECTOR_IDS.includes(slug)
 
@@ -73,18 +78,30 @@ export async function syncCustomServerSkillDocs(
   skillsDir: string,
   servers: StoredCustomMcpServer[],
   listTools: CustomServerListTools
-): Promise<void> {
+): Promise<CustomServerSkillSyncResult> {
   await mkdir(skillsDir, { recursive: true })
   const safeServers = servers
     .map((server) => ({ server, slug: customConnectorSlug(server) }))
     .filter(({ slug }) => isSafeCustomServerSlug(slug))
-  const enabledSlugs = new Set(safeServers.map(({ slug }) => slug))
+  const materializedSlugs: string[] = []
+  const failures: CustomServerSkillSyncResult['failures'] = []
   for (const { server, slug } of safeServers) {
-    const tools = await listTools(server)
     const dir = join(skillsDir, `mcp-${slug}`)
+    let tools: CustomSkillDocTool[]
+    try {
+      tools = await listTools(server)
+    } catch (error) {
+      failures.push({ server, error })
+      // A previously healthy Connector may have left a now-stale Skill behind. Keeping it would
+      // advertise tools that this startup could not actually discover or call.
+      await rm(dir, { recursive: true, force: true })
+      continue
+    }
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
+    materializedSlugs.push(slug)
   }
+  const enabledSlugs = new Set(materializedSlugs)
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
     const m = /^mcp-(.+)$/.exec(entry)
@@ -95,4 +112,5 @@ export async function syncCustomServerSkillDocs(
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
+  return { materializedSlugs, failures }
 }

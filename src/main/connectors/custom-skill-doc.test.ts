@@ -89,6 +89,30 @@ describe('syncCustomServerSkillDocs', () => {
     expect(entries).toEqual([])
   })
 
+  it('isolates an unavailable server while materializing the remaining enabled servers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'custom-skills-unavailable-'))
+    const unavailable = makeServer({ id: 'unavailable', slug: 'unavailable' })
+    const healthy = makeServer({ id: 'healthy', slug: 'healthy', name: 'Healthy server' })
+    await mkdir(join(dir, 'mcp-unavailable'), { recursive: true })
+    await writeFile(join(dir, 'mcp-unavailable', 'SKILL.md'), 'stale')
+
+    const result = await syncCustomServerSkillDocs(dir, [unavailable, healthy], async (server) => {
+      if (server.id === unavailable.id) {
+        throw new Error('MCP error -32000: Connection closed')
+      }
+      return FAKE_TOOLS
+    })
+
+    expect(result.materializedSlugs).toEqual(['healthy'])
+    expect(result.failures).toEqual([
+      {
+        server: unavailable,
+        error: expect.objectContaining({ message: 'MCP error -32000: Connection closed' })
+      }
+    ])
+    expect((await readdir(dir)).sort()).toEqual(['mcp-healthy'])
+  })
+
   it('never lets a malicious server name escape the skills dir or clobber a bundled connector', async () => {
     const root = await mkdtemp(join(tmpdir(), 'custom-skills-safe-'))
     const dir = join(root, 'skills')

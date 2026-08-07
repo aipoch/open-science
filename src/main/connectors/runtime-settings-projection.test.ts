@@ -34,6 +34,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     const syncBundledSkillDocs = vi.fn().mockResolvedValue(undefined)
     const syncCustomSkillDocs = vi.fn(async (_dir, servers, loadTools) => {
       await loadTools(servers[0])
+      return { materializedSlugs: ['enabled'], failures: [] }
     })
     const projection = new ConnectorRuntimeSettingsProjection({
       readConnectors: vi.fn().mockResolvedValue(stored),
@@ -61,6 +62,51 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.materializedCustomSkillNames()).toEqual(['mcp-enabled'])
   })
 
+  it('advertises only custom Skills that materialized when one enabled server is unavailable', async () => {
+    const unavailable = {
+      id: 'unavailable-id',
+      slug: 'unavailable',
+      name: 'Unavailable',
+      transport: 'stdio' as const,
+      command: 'node',
+      enabled: true
+    }
+    const healthy = {
+      id: 'healthy-id',
+      slug: 'healthy',
+      name: 'Healthy',
+      transport: 'stdio' as const,
+      command: 'node',
+      enabled: true
+    }
+    const failure = new Error('MCP error -32000: Connection closed')
+    const reportError = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(
+        connectors({
+          customMcpServers: [unavailable, healthy]
+        })
+      ),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({
+        materializedSlugs: ['healthy'],
+        failures: [{ server: unavailable, error: failure }]
+      }),
+      reportError
+    })
+
+    await projection.refresh()
+
+    expect(projection.materializedCustomSkillNames()).toEqual(['mcp-healthy'])
+    expect(reportError).toHaveBeenCalledOnce()
+    expect(reportError.mock.calls[0]?.[0]).toMatchObject({
+      message: 'Failed to sync custom MCP server "unavailable" skill docs',
+      cause: failure
+    })
+  })
+
   it('contains refresh errors while retaining the last snapshot reached by the refresh', async () => {
     const first = connectors({ disabledConnectorIds: ['chemistry'] })
     const second = connectors({ disabledConnectorIds: ['literature'] })
@@ -79,7 +125,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       skillsDir: '/config/skills',
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs,
-      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] }),
       reportError
     })
 
@@ -122,7 +168,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       skillsDir: '/config/skills',
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs,
-      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined)
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] })
     })
 
     const olderRefresh = projection.refresh()
@@ -157,7 +203,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
         .fn()
         .mockRejectedValueOnce(new Error('older sync failed'))
         .mockResolvedValueOnce(undefined),
-      syncCustomSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] }),
       reportError
     })
 
