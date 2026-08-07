@@ -1,10 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useNetworkStore } from './network-store'
 
+type CheckConnectivity = () => Promise<boolean>
+
+// window.api is typed as the full preload bridge; tests replace it wholesale through an
+// unknown cast and only model the one method under test.
+const stubCheckConnectivity = (checkConnectivity?: CheckConnectivity): void => {
+  ;(window as unknown as { api: unknown }).api =
+    checkConnectivity === undefined ? undefined : { network: { checkConnectivity } }
+}
+
 afterEach(() => {
-  useNetworkStore.setState({ isOnline: true })
+  stubCheckConnectivity()
+  useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
 })
 
 describe('useNetworkStore', () => {
@@ -31,5 +41,66 @@ describe('useNetworkStore', () => {
     useNetworkStore.getState().recheckOnline()
 
     expect(useNetworkStore.getState().isOnline).toBe(navigator.onLine)
+  })
+})
+
+describe('probeConnectivity', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('an announced probe flips to unknown, then applies the result only after the minimum delay', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(false)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    const probe = useNetworkStore.getState().probeConnectivity({ announce: true })
+    expect(useNetworkStore.getState().connectivity).toBe('unknown')
+
+    await vi.advanceTimersByTimeAsync(499)
+    expect(useNetworkStore.getState().connectivity).toBe('unknown')
+
+    await vi.advanceTimersByTimeAsync(1)
+    await probe
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(checkConnectivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('a silent probe keeps the previous state while probing', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    const probe = useNetworkStore.getState().probeConnectivity()
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+
+    await vi.advanceTimersByTimeAsync(500)
+    await probe
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
+  it('keeps the last known state when the bridge call rejects', async () => {
+    const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await useNetworkStore.getState().probeConnectivity()
+
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
+  })
+
+  it('falls back to reachable when there is no probe bridge', async () => {
+    stubCheckConnectivity()
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
+
+    const probe = useNetworkStore.getState().probeConnectivity()
+    await vi.advanceTimersByTimeAsync(500)
+    await probe
+
+    expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })
 })

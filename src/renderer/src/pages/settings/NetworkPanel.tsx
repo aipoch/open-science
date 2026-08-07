@@ -17,36 +17,32 @@ const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const actionButtonClassName =
   'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50'
 
-// Minimum time the Checking… row stays visible after a probe starts, so a fast answer reads as
-// a deliberate check instead of a flash.
-const MIN_CHECKING_MS = 500
-
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
 type NetworkView = { kind: 'list' | 'configure' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
-// Settings -> Network. The Network status section combines the navigator.onLine link signal
-// with a real end-to-end reachability probe (the same HTTPS HEAD check the onboarding
-// environment step uses) plus local interface details reported by the main process; the Package
-// mirror section lets a user behind a firewall or on a slow route to the public conda-forge /
-// pip hosts point package fetches at a mirror instead. The "Claude Science domains" egress
-// allowlist from the mockup is phase-3 (spec §14, §9) and is intentionally not built here.
+// Settings -> Network. The Network status section presents the network store's connectivity
+// (navigator.onLine link signal plus the store's shared end-to-end reachability probe) and the
+// local interface details reported by the main process; the Package mirror section lets a user
+// behind a firewall or on a slow route to the public conda-forge / pip hosts point package
+// fetches at a mirror instead. The "Claude Science domains" egress allowlist from the mockup is
+// phase-3 (spec §14, §9) and is intentionally not built here.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
+  // End-to-end reachability is owned by the network store (probed on startup, recovery, a
+  // background cadence, and Retry), so this panel and the header/sidebar indicators never
+  // disagree. 'unknown' renders as Checking….
+  const connectivity = useNetworkStore((state) => state.connectivity)
+  const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
   const isConfiguring = view.kind === 'configure'
   const [draft, setDraft] = useState<PackageMirror>({})
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
-  // Real end-to-end reachability, probed by the main process with the same HTTPS HEAD check the
-  // onboarding environment step uses. null means "no fresh answer yet" — while online that
-  // renders as Checking…; while offline the rows gate on isOnline and never read this.
-  const [connectivity, setConnectivity] = useState<'reachable' | 'unreachable' | null>(null)
-  const probeGenerationRef = useRef(0)
 
   // Local interface details come from the main process; window.api.network is Electron-only,
   // so stay with placeholders when the preload bridge is unavailable.
@@ -57,58 +53,20 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     void getInfo().then((info) => setNetworkInfo(info))
   }, [])
 
-  // setState happens only in async callbacks, so callers (effects, the Retry button) never
-  // trigger a cascading synchronous render.
-  const probeConnectivity = useCallback((): void => {
-    const checkConnectivity = window.api?.network?.checkConnectivity
-    const generation = ++probeGenerationRef.current
-    const startedAt = Date.now()
-
-    // Switch the row back to Checking… for this probe. A microtask keeps the effect caller
-    // free of synchronous setState and still lands well before any network probe resolves.
-    void Promise.resolve().then(() => {
-      if (probeGenerationRef.current === generation) setConnectivity(null)
-    })
-
-    const applyReachable = (reachable: boolean): void => {
-      const apply = (): void => {
-        if (probeGenerationRef.current === generation) {
-          setConnectivity(reachable ? 'reachable' : 'unreachable')
-        }
-      }
-      const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
-      if (remaining > 0) {
-        setTimeout(apply, remaining)
-      } else {
-        apply()
-      }
-    }
-
-    if (!checkConnectivity) {
-      // Web surface has no probe bridge; fall back to the navigator.onLine signal, which is
-      // the best information available there.
-      void Promise.resolve().then(() => applyReachable(true))
-      return
-    }
-
-    void checkConnectivity().then(applyReachable)
-  }, [])
-
-  // Load once when the list view mounts while online, and re-pull whenever connectivity comes
-  // back; offline rows show placeholders, so a connectivity drop has nothing to refresh.
+  // Pull local interface details when the list view mounts while online, and re-pull whenever
+  // connectivity comes back; offline rows show placeholders, so a drop has nothing to refresh.
   useEffect(() => {
-    if (view.kind === 'list' && isOnline) {
-      refreshNetworkInfo()
-      probeConnectivity()
-    }
-  }, [view.kind, isOnline, refreshNetworkInfo, probeConnectivity])
+    if (view.kind === 'list' && isOnline) refreshNetworkInfo()
+  }, [view.kind, isOnline, refreshNetworkInfo])
 
   const recheckOnline = useNetworkStore((state) => state.recheckOnline)
 
   const handleRetry = (): void => {
     recheckOnline()
     refreshNetworkInfo()
-    if (useNetworkStore.getState().isOnline) probeConnectivity()
+    if (useNetworkStore.getState().isOnline) {
+      void probeConnectivity({ announce: true })
+    }
   }
 
   // Seed the draft from the saved mirror once each time the configure view is entered (including via
@@ -161,7 +119,8 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       .join(' · ') || undefined
 
   // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
-  // component as the onboarding environment step's network check.
+  // component as the onboarding environment step's network check. A live link with unreachable
+  // internet is amber (warning) rather than red — the machine is connected, the path out is not.
   const networkCheck: EnvironmentCheckItem = !isOnline
     ? {
         id: 'install-network',
@@ -173,7 +132,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       ? {
           id: 'install-network',
           label: 'Internet connection',
-          status: 'failed',
+          status: 'warning',
           summary: 'The network link is up, but the internet is unreachable.',
           detail: interfaceDetail
         }
@@ -185,7 +144,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
           detail: interfaceDetail
         }
 
-  const isChecking = isOnline && connectivity === null
+  const isChecking = isOnline && connectivity === 'unknown'
 
   // Tile icon follows the actual link: WifiOff while offline, then by connection type.
   const networkIcon = !isOnline

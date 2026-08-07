@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
-  useNetworkStore.setState({ isOnline: true })
+  useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
   useSettingsStore.setState({ isSettingsOpen: false, pendingSettingsPanel: undefined })
 })
 
@@ -85,6 +85,28 @@ describe('NetworkStatusIndicator', () => {
     await act(async () => {
       window.dispatchEvent(new Event('online'))
     })
+    expect(container.querySelector('button')).toBeNull()
+  })
+
+  it('renders the amber unreachable pill when the link is up but the internet is unreachable', async () => {
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
+    const button = container.querySelector('button')
+    expect(button?.getAttribute('aria-label')).toBe('Internet unreachable')
+    expect(button?.textContent).toContain('Unreachable')
+  })
+
+  it('renders nothing while the internet is reachable', async () => {
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+
+    await act(async () => {
+      root.render(<NetworkStatusIndicator variant="pill" />)
+    })
+
     expect(container.querySelector('button')).toBeNull()
   })
 })
