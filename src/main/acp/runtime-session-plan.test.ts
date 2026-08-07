@@ -690,6 +690,51 @@ describe('AcpRuntime Session Plan seam', () => {
     })
   })
 
+  it('restores decision authorization after persistence fails so the same interaction can retry', async () => {
+    const { runtime, interactions, service } = createRuntimeHarness({})
+    const authorization = {
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    }
+    interactions.authorizeAgentDecision(authorization)
+    let attempts = 0
+    service.respond.mockImplementation(async (input) => {
+      expect(input.beforeDecisionCommit?.()).toBe(true)
+      attempts += 1
+      if (attempts === 1) {
+        throw new PlanCommandError('revision-conflict', 'The Plan revision changed concurrently.')
+      }
+      return {
+        projection: {
+          ...projection('version-1'),
+          approval: 'approved' as const,
+          lifecycle: 'approved' as const
+        },
+        changed: true
+      }
+    })
+
+    await expect(
+      runtime.callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'approve'
+      })
+    ).rejects.toMatchObject({ code: 'revision-conflict' })
+    expect(interactions.isAgentDecisionAuthorized(authorization)).toBe(true)
+
+    await expect(
+      runtime.callSessionPlan({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'approve'
+      })
+    ).resolves.toMatchObject({ projection: { approval: 'approved' } })
+    expect(interactions.isAgentDecisionAuthorized(authorization)).toBe(false)
+    expect(attempts).toBe(2)
+  })
+
   it('routes feedback as a visible user Message and resumes the blocked interaction', async () => {
     const onEvent = vi.fn()
     const { runtime } = createRuntimeHarness({ onEvent })

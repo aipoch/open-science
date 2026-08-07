@@ -177,23 +177,37 @@ const composeAcpRuntimePlanWorkflow = (
         )
       }
       const executionBinding = interactions.executionBindingFor(input.sessionId)
+      let decisionAuthorizationConsumed = false
       const beforeDecisionCommit =
         requiresHumanFeedback && authorization
           ? (): boolean => {
               const currentInteraction = sessionInteractions.current(input.sessionId)
-              return (
+              decisionAuthorizationConsumed =
                 currentInteraction?.kind === 'prompt' &&
                 currentInteraction.sequence === authorization.interactionSequence &&
                 interactions.consumeAgentDecisionAuthorization(authorization)
-              )
+              return decisionAuthorizationConsumed
             }
           : undefined
-      const result = await service.respond({
-        ...identity,
-        decision,
-        interactionIsLive,
-        ...(beforeDecisionCommit ? { beforeDecisionCommit } : {})
-      })
+      const result = await service
+        .respond({
+          ...identity,
+          decision,
+          interactionIsLive,
+          ...(beforeDecisionCommit ? { beforeDecisionCommit } : {})
+        })
+        .catch((error: unknown) => {
+          const currentInteraction = sessionInteractions.current(input.sessionId)
+          if (
+            decisionAuthorizationConsumed &&
+            authorization &&
+            currentInteraction?.kind === 'prompt' &&
+            currentInteraction.sequence === authorization.interactionSequence
+          ) {
+            interactions.authorizeAgentDecision(authorization)
+          }
+          throw error
+        })
       if (decision === 'approved') {
         if (requiresHumanFeedback && authorization) {
           interactions.bindExecution({
