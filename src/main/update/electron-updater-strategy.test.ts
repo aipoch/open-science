@@ -97,31 +97,35 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('pins Windows NSIS updates to the current installation directory', () => {
     const updater = new FakeUpdater()
+    const pathExists = vi.fn(() => true)
     new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'win32',
       executablePath: 'D:\\Apps\\Open Science\\open-science.exe',
-      isNsisInstallation: () => true,
+      pathExists,
       broadcast: vi.fn()
     })
 
+    expect(pathExists).toHaveBeenCalledWith('D:\\Apps\\Open Science\\Uninstall open-science.exe')
     expect(updater.installDirectory).toBe('D:\\Apps\\Open Science')
   })
 
   it('does not pin portable Windows builds to their extraction directory', () => {
     const updater = new FakeUpdater()
-    const isNsisInstallation = vi.fn(() => false)
+    const pathExists = vi.fn(() => false)
     new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'win32',
       executablePath: 'D:\\Portable\\Open Science\\open-science.exe',
-      isNsisInstallation,
+      pathExists,
       broadcast: vi.fn()
     })
 
-    expect(isNsisInstallation).toHaveBeenCalledWith('D:\\Portable\\Open Science')
+    expect(pathExists).toHaveBeenCalledWith(
+      'D:\\Portable\\Open Science\\Uninstall open-science.exe'
+    )
     expect(updater.installDirectory).toBeUndefined()
   })
 

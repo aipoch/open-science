@@ -51,7 +51,7 @@ export type ElectronUpdaterDeps = {
   currentVersion?: string
   platform?: NodeJS.Platform
   executablePath?: string
-  isNsisInstallation?: (installDirectory: string) => boolean
+  pathExists?: (path: string) => boolean
   arch?: string
   broadcast?: UpdateBroadcast
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
@@ -209,10 +209,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       const executablePath = deps.executablePath ?? process.execPath
       if (win32.isAbsolute(executablePath)) {
         const installDirectory = win32.dirname(executablePath)
-        const isNsisInstallation =
-          deps.isNsisInstallation ??
-          ((directory: string) => existsSync(join(directory, `Uninstall ${APP.name}.exe`)))
-        if (isNsisInstallation(installDirectory)) {
+        // electron-builder derives the uninstaller from PRODUCT_FILENAME, which is the configured
+        // executable name here ("Uninstall open-science.exe"), not the display product name.
+        const uninstaller = join(installDirectory, `Uninstall ${win32.basename(executablePath)}`)
+        if ((deps.pathExists ?? existsSync)(uninstaller)) {
           // NsisUpdater otherwise relies on registry discovery when it starts the downloaded installer.
           // Pin confirmed NSIS installs, but never turn a portable ZIP into an install in its folder.
           this.updater.installDirectory = installDirectory
