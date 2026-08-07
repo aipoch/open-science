@@ -13,6 +13,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 
 import type {
@@ -100,6 +101,8 @@ const BrowserAccessSteps = (): React.JSX.Element => (
 )
 
 export const RemoteControlPanel = (): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(null)
   const [busy, setBusy] = useState<string | null>('loading')
   const [actionError, setActionError] = useState<string | undefined>()
@@ -176,7 +179,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     return (
       <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
         <LoaderCircle className="mr-2 size-4 animate-spin" aria-hidden="true" />
-        Loading remote access…
+        {t('Loading remote access…')}
       </div>
     )
   }
@@ -209,7 +212,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         className={`size-3.5 ${busy === 'detect' ? 'animate-spin' : ''}`}
         aria-hidden="true"
       />
-      Detect again
+      {t('Detect again')}
     </Button>
   ) : null
 
@@ -233,7 +236,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       : 'Applying remote access settings…'}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    Waiting for the system command to finish.
+                    {t('Waiting for the system command to finish.')}
                   </div>
                 </div>
               </div>
@@ -245,7 +248,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       <SettingsSection
         className="relative"
         contentClassName="space-y-3"
-        title="Remote browser access"
+        title={t('Remote browser access')}
         description={
           <>
             Choose who can reach this computer&apos;s Open Science workspace. All projects, agents,
@@ -255,7 +258,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
               href={REMOTE_IT_DOWNLOAD_URL}
               className="box-decoration-clone rounded-sm bg-primary/10 px-1 py-0.5 font-medium text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary"
             >
-              Download Remote.It App
+              {t('Download Remote.It App')}
             </ExternalTextLink>
           </>
         }
@@ -279,7 +282,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         <div
           className="grid grid-cols-1 gap-2 sm:grid-cols-3"
           role="radiogroup"
-          aria-label="Remote access mode"
+          aria-label={t('Remote access mode')}
         >
           {ACCESS_MODES.map((option) => {
             const selected = snapshot.mode === option.mode
@@ -348,7 +351,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       {accessIsApp ? (
         <SettingsSection
           contentClassName="space-y-3"
-          title="Remote App Access"
+          title={t('Remote App Access')}
           action={
             <Badge variant="outline" className={statusClassName}>
               {statusLabel}
@@ -357,8 +360,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
-              Open this computer from the signed-in mobile app. Open Science creates and maintains
-              the local service automatically after this computer is added once.
+              {t(
+                'Open this computer from the signed-in mobile app. Open Science creates and maintains the local service automatically after this computer is added once.'
+              )}
             </p>
             {detectButton}
           </div>
@@ -399,7 +403,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       {accessIsBrowser ? (
         <SettingsSection
           contentClassName="space-y-3"
-          title="Remote Browser Access"
+          title={t('Remote Browser Access')}
           action={
             <Badge variant="outline" className={statusClassName}>
               {statusLabel}
@@ -408,8 +412,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
-              Open a persistent HTTPS address from any modern browser. Open Science creates and
-              maintains the public browser service automatically.
+              {t(
+                'Open a persistent HTTPS address from any modern browser. Open Science creates and maintains the public browser service automatically.'
+              )}
             </p>
             {detectButton}
           </div>
@@ -429,7 +434,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-sm font-medium text-foreground">
-                          Browser link is ready
+                          {t('Browser link is ready')}
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <Button
@@ -444,7 +449,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                           <Button type="button" variant="outline" size="sm" asChild>
                             <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
                               <ExternalLink className="size-3.5" aria-hidden="true" />
-                              Open
+                              {t('Open')}
                             </a>
                           </Button>
                         </div>
@@ -467,17 +472,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                     marginSize={2}
                     bgColor="#ffffff"
                     fgColor="#111827"
-                    title="Scan to open Open Science"
+                    title={t('Scan to open Open Science')}
                   />
                   <div className="mt-1 text-center text-[11px] font-medium text-slate-700">
-                    Scan to open
+                    {t('Scan to open')}
                   </div>
                 </div>
               </div>
             ) : (
               <div>
                 <div className="text-sm text-muted-foreground">
-                  The browser link and QR code appear here after setup is complete.
+                  {t('The browser link and QR code appear here after setup is complete.')}
                 </div>
                 <BrowserAccessSteps />
               </div>
@@ -488,12 +493,12 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
       {snapshot.canManagePairing && accessUsesPairing ? (
         <SettingsSection
-          title="Trusted browsers"
+          title={t('Trusted browsers')}
           description="Always-trusted browsers can reconnect while the same remote address remains available. Revoking one takes effect on its next request or WebSocket reconnect."
         >
           {snapshot.trustedBrowsers.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-              No browser has permanent access.
+              {t('No browser has permanent access.')}
             </div>
           ) : (
             <div className="divide-y divide-border rounded-xl border border-border">
@@ -537,7 +542,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         >
           {snapshot.pendingRequests.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-              No browsers are waiting for approval.
+              {t('No browsers are waiting for approval.')}
             </div>
           ) : (
             <div className="space-y-3">
@@ -600,8 +605,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       ) : null}
 
       <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-        Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI
-        and does not include, redistribute, register, or create an account for it.
+        {t(
+          'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.'
+        )}
       </p>
     </div>
   )

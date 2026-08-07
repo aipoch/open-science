@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -120,6 +121,8 @@ const TiffPreviewContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const resourceKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -296,7 +299,7 @@ const TiffPreviewContent = ({
     result?.status !== 'ready' ||
     result.requestKey !== requestKey
   ) {
-    return <PreviewLoadingContent title="Decoding TIFF image" />
+    return <PreviewLoadingContent title={t('Decoding TIFF image')} />
   }
 
   return (

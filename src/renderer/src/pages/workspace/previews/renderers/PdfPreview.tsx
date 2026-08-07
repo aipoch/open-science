@@ -1,5 +1,6 @@
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -42,10 +43,11 @@ const PdfZoomControls = ({
   onZoomOut: () => void
   onReset: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const actions = [
-    { label: 'Zoom out', icon: ZoomOut, onClick: onZoomOut, disabled: zoom <= MIN_ZOOM },
-    { label: 'Reset zoom', icon: Maximize2, onClick: onReset, disabled: zoom === 1 },
-    { label: 'Zoom in', icon: ZoomIn, onClick: onZoomIn, disabled: zoom >= MAX_ZOOM }
+    { label: t('Zoom out'), icon: ZoomOut, onClick: onZoomOut, disabled: zoom <= MIN_ZOOM },
+    { label: t('Reset zoom'), icon: Maximize2, onClick: onReset, disabled: zoom === 1 },
+    { label: t('Zoom in'), icon: ZoomIn, onClick: onZoomIn, disabled: zoom >= MAX_ZOOM }
   ]
 
   return (
@@ -277,6 +279,7 @@ export const PdfPreviewContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -436,7 +439,7 @@ export const PdfPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={currentDocumentState.error}
-        fallbackMessage="This PDF couldn't be rendered for preview"
+        fallbackMessage={t("This PDF couldn't be rendered for preview")}
       />
     )
   }

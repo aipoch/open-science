@@ -105,11 +105,22 @@ export const defaultProviderKindKey = (
 
 // Per-field validation errors. Custom needs base URL/model/key; official needs only a key (base URL
 // and model come from the registry).
+//
+// Values are the English copy itself, which under natural-language keys is also its own catalog key:
+// validation stays a locale-independent decision about the draft, and ProviderForm resolves each
+// through t() at render time. The union (rather than `string`) makes a typo in the English a
+// typecheck failure at every call site.
+export type ProviderFormErrorKey =
+  | 'Base URL is required.'
+  | 'Model is required.'
+  | 'API key is required.'
+  | 'Context window must be a positive whole number of tokens.'
+
 export type ProviderFormErrors = {
-  baseUrl?: string
-  contextWindow?: string
-  key?: string
-  model?: string
+  baseUrl?: ProviderFormErrorKey
+  contextWindow?: ProviderFormErrorKey
+  key?: ProviderFormErrorKey
+  model?: ProviderFormErrorKey
 }
 
 // Computes required-field errors for a draft. On edit, an already-stored key satisfies the key
@@ -151,28 +162,46 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
 export type ProviderKindGroup = 'codex' | 'claude' | 'api' | 'other'
 
+export type ProviderKindGroupLabelKey =
+  'Codex subscription' | 'Claude subscription' | 'Official API' | 'Other'
+
+// A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
+// string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
+// which the glossary keeps in English in every locale. Only the description is prose.
+export type ProviderKindDescriptionKey =
+  | 'Use an existing Codex profile or sign in with a separate Open Science profile.'
+  | 'Use an existing Claude profile or sign in with a separate Open Science profile.'
+  | 'API key — models provided'
+  | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
+
 // Group headers shown in the provider-type picker and dropdown, in display order. The two
 // subscription groups mirror each other: only the one matching the active framework is rendered.
-export const PROVIDER_KIND_GROUPS: { id: ProviderKindGroup; label: string }[] = [
-  { id: 'codex', label: 'Codex subscription' },
-  { id: 'claude', label: 'Claude subscription' },
-  { id: 'api', label: 'Official API' },
-  { id: 'other', label: 'Other' }
+export const PROVIDER_KIND_GROUPS: {
+  id: ProviderKindGroup
+  labelKey: ProviderKindGroupLabelKey
+}[] = [
+  { id: 'codex', labelKey: 'Codex subscription' },
+  { id: 'claude', labelKey: 'Claude subscription' },
+  { id: 'api', labelKey: 'Official API' },
+  { id: 'other', labelKey: 'Other' }
 ]
 
 // A selectable option in the provider-type dropdown. Official vendors are keyed `official:<vendorId>`.
+// A kind carries exactly one of `label` (a vendor / subscription proper noun, identical in every
+// locale) or `labelKey` (translated prose — only the custom gateway). Modelled as a union so the form
+// has to handle both and neither can be silently forgotten.
 export type ProviderKind = {
   key: string
-  label: string
-  description: string
+  descriptionKey: ProviderKindDescriptionKey
   group: ProviderKindGroup
-}
+} & ({ label: string; labelKey?: never } | { labelKey: 'Custom Gateway'; label?: never })
 
 export const PROVIDER_KINDS: ProviderKind[] = [
   {
     key: 'codex-subscription',
     label: codexSubscriptionProviderIdentity().name,
-    description: 'Use an existing Codex profile or sign in with a separate Open Science profile.',
+    descriptionKey:
+      'Use an existing Codex profile or sign in with a separate Open Science profile.',
     group: 'codex'
   },
   {
@@ -181,19 +210,20 @@ export const PROVIDER_KINDS: ProviderKind[] = [
     // app-owned config dir). Surfaced only when Claude Code is the active framework.
     key: 'claude-subscription',
     label: claudeIsolatedProviderIdentity().name,
-    description: 'Use an existing Claude profile or sign in with a separate Open Science profile.',
+    descriptionKey:
+      'Use an existing Claude profile or sign in with a separate Open Science profile.',
     group: 'claude'
   },
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    description: 'API key — models provided',
+    descriptionKey: 'API key — models provided',
     group: 'api'
   })),
   {
     key: 'custom',
-    label: 'Custom Gateway',
-    description: 'Base URL, key, and model for a Messages or Chat Completions endpoint',
+    labelKey: 'Custom Gateway',
+    descriptionKey: 'Base URL, key, and model for a Messages or Chat Completions endpoint',
     group: 'other'
   }
 ]

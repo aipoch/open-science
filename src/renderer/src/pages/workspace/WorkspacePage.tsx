@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -382,6 +383,7 @@ const WorkspacePage = ({
   isSessionPersistenceReady,
   canDeleteConversations
 }: WorkspacePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [sidebarPanelState, setSidebarPanelState] = useState<'open' | 'collapsed'>('open')
   const sidebarToggleRef = useRef<HTMLButtonElement | null>(null)
   const previewToggleRef = useRef<HTMLButtonElement | null>(null)
@@ -2330,7 +2332,7 @@ const WorkspacePage = ({
           <button
             type="button"
             className="fixed inset-0 z-[65] bg-black/45 md:hidden"
-            aria-label="Close navigation"
+            aria-label={t('Close navigation')}
             onClick={() => setIsMobileSidebarOpen(false)}
           />
         ) : null}
@@ -2459,7 +2461,7 @@ const WorkspacePage = ({
 
               <ResizableHandle
                 elementRef={sidebarSeparatorRef}
-                aria-label="Resize left panel"
+                aria-label={t('Resize left panel')}
                 disabled={sidebarPanelState === 'collapsed'}
                 aria-hidden={sidebarPanelState === 'collapsed'}
                 className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-200 ease-out ${
@@ -2617,7 +2619,7 @@ const WorkspacePage = ({
             <>
               <ResizableHandle
                 elementRef={previewSeparatorRef}
-                aria-label="Resize right panel"
+                aria-label={t('Resize right panel')}
                 disabled={previewPanelState === 'collapsed'}
                 aria-hidden={previewPanelState === 'collapsed'}
                 className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-200 ease-out ${

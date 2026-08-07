@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Circle, Download, LoaderCircle, X } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -322,6 +323,8 @@ const ProvenanceMessagesTimeline = ({
   projectId: string
   sessionId: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({})
   const projectedById = useMemo(
@@ -352,7 +355,7 @@ const ProvenanceMessagesTimeline = ({
       scrollPreviousItemPeek={64}
     >
       <MessageScroller className="min-h-0 bg-bg-000">
-        <MessageScrollerViewport aria-label="Provenance messages">
+        <MessageScrollerViewport aria-label={t('Provenance messages')}>
           <MessageScrollerContent className="gap-0 px-4">
             <div className="mx-auto w-full max-w-4xl pb-4">
               {conversationItems.map((conversationItem) => {
@@ -423,6 +426,8 @@ const ArtifactProvenancePanel = ({
   onClose,
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
   const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
   const [lineageResult, setLineageResult] = useState<{
@@ -926,7 +931,7 @@ const ArtifactProvenancePanel = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Previous Artifact version"
+          aria-label={t('Previous Artifact version')}
           disabled={selectedIndex <= 0}
           onClick={() => {
             const versionId = lineage?.versions[selectedIndex - 1]?.versionId
@@ -942,7 +947,7 @@ const ArtifactProvenancePanel = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Next Artifact version"
+          aria-label={t('Next Artifact version')}
           disabled={!lineage || selectedIndex < 0 || selectedIndex >= lineage.versions.length - 1}
           onClick={() => {
             const versionId = lineage?.versions[selectedIndex + 1]?.versionId
@@ -968,7 +973,7 @@ const ArtifactProvenancePanel = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label="Close Provenance"
+          aria-label={t('Close Provenance')}
           onClick={onClose}
         >
           <X aria-hidden="true" />
@@ -997,12 +1002,12 @@ const ArtifactProvenancePanel = ({
         {error ? <p className="p-5 text-sm text-danger-000">{error}</p> : null}
         {!error && lineageUnavailable ? (
           <p className="p-5 text-sm text-text-300">
-            Provenance is not available for this legacy file.
+            {t('Provenance is not available for this legacy file.')}
           </p>
         ) : null}
         {!error && !lineageUnavailable && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
-            <LoaderCircle className="size-4 animate-spin" aria-label="Loading Provenance" />
+            <LoaderCircle className="size-4 animate-spin" aria-label={t('Loading Provenance')} />
           </div>
         ) : null}
         {provenance && deferredTabLabel && deferredSectionLoading ? (
@@ -1034,7 +1039,7 @@ const ArtifactProvenancePanel = ({
                   onClick={() => void downloadScript(generatedCode.code, generatedCode.language)}
                 >
                   <Download aria-hidden="true" />
-                  Download script
+                  {t('Download script')}
                 </Button>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
@@ -1042,7 +1047,7 @@ const ArtifactProvenancePanel = ({
                     className="animate-spin motion-reduce:animate-none"
                     aria-hidden="true"
                   />
-                  Generating…
+                  {t('Generating…')}
                 </Button>
               ) : codeReconstructionState?.state === 'ready' ? (
                 <Button
@@ -1068,27 +1073,32 @@ const ArtifactProvenancePanel = ({
                 </Button>
               ) : codeReconstructionState?.state === 'unavailable' ? (
                 <Button type="button" size="sm" className="shrink-0 whitespace-nowrap" disabled>
-                  Generate script
+                  {t('Generate script')}
                 </Button>
               ) : (
                 <LoaderCircle
                   className="size-4 animate-spin text-text-300 motion-reduce:animate-none"
-                  aria-label="Checking for a generated script"
+                  aria-label={t('Checking for a generated script')}
                 />
               )}
               {generatedCode ? (
                 <div className="min-w-0 flex-1 truncate text-sm text-text-300">
-                  <span>LLM-generated reconstruction · see </span>
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="h-auto whitespace-nowrap px-0 py-0 text-sm"
-                    onClick={() => setActiveTab('execution')}
-                  >
-                    Execution Log
-                  </Button>
-                  <span> for the raw record</span>
+                  {/* One sentence around the tab link, so each locale can place the link where its
+                      own word order needs it. */}
+                  <Trans
+                    i18nKey="LLM-generated reconstruction · see <logLink>Execution Log</logLink> for the raw record"
+                    components={{
+                      logLink: (
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto whitespace-nowrap px-0 py-0 text-sm"
+                          onClick={() => setActiveTab('execution')}
+                        />
+                      )
+                    }}
+                  />
                 </div>
               ) : codeReconstructionResult?.status === 'error' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-danger-000" role="alert">
@@ -1100,16 +1110,17 @@ const ArtifactProvenancePanel = ({
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-300">
-                  Using the provider and model selected when generation started.
+                  {t('Using the provider and model selected when generation started.')}
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-300">
-                  Generate a standalone script from the immutable Execution Log with your current
-                  provider and model.
+                  {t(
+                    'Generate a standalone script from the immutable Execution Log with your current provider and model.'
+                  )}
                 </p>
               ) : (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-300">
-                  Checking for a previously generated script…
+                  {t('Checking for a previously generated script…')}
                 </p>
               )}
             </div>
@@ -1133,20 +1144,22 @@ const ArtifactProvenancePanel = ({
                 className="flex min-h-48 items-center justify-center gap-2 px-4 py-8 text-sm text-text-300"
                 role="status"
                 aria-live="polite"
-                aria-label="Generating reconstructed script"
+                aria-label={t('Generating reconstructed script')}
               >
                 <LoaderCircle
                   className="size-5 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
-                <span>Generating script…</span>
+                <span>{t('Generating script…')}</span>
               </div>
             ) : generatedCode ? (
               <NotebookCodeBlock code={generatedCode.code} language={generatedCode.language} />
             ) : (
               <div className="space-y-3 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-text-000">Captured producer block</h3>
+                  <h3 className="text-sm font-semibold text-text-000">
+                    {t('Captured producer block')}
+                  </h3>
                   {reproductionCode ? (
                     <div className="flex items-center gap-1">
                       <Button
@@ -1156,7 +1169,7 @@ const ArtifactProvenancePanel = ({
                         onClick={() => void downloadProducerCode()}
                       >
                         <Download aria-hidden="true" />
-                        Download
+                        {t('Download')}
                       </Button>
                     </div>
                   ) : null}
@@ -1225,7 +1238,7 @@ const ArtifactProvenancePanel = ({
             </div>
           ) : (
             <p className="p-5 text-sm text-text-300">
-              Unable to determine the producer execution for this version.
+              {t('Unable to determine the producer execution for this version.')}
             </p>
           )
         ) : null}
@@ -1254,16 +1267,16 @@ const ArtifactProvenancePanel = ({
             {environment ? (
               <>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                  <dt className="text-text-300">Runtime</dt>
+                  <dt className="text-text-300">{t('Runtime')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.runtime_version) ?? 'Version unavailable'}
                   </dd>
-                  <dt className="text-text-300">Source</dt>
+                  <dt className="text-text-300">{t('Source')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.runtime_source) ?? 'unknown'} ·{' '}
                     {asString(environment.kernel_kind) ?? 'unknown'}
                   </dd>
-                  <dt className="text-text-300">Capture</dt>
+                  <dt className="text-text-300">{t('Capture')}</dt>
                   <dd className="text-text-100">
                     {asString(environment.capture_status) ?? 'partial'} ·{' '}
                     {environmentPackages.length} packages
@@ -1274,7 +1287,7 @@ const ArtifactProvenancePanel = ({
                     role="status"
                     className="rounded-md border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-xs text-text-200"
                   >
-                    <p className="font-medium text-text-100">Partial capture details</p>
+                    <p className="font-medium text-text-100">{t('Partial capture details')}</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
                       {environmentWarnings.map((warning) => (
                         <li key={warning}>{environmentWarningLabel(warning)}</li>
@@ -1286,9 +1299,9 @@ const ArtifactProvenancePanel = ({
                   <table className="w-full table-fixed text-left text-xs">
                     <thead className="bg-bg-100 text-text-300">
                       <tr>
-                        <th className="w-1/2 px-3 py-2 font-medium">Package</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">Version</th>
-                        <th className="w-1/4 px-3 py-2 font-medium">State</th>
+                        <th className="w-1/2 px-3 py-2 font-medium">{t('Package')}</th>
+                        <th className="w-1/4 px-3 py-2 font-medium">{t('Version')}</th>
+                        <th className="w-1/4 px-3 py-2 font-medium">{t('State')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1336,15 +1349,23 @@ const ArtifactProvenancePanel = ({
                 ) : null}
                 {environmentOperations.length > 0 ? (
                   <div className="space-y-2">
-                    <h4 className="font-semibold text-text-000">Operations</h4>
+                    <h4 className="font-semibold text-text-000">{t('Operations')}</h4>
                     <div className="overflow-hidden rounded-md border border-border-300/60">
                       <table className="w-full table-fixed text-left text-xs">
                         <thead className="bg-bg-100 text-text-300">
                           <tr>
-                            <th className="w-[34%] break-words px-2 py-2 font-medium">Time</th>
-                            <th className="w-1/5 break-words px-2 py-2 font-medium">Operation</th>
-                            <th className="w-[28%] break-words px-2 py-2 font-medium">Packages</th>
-                            <th className="w-[18%] break-words px-2 py-2 font-medium">Result</th>
+                            <th className="w-[34%] break-words px-2 py-2 font-medium">
+                              {t('Time')}
+                            </th>
+                            <th className="w-1/5 break-words px-2 py-2 font-medium">
+                              {t('Operation')}
+                            </th>
+                            <th className="w-[28%] break-words px-2 py-2 font-medium">
+                              {t('Packages')}
+                            </th>
+                            <th className="w-[18%] break-words px-2 py-2 font-medium">
+                              {t('Result')}
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1409,7 +1430,7 @@ const ArtifactProvenancePanel = ({
                                       {dependencyChanges.length > 0 ? (
                                         <div>
                                           <span className="font-medium text-text-200">
-                                            Dependency impact
+                                            {t('Dependency impact')}
                                           </span>
                                           <div className="mt-1 flex flex-wrap gap-1.5">
                                             {dependencyChanges.map((change, changeIndex) => (
@@ -1426,8 +1447,9 @@ const ArtifactProvenancePanel = ({
                                       {unattributedChanges.length > 0 ? (
                                         <div className={dependencyChanges.length > 0 ? 'mt-2' : ''}>
                                           <span className="font-medium text-text-200">
-                                            Observed since the previous snapshot (not attributed to
-                                            this operation)
+                                            {t(
+                                              'Observed since the previous snapshot (not attributed to this operation)'
+                                            )}
                                           </span>
                                           <div className="mt-1 flex flex-wrap gap-1.5">
                                             {unattributedChanges.map((change, changeIndex) => (
@@ -1443,7 +1465,7 @@ const ArtifactProvenancePanel = ({
                                       ) : null}
                                       {dependencyChanges.length === 0 &&
                                       unattributedChanges.length === 0 ? (
-                                        <span>No additional package version changes</span>
+                                        <span>{t('No additional package version changes')}</span>
                                       ) : null}
                                     </td>
                                   </tr>
@@ -1475,7 +1497,7 @@ const ArtifactProvenancePanel = ({
               />
               {lineage?.originSession.state === 'deleted' ? (
                 <p className="mt-3 text-xs text-text-300">
-                  Captured before source session deletion
+                  {t('Captured before source session deletion')}
                 </p>
               ) : null}
             </section>
@@ -1496,7 +1518,7 @@ const ArtifactProvenancePanel = ({
                       : 'This version was generated without an applicable reviewer audit.'}
                 </p>
                 {reviewUnavailableReason !== 'source-session-unavailable' ? (
-                  <p className="mt-3 text-xs text-text-300">Model · not triggered</p>
+                  <p className="mt-3 text-xs text-text-300">{t('Model · not triggered')}</p>
                 ) : null}
               </div>
             </section>

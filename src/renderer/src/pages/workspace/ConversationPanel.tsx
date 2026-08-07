@@ -33,6 +33,8 @@ import {
   X
 } from 'lucide-react'
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -269,6 +271,7 @@ const ConversationPanel = ({
   onReconfigureChooseOther,
   onReconfigureUseNone
 }: ConversationPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -429,20 +432,22 @@ const ConversationPanel = ({
           <button
             type="button"
             className="grid size-9 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-surface-control-hover hover:text-text-000 md:hidden"
-            aria-label="Open navigation"
+            aria-label={t('Open navigation')}
             onClick={onOpenSidebar}
           >
             <Menu className="size-5" strokeWidth={2} aria-hidden="true" />
           </button>
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
-            {activeSession?.title ?? 'New conversation'}
+            {activeSession?.title ?? t('New conversation')}
           </h1>
           <button
             type="button"
             className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
               isPreviewPanelCollapsed ? 'text-action-panel-toggle' : 'text-primary'
             }`}
-            aria-label={isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
+            aria-label={t(
+              isPreviewPanelCollapsed ? 'Expand preview panel' : 'Collapse preview panel'
+            )}
             aria-expanded={!isPreviewPanelCollapsed}
             aria-controls="right-panel"
             onClick={onTogglePreviewPanel}
@@ -474,7 +479,7 @@ const ConversationPanel = ({
                     red error box, so the user can re-attach the runtime and keep chatting. */}
                 {activeSession?.interrupted ? (
                   <SessionInterruptedBanner
-                    message={activeSession.error ?? 'This session was interrupted.'}
+                    message={activeSession.error ?? t('This session was interrupted.')}
                     isDisabled={!canResumeSession}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
@@ -484,7 +489,7 @@ const ConversationPanel = ({
                   // while the agent context is reset and the conversation is replayed as text.
                   <div className="mb-2 flex items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-3 py-2 text-[12px] leading-5 text-text-300">
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
-                    Compacting conversation to fit the context limit…
+                    {t('Compacting conversation to fit the context limit…')}
                   </div>
                 ) : actionError || activeSession?.status === 'error' ? (
                   <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
@@ -505,10 +510,10 @@ const ConversationPanel = ({
                             type="button"
                             onClick={openReportDialog}
                             className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-                            aria-label="Report this error"
+                            aria-label={t('Report this error')}
                           >
                             <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-                            Report error
+                            {t('Report error')}
                           </button>
                         ) : null}
                       </div>
@@ -567,12 +572,12 @@ const ConversationPanel = ({
                       <button
                         type="button"
                         className="flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[12px] font-normal text-text-100 transition-colors duration-200 ease-out hover:bg-bg-300 hover:text-text-000"
-                        aria-label="Open notebook"
+                        aria-label={t('Open notebook')}
                         aria-controls="right-panel"
                         onClick={() => onOpenNotebook(notebookReference)}
                       >
                         <BookOpen className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        Notebook
+                        {t('Notebook')}
                       </button>
                     ) : null}
                     <div className="flex-1" />
@@ -605,11 +610,14 @@ const ConversationPanel = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {`Could not switch to ${reconfigureError.specialistName}`}
+                          {t('Could not switch to {{name}}', {
+                            name: reconfigureError.specialistName
+                          })}
                         </div>
                         <div className="text-[11px] leading-4 text-red-400/80">
-                          The agent session could not be reconfigured. Your draft has been
-                          preserved.
+                          {t(
+                            'The agent session could not be reconfigured. Your draft has been preserved.'
+                          )}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <button
@@ -617,21 +625,21 @@ const ConversationPanel = ({
                             onClick={onReconfigureRetry}
                             className="flex h-6 items-center rounded px-2 text-[11px] font-medium text-red-300 hover:bg-red-500/15 border border-red-500/30"
                           >
-                            Retry
+                            {t('Retry')}
                           </button>
                           <button
                             type="button"
                             onClick={onReconfigureChooseOther}
                             className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
                           >
-                            Choose another specialist
+                            {t('Choose another specialist')}
                           </button>
                           <button
                             type="button"
                             onClick={onReconfigureUseNone}
                             className="flex h-6 items-center rounded px-2 text-[11px] text-red-400/80 hover:bg-red-500/10 border border-red-500/20"
                           >
-                            Use None (Main Agent)
+                            {t('Use None (Main Agent)')}
                           </button>
                         </div>
                       </div>
@@ -661,7 +669,7 @@ const ConversationPanel = ({
                   >
                     {/* File-drag overlay is scoped to the composer input card only. */}
                     {isDragging ? (
-                      <FileDropOverlay label="Drop files to attach" className="rounded-2xl" />
+                      <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
                     ) : null}
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 || attachmentTransfers.length > 0 ? (
@@ -693,7 +701,9 @@ const ConversationPanel = ({
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
                                   disabled={!canEditDraft}
-                                  aria-label={`Remove attachment ${attachmentName}`}
+                                  aria-label={t('Remove attachment {{name}}', {
+                                    name: attachmentName
+                                  })}
                                   onClick={() => onRemoveAttachment(attachment)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
@@ -714,11 +724,11 @@ const ConversationPanel = ({
                                   )
                             const statusLabel =
                               transfer.status === 'queued'
-                                ? 'Queued'
+                                ? t('Queued')
                                 : transfer.status === 'cancelling'
-                                  ? 'Cancelling…'
+                                  ? t('Cancelling…')
                                   : transfer.status === 'error'
-                                    ? transfer.error || 'Upload failed'
+                                    ? transfer.error || t('Upload failed')
                                     : `${percent}% of ${formatAttachmentSize(transfer.totalBytes)}`
 
                             return (
@@ -748,7 +758,9 @@ const ConversationPanel = ({
                                     <div
                                       className="mt-1 h-0.5 overflow-hidden rounded-full bg-bg-300"
                                       role="progressbar"
-                                      aria-label={`Uploading ${transfer.name}`}
+                                      aria-label={t('Uploading {{name}}', {
+                                        name: transfer.name
+                                      })}
                                       aria-valuemin={0}
                                       aria-valuemax={100}
                                       aria-valuenow={percent}
@@ -764,9 +776,12 @@ const ConversationPanel = ({
                                   type="button"
                                   className={attachmentRemoveButtonClassName}
                                   disabled={!canEditDraft || transfer.status === 'cancelling'}
-                                  aria-label={`${
-                                    transfer.status === 'error' ? 'Remove failed' : 'Cancel'
-                                  } attachment ${transfer.name}`}
+                                  aria-label={t(
+                                    transfer.status === 'error'
+                                      ? 'Remove failed attachment {{name}}'
+                                      : 'Cancel attachment {{name}}',
+                                    { name: transfer.name }
+                                  )}
                                   onClick={() => onCancelAttachmentTransfer(transfer)}
                                 >
                                   <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
@@ -785,8 +800,13 @@ const ConversationPanel = ({
                           onSubmit={handleSubmit}
                           onPaste={handleMessageDraftPaste}
                           disabled={!canEditDraft}
-                          placeholder={`Ask anything — / skills · @ files · ${globalSearchShortcut} search · ↑↓ history`}
-                          ariaLabel="Ask anything"
+                          placeholder={t(
+                            'Ask anything — / skills · @ files · {{shortcut}} search · ↑↓ history',
+                            {
+                              shortcut: globalSearchShortcut
+                            }
+                          )}
+                          ariaLabel={t('Ask anything')}
                           allowedSkillIds={allowedSkillIds}
                           isHistoryBrowsing={isHistoryBrowsing}
                           historyStatus={historyStatus}
@@ -809,8 +829,8 @@ const ConversationPanel = ({
                                     className={composerIconButtonClassName}
                                     aria-label={
                                       activeBranchPlan
-                                        ? 'Add attachment, view plan, or request review'
-                                        : 'Add attachment or request review'
+                                        ? t('Add attachment, view plan, or request review')
+                                        : t('Add attachment or request review')
                                     }
                                     data-testid="composer-plus-trigger"
                                   >
@@ -820,8 +840,8 @@ const ConversationPanel = ({
                               </TooltipTrigger>
                               <TooltipContent side="top">
                                 {activeBranchPlan
-                                  ? 'Add attachment, view plan, or request review'
-                                  : 'Add attachment or request review'}
+                                  ? t('Add attachment, view plan, or request review')
+                                  : t('Add attachment or request review')}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -832,14 +852,18 @@ const ConversationPanel = ({
                               onSelect={() => fileInputRef.current?.click()}
                             >
                               <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Attach files
+                              {t('Attach files')}
                             </DropdownMenuItem>
                             <div
                               className="px-2 py-1.5 text-[11px] leading-4 text-text-300"
                               data-testid="attachment-limits"
                             >
-                              Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
-                              file. Large files are linked, not embedded.
+                              {t(
+                                'Any file type · {{size}} per file. Large files are linked, not embedded.',
+                                {
+                                  size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
+                                }
+                              )}
                             </div>
                             <DropdownMenuSeparator />
                             {activeSession && activeBranchPlan ? (
@@ -862,7 +886,7 @@ const ConversationPanel = ({
                                     className="mr-2 size-4 text-text-300"
                                     aria-hidden="true"
                                   />
-                                  <span className="flex-1">View plan</span>
+                                  <span className="flex-1">{t('View plan')}</span>
                                   <span className="text-[11px] text-text-300">
                                     {activeBranchPlan.counts.completed}/
                                     {activeBranchPlan.counts.steps}
@@ -879,7 +903,7 @@ const ConversationPanel = ({
                               }}
                             >
                               <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Request review
+                              {t('Request review')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -926,9 +950,9 @@ const ConversationPanel = ({
                           <span
                             className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[11px] italic text-blue-400"
                             data-testid="specialist-pending-switch-chip"
-                            aria-label="Specialist switch pending"
+                            aria-label={t('Specialist switch pending')}
                           >
-                            Switching in this turn
+                            {t('Switching in this turn')}
                           </span>
                         ) : null}
 
@@ -969,7 +993,7 @@ const ConversationPanel = ({
                               type="button"
                               onClick={onCancelRun}
                               className={composerCancelButtonClassName}
-                              aria-label="Cancel run"
+                              aria-label={t('Cancel run')}
                             >
                               <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                             </button>
@@ -978,7 +1002,7 @@ const ConversationPanel = ({
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
-                              aria-label="Send message options"
+                              aria-label={t('Send message options')}
                               className={cn(
                                 'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
                                 !canSendMessage && 'opacity-50'
@@ -993,7 +1017,7 @@ const ConversationPanel = ({
                                     onClick={handleSubmit}
                                     disabled={!canSendMessage}
                                     className={composerSplitSendPrimaryButtonClassName}
-                                    aria-label="Send message"
+                                    aria-label={t('Send message')}
                                   >
                                     <ArrowUp
                                       className="size-4"
@@ -1002,7 +1026,7 @@ const ConversationPanel = ({
                                     />
                                   </Button>
                                 </TooltipTrigger>
-                                <TooltipContent side="top">Send message</TooltipContent>
+                                <TooltipContent side="top">{t('Send message')}</TooltipContent>
                               </Tooltip>
                               <DropdownMenu>
                                 <Tooltip>
@@ -1017,7 +1041,7 @@ const ConversationPanel = ({
                                           (!canSendMessage || !onBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
-                                        aria-label="More send options"
+                                        aria-label={t('More send options')}
                                         aria-haspopup="menu"
                                         data-testid="branch-send-menu-trigger"
                                       >
@@ -1029,7 +1053,9 @@ const ConversationPanel = ({
                                       </Button>
                                     </DropdownMenuTrigger>
                                   </TooltipTrigger>
-                                  <TooltipContent side="top">More send options</TooltipContent>
+                                  <TooltipContent side="top">
+                                    {t('More send options')}
+                                  </TooltipContent>
                                 </Tooltip>
                                 <DropdownMenuContent side="top" align="end" className="w-56">
                                   <DropdownMenuItem
@@ -1042,7 +1068,7 @@ const ConversationPanel = ({
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    Plan first
+                                    {t('Plan first')}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
@@ -1054,7 +1080,7 @@ const ConversationPanel = ({
                                       className="mr-2 size-4 text-text-300"
                                       aria-hidden="true"
                                     />
-                                    Branch in new session
+                                    {t('Branch in new session')}
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
@@ -1066,7 +1092,7 @@ const ConversationPanel = ({
                             onClick={handleSubmit}
                             disabled={!canSendMessage}
                             className={composerSendButtonClassName}
-                            aria-label="Send message"
+                            aria-label={t('Send message')}
                           >
                             <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
                           </button>

@@ -3,6 +3,7 @@
 // once an Agent total exists it remains the numerator until a fresher usage_update arrives. The
 // denominator is bound to the selected model and agent-context generation when that window is known.
 
+import { useTranslation } from 'react-i18next'
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 
@@ -63,6 +64,7 @@ const ComposerContextUsage = ({
   compactDisabledReason,
   onCompact
 }: ComposerContextUsageProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const contentId = useId()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -109,6 +111,11 @@ const ComposerContextUsage = ({
   const breakdown = contextUsage.breakdown
   const estimating = breakdown?.status === 'preflight'
   const hasAgentTotal = !estimating || contextUsage.agentUsed !== undefined
+  // Whole sentences per branch rather than a swapped-in noun: a pre-Agent snapshot is announced as an
+  // estimate, not as settled usage, and that distinction has to survive translation.
+  const triggerAriaLabel = hasAgentTotal
+    ? t('Context used: {{label}}', { label })
+    : t('Estimated context: {{label}}', { label })
   const showCompactAction =
     compacting ||
     (!estimating && usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
@@ -124,14 +131,14 @@ const ComposerContextUsage = ({
   const compactButton = (
     <button
       type="button"
-      aria-label={compacting ? 'Compacting context' : 'Compact context'}
+      aria-label={compacting ? t('Compacting context') : t('Compact context')}
       aria-disabled={compactUnavailable ? true : undefined}
       disabled={compacting || (compactUnavailable && !compactHint)}
       onClick={compacting || compactUnavailable ? undefined : onCompact}
       className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg bg-bg-200 px-2 text-[11px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-300 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-200' : ''}`}
     >
       <Minimize2 className="size-3" aria-hidden="true" />
-      {compacting ? 'Compacting…' : 'Compact'}
+      {compacting ? t('Compacting…') : t('Compact')}
     </button>
   )
 
@@ -142,7 +149,7 @@ const ComposerContextUsage = ({
           ref={triggerRef}
           type="button"
           className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
-          aria-label={`${hasAgentTotal ? 'Context used' : 'Estimated context'}: ${label}`}
+          aria-label={triggerAriaLabel}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
@@ -185,7 +192,7 @@ const ComposerContextUsage = ({
       >
         <div className="space-y-2.5 text-[12px]">
           <div>
-            <div className="text-[13px] font-medium">Context window</div>
+            <div className="text-[13px] font-medium">{t('Context window')}</div>
             <div
               data-slot="context-usage-summary"
               className="mt-1 flex min-w-0 items-baseline gap-2 whitespace-nowrap"

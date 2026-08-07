@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,8 @@ const PermissionScopeConfirmationDialog = ({
   onCancel,
   onConfirm
 }: PermissionScopeConfirmationDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const retainedConfirmation = useRetainedDialogValue(confirmation)
   const scope = retainedConfirmation?.scope ?? 'project'
   const subject = retainedConfirmation?.subject ?? 'this permission'
@@ -59,12 +62,13 @@ const PermissionScopeConfirmationDialog = ({
           </AlertDialog.Title>
           <AlertDialog.Description className={dialogDescriptionClassName}>
             {effect} You can revoke it in{' '}
-            <strong className="font-semibold text-foreground">Settings → Permissions</strong>.
+            <strong className="font-semibold text-foreground">{t('Settings → Permissions')}</strong>
+            .
           </AlertDialog.Description>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
               <Button type="button" variant="outline" data-testid="permission-scope-cancel">
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>

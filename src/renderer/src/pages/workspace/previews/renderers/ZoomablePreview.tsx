@@ -1,4 +1,5 @@
 import { Shrink, ZoomIn, ZoomOut } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch'
 
 import { Button } from '@/components/ui/button'
@@ -8,12 +9,13 @@ const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 const PreviewZoomControls = ({ reduceMotion }: { reduceMotion: boolean }): React.JSX.Element => {
+  const { t } = useTranslation()
   const { zoomIn, zoomOut, resetTransform } = useControls()
   const actions = [
-    { label: 'Zoom in', icon: ZoomIn, onClick: () => zoomIn() },
-    { label: 'Zoom out', icon: ZoomOut, onClick: () => zoomOut() },
+    { label: t('Zoom in'), icon: ZoomIn, onClick: () => zoomIn() },
+    { label: t('Zoom out'), icon: ZoomOut, onClick: () => zoomOut() },
     {
-      label: 'Reset zoom',
+      label: t('Reset zoom'),
       icon: Shrink,
       onClick: () => resetTransform(reduceMotion ? 0 : undefined)
     }

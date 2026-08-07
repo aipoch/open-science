@@ -1,5 +1,6 @@
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
@@ -20,6 +21,7 @@ import { formatBytes } from '../../../shared/update'
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
 const UpdateDialog = (): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const closeDialog = useUpdateStore((state) => state.closeDialog)
@@ -49,9 +51,14 @@ const UpdateDialog = (): React.JSX.Element | null => {
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <Dialog.Title className="text-base font-semibold">Update available</Dialog.Title>
+                <Dialog.Title className="text-base font-semibold">
+                  {t('Update available')}
+                </Dialog.Title>
                 <Dialog.Description className="mt-0.5 text-xs text-muted-foreground tabular-nums">
-                  v{dialogStatus.current} → v{dialogStatus.latest}
+                  {t('v{{current}} → v{{latest}}', {
+                    current: dialogStatus.current,
+                    latest: dialogStatus.latest
+                  })}
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
@@ -59,7 +66,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Close"
+                  aria-label={t('Close')}
                   disabled={isApplying}
                   className={dialogCloseButtonClassName}
                 >
@@ -70,19 +77,19 @@ const UpdateDialog = (): React.JSX.Element | null => {
 
             {dialogStatus.notes ? (
               <div className="mt-3">
-                <p className="mb-1 text-xs font-medium text-muted-foreground">What&apos;s new</p>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">{t("What's new")}</p>
                 <div className="max-h-96 overflow-auto rounded-lg bg-muted px-3 py-2">
                   <AgentMarkdown content={dialogStatus.notes} />
                 </div>
                 <ExternalTextLink href={releaseUrl} className="mt-2 text-xs">
-                  View full release notes on GitHub
+                  {t('View full release notes on GitHub')}
                 </ExternalTextLink>
               </div>
             ) : (
               <div className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                Release notes aren&apos;t available in-app for this version.{' '}
+                {t("Release notes aren't available in-app for this version.")}{' '}
                 <ExternalTextLink href={releaseUrl} className="text-xs">
-                  View release notes on GitHub
+                  {t('View release notes on GitHub')}
                 </ExternalTextLink>
               </div>
             )}
@@ -106,19 +113,21 @@ const UpdateDialog = (): React.JSX.Element | null => {
 
             {isApplying ? (
               <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                Open Science is stopping background tasks and will close to finish installing. The
-                update may take a moment; please don&apos;t reopen the app during this step. The
-                updated app will reopen automatically.
+                {t(
+                  "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
+                )}
               </div>
             ) : null}
 
             {dialogStatus.state === 'error' ? (
               <div className="mt-3" role="alert">
-                <p className="text-xs text-destructive">{dialogStatus.error ?? 'Update failed'}</p>
+                <p className="text-xs text-destructive">
+                  {dialogStatus.error ?? t('Update failed')}
+                </p>
                 {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
                   user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
                 <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
-                  Download manually
+                  {t('Download manually')}
                 </ExternalTextLink>
               </div>
             ) : null}
@@ -130,7 +139,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
                 disabled={isApplying}
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-bg-300"
               >
-                {isReady ? 'Close' : 'Cancel'}
+                {isReady ? t('Close') : t('Cancel')}
               </button>
               {isApplying ? (
                 <button
@@ -139,7 +148,7 @@ const UpdateDialog = (): React.JSX.Element | null => {
                   className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground opacity-70"
                 >
                   <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-                  Preparing update…
+                  {t('Preparing update…')}
                 </button>
               ) : isReady ? (
                 <button
@@ -150,12 +159,12 @@ const UpdateDialog = (): React.JSX.Element | null => {
                   {dialogStatus.applyKind === 'restart' ? (
                     <>
                       <RefreshCw className="size-4" aria-hidden="true" />
-                      Restart to update
+                      {t('Restart to update')}
                     </>
                   ) : (
                     <>
                       <ExternalLink className="size-4" aria-hidden="true" />
-                      Open installer
+                      {t('Open installer')}
                     </>
                   )}
                 </button>
@@ -168,10 +177,12 @@ const UpdateDialog = (): React.JSX.Element | null => {
                 >
                   <Download className="size-4" aria-hidden="true" />
                   {isDownloading
-                    ? `Downloading ${dialogStatus.progress ?? 0}%`
+                    ? t('Downloading {{percent}}%', { percent: dialogStatus.progress ?? 0 })
                     : dialogStatus.totalBytes
-                      ? `Download update (${formatBytes(dialogStatus.totalBytes)})`
-                      : 'Download update'}
+                      ? t('Download update ({{size}})', {
+                          size: formatBytes(dialogStatus.totalBytes)
+                        })
+                      : t('Download update')}
                 </button>
               )}
             </div>

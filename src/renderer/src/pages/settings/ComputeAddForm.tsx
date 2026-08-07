@@ -1,11 +1,18 @@
 import { ChevronDown } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type { CreateComputeHostRequest, SshOverrides } from '../../../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
 
@@ -39,6 +46,8 @@ const buildRequest = (
 }
 
 export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const sshAliases = useComputeStore((state) => state.sshAliases)
   const loadSshAliases = useComputeStore((state) => state.loadSshAliases)
   const createHost = useComputeStore((state) => state.createHost)
@@ -76,7 +85,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
       // Fire-and-forget: errors are captured as probeResult.ok=false and surfaced in the detail UI.
       void probeHost(host.providerId).catch(() => undefined)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not add host.')
+      setError(err instanceof Error ? err.message : t('Could not add host.'))
     } finally {
       setIsSubmitting(false)
     }
@@ -85,23 +94,24 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
   return (
     <div className="p-5">
       <p className="mb-5 text-[13px] leading-5 text-muted-foreground">
-        Pick a host alias from your <code className="font-mono text-xs">~/.ssh/config</code>, or
-        type one. Open Science will use it as a compute provider via your existing SSH key — no
-        credentials are copied.
+        <Trans
+          i18nKey="Pick a host alias from your <path>~/.ssh/config</path>, or type one. Open Science will use it as a compute provider via your existing SSH key — no credentials are copied."
+          components={{ path: <code className="font-mono text-xs" /> }}
+        />
       </p>
 
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-foreground">From ~/.ssh/config</label>
+          <label className="text-sm font-medium text-foreground">{t('From ~/.ssh/config')}</label>
           <Select
             value={alias}
             onValueChange={(value) => setAlias(value)}
             disabled={sshAliases.length === 0}
           >
-            <SelectTrigger aria-label="Pick a host from ~/.ssh/config">
+            <SelectTrigger aria-label={t('Pick a host from ~/.ssh/config')}>
               <SelectValue
                 placeholder={
-                  sshAliases.length === 0 ? 'No hosts in ~/.ssh/config' : 'Pick a host…'
+                  sshAliases.length === 0 ? t('No hosts in ~/.ssh/config') : t('Pick a host…')
                 }
               />
             </SelectTrigger>
@@ -117,25 +127,28 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="compute-alias" className="text-sm font-medium text-foreground">
-            Or type a host alias
+            {t('Or type a host alias')}
           </label>
           <Input
             id="compute-alias"
             value={alias}
             onChange={(event) => setAlias(event.target.value)}
-            placeholder="e.g. biowulf, lab-gpu, coder.myworkspace"
+            placeholder={t('e.g. biowulf, lab-gpu, coder.myworkspace')}
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-baseline justify-between gap-2">
             <label htmlFor="compute-details" className="text-sm font-medium text-foreground">
-              Anything Open Science should know? (optional)
+              {t('Anything Open Science should know? (optional)')}
             </label>
             <span
               className={`text-xs ${detailsTooLong ? 'text-destructive' : 'text-muted-foreground'}`}
             >
-              {detailsDoc.length} / {DETAILS_DOC_MAX_LENGTH} chars
+              {t('{{used}} / {{limit}} chars', {
+                used: detailsDoc.length,
+                limit: DETAILS_DOC_MAX_LENGTH
+              })}
             </span>
           </div>
           <Textarea
@@ -143,7 +156,9 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
             value={detailsDoc}
             onChange={(event) => setDetailsDoc(event.target.value)}
             rows={4}
-            placeholder="How do jobs run here — sbatch, qsub, or just bash? Is it OK to pip/conda install, and where should new envs go? Any partition, account, or module to use?"
+            placeholder={t(
+              'How do jobs run here — sbatch, qsub, or just bash? Is it OK to pip/conda install, and where should new envs go? Any partition, account, or module to use?'
+            )}
             aria-invalid={detailsTooLong || undefined}
           />
         </div>
@@ -162,20 +177,23 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
               }`}
               aria-hidden="true"
             />
-            Advanced (override ~/.ssh/config)
+            {t('Advanced (override ~/.ssh/config)')}
           </button>
 
           {advancedOpen ? (
             <div className="flex flex-col gap-4 border-t border-border px-3 py-3">
               <p className="text-xs text-muted-foreground">
-                By default Open Science resolves connection details via{' '}
-                <code className="font-mono">ssh -G &lt;alias&gt;</code> from your{' '}
-                <code className="font-mono">~/.ssh/config</code>. Set these only if you need to
-                override that.
+                <Trans
+                  i18nKey="By default Open Science resolves connection details by running <code>ssh -G</code> against the alias in your <path>~/.ssh/config</path>. Set these only if you need to override that."
+                  components={{
+                    code: <code className="font-mono" />,
+                    path: <code className="font-mono" />
+                  }}
+                />
               </p>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="compute-user" className="text-sm font-medium text-foreground">
-                  User
+                  {t('User')}
                 </label>
                 <Input
                   id="compute-user"
@@ -184,12 +202,12 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
                   placeholder="argocd"
                 />
                 <span className="text-xs text-muted-foreground">
-                  Leave empty to use User from ~/.ssh/config.
+                  {t('Leave empty to use User from ~/.ssh/config.')}
                 </span>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="compute-port" className="text-sm font-medium text-foreground">
-                  Port
+                  {t('Port')}
                 </label>
                 <Input
                   id="compute-port"
@@ -199,12 +217,12 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
                   placeholder="22"
                 />
                 <span className="text-xs text-muted-foreground">
-                  Leave empty for 22 or Port from ~/.ssh/config.
+                  {t('Leave empty for 22 or Port from ~/.ssh/config.')}
                 </span>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="compute-identity" className="text-sm font-medium text-foreground">
-                  Identity file
+                  {t('Identity file')}
                 </label>
                 <Input
                   id="compute-identity"
@@ -213,7 +231,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
                   placeholder="~/.ssh/id_ed25519"
                 />
                 <span className="text-xs text-muted-foreground">
-                  Leave empty for ssh-agent / IdentityFile from ~/.ssh/config.
+                  {t('Leave empty for ssh-agent / IdentityFile from ~/.ssh/config.')}
                 </span>
               </div>
             </div>
@@ -228,10 +246,10 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={isSubmitting}>
-            Cancel
+            {tCommon('Cancel')}
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {isSubmitting ? 'Adding host…' : 'Add'}
+            {isSubmitting ? t('Adding host…') : t('Add')}
           </Button>
         </div>
       </div>

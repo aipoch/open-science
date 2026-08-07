@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { CardContent, CardFooter } from '@/components/ui/card'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -25,6 +27,7 @@ const useEnvironmentReady = (): boolean => {
 // The first-run step reuses the same runtime cards and repair/install behavior as Settings. Only the
 // surrounding Back/Continue gate is onboarding-specific.
 const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const environmentReady = useEnvironmentReady()
 
   return (
@@ -32,22 +35,24 @@ const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element =>
       <CardContent className="flex-1 p-0">
         <AgentPanel
           variant="onboarding"
-          title="Set up the agent runtime"
-          description="Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue."
+          title={t('Set up the agent runtime')}
+          description={t(
+            'Pick the agent Open Science drives, then install it. Only this agent needs to be installed to continue.'
+          )}
         />
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         <p className="text-xs leading-5 text-text-100">
           {environmentReady
-            ? 'All required environment checks passed.'
-            : 'Complete every required item above to continue.'}
+            ? t('All required environment checks passed.')
+            : t('Complete every required item above to continue.')}
         </p>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" onClick={onBack}>
-            Back
+            {t('Back', { context: 'step' })}
           </Button>
           <Button type="button" onClick={onContinue} disabled={!environmentReady} className="px-4">
-            Continue
+            {t('Continue')}
           </Button>
         </div>
       </CardFooter>

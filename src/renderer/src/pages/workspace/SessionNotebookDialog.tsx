@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
@@ -31,10 +32,6 @@ const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-// Renders "N word" with correct singular/plural for the summary counts.
-const pluralize = (count: number, word: string): string =>
-  `${count} ${word}${count === 1 ? '' : 's'}`
-
 // One persisted run rendered as a notebook cell: header badges, code, and split stdout/stderr. The
 // zero-based index is the cell number shown in [n], aligning the display with a notebook's cells.
 const NotebookDialogCell = ({
@@ -46,6 +43,7 @@ const NotebookDialogCell = ({
   index: number
   showInputData?: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
@@ -60,10 +58,12 @@ const NotebookDialogCell = ({
           {isProblem ? (
             errorLine ? (
               <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
-                error (line {errorLine})
+                {t('error (line {{line}})', { line: errorLine })}
               </span>
             ) : (
-              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
+              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">
+                {t('error')}
+              </span>
             )
           ) : null}
         </div>
@@ -113,6 +113,8 @@ const SessionNotebookContent = ({
   onExport,
   onExportAll
 }: SessionNotebookContentProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [exporting, setExporting] = useState(false)
   const [exportingAll, setExportingAll] = useState(false)
@@ -129,8 +131,8 @@ const SessionNotebookContent = ({
   const replCount = runs.filter((run) => resolveRunKernelKind(run) === 'repl').length
   const bashCount = runs.filter((run) => resolveRunKernelKind(run) === 'bash').length
   const extraCounts = [
-    replCount > 0 ? `${replCount} repl` : null,
-    bashCount > 0 ? `${bashCount} shell` : null
+    replCount > 0 ? t('{{count}} repl', { count: replCount }) : null,
+    bashCount > 0 ? t('{{count}} shell', { count: bashCount }) : null
   ].filter((part): part is string => part !== null)
 
   // Per-kernel tabs, in fixed order, keeping only kinds that actually have a run — same has-runs
@@ -193,12 +195,13 @@ const SessionNotebookContent = ({
     <>
       <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3.5">
         <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
-          <span>Session notebook</span>
+          <span>{t('Session notebook')}</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal text-muted-foreground">
             {shortId}
           </span>
           <span className="truncate text-xs font-normal text-muted-foreground">
-            {pluralize(agents, 'agent')} · {pluralize(cells, 'cell')}
+            {t('{{count}} agents', { defaultValue_one: '{{count}} agent', count: agents })} ·{' '}
+            {t('{{count}} cells', { defaultValue_one: '{{count}} cell', count: cells })}
             {extraCounts.length > 0 ? ` · ${extraCounts.join(' / ')}` : ''}
           </span>
         </h2>
@@ -206,7 +209,7 @@ const SessionNotebookContent = ({
           type="button"
           onClick={onClose}
           className="-m-1 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Close"
+          aria-label={tCommon('Close')}
         >
           <X className="size-4" aria-hidden="true" />
         </button>
@@ -214,14 +217,16 @@ const SessionNotebookContent = ({
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {status === 'loading' ? (
-          <p className="px-5 py-16 text-center text-sm text-muted-foreground">Loading notebook…</p>
+          <p className="px-5 py-16 text-center text-sm text-muted-foreground">
+            {t('Loading notebook…')}
+          </p>
         ) : status === 'error' ? (
           <p className="px-5 py-16 text-center text-sm text-danger-000">
-            {error ?? 'Failed to load notebook.'}
+            {error ?? t('Failed to load notebook.')}
           </p>
         ) : runs.length === 0 ? (
           <p className="px-5 py-16 text-center text-sm text-muted-foreground">
-            No execution records for this session.
+            {t('No execution records for this session.')}
           </p>
         ) : (
           <>
@@ -297,19 +302,25 @@ const SessionNotebookContent = ({
                       onClick={() => void handleExportAll()}
                       data-testid="session-notebook-export-all"
                       className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label={`Download separate notebooks by kernel (${exportAllCount})`}
+                      aria-label={t('Download separate notebooks by kernel ({{count}})', {
+                        count: exportAllCount
+                      })}
                     >
                       {exportingAll ? (
                         <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
                       ) : (
                         <Download className="size-3.5" aria-hidden="true" />
                       )}
-                      {exportingAll ? 'Exporting…' : `All (${exportAllCount})`}
+                      {exportingAll
+                        ? t('Exporting…')
+                        : t('All ({{count}})', { count: exportAllCount })}
                     </button>
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  Save one .ipynb per data kernel ({exportAllCount} files) to a chosen directory.
+                  {t('Save one .ipynb per data kernel ({{count}} files) to a chosen directory.', {
+                    count: exportAllCount
+                  })}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -327,8 +338,8 @@ const SessionNotebookContent = ({
                     className="flex items-center justify-center gap-1.5 rounded px-2 py-1 text-xs text-text-200 hover:bg-bg-200 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label={
                       resolvedDataKernel
-                        ? `Download ${resolvedDataKernel} as .ipynb`
-                        : 'Download as .ipynb'
+                        ? t('Download {{kernel}} as .ipynb', { kernel: resolvedDataKernel })
+                        : t('Download as .ipynb')
                     }
                   >
                     {exporting ? (
@@ -336,18 +347,20 @@ const SessionNotebookContent = ({
                     ) : (
                       <Download className="size-3.5" aria-hidden="true" />
                     )}
-                    {exporting ? 'Exporting…' : '.ipynb'}
+                    {exporting ? t('Exporting…') : t('.ipynb')}
                   </button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
                 {resolvedDataKernel
-                  ? `Download ${kernelKindLabel(resolvedDataKernel)} cells as .ipynb${
+                  ? `${t('Download {{kernel}} cells as .ipynb', {
+                      kernel: kernelKindLabel(resolvedDataKernel)
+                    })}${
                       effectiveActiveKind !== resolvedDataKernel
-                        ? ' (control tab falls back to most recent data kernel)'
+                        ? t(' (control tab falls back to most recent data kernel)')
                         : ''
                     }`
-                  : 'Run a Python or R cell first to enable .ipynb export.'}
+                  : t('Run a Python or R cell first to enable .ipynb export.')}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -375,6 +388,7 @@ const SessionNotebookDialog = ({
   session,
   onClose
 }: SessionNotebookDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
@@ -436,7 +450,7 @@ const SessionNotebookDialog = ({
             'flex max-h-[85vh] w-[calc(100%-2rem)] max-w-5xl flex-col overflow-hidden p-0'
           )}
         >
-          <Dialog.Title className="sr-only">Session notebook</Dialog.Title>
+          <Dialog.Title className="sr-only">{t('Session notebook')}</Dialog.Title>
           {dialogSession ? (
             <SessionNotebookContent
               // Remount per session: the dialog is mounted once and the session prop swaps in
@@ -464,7 +478,10 @@ const SessionNotebookDialog = ({
                   workspaceCwd: dialogSession.cwd ?? ''
                 })
                 if (result.saved) {
-                  return `Saved ${result.files.length} notebooks to ${result.directory}`
+                  return t('Saved {{count}} notebooks to {{directory}}', {
+                    count: result.files.length,
+                    directory: result.directory
+                  })
                 }
                 return undefined
               }}

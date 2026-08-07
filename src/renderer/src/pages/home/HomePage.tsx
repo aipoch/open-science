@@ -10,8 +10,9 @@ import {
 } from 'lucide-react'
 import { DropdownMenu } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -21,6 +22,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { LanguagePreferenceMenu } from '@/components/LanguageControls'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
@@ -33,6 +35,19 @@ import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
 
 const RECENT_SESSION_LIMIT = 5
+
+// Compact labels for dense rows ("3d"), unlike the verbose wording in global search ("3 days ago").
+// The unit is a runtime value, so it maps to its English text rather than being interpolated into a
+// key. Every entry carries the 'ago' context: Chinese needs "3 天前" here, where the file browser's
+// bare-age column says "3 天" for the same unit.
+const COMPACT_ELAPSED = {
+  minute: '{{count}}m',
+  hour: '{{count}}h',
+  day: '{{count}}d',
+  week: '{{count}}w',
+  month: '{{count}}mo',
+  year: '{{count}}y'
+} as const satisfies Record<Exclude<RelativeTimeUnit, 'now'>, string>
 
 type ProjectSummary = {
   project: Project
@@ -85,6 +100,7 @@ const HomePage = ({
   canDeleteProjects,
   hasCompleteSessionCatalog
 }: HomePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
@@ -228,7 +244,7 @@ const HomePage = ({
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
         setArchiveProjectError(
-          error instanceof Error ? error.message : 'Could not archive project.'
+          error instanceof Error ? error.message : t('Could not archive project.')
         )
       )
       .finally(() => {
@@ -274,7 +290,7 @@ const HomePage = ({
         if (isCreate) openProject(project.id, 'user')
       })
       .catch((error: unknown) => {
-        setFormError(error instanceof Error ? error.message : 'Could not save project.')
+        setFormError(error instanceof Error ? error.message : t('Could not save project.'))
       })
       .finally(() => {
         setIsSubmitting(false)
@@ -311,12 +327,18 @@ const HomePage = ({
       })
   }
 
-  const formTitle = formState?.mode === 'edit' ? 'Edit project' : 'New project'
-  const formDescription =
-    formState?.mode === 'edit'
-      ? 'Rename this project or update its description.'
-      : 'Group related sessions under a project. You can rename it later.'
-  const formSubmitLabel = formState?.mode === 'edit' ? 'Save changes' : 'Create project'
+  const isEditForm = formState?.mode === 'edit'
+  const formTitle = isEditForm ? t('Edit project') : t('New project')
+  const formDescription = isEditForm
+    ? t('Rename this project or update its description.')
+    : t('Group related sessions under a project. You can rename it later.')
+  const formSubmitLabel = isEditForm ? t('Save changes') : t('Create project')
+
+  // The bucket comes from a pure helper; the wording is per-locale ("3d" vs "3 天前").
+  const relativeTime = (timestamp: number): string => {
+    const { unit, count } = relativeTimeParts(timestamp)
+    return unit === 'now' ? t('now') : t(COMPACT_ELAPSED[unit], { count, context: 'ago' })
+  }
 
   return (
     <main className="min-h-svh bg-bg-10 text-text-000">
@@ -331,7 +353,7 @@ const HomePage = ({
             >
               Open Science
             </a>
-            <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             <UpdateCapsule />
@@ -340,25 +362,30 @@ const HomePage = ({
                 type="button"
                 onClick={() => openSettingsToPanel(environmentRepairPanel)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
-                aria-label="Open environment repair"
+                aria-label={t('Open environment repair')}
               >
                 <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
                 <span className="hidden sm:inline">
                   {requiredEnvironmentFailures.length === 1
-                    ? `${requiredEnvironmentFailures[0].label} needs attention`
-                    : `${requiredEnvironmentFailures.length} environment items need attention`}
+                    ? t('{{label}} needs attention', {
+                        label: requiredEnvironmentFailures[0].label
+                      })
+                    : t('{{count}} environment items need attention', {
+                        count: requiredEnvironmentFailures.length
+                      })}
                 </span>
-                <span className="sm:hidden">Environment</span>
+                <span className="sm:hidden">{t('Environment')}</span>
               </button>
             ) : null}
             <NetworkStatusIndicator variant="pill" />
             <span className="hidden sm:inline-flex">
               <GitHubStarBadge />
             </span>
+            <LanguagePreferenceMenu />
             <ThemePreferenceMenu />
             <button
               type="button"
-              aria-label="Model settings"
+              aria-label={t('Model settings')}
               onClick={openSettings}
               className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
             >
@@ -372,16 +399,16 @@ const HomePage = ({
               onClick={openCreateDialog}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              <span className="hidden sm:inline">New project</span>
+              <span className="hidden sm:inline">{t('New project')}</span>
             </Button>
           </div>
         </header>
 
         <div className="mt-8 grid grid-cols-1 gap-7 sm:mt-10 sm:gap-8 lg:grid-cols-2">
-          <section className="min-w-0" aria-label="Projects">
+          <section className="min-w-0" aria-label={t('Projects')}>
             <h2 className={sectionHeadingClassName}>
               <Archive className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
-              Projects
+              {t('Projects')}
             </h2>
             {archiveProjectError ? (
               <div
@@ -396,11 +423,11 @@ const HomePage = ({
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
                 role="alert"
               >
-                Could not load projects: {loadError}
+                {t('Could not load projects: {{error}}', { error: loadError })}
               </div>
             ) : projectSummaries.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                No projects yet. Create one to get started.
+                {t('No projects yet. Create one to get started.')}
               </div>
             ) : (
               <div className={listCardClassName}>
@@ -418,31 +445,34 @@ const HomePage = ({
                       <span className="truncate font-semibold text-text-000">{project.name}</span>
                       {project.isExample ? (
                         <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
-                          Example
+                          {t('Example')}
                         </span>
                       ) : null}
                     </button>
                     <span className="shrink-0 text-xs text-text-100">
                       {hasCompleteSessionCatalog
-                        ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
-                        : 'Session count unavailable'}
+                        ? t('{{count}} sessions', {
+                            defaultValue_one: '{{count}} session',
+                            count: sessionCount
+                          })
+                        : t('Session count unavailable')}
                     </span>
                     <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
-                      {formatRelativeTime(lastActivityAt)}
+                      {relativeTime(lastActivityAt)}
                     </span>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>
                         <button
                           type="button"
                           className={rowActionClassName}
-                          aria-label={`Open actions for ${project.name}`}
+                          aria-label={t('Open actions for {{name}}', { name: project.name })}
                         >
                           <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
                         </button>
                       </DropdownMenu.Trigger>
                       <DropdownMenu.Portal>
                         <DropdownMenu.Content
-                          aria-label="Project actions"
+                          aria-label={t('Project actions')}
                           className={menuContentClassName}
                           align="end"
                           sideOffset={6}
@@ -452,7 +482,7 @@ const HomePage = ({
                             onSelect={() => openEditDialog(project)}
                           >
                             <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Rename…
+                            {t('Rename…')}
                           </DropdownMenu.Item>
                           <DropdownMenu.Item
                             className={menuItemClassName}
@@ -462,7 +492,10 @@ const HomePage = ({
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
+                            {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                            {archivingProjectIds.has(project.id)
+                              ? t('Archiving…')
+                              : t('Archive', { context: 'verb' })}
                           </DropdownMenu.Item>
                           <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
                           <DropdownMenu.Item
@@ -471,7 +504,7 @@ const HomePage = ({
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Delete
+                            {t('Delete')}
                           </DropdownMenu.Item>
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
@@ -482,14 +515,14 @@ const HomePage = ({
             )}
           </section>
 
-          <section className="min-w-0" aria-label="Recent sessions">
+          <section className="min-w-0" aria-label={t('Recent sessions')}>
             <h2 className={sectionHeadingClassName}>
               <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
-              Recent sessions
+              {t('Recent sessions')}
             </h2>
             {recentSessions.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                Sessions you start will appear here.
+                {t('Sessions you start will appear here.')}
               </div>
             ) : (
               <div className={listCardClassName}>
@@ -519,7 +552,7 @@ const HomePage = ({
                         ) : null}
                       </span>
                       <span className="shrink-0 text-xs text-text-300">
-                        {formatRelativeTime(session.updatedAt)}
+                        {relativeTime(session.updatedAt)}
                       </span>
                     </button>
                   )

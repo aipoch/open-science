@@ -15,6 +15,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,13 +70,15 @@ const sessionStatusDotClassName: Record<SessionStatus, string> = {
   error: 'bg-destructive'
 }
 
-const sessionStatusLabel: Record<SessionStatus, string> = {
+// Status label keys, resolved per component instance via useTranslation. `as const` keeps them as
+// literals so t() stays compile-time checked against the English catalog.
+const sessionStatusLabelKeys = {
   idle: 'Idle',
   running: 'Running',
   'waiting-permission': 'Waiting for permission',
   'waiting-plan-approval': 'Waiting for plan approval',
   error: 'Error'
-}
+} as const satisfies Record<SessionStatus, string>
 
 const sidebarInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -117,6 +120,8 @@ const WorkspaceSidebar = ({
   isMobileOpen = false,
   onMobileClose
 }: WorkspaceSidebarProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   // Partition sessions into pinned and unpinned groups; each group preserves the incoming order.
   const pinnedSessions = sessions.filter((s) => s.pinned)
   const activeSessions = sessions.filter((s) => !s.pinned)
@@ -124,12 +129,12 @@ const WorkspaceSidebar = ({
   // Build section descriptors so the list renders with a labelled header per group.
   const sections: Array<{ label: string; items: typeof sessions }> = []
 
-  if (pinnedSessions.length > 0) sections.push({ label: 'Pinned', items: pinnedSessions })
-  sections.push({ label: 'Active', items: activeSessions })
+  if (pinnedSessions.length > 0) sections.push({ label: t('Pinned'), items: pinnedSessions })
+  sections.push({ label: t('Active'), items: activeSessions })
 
   return (
     <aside
-      aria-label="Workspace navigation"
+      aria-label={t('Workspace navigation')}
       aria-hidden={mobileMode && !isMobileOpen ? true : undefined}
       inert={mobileMode && !isMobileOpen ? true : undefined}
       data-mobile-open={isMobileOpen ? 'true' : 'false'}
@@ -153,7 +158,7 @@ const WorkspaceSidebar = ({
                 )}
               >
                 <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span>All projects</span>
+                <span>{t('All projects')}</span>
               </button>
               <div
                 className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
@@ -167,7 +172,7 @@ const WorkspaceSidebar = ({
                 type="button"
                 onClick={onMobileClose}
                 className="grid size-8 shrink-0 place-items-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-                aria-label="Close navigation"
+                aria-label={t('Close navigation')}
               >
                 <X className="size-4" aria-hidden="true" />
               </button>
@@ -175,7 +180,7 @@ const WorkspaceSidebar = ({
           </div>
         </div>
 
-        <nav aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
+        <nav aria-label={t('Sessions')} className="flex min-h-0 flex-1 flex-col">
           {/* New stays disabled until persistence hydration has reconciled restored sessions. */}
           <div className="flex h-9 items-center gap-1 px-2">
             <button
@@ -193,7 +198,7 @@ const WorkspaceSidebar = ({
               >
                 <Plus className="size-3.5" strokeWidth={2} />
               </span>
-              <span>New</span>
+              <span>{t('New')}</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-2">
@@ -215,7 +220,7 @@ const WorkspaceSidebar = ({
               >
                 <Files className="size-3.5" strokeWidth={2} />
               </span>
-              <span>Files</span>
+              <span>{t('Files')}</span>
             </button>
           </div>
 
@@ -259,7 +264,9 @@ const WorkspaceSidebar = ({
                             />
                           </span>
                           <span className="sr-only">
-                            Session status: {sessionStatusLabel[session.status]}
+                            {t('Session status: {{status}}', {
+                              status: t(sessionStatusLabelKeys[session.status])
+                            })}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{session.title}</span>
                         </button>
@@ -269,7 +276,7 @@ const WorkspaceSidebar = ({
                             <button
                               type="button"
                               className={cn(sessionRowActionClassName, isActive && 'opacity-100')}
-                              aria-label={`Open actions for ${session.title}`}
+                              aria-label={t('Open actions for {{title}}', { title: session.title })}
                             >
                               <span
                                 className="flex size-3.5 items-center justify-center"
@@ -281,7 +288,7 @@ const WorkspaceSidebar = ({
                           </DropdownMenuTrigger>
                           {/* Session action menu: uses shadcn default light-surface tokens. */}
                           <DropdownMenuContent
-                            aria-label="Session actions"
+                            aria-label={t('Session actions')}
                             className="min-w-[9rem]"
                             side="right"
                             align="start"
@@ -300,7 +307,7 @@ const WorkspaceSidebar = ({
                                   <Pin className="size-4" strokeWidth={2} aria-hidden="true" />
                                 )}
                               </span>
-                              {session.pinned ? 'Unpin' : 'Pin'}
+                              {session.pinned ? t('Unpin') : t('Pin')}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2"
@@ -310,7 +317,7 @@ const WorkspaceSidebar = ({
                               <span className={sessionMenuIconClassName}>
                                 <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Rename…
+                              {t('Rename…')}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {canDownloadArtifacts ? (
@@ -331,7 +338,7 @@ const WorkspaceSidebar = ({
                               <span className={sessionMenuIconClassName}>
                                 <BookOpen className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              View notebook
+                              {t('View notebook')}
                             </DropdownMenuItem>
                             {onExportSession ? (
                               <DropdownMenuSub>
@@ -346,9 +353,11 @@ const WorkspaceSidebar = ({
                                       aria-hidden="true"
                                     />
                                   </span>
-                                  <span className="flex-1">Export conversation</span>
+                                  <span className="flex-1">{t('Export conversation')}</span>
                                 </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent aria-label="Export conversation formats">
+                                <DropdownMenuSubContent
+                                  aria-label={t('Export conversation formats')}
+                                >
                                   <DropdownMenuItem
                                     className="gap-2"
                                     onSelect={() => onExportSession(session, 'markdown')}
@@ -386,7 +395,8 @@ const WorkspaceSidebar = ({
                               <span className={sessionMenuIconClassName}>
                                 <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Archive
+                              {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                              {t('Archive', { context: 'verb' })}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {/* Delete uses the project's danger token pair for light surfaces. */}
@@ -398,7 +408,7 @@ const WorkspaceSidebar = ({
                               <span className={sessionMenuIconClassName}>
                                 <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
                               </span>
-                              Delete
+                              {t('Delete')}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -422,7 +432,7 @@ const WorkspaceSidebar = ({
                 'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
                 sidebarInteractiveTransitionClassName
               )}
-              aria-label="Settings"
+              aria-label={t('Settings')}
             >
               <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
             </button>

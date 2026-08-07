@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import type { ToolActivity } from '@/stores/session-store'
 
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
@@ -11,14 +13,19 @@ type WorkspaceWebSearchActivityRowProps = {
 }
 
 // Formats the compact right-side count label while preserving zero-result visibility.
-const formatResultCountLabel = (resultCount: number): string =>
-  resultCount === 1 ? '1 result' : `${resultCount} results`
+const formatResultCountLabel = (
+  resultCount: number,
+  t: ReturnType<typeof useTranslation<'workspace'>>['t']
+): string => t('{{count}} results', { defaultValue_one: '{{count}} result', count: resultCount })
 
 // Renders the expanded payload: the query followed by compact title/url result pairs.
-const renderSearchDetailsBody = (details: WebSearchDetails): React.JSX.Element => (
+const renderSearchDetailsBody = (
+  details: WebSearchDetails,
+  t: ReturnType<typeof useTranslation<'workspace'>>['t']
+): React.JSX.Element => (
   <>
     <div className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1.5">
-      <span className="pt-px text-text-100">query</span>
+      <span className="pt-px text-text-100">{t('query')}</span>
       <span className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-text-000">
         {details.query}
       </span>
@@ -49,21 +56,25 @@ const WorkspaceWebSearchActivityRow = ({
   details,
   isExpanded,
   onToggleSearch
-}: WorkspaceWebSearchActivityRowProps): React.JSX.Element => (
-  <WorkspaceToolActivityRowButton
-    activity={activity}
-    label="Web Search"
-    subtitle={details.query || undefined}
-    metaLabel={formatResultCountLabel(details.resultCount)}
-    isExpanded={isExpanded}
-    // Rows without any query or result metadata remain visible but non-interactive.
-    canExpand={Boolean(details.query || details.resultCount)}
-    panelClassName="mx-1 mb-1.5 rounded-[10px] border border-border-200 bg-bg-000 px-3.5 py-3 text-[12.5px] leading-5 shadow-card md:ml-[30px]"
-    panelTestId="tool-search-details"
-    onToggle={onToggleSearch}
-  >
-    {renderSearchDetailsBody(details)}
-  </WorkspaceToolActivityRowButton>
-)
+}: WorkspaceWebSearchActivityRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <WorkspaceToolActivityRowButton
+      activity={activity}
+      label={t('Web Search')}
+      subtitle={details.query || undefined}
+      metaLabel={formatResultCountLabel(details.resultCount, t)}
+      isExpanded={isExpanded}
+      // Rows without any query or result metadata remain visible but non-interactive.
+      canExpand={Boolean(details.query || details.resultCount)}
+      panelClassName="mx-1 mb-1.5 rounded-[10px] border border-border-200 bg-bg-000 px-3.5 py-3 text-[12.5px] leading-5 shadow-card md:ml-[30px]"
+      panelTestId="tool-search-details"
+      onToggle={onToggleSearch}
+    >
+      {renderSearchDetailsBody(details, t)}
+    </WorkspaceToolActivityRowButton>
+  )
+}
 
 export { WorkspaceWebSearchActivityRow }

@@ -1,6 +1,7 @@
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, SearchX, Star } from 'lucide-react'
 
 import type {
@@ -25,6 +26,7 @@ type BusyOperation =
 // Full-page GitHub import. Keywords discover repositories; direct references and chosen search
 // results reuse the commit-pinned scan and batch-import flow.
 const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const importSkill = useSettingsStore((state) => state.importSkill)
   const scanRepoSkills = useSettingsStore((state) => state.scanRepoSkills)
@@ -73,7 +75,9 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         if (result.repositories.length === 0) {
           setMessage({
             kind: 'status',
-            text: 'No matching Skill repositories found. Try another keyword or paste an owner/repo reference.'
+            text: t(
+              'No matching Skill repositories found. Try another keyword or paste an owner/repo reference.'
+            )
           })
         }
         return
@@ -87,13 +91,14 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         new Set(result.skills.filter((skill) => !skill.alreadyImported).map((skill) => skill.url))
       )
       if (result.skills.length === 0) {
-        setMessage({ kind: 'status', text: 'No skills found in that repo.' })
+        setMessage({ kind: 'status', text: t('No skills found in that repo.') })
       }
     } catch (error) {
       if (inputRef.current !== visibleInputAtStart) return
       setMessage({
         kind: 'error',
-        text: error instanceof Error ? error.message : 'GitHub request failed.'
+        // Main-process failures arrive already worded; only the fallback is ours to translate.
+        text: error instanceof Error ? error.message : t('GitHub request failed.')
       })
     } finally {
       setOperation(null)
@@ -123,14 +128,23 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         await importSkill(url)
         done += 1
       }
-      setMessage({ kind: 'status', text: `Imported ${done} skill${done === 1 ? '' : 's'}.` })
+      setMessage({
+        kind: 'status',
+        text: t('Imported {{count}} skills.', {
+          defaultValue_one: 'Imported {{count}} skill.',
+          count: done
+        })
+      })
       setScanned(null)
       setScannedRepo(null)
       onImported()
     } catch (error) {
       setMessage({
         kind: 'error',
-        text: error instanceof Error ? error.message : `Imported ${done}, then failed.`
+        text:
+          error instanceof Error
+            ? error.message
+            : t('Imported {{count}}, then failed.', { count: done })
       })
     } finally {
       setOperation(null)
@@ -163,9 +177,11 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
+      <h2 className="text-base font-semibold text-foreground">{t('Import from GitHub')}</h2>
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
+        {t(
+          'Search repositories by keyword, or scan a GitHub repository for Skill folders to import.'
+        )}
       </p>
 
       <div className="mt-4">
@@ -173,18 +189,18 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
           htmlFor="github-skill-source"
           className="mb-1.5 block text-xs font-medium text-foreground"
         >
-          GitHub keyword or repository
+          {t('GitHub keyword or repository')}
         </label>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             id="github-skill-source"
-            aria-label="GitHub keyword or repository"
+            aria-label={t('GitHub keyword or repository')}
             aria-invalid={
               (message?.kind === 'error' &&
                 message.text === GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE) ||
               undefined
             }
-            placeholder="keywords, owner/repo, owner/repo@ref, or a github.com URL"
+            placeholder={t('keywords, owner/repo, owner/repo@ref, or a github.com URL')}
             className="[@media(pointer:coarse)]:min-h-11"
             value={input}
             onChange={(event) => updateInput(event.target.value)}
@@ -205,10 +221,10 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                   className="size-4 animate-spin motion-reduce:animate-none"
                   aria-hidden="true"
                 />
-                Finding…
+                {t('Finding…')}
               </>
             ) : (
-              'Find skills'
+              t('Find skills')
             )}
           </Button>
         </div>
@@ -225,16 +241,21 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
 
         {repositories ? (
-          <section aria-label="Repository results" className="mt-5 border-b border-border pb-5">
+          <section
+            aria-label={t('Repository results')}
+            className="mt-5 border-b border-border pb-5"
+          >
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-foreground">
-                Repositories ({repositories.length})
+                {t('Repositories ({{count}})', { count: repositories.length })}
               </h3>
               {repositories.length > 0 ? (
                 <Button
                   type="button"
                   variant="outline"
-                  aria-label={`${repositoriesExpanded ? 'Hide' : 'Show'} repositories`}
+                  aria-label={
+                    repositoriesExpanded ? t('Hide repositories') : t('Show repositories')
+                  }
                   aria-expanded={repositoriesExpanded}
                   aria-controls="github-repository-results"
                   className="shrink-0 gap-1.5 [@media(pointer:coarse)]:min-h-11"
@@ -245,7 +266,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                   ) : (
                     <ChevronDown className="size-4" aria-hidden="true" />
                   )}
-                  {repositoriesExpanded ? 'Hide repositories' : 'Show repositories'}
+                  {repositoriesExpanded ? t('Hide repositories') : t('Show repositories')}
                 </Button>
               ) : null}
             </div>
@@ -277,7 +298,9 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                             type="button"
                             variant="outline"
                             size="sm"
-                            aria-label={`Scan ${repository.fullName} for skills`}
+                            aria-label={t('Scan {{repo}} for skills', {
+                              repo: repository.fullName
+                            })}
                             aria-pressed={scannedRepo === repository.fullName}
                             disabled={busy}
                             aria-busy={
@@ -299,16 +322,16 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                                   className="size-4 animate-spin motion-reduce:animate-none"
                                   aria-hidden="true"
                                 />
-                                Scanning…
+                                {t('Scanning…')}
                               </>
                             ) : scannedRepo === repository.fullName ? (
                               scanned && scanned.length > 0 ? (
-                                'Scanned'
+                                t('Scanned')
                               ) : (
-                                'No skills found'
+                                t('No skills found')
                               )
                             ) : (
-                              'Scan for skills'
+                              t('Scan for skills')
                             )}
                           </Button>
                         </div>
@@ -320,7 +343,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
             ) : repositories.length === 0 ? (
               <div className="mt-2 flex items-center gap-2 py-3 text-xs text-muted-foreground">
                 <SearchX className="size-4 shrink-0" aria-hidden="true" />
-                <p>{message?.kind === 'status' ? message.text : 'No repositories found.'}</p>
+                <p>{message?.kind === 'status' ? message.text : t('No repositories found.')}</p>
               </div>
             ) : null}
           </section>
@@ -331,14 +354,20 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
 
         {scanned && scanned.length > 0 ? (
-          <section aria-label={`Skills found in ${scannedRepo}`} className="mt-5">
+          <section
+            aria-label={t('Skills found in {{repo}}', { repo: scannedRepo ?? '' })}
+            className="mt-5"
+          >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <h3 className="truncate text-sm font-semibold text-foreground">
-                  Skills in {scannedRepo}
+                  {t('Skills in {{repo}}', { repo: scannedRepo ?? '' })}
                 </h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Found {scanned.length} skill{scanned.length === 1 ? '' : 's'}.
+                  {t('Found {{count}} skills.', {
+                    defaultValue_one: 'Found {{count}} skill.',
+                    count: scanned.length
+                  })}
                 </p>
               </div>
               <Button
@@ -354,28 +383,28 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                       className="size-4 animate-spin motion-reduce:animate-none"
                       aria-hidden="true"
                     />
-                    Importing…
+                    {t('Importing…')}
                   </>
                 ) : (
-                  `Import selected (${selected.size})`
+                  t('Import selected ({{count}})', { count: selected.size })
                 )}
               </Button>
             </div>
 
             <div
               role="group"
-              aria-label="Skill selection controls"
+              aria-label={t('Skill selection controls')}
               className="mt-3 flex min-h-10 items-center gap-2 border-y border-border bg-muted/20 px-1 py-1"
             >
               <label className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
                 <input
                   type="checkbox"
-                  aria-label="Select all"
+                  aria-label={t('Select all')}
                   checked={allSelected}
                   onChange={toggleAll}
                   className="size-4 shrink-0"
                 />
-                Select all
+                {t('Select all')}
               </label>
               <Button
                 type="button"
@@ -384,7 +413,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 className="[@media(pointer:coarse)]:min-h-11"
                 onClick={invertSelection}
               >
-                Invert selection
+                {t('Invert selection')}
               </Button>
             </div>
 
@@ -394,7 +423,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                   <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
                     <input
                       type="checkbox"
-                      aria-label={`Select ${skill.name}`}
+                      aria-label={t('Select {{name}}', { name: skill.name })}
                       checked={selected.has(skill.url)}
                       onChange={() => toggle(skill.url)}
                       className="size-4 shrink-0"
@@ -402,7 +431,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                   </span>
                   <button
                     type="button"
-                    aria-label={`Preview ${skill.name}`}
+                    aria-label={t('Preview {{name}}', { name: skill.name })}
                     onClick={() =>
                       candidatePreview.openPreview(() => previewGitHubSkill(skill.url))
                     }
@@ -416,7 +445,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                     </span>
                     {skill.alreadyImported ? (
                       <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                        Imported
+                        {t('Imported')}
                       </span>
                     ) : null}
                   </button>
@@ -428,7 +457,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
       </div>
 
       <h3 className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground">
-        Imported skills
+        {t('Imported skills')}
       </h3>
       {imported.length > 0 ? (
         <ul className="mt-2 flex flex-col divide-y divide-border">
@@ -441,7 +470,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         </ul>
       ) : (
         <p className="mt-2 py-2 text-xs text-muted-foreground">
-          No imported skills yet. Repos you import from will appear here.
+          {t('No imported skills yet. Repos you import from will appear here.')}
         </p>
       )}
 

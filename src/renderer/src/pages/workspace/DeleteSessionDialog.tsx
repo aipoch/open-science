@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +32,8 @@ const DeleteSessionDialog = ({
   onCancel,
   onConfirmDelete
 }: DeleteSessionDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const dialogSession = useRetainedDialogValue(session)
 
   return (
@@ -46,18 +49,20 @@ const DeleteSessionDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                Delete Session?
+                {t('Delete Session?')}
               </AlertDialog.Title>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                This will permanently delete &quot;{dialogSession?.title}&quot;. Artifacts created
-                in this session will remain in the project. This action cannot be undone.
+                {t(
+                  'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. This action cannot be undone.',
+                  { title: dialogSession?.title ?? '' }
+                )}
               </AlertDialog.Description>
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={tCommon('Close')}
               className={dialogCloseButtonClassName}
               onClick={onCancel}
             >
@@ -67,7 +72,7 @@ const DeleteSessionDialog = ({
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
               <Button type="button" variant="outline">
-                Cancel
+                {tCommon('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
@@ -77,7 +82,7 @@ const DeleteSessionDialog = ({
                 disabled={!canDelete}
                 onClick={onConfirmDelete}
               >
-                Delete
+                {t('Delete')}
               </Button>
             </AlertDialog.Action>
           </div>

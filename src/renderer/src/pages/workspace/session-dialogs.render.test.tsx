@@ -2,6 +2,10 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from 'rea
 import type { ChatSession } from '@/stores/session-store'
 import { describe, expect, it, vi } from 'vitest'
 
+import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+
+vi.mock('react-i18next', () => createI18nTestStub())
+
 vi.mock('@/lib/utils', () => ({
   cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
 }))

@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   MessageScroller as MessageScrollerPrimitive,
   useMessageScroller,
@@ -93,6 +94,7 @@ function MessageScrollerButton({
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Button> &
   Pick<React.ComponentProps<typeof Button>, 'variant' | 'size'>) {
+  const { t } = useTranslation()
   return (
     <MessageScrollerPrimitive.Button
       data-slot="message-scroller-button"
@@ -111,7 +113,7 @@ function MessageScrollerButton({
         <>
           <ArrowDownIcon />
           <span className="sr-only">
-            {direction === 'end' ? 'Scroll to end' : 'Scroll to start'}
+            {direction === 'end' ? t('Scroll to end') : t('Scroll to start')}
           </span>
         </>
       )}

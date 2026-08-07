@@ -262,7 +262,9 @@ export const decodeRemoteFsError = (message: string): SerializableRemoteFsError 
   const idx = message.lastIndexOf(REMOTE_FS_ERROR_MARKER)
   if (idx === -1) return null
   try {
-    return JSON.parse(message.slice(idx + REMOTE_FS_ERROR_MARKER.length)) as SerializableRemoteFsError
+    return JSON.parse(
+      message.slice(idx + REMOTE_FS_ERROR_MARKER.length)
+    ) as SerializableRemoteFsError
   } catch {
     return null
   }

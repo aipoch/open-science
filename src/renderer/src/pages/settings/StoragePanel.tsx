@@ -8,6 +8,7 @@ import {
   TriangleAlert
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -39,13 +40,18 @@ const formatBytes = (bytes: number): string => {
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
-const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
+// Catalog keys, not resolved strings: a module-level constant is evaluated once at import time, so
+// storing translated text here would freeze the language of the first render and never update when
+// the user switches. Resolution happens inside the component, on every render.
+// `as const` rather than a `: Record<..., string>` annotation so the values stay literal types and
+// t() can still key-check them against the catalog.
+const CATEGORY_LABEL_KEYS = {
   artifacts: 'Artifacts',
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
   workspaces: 'Session workspaces'
-}
+} as const satisfies Record<UsageCategoryKey, string>
 
 // Fixed swatch palette keyed by category so the stacked bar and legend always agree on color,
 // even though the bar only renders non-zero segments while the legend lists every category.
@@ -72,6 +78,8 @@ type StoragePanelProps = {
 }
 
 const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
@@ -126,10 +134,12 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     setRevealError(undefined)
     try {
       const result = await window.api.storage.revealAppStorage()
-      if (!result.revealed) setRevealError(result.error ?? 'Could not reveal application storage.')
+      // Backend-supplied failure text passes through verbatim; the catalog copy is the fallback.
+      if (!result.revealed)
+        setRevealError(result.error ?? t('Could not reveal application storage.'))
     } catch (error) {
       setRevealError(
-        error instanceof Error ? error.message : 'Could not reveal application storage.'
+        error instanceof Error ? error.message : t('Could not reveal application storage.')
       )
     }
   }
@@ -188,7 +198,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     const result = await window.api.storage.setDataRootAndRelaunch(trimmedNewPath, false)
     if (!result.ok) {
       setIsAdopting(false)
-      setAdoptError(result.error ?? 'Could not switch to this folder.')
+      setAdoptError(result.error ?? t('Could not switch to this folder.'))
     }
     // On success the app relaunches; nothing left to update here.
   }
@@ -213,7 +223,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       setAdoptConfirmOpen(true)
       return
     }
-    setDefaultError(result.error ?? 'The default location is not usable.')
+    setDefaultError(result.error ?? t('The default location is not usable.'))
   }
 
   const trimmedNewPath = newPath.trim()
@@ -237,9 +247,9 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
     <div className="space-y-5 p-5">
       {storageRepairActive && storageCheck ? (
         <SettingsSection
-          title="Application storage"
-          description="Open Science needs write access to its private configuration directory."
-          aria-label="Application storage"
+          title={t('Application storage')}
+          description={t('Open Science needs write access to its private configuration directory.')}
+          aria-label={t('Application storage')}
         >
           {/* Keep the failure visibly actionable, then remove the warning treatment as soon as a
               user-requested recheck confirms storage is writable again. */}
@@ -283,7 +293,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             <div className="flex flex-wrap items-center gap-2">
               <Button type="button" variant="outline" onClick={() => void handleRevealAppStorage()}>
                 <FolderOpen className="size-4" aria-hidden="true" />
-                {window.api.platform === 'darwin' ? 'Reveal in Finder' : 'Reveal in folder'}
+                {window.api.platform === 'darwin' ? t('Reveal in Finder') : t('Reveal in folder')}
               </Button>
               <Button
                 type="button"
@@ -295,11 +305,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   className={cn('size-4', isCheckingStorage && 'animate-spin')}
                   aria-hidden="true"
                 />
-                {isCheckingStorage ? 'Checking…' : 'Check again'}
+                {isCheckingStorage ? t('Checking…') : t('Check again')}
               </Button>
               {agentRepairRequired ? (
                 <Button type="button" onClick={onContinueToAgent}>
-                  Continue to repair Agent
+                  {t('Continue to repair Agent')}
                 </Button>
               ) : null}
             </div>
@@ -308,30 +318,34 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       ) : null}
 
       <SettingsSection
-        title="Data location"
-        description="Where Open Science stores your projects, artifacts, and other app data on this device."
-        aria-label="Data location"
+        title={t('Data location')}
+        description={t(
+          'Where Open Science stores your projects, artifacts, and other app data on this device.'
+        )}
+        aria-label={t('Data location')}
         separated={storageRepairActive}
         action={
           info !== null && !isEditing ? (
             <Button type="button" variant="outline" onClick={() => setWarnOpen(true)}>
-              Change location
+              {t('Change location')}
             </Button>
           ) : undefined
         }
       >
         {info === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
         ) : (
           <>
-            <span className="text-xs font-medium text-muted-foreground">Location</span>
-            <pre className={cn('mt-1', PATH_PILL)} aria-label="Data root path">
+            <span className="text-xs font-medium text-muted-foreground">{t('Location')}</span>
+            <pre className={cn('mt-1', PATH_PILL)} aria-label={t('Data root path')}>
               {info.dataRoot}
             </pre>
             <p className="mt-1.5 text-xs text-muted-foreground">
               {info.isDefault
-                ? `${formatBytes(info.usage.totalBytes)} on disk · default location`
-                : `${formatBytes(info.usage.totalBytes)} on disk`}
+                ? t('{{size}} on disk · default location', {
+                    size: formatBytes(info.usage.totalBytes)
+                  })
+                : t('{{size}} on disk', { size: formatBytes(info.usage.totalBytes) })}
             </p>
 
             {isEditing ? (
@@ -340,20 +354,20 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                   htmlFor="data-dir-path-input"
                   className="mb-1 block text-xs font-medium text-muted-foreground"
                 >
-                  New location
+                  {t('New location')}
                 </label>
                 <div className="flex gap-2">
                   <Input
                     id="data-dir-path-input"
                     type="text"
-                    placeholder="/path/to/new/location"
+                    placeholder={t('/path/to/new/location')}
                     value={newPath}
                     onChange={(event) => handleNewPathChange(event.target.value)}
                     className="flex-1 bg-background font-mono"
                   />
                   <Button type="button" variant="outline" onClick={() => void handleBrowse()}>
                     <FolderOpen className="size-4" aria-hidden="true" />
-                    Browse…
+                    {t('Browse…')}
                   </Button>
                 </div>
 
@@ -367,8 +381,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     onClick={() => void handleUseDefault()}
                     className="mt-2 text-xs text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
                   >
-                    Or move it back to the default location{' '}
-                    <span className="font-mono no-underline">({info.defaultDataRoot})</span>
+                    <Trans
+                      i18nKey="Or move it back to the default location <path>({{path}})</path>"
+                      values={{ path: info.defaultDataRoot }}
+                      components={{ path: <span className="font-mono no-underline" /> }}
+                    />
                   </button>
                 ) : null}
 
@@ -380,34 +397,34 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
 
                 {(kind === 'move' || kind === 'adopt') && inspection ? (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Data will be stored in <span className="font-mono">{inspection.dataRoot}</span>
+                    <Trans
+                      i18nKey="Data will be stored in <path>{{path}}</path>"
+                      values={{ path: inspection.dataRoot }}
+                      components={{ path: <span className="font-mono" /> }}
+                    />
                   </p>
                 ) : null}
 
                 {kind === 'adopt' ? (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    This folder already contains Open Science data. It will be{' '}
-                    <strong className="font-semibold text-foreground">
-                      used as-is (not merged)
-                    </strong>
-                    —{' '}
-                    <strong className="font-semibold text-foreground">
-                      your current data folder is kept, so you can switch back
-                    </strong>
-                    . The app will restart.
+                    <Trans
+                      i18nKey="This folder already contains Open Science data. It will be <em>used as-is (not merged)</em> — <em>your current data folder is kept, so you can switch back</em>. The app will restart."
+                      components={{ em: <strong className="font-semibold text-foreground" /> }}
+                    />
                   </p>
                 ) : (
                   <>
                     <p className="mt-2 text-xs text-muted-foreground">
-                      <strong className="font-semibold text-foreground">
-                        Your existing data (~{formatBytes(migratableBytes)}) will be moved
-                      </strong>{' '}
-                      to the new location — your files come with it, and nothing is left behind in
-                      the current folder.
+                      <Trans
+                        i18nKey="<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder."
+                        values={{ size: formatBytes(migratableBytes) }}
+                        components={{ em: <strong className="font-semibold text-foreground" /> }}
+                      />
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Python/R environments are rebuilt at the new location on first use (not
-                      moved).
+                      {t(
+                        'Python/R environments are rebuilt at the new location on first use (not moved).'
+                      )}
                     </p>
                   </>
                 )}
@@ -432,7 +449,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       onClick={() => setAdoptConfirmOpen(true)}
                     >
                       <FolderInput className="size-4" aria-hidden="true" />
-                      {isAdopting ? 'Switching…' : 'Use this folder'}
+                      {isAdopting ? t('Switching…') : t('Use this folder')}
                     </Button>
                   ) : (
                     <Button
@@ -441,11 +458,11 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                       onClick={() => setMigrationTarget(trimmedNewPath)}
                     >
                       <FolderInput className="size-4" aria-hidden="true" />
-                      Change location
+                      {t('Change location')}
                     </Button>
                   )}
                   <Button type="button" variant="outline" onClick={handleCancelNewPath}>
-                    Cancel
+                    {tCommon('Cancel')}
                   </Button>
                 </div>
               </div>
@@ -455,7 +472,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       </SettingsSection>
 
       {info !== null ? (
-        <SettingsSection title="Disk usage" aria-label="Disk usage" separated>
+        <SettingsSection title={t('Disk usage')} aria-label={t('Disk usage')} separated>
           {totalBytes > 0 ? (
             <div className="flex h-2 gap-0.5 overflow-hidden rounded bg-muted">
               {categories
@@ -465,12 +482,15 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     key={category.key}
                     className={cn('rounded', CATEGORY_COLORS[category.key])}
                     style={{ width: `${(category.bytes / totalBytes) * 100}%` }}
-                    title={`${CATEGORY_LABELS[category.key]}: ${formatBytes(category.bytes)}`}
+                    title={t('{{label}}: {{size}}', {
+                      label: t(CATEGORY_LABEL_KEYS[category.key]),
+                      size: formatBytes(category.bytes)
+                    })}
                   />
                 ))}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">No data yet.</p>
+            <p className="text-xs text-muted-foreground">{t('No data yet.')}</p>
           )}
 
           <div className="mt-2 space-y-1.5">
@@ -493,7 +513,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                           onClick={() => toggleCategory(category.key)}
                           className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
                         >
-                          {CATEGORY_LABELS[category.key]}
+                          {t(CATEGORY_LABEL_KEYS[category.key])}
                           <ChevronRight
                             className={cn('size-3 transition-transform', isExpanded && 'rotate-90')}
                             aria-hidden="true"
@@ -501,7 +521,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                         </button>
                       ) : (
                         <span className="text-muted-foreground">
-                          {CATEGORY_LABELS[category.key]}
+                          {t(CATEGORY_LABEL_KEYS[category.key])}
                         </span>
                       )}
                     </div>
@@ -532,13 +552,13 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             })}
 
             <div className="flex items-center justify-between border-t border-border pt-1.5 text-xs">
-              <span className="font-medium text-foreground">Total</span>
+              <span className="font-medium text-foreground">{t('Total')}</span>
               <span className="font-medium tabular-nums text-foreground">
                 {formatBytes(totalBytes)}
               </span>
             </div>
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Available on disk</span>
+              <span>{t('Available on disk')}</span>
               <span className="tabular-nums">{formatBytes(info.availableBytes)}</span>
             </div>
           </div>
@@ -550,10 +570,10 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              Change data location?
+              {t('Change data location?')}
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              You can move Open Science&apos;s data to another folder on this device.
+              {t("You can move Open Science's data to another folder on this device.")}
             </AlertDialog.Description>
             <div className="mt-3">
               <DataRootWarning />
@@ -561,7 +581,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="outline">
-                  Cancel
+                  {tCommon('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
@@ -572,7 +592,7 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
                     setIsEditing(true)
                   }}
                 >
-                  Continue
+                  {tCommon('Continue')}
                 </Button>
               </AlertDialog.Action>
             </div>
@@ -584,27 +604,25 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>Use this folder?</AlertDialog.Title>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              {t('Use this folder?')}
+            </AlertDialog.Title>
             <pre className={cn('mt-3', PATH_PILL)}>{inspection?.dataRoot ?? trimmedNewPath}</pre>
             <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-3')}>
-              Open Science will restart and use this folder as-is —{' '}
-              <strong className="font-semibold text-text-000">
-                its contents are not merged with your current data
-              </strong>
-              , and anything it&apos;s missing will show as unavailable.{' '}
-              <strong className="font-semibold text-text-000">
-                Your current data folder is left untouched, so you can switch back.
-              </strong>
+              <Trans
+                i18nKey="Open Science will restart and use this folder as-is — <em>its contents are not merged with your current data</em>, and anything it's missing will show as unavailable. <em>Your current data folder is left untouched, so you can switch back.</em>"
+                components={{ em: <strong className="font-semibold text-text-000" /> }}
+              />
             </AlertDialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="outline">
-                  Cancel
+                  {tCommon('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
                 <Button type="button" onClick={() => void handleAdopt()}>
-                  Use this folder
+                  {t('Use this folder')}
                 </Button>
               </AlertDialog.Action>
             </div>

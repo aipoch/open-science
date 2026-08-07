@@ -1,6 +1,7 @@
 import { CheckCircle2, FolderInput, Package, RefreshCw, Search } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,7 @@ import {
 import type { NotebookLanguage } from '../../../../shared/notebook'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { PythonIcon, RIcon } from './language-icons'
+import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
 // be enabled/disabled (the agent only ever sees enabled envs); external envs additionally expose a
@@ -46,27 +48,8 @@ type RuntimesPanelProps = {
   description: React.ReactNode
 }
 
-// Human provider/type for the card badge (provenance + conda env name), e.g. "App-managed",
-// "Conda: bio", "System".
-const providerType = (env: DiscoveredInterpreter): string => {
-  if (env.provenance === 'app-managed') return 'App-managed'
-  if (env.provenance === 'agent-created') return 'Agent-created'
-  if (env.condaEnv) return `Conda: ${env.condaEnv}`
-  return 'System'
-}
-
-// One-line readiness for a discovered env: version plus runnable/gap detail.
-const envReadyLine = (env: DiscoveredInterpreter): string => {
-  const version = env.version ? ` · ${env.version}` : ''
-  return env.runnable ? `Ready${version}` : `${env.detail ?? 'Not runnable'}${version}`
-}
-
-const managedLine = (runnable: boolean, preparing: boolean, message?: string): string => {
-  if (preparing) return message ?? 'Downloading managed runtime…'
-  return runnable ? 'Installed and ready' : 'Managed runtime is not set up yet'
-}
-
 const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [envs, setEnvs] = useState<EnvLists | null>(null)
   const [enablement, setEnablement] = useState<Enablements>({})
   const [loaded, setLoaded] = useState(false)
@@ -176,12 +159,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       })
       .catch((e: unknown) => {
         if (cancelled) return
-        setPackagesError(e instanceof Error ? e.message : 'Could not list packages.')
+        setPackagesError(e instanceof Error ? e.message : t('Could not list packages.'))
       })
     return () => {
       cancelled = true
     }
-  }, [packagesEnv, packagesRetryNonce])
+  }, [packagesEnv, packagesRetryNonce, t])
 
   // Recheck refreshes both halves of the runtime registry together for the same reason as initial
   // loading: cards and their permissions must describe one coherent backend snapshot. Counts are
@@ -194,7 +177,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
     try {
       applyAll(await fetchAll())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not re-check runtimes.')
+      setError(e instanceof Error ? e.message : t('Could not re-check runtimes.'))
     } finally {
       setBusy(false)
     }
@@ -226,7 +209,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       )
       setEnablement((current) => ({ ...current, [language]: next }))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not change that runtime.')
+      setError(e instanceof Error ? e.message : t('Could not change that runtime.'))
     } finally {
       setBusy(false)
     }
@@ -283,7 +266,9 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       )
       setEnablement((current) => ({ ...current, [language]: next }))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not change package-install authorization.')
+      setError(
+        e instanceof Error ? e.message : t('Could not change package-install authorization.')
+      )
     } finally {
       setBusy(false)
     }
@@ -307,7 +292,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
         setEnablement((current) => ({ ...current, [language]: next }))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not add that interpreter.')
+      setError(e instanceof Error ? e.message : t('Could not add that interpreter.'))
     } finally {
       setBusy(false)
     }
@@ -324,7 +309,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       // discovered environments and persisted enablement before rendering the completed card.
       applyAll(await fetchAll())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not refresh runtime readiness.')
+      setError(e instanceof Error ? e.message : t('Could not refresh runtime readiness.'))
     } finally {
       setManagedOperations((current) => ({ ...current, [language]: false }))
     }
@@ -339,7 +324,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       await resetEnv(language)
       applyAll(await fetchAll())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not reset the runtime.')
+      setError(e instanceof Error ? e.message : t('Could not reset the runtime.'))
     } finally {
       setManagedOperations((current) => ({ ...current, [language]: false }))
     }
@@ -352,7 +337,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
       await cancelEnv(language)
       applyAll(await fetchAll())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not cancel the setup.')
+      setError(e instanceof Error ? e.message : t('Could not cancel the setup.'))
     }
   }
 
@@ -380,13 +365,13 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground">{env.label}</span>
-              <Badge variant="secondary">{providerType(env)}</Badge>
+              <Badge variant="secondary">{providerType(env, t)}</Badge>
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[13px] text-muted-foreground">
               {env.runnable ? (
                 <CheckCircle2 className="size-3.5 text-primary" aria-hidden="true" />
               ) : null}
-              <span>{envReadyLine(env)}</span>
+              <span>{envReadyLine(env, t)}</span>
             </div>
             <code className="mt-1 block truncate text-xs text-muted-foreground">
               {env.interpreterPath}
@@ -415,7 +400,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
               }}
             >
               <Package aria-hidden="true" />
-              Packages
+              {t('Packages')}
               {typeof packageCounts[env.envId] === 'number' ? (
                 <Badge variant="secondary" data-testid="runtime-packages-count">
                   {packageCounts[env.envId]}
@@ -429,8 +414,10 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           <div className="mt-3 border-t border-border pt-3">
             <SettingsRow
               className="min-h-0 py-0"
-              label="Allow package install"
-              description="Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage."
+              label={t('Allow package install')}
+              description={t(
+                'Lets Open Science install packages into this environment. Installs go to your own environment, not the app-managed storage.'
+              )}
             >
               <div className="flex justify-end">
                 <SettingsToggle
@@ -478,7 +465,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             disabled={busy}
           >
             <RefreshCw className={cn(busy && 'animate-spin')} aria-hidden="true" />
-            Recheck
+            {t('Recheck')}
           </Button>
         }
       >
@@ -488,7 +475,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           </p>
         )}
         {loading ? (
-          <p className="text-sm text-muted-foreground">Detecting runtimes…</p>
+          <p className="text-sm text-muted-foreground">{t('Detecting runtimes…')}</p>
         ) : (
           LANGUAGES.map(({ id, label, icon }) => {
             const list = envs[id]
@@ -528,13 +515,17 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                           onClick={() => void addInterpreter(id)}
                         >
                           <FolderInput aria-hidden="true" />
-                          Add interpreter…
+                          {t('Add interpreter…')}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
                         {id === 'r'
-                          ? 'Pick your Rscript executable — e.g. Rscript.exe (Windows) or bin/Rscript (macOS/Linux). Choose the file, not a folder.'
-                          : 'Pick your Python interpreter executable — e.g. python.exe (Windows) or bin/python (macOS/Linux). Choose the file, not a folder.'}
+                          ? t(
+                              'Pick your Rscript executable — e.g. Rscript.exe (Windows) or bin/Rscript (macOS/Linux). Choose the file, not a folder.'
+                            )
+                          : t(
+                              'Pick your Python interpreter executable — e.g. python.exe (Windows) or bin/python (macOS/Linux). Choose the file, not a folder.'
+                            )}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -569,7 +560,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             disabled={busy}
                             onClick={() => void resetManaged(id)}
                           >
-                            Reset runtime
+                            {t('Reset runtime')}
                           </Button>
                         </div>
                       ) : null}
@@ -583,22 +574,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-foreground">
-                              App-managed environment
+                              {t('App-managed environment')}
                             </span>
-                            <Badge variant="secondary">App-managed</Badge>
+                            <Badge variant="secondary">{t('App-managed')}</Badge>
                           </div>
                           <div className="mt-0.5 text-[13px] text-muted-foreground">
                             {managedLine(
                               managedRunnable,
                               settingUp,
-                              finishing ? 'Finishing setup…' : langProgress?.message
+                              t,
+                              finishing ? t('Finishing setup…') : langProgress?.message
                             )}
                           </div>
                           {settingUp ? (
                             <div
                               className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
                               role="progressbar"
-                              aria-label={`Setting up ${label} runtime`}
+                              aria-label={t('Setting up {{language}} runtime', { language: label })}
                               aria-valuenow={Math.round(progress * 100)}
                               aria-valuemin={0}
                               aria-valuemax={100}
@@ -631,7 +623,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             disabled={busy}
                             onClick={() => void cancelProvision(id)}
                           >
-                            Cancel
+                            {t('Cancel')}
                           </Button>
                         ) : finishing ? (
                           <Button
@@ -641,7 +633,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             className="shrink-0"
                             disabled
                           >
-                            Finishing setup…
+                            {t('Finishing setup…')}
                           </Button>
                         ) : (
                           <Button
@@ -657,10 +649,10 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             }
                           >
                             {langError?.includes('RUNTIME_RECOVERY_BLOCKED')
-                              ? 'Reset runtime'
+                              ? t('Reset runtime')
                               : langError
-                                ? 'Retry setup'
-                                : 'Download and set up'}
+                                ? t('Retry setup')
+                                : t('Download and set up')}
                           </Button>
                         )}
                       </div>
@@ -688,19 +680,24 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}
           >
             <AlertDialog.Title className={dialogTitleClassName}>
-              Disable {dialogDisableImpact?.env.label}?
+              {t('Disable {{label}}?', { label: dialogDisableImpact?.env.label ?? '' })}
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              It is in use by{' '}
-              {(dialogDisableImpact?.usage.running ?? 0) + (dialogDisableImpact?.usage.idle ?? 0)}{' '}
-              active session(s) — {dialogDisableImpact?.usage.running ?? 0} running,{' '}
-              {dialogDisableImpact?.usage.idle ?? 0} idle. Disabling lets any running cell finish,
-              then closes its kernel; those sessions must switch to another runtime to keep working.
+              {t(
+                'It is in use by {{total}} active session(s) — {{running}} running, {{idle}} idle. Disabling lets any running cell finish, then closes its kernel; those sessions must switch to another runtime to keep working.',
+                {
+                  total:
+                    (dialogDisableImpact?.usage.running ?? 0) +
+                    (dialogDisableImpact?.usage.idle ?? 0),
+                  running: dialogDisableImpact?.usage.running ?? 0,
+                  idle: dialogDisableImpact?.usage.idle ?? 0
+                }
+              )}
             </AlertDialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="outline">
-                  Cancel
+                  {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
               {(dialogDisableImpact?.usage.running ?? 0) > 0 ? (
@@ -710,13 +707,13 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                     variant="destructive"
                     onClick={() => void confirmForceStop()}
                   >
-                    Stop running work
+                    {t('Stop running work')}
                   </Button>
                 </AlertDialog.Action>
               ) : null}
               <AlertDialog.Action asChild>
                 <Button type="button" onClick={() => void confirmDisable()}>
-                  Disable after current work
+                  {t('Disable after current work')}
                 </Button>
               </AlertDialog.Action>
             </div>
@@ -741,24 +738,28 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             {dialogPackagesEnv ? (
               <>
                 <Dialog.Title className={dialogTitleClassName}>
-                  Packages in {dialogPackagesEnv.label}
+                  {t('Packages in {{label}}', { label: dialogPackagesEnv.label })}
                   {dialogPackagesEnv.version ? ` · ${dialogPackagesEnv.version}` : ''}
                 </Dialog.Title>
                 <Dialog.Description className={dialogDescriptionClassName}>
-                  Installed packages in this environment.
+                  {t('Installed packages in this environment.')}
                 </Dialog.Description>
 
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
-                  <Badge variant="secondary">{providerType(dialogPackagesEnv)}</Badge>
+                  <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
                   {/* Conda env name badge — but only when the provenance badge doesn't already carry
-                      it: providerType() returns `Conda: <name>` for user-own conda envs, so the name
-                      badge is added just for app-owned (app-managed/agent-created) conda envs. */}
+                      it: providerType() returns the "Conda: <name>" label for user-own conda envs, so
+                      the name badge is added just for app-owned (app-managed/agent-created) conda
+                      envs. Comparing against the same catalog string keeps that true in any locale. */}
                   {dialogPackagesEnv.condaEnv &&
-                  providerType(dialogPackagesEnv) !== `Conda: ${dialogPackagesEnv.condaEnv}` ? (
-                    <Badge variant="secondary">Conda: {dialogPackagesEnv.condaEnv}</Badge>
+                  providerType(dialogPackagesEnv, t) !==
+                    t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv }) ? (
+                    <Badge variant="secondary">
+                      {t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv })}
+                    </Badge>
                   ) : null}
                   <Badge variant={dialogPackagesEnv.runnable ? 'secondary' : 'destructive'}>
-                    {dialogPackagesEnv.runnable ? 'Ready' : 'Not runnable'}
+                    {dialogPackagesEnv.runnable ? t('Ready') : t('Not runnable')}
                   </Badge>
                   <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
                 </div>
@@ -772,17 +773,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                     <Input
                       value={packagesFilter}
                       onChange={(event) => setPackagesFilter(event.target.value)}
-                      placeholder="Filter packages…"
-                      aria-label="Filter packages"
+                      placeholder={t('Filter packages…')}
+                      aria-label={t('Filter packages')}
                       data-testid="runtime-packages-filter"
                       className="pl-8"
                     />
                   </div>
                   {packages !== null ? (
                     <span className="text-xs text-muted-foreground">
-                      {visiblePackages.length} of {packages.length}
+                      {t('{{visible}} of {{total}}', {
+                        visible: visiblePackages.length,
+                        total: packages.length
+                      })}
                       {hasCondaFields
-                        ? ` · ${condaPackageCount} conda, ${packages.length - condaPackageCount} pypi`
+                        ? ` · ${t('{{conda}} conda, {{pypi}} pypi', {
+                            conda: condaPackageCount,
+                            pypi: packages.length - condaPackageCount
+                          })}`
                         : ''}
                     </span>
                   ) : null}
@@ -804,23 +811,23 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                           setPackagesRetryNonce((nonce) => nonce + 1)
                         }}
                       >
-                        Retry
+                        {t('Retry')}
                       </Button>
                     </div>
                   ) : packages === null ? (
                     <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      Listing packages…
+                      {t('Listing packages…')}
                     </p>
                   ) : (
                     <table className="w-full border-collapse text-[13px]">
                       <thead className="sticky top-0 bg-card">
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 pl-3 pr-3 font-medium">Name</th>
-                          <th className="py-2 pr-3 font-medium">Version</th>
+                          <th className="py-2 pl-3 pr-3 font-medium">{t('Name')}</th>
+                          <th className="py-2 pr-3 font-medium">{t('Version')}</th>
                           {hasCondaFields ? (
                             <>
-                              <th className="py-2 pr-3 font-medium">Build</th>
-                              <th className="py-2 pr-3 font-medium">Channel</th>
+                              <th className="py-2 pr-3 font-medium">{t('Build')}</th>
+                              <th className="py-2 pr-3 font-medium">{t('Channel')}</th>
                             </>
                           ) : null}
                         </tr>
@@ -858,12 +865,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                   packages.length > 0 &&
                   visiblePackages.length === 0 ? (
                     <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      No packages match “{packagesFilter}”.
+                      {t('No packages match “{{filter}}”.', { filter: packagesFilter })}
                     </p>
                   ) : null}
                   {packages !== null && packagesError === null && packages.length === 0 ? (
                     <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      No packages installed.
+                      {t('No packages installed.')}
                     </p>
                   ) : null}
                 </div>
@@ -871,7 +878,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                 <div className="mt-4 flex justify-end">
                   <Dialog.Close asChild>
                     <Button type="button" variant="outline" size="sm">
-                      Close
+                      {t('Close')}
                     </Button>
                   </Dialog.Close>
                 </div>

@@ -431,9 +431,7 @@ describe('validate: provider dispatch', () => {
   it('surfaces a 5xx error message from a bridge validation', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(
-        new Response('{"error":{"message":"Gateway timeout"}}', { status: 502 })
-      )
+      .mockResolvedValue(new Response('{"error":{"message":"Gateway timeout"}}', { status: 502 }))
 
     const result = await validateProvider(
       { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },

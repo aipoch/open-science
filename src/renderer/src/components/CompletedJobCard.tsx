@@ -1,4 +1,5 @@
 import { Zap, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
 
@@ -13,24 +14,28 @@ type CompletedJobCardProps = {
   onOpen: (job: JobSummary) => void
 }
 
-// Returns the status label and color class based on job status.
-function getStatusDisplay(job: JobSummary): { label: string; colorClass: string } {
+type StatusKey = 'finished' | 'failed' | 'timed out' | 'error'
+
+// Returns the catalog key and color class for a job's terminal status.
+function getStatusLabelKey(job: JobSummary): { key: StatusKey | null; colorClass: string } {
   switch (job.status) {
     case 'success':
-      return { label: 'finished', colorClass: 'text-green-600 dark:text-green-400' }
+      return { key: 'finished', colorClass: 'text-green-600 dark:text-green-400' }
     case 'failed':
-      return { label: 'failed', colorClass: 'text-red-600 dark:text-red-400' }
+      return { key: 'failed', colorClass: 'text-red-600 dark:text-red-400' }
     case 'timeout':
-      return { label: 'timed out', colorClass: 'text-red-600 dark:text-red-400' }
+      return { key: 'timed out', colorClass: 'text-red-600 dark:text-red-400' }
     case 'error':
-      return { label: 'error', colorClass: 'text-red-600 dark:text-red-400' }
+      return { key: 'error', colorClass: 'text-red-600 dark:text-red-400' }
     default:
-      return { label: job.status, colorClass: 'text-muted-foreground' }
+      return { key: null, colorClass: 'text-muted-foreground' }
   }
 }
 
 export function CompletedJobCard({ job, onOpen }: CompletedJobCardProps): React.JSX.Element {
-  const { label, colorClass } = getStatusDisplay(job)
+  const { t } = useTranslation()
+  const { key, colorClass } = getStatusLabelKey(job)
+  const label = key ? t(key) : job.status
 
   const intentDisplay = job.intent.length > 70 ? `${job.intent.slice(0, 67)}…` : job.intent
 
@@ -40,7 +45,7 @@ export function CompletedJobCard({ job, onOpen }: CompletedJobCardProps): React.
       data-testid="completed-job-card"
       className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-muted/30 px-3.5 py-2.5 text-left text-[12px] hover:bg-muted/50 transition-colors"
       onClick={() => onOpen(job)}
-      aria-label={`Completed remote job: ${job.intent}`}
+      aria-label={t('Completed remote job: {{intent}}', { intent: job.intent })}
     >
       <Zap size={13} className={colorClass} aria-hidden="true" style={{ flexShrink: 0 }} />
       <span className="text-[11px] text-muted-foreground shrink-0">{job.display_name}</span>

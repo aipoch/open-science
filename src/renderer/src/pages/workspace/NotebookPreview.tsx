@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -93,6 +94,7 @@ const NotebookRunCell = ({
   run: NotebookRunRecord
   index: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
@@ -105,15 +107,19 @@ const NotebookRunCell = ({
           <span className="font-mono text-text-300">[{index}]</span>
           <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
           {run.source === 'user' ? (
-            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">you</span>
+            <span className="rounded bg-accent px-1.5 py-0.5 font-medium text-accent">
+              {t('you')}
+            </span>
           ) : null}
           {isProblem ? (
             errorLine ? (
               <span className="rounded bg-danger-000 px-1.5 py-0.5 font-medium text-white">
-                error (line {errorLine})
+                {t('error (line {{line}})', { line: errorLine })}
               </span>
             ) : (
-              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
+              <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">
+                {t('error')}
+              </span>
             )
           ) : null}
         </div>
@@ -173,6 +179,7 @@ const TerminalInput = ({
   onChange: (value: string) => void
   onSubmit: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   // Match Python REPL ergonomics while avoiding submit during IME composition.
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
@@ -188,7 +195,7 @@ const TerminalInput = ({
         rows={1}
         value={code}
         disabled={disabled}
-        placeholder="run code in this kernel..."
+        placeholder={t('run code in this kernel...')}
         spellCheck={false}
         autoCapitalize="off"
         autoComplete="off"
@@ -203,6 +210,7 @@ const TerminalInput = ({
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
 const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
   const [terminalCode, setTerminalCode] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -413,7 +421,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                     : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
                 )}
               >
-                {isPreparingR ? 'R (preparing…)' : 'R'}
+                {isPreparingR ? t('R (preparing…)') : 'R'}
               </button>
             ) : (
               <button
@@ -471,7 +479,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           className="flex shrink-0 items-center justify-between gap-2 border-b border-border-100 bg-bg-300 px-3 py-1.5 text-[11px] text-text-100"
           data-testid="r-restart-banner"
         >
-          <span>Installed R packages need a kernel restart to load.</span>
+          <span>{t('Installed R packages need a kernel restart to load.')}</span>
           <button
             type="button"
             disabled={isRestarting}
@@ -479,7 +487,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
             data-testid="r-restart-button"
           >
-            {isRestarting ? 'Restarting…' : 'Restart R kernel'}
+            {isRestarting ? t('Restarting…') : t('Restart R kernel')}
           </button>
         </div>
       ) : null}
@@ -503,9 +511,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           data-testid="notebook-terminal-divider"
           role="separator"
         >
-          <span>Python kernel · shared with the agent</span>
+          <span>{t('Python kernel · shared with the agent')}</span>
           <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border-100 opacity-60 transition duration-150 group-hover:opacity-100" />
-          <span>{isNotebookBusy ? 'running' : 'idle'}</span>
+          <span>{isNotebookBusy ? t('running') : t('idle')}</span>
         </div>
 
         <div className="min-h-0 flex-[1_1_0]" data-testid="notebook-terminal-panel">

@@ -1,0 +1,206 @@
+// @vitest-environment jsdom
+// Covers what a plain string swap gets wrong in this form: the command dropdown labels are catalog
+// keys resolved at render (a stale `.label` would silently ship English), the headers hint runs
+// through <Trans> with a `code` placeholder that must render a real element rather than literal
+// markup, the credential hints are composed from independently-translated sentences whose order the
+// catalog must not assume, and Cancel comes from the shared `common` namespace.
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { CustomServerView } from '../../../../shared/settings'
+import { i18next } from '@/i18n'
+import { useSettingsStore } from '@/stores/settings-store'
+import { ConnectorAddForm } from './ConnectorAddForm'
+
+let container: HTMLDivElement
+let root: Root
+
+const switchTo = (language: string): void => {
+  act(() => {
+    void i18next.changeLanguage(language)
+  })
+}
+
+const setup = (): void => {
+  useSettingsStore.setState({
+    addCustomServer: vi.fn().mockResolvedValue(undefined),
+    updateCustomServer: vi.fn().mockResolvedValue(undefined)
+  } as never)
+}
+
+const render = (props: Partial<Parameters<typeof ConnectorAddForm>[0]> = {}): void => {
+  act(() => {
+    root.render(<ConnectorAddForm onDone={vi.fn()} onCancel={vi.fn()} {...props} />)
+  })
+}
+
+const editServer: CustomServerView = {
+  id: 'srv-1',
+  slug: 'memory-server',
+  name: 'Memory server',
+  transport: 'stdio',
+  enabled: true,
+  command: 'npx',
+  args: ['-y', '@modelcontextprotocol/server-memory']
+}
+
+const remoteEditServer: CustomServerView = {
+  id: 'srv-2',
+  slug: 'remote-server',
+  name: 'Remote server',
+  transport: 'streamable_http',
+  enabled: true,
+  url: 'https://example.com/mcp'
+}
+
+// hasHeaders is what puts the form into the Static-headers auth mode, which is the only state that
+// renders the headers field the <Trans> hint below belongs to.
+const headersEditServer: CustomServerView = {
+  ...remoteEditServer,
+  id: 'srv-3',
+  slug: 'headers-server',
+  hasHeaders: true
+}
+
+beforeEach(() => {
+  setup()
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  container.remove()
+  switchTo('en')
+})
+
+describe('ConnectorAddForm copy', () => {
+  it('translates the mode switch and the trust confirmation', () => {
+    render()
+    expect(container.textContent).toContain('Local command')
+    expect(container.textContent).toContain('Remote server')
+    expect(container.textContent).toContain(
+      'I trust this connector. Only add connectors from developers you trust.'
+    )
+
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('本地命令')
+    expect(container.textContent).toContain('远程服务器')
+    expect(container.textContent).toContain('我信任这个连接器。只添加来自你信任的开发者的连接器。')
+
+    switchTo('zh-Hant')
+    expect(container.textContent).toContain('本機指令')
+    expect(container.textContent).toContain('遠端伺服器')
+    expect(container.textContent).toContain('我信任這個連接器。只加入來自你信任的開發者的連接器。')
+  })
+
+  it('resolves the selected command label from the catalog, keeping the runtime name verbatim', () => {
+    render()
+    const trigger = container.querySelector('[aria-label="Command"]') as HTMLElement
+    expect(trigger.textContent).toBe('npx — Node package')
+
+    switchTo('zh-Hans')
+    expect((container.querySelector('[aria-label="命令"]') as HTMLElement).textContent).toBe(
+      'npx — Node 包'
+    )
+
+    switchTo('zh-Hant')
+    expect((container.querySelector('[aria-label="指令"]') as HTMLElement).textContent).toBe(
+      'npx — Node 套件'
+    )
+  })
+
+  it('takes Cancel from the shared common namespace', () => {
+    render()
+    expect(container.textContent).toContain('Cancel')
+
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('取消')
+  })
+
+  it('labels the submit button for add versus edit', () => {
+    render()
+    expect(container.textContent).toContain('Add connector')
+    expect(container.textContent).not.toContain('Save changes')
+
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('添加连接器')
+
+    render({ editServer })
+    expect(container.textContent).toContain('保存更改')
+    expect(container.textContent).not.toContain('添加连接器')
+
+    switchTo('zh-Hant')
+    expect(container.textContent).toContain('儲存變更')
+  })
+
+  // The env hint is assembled at the call site from up to three independently-translated sentences,
+  // only the first of which is always present. Each has to stand alone in the catalog: a translation
+  // that reaches for the neighbouring clause's grammar reads as a fragment whenever that clause is
+  // absent, which is the add-mode case below.
+  it('composes the credential hint from clauses that each stand alone', () => {
+    render()
+    expect(container.textContent).toContain('One KEY=VALUE per line.')
+    expect(container.textContent).not.toContain('Leave blank')
+
+    render({ editServer })
+    expect(container.textContent).toContain(
+      'One KEY=VALUE per line. Leave blank to keep the current values.'
+    )
+
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('每行一条 KEY=VALUE。')
+    expect(container.textContent).toContain('留空则保留当前值。')
+
+    switchTo('zh-Hant')
+    expect(container.textContent).toContain('每行一條 KEY=VALUE。')
+    expect(container.textContent).toContain('留空則保留目前值。')
+  })
+
+  // The field is behind the Static-headers auth mode, which initializes from hasHeaders — hence the
+  // edit fixture rather than initialTransport alone.
+  it('renders the headers hint <code> placeholder as an element, not literal markup', () => {
+    render({ editServer: headersEditServer })
+    const hint = container.querySelector('#connector-headers')?.parentElement as HTMLElement
+    const code = hint.querySelector('span.font-mono') as HTMLElement
+    expect(code.textContent).toBe('Name: Value')
+    expect(hint.textContent).toContain('One Name: Value per line (not JSON).')
+    expect(hint.textContent).not.toContain('<code>')
+
+    switchTo('zh-Hant')
+    const zhHint = container.querySelector('#connector-headers')?.parentElement as HTMLElement
+    expect((zhHint.querySelector('span.font-mono') as HTMLElement).textContent).toBe('Name: Value')
+    expect(zhHint.textContent).toContain('每行一條 Name: Value（不是 JSON）。')
+    expect(zhHint.textContent).not.toContain('<code>')
+  })
+
+  it('translates the immutable-name note only while editing', () => {
+    render()
+    expect(container.textContent).not.toContain('is fixed after creation')
+
+    render({ editServer })
+    expect(container.textContent).toContain('The display name is fixed after creation.')
+
+    switchTo('zh-Hans')
+    expect(container.textContent).toContain('显示名称在创建后固定不变。')
+
+    switchTo('zh-Hant')
+    expect(container.textContent).toContain('顯示名稱在建立後固定不變。')
+  })
+
+  it('keeps protocol values untranslated in the remote fields', () => {
+    render({ editServer: remoteEditServer })
+    const transport = container.querySelector('[aria-label="Transport"]') as HTMLElement
+    expect(transport.textContent).toBe('Streamable HTTP')
+    expect((container.querySelector('#connector-url') as HTMLInputElement).value).toBe(
+      'https://example.com/mcp'
+    )
+
+    switchTo('zh-Hans')
+    expect((container.querySelector('[aria-label="传输方式"]') as HTMLElement).textContent).toBe(
+      'Streamable HTTP'
+    )
+  })
+})

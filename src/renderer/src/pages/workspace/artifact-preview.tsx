@@ -2,6 +2,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText } from 'lucide-react'
 import { parse } from 'papaparse'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-store'
 
@@ -104,7 +105,8 @@ const getPreviewText = (content: string, maxLines: number): string =>
 
 const getCsvPreview = (
   artifact: MessageArtifact,
-  preview: ArtifactPreviewResult
+  preview: ArtifactPreviewResult,
+  t: ReturnType<typeof useTranslation<'workspace'>>['t']
 ): { columns: string[]; hiddenColumnCount: number; rowCountLabel: string } => {
   const delimiter = getArtifactExtension(artifact) === 'tsv' ? '\t' : undefined
   const parsed = parse<string[]>(preview.content, {
@@ -119,7 +121,9 @@ const getCsvPreview = (
   return {
     columns: columns.slice(0, visibleColumnCount),
     hiddenColumnCount: Math.max(0, columns.length - visibleColumnCount),
-    rowCountLabel: `${dataRows}${preview.truncated ? '+' : ''} rows · ${columns.length} columns`
+    rowCountLabel: preview.truncated
+      ? t('{{rows}}+ rows · {{columns}} columns', { rows: dataRows, columns: columns.length })
+      : t('{{rows}} rows · {{columns}} columns', { rows: dataRows, columns: columns.length })
   }
 }
 
@@ -130,7 +134,8 @@ const CsvPreview = ({
   artifact: MessageArtifact
   preview: ArtifactPreviewResult
 }): React.JSX.Element => {
-  const csvPreview = getCsvPreview(artifact, preview)
+  const { t } = useTranslation()
+  const csvPreview = getCsvPreview(artifact, preview, t)
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-000 p-2 text-text-000">
@@ -146,7 +151,7 @@ const CsvPreview = ({
         ))}
         {csvPreview.hiddenColumnCount > 0 ? (
           <div className="pl-[30px] text-[10px] text-text-300">
-            +{csvPreview.hiddenColumnCount} more
+            {t('+{{count}} more', { count: csvPreview.hiddenColumnCount })}
           </div>
         ) : null}
       </div>
@@ -287,6 +292,7 @@ const ManagedImageThumbnail = ({
     size: artifact.size,
     mtimeMs: artifact.mtimeMs
   })
+  const { t } = useTranslation()
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   // A decode failure disables the hook, which releases the protocol capability immediately.
@@ -308,7 +314,7 @@ const ManagedImageThumbnail = ({
   return (
     <img
       src={resourceState.resource.url}
-      alt={`Preview of ${name}`}
+      alt={t('Preview of {{name}}', { name })}
       className="size-full object-cover object-top"
       loading="lazy"
       decoding="async"
