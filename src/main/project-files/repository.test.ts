@@ -2353,19 +2353,23 @@ describe('ManagedFileIndexRepository', () => {
         ]
       })
     )
-    const softDelete = vi
-      .spyOn(repository, 'softDeleteSession')
-      .mockRejectedValueOnce(new Error('database busy'))
+    let shouldFail = true
+    const recoveringRepository = new ManagedFileIndexRepository(async () => {
+      if (shouldFail) {
+        shouldFail = false
+        throw new Error('database busy')
+      }
+      return client
+    }, storageRoot)
 
-    await expect(repository.reconcileActiveSessions([])).rejects.toThrow('database busy')
-    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+    await expect(recoveringRepository.reconcileActiveSessions([])).rejects.toThrow('database busy')
+    await expect(recoveringRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       totalCount: 1,
       isIndexComplete: false
     })
 
-    softDelete.mockRestore()
-    await repository.reconcileActiveSessions([])
-    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+    await recoveringRepository.reconcileActiveSessions([])
+    await expect(recoveringRepository.getOverview(PROJECT_ID)).resolves.toMatchObject({
       totalCount: 0,
       isIndexComplete: true
     })

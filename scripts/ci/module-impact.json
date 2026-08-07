@@ -113,11 +113,19 @@
       "fallbackCapability": "main_runtime"
     },
     "project_files_repository": {
-      "ownerPaths": ["src/main/project-files/repository.ts"],
+      "ownerPaths": [
+        "src/main/project-files/mutation-owner.ts",
+        "src/main/project-files/mutation-projection.ts",
+        "src/main/project-files/query-support.ts",
+        "src/main/project-files/repository.ts"
+      ],
       "interfacePaths": ["src/main/project-files/repository.ts"],
       "consumerModules": ["session_persistence"],
       "testFiles": {
-        "owner": ["src/main/project-files/repository.test.ts"],
+        "owner": [
+          "src/main/project-files/repository.architecture.test.ts",
+          "src/main/project-files/repository.test.ts"
+        ],
         "contract": ["src/main/project-files/ipc.test.ts"],
         "consumer": [
           "src/main/session-persistence/coordinator.test.ts",
