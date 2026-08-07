@@ -34,7 +34,6 @@ type FakeToken = { cancelled: boolean; cancel(): void }
 class FakeUpdater extends EventEmitter {
   autoDownload = true
   autoInstallOnAppQuit = true
-  installDirectory?: string
   // The download body each call runs. Default: emit progress + downloaded and resolve. Tests override
   // it to hang, to inspect the token, or to count real starts.
   runDownload: (token?: FakeToken) => Promise<void> = async () => {
@@ -93,38 +92,6 @@ describe('ElectronUpdaterStrategy', () => {
     new ElectronUpdaterStrategy({ updater, currentVersion: '0.2.0', broadcast: vi.fn() })
     expect(updater.autoDownload).toBe(false)
     expect(updater.autoInstallOnAppQuit).toBe(false)
-  })
-
-  it('pins Windows NSIS updates to the current installation directory', () => {
-    const updater = new FakeUpdater()
-    const directoryEntries = vi.fn(() => ['open-science.exe', 'Uninstall Open Science.exe'])
-    new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      platform: 'win32',
-      executablePath: 'D:\\Apps\\Open Science\\open-science.exe',
-      directoryEntries,
-      broadcast: vi.fn()
-    })
-
-    expect(directoryEntries).toHaveBeenCalledWith('D:\\Apps\\Open Science')
-    expect(updater.installDirectory).toBe('D:\\Apps\\Open Science')
-  })
-
-  it('does not pin portable Windows builds to their extraction directory', () => {
-    const updater = new FakeUpdater()
-    const directoryEntries = vi.fn(() => ['open-science.exe', 'resources'])
-    new ElectronUpdaterStrategy({
-      updater,
-      currentVersion: '0.2.0',
-      platform: 'win32',
-      executablePath: 'D:\\Portable\\Open Science\\open-science.exe',
-      directoryEntries,
-      broadcast: vi.fn()
-    })
-
-    expect(directoryEntries).toHaveBeenCalledWith('D:\\Portable\\Open Science')
-    expect(updater.installDirectory).toBeUndefined()
   })
 
   it('maps check → available with restart applyKind', async () => {

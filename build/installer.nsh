@@ -175,6 +175,22 @@ FunctionEnd
   Call normalizeRegisteredInstallPath
   Pop $perUserInstallDirCache
 
+  # The updater that launches this installer belongs to the PREVIOUS release, so it cannot rely
+  # on any updater-side fix shipped here. Preserve a registered custom directory in this new
+  # installer itself before the old uninstaller removes the registry entry. Explicit /D installs
+  # are not marked --updated and therefore keep the caller-selected directory.
+  ${if} ${isUpdated}
+    ${if} $installMode == "all"
+    ${andIf} $perMachineInstallDirCache != ""
+      StrCpy $INSTDIR $perMachineInstallDirCache
+      DetailPrint `Continuing the machine update in the registered directory: $INSTDIR`
+    ${elseif} $installMode == "CurrentUser"
+    ${andIf} $perUserInstallDirCache != ""
+      StrCpy $INSTDIR $perUserInstallDirCache
+      DetailPrint `Continuing the user update in the registered directory: $INSTDIR`
+    ${endif}
+  ${endif}
+
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
   # One exception needs a non-destructive write probe: both registry entries may point at the

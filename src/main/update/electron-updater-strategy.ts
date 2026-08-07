@@ -1,7 +1,5 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
-import { win32 } from 'node:path'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -39,7 +37,6 @@ export interface MinimalCancellationToken {
 export interface MinimalAutoUpdater {
   autoDownload: boolean
   autoInstallOnAppQuit: boolean
-  installDirectory?: string
   on(event: string, listener: (...args: unknown[]) => void): unknown
   checkForUpdates(): Promise<unknown>
   downloadUpdate(cancellationToken?: MinimalCancellationToken): Promise<unknown>
@@ -50,8 +47,6 @@ export type ElectronUpdaterDeps = {
   updater?: MinimalAutoUpdater
   currentVersion?: string
   platform?: NodeJS.Platform
-  executablePath?: string
-  directoryEntries?: (path: string) => string[]
   arch?: string
   broadcast?: UpdateBroadcast
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
@@ -205,25 +200,6 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
     this.currentVersion = deps.currentVersion ?? app?.getVersion?.() ?? '0.0.0'
     this.platform = deps.platform ?? process.platform
-    if (this.platform === 'win32') {
-      const executablePath = deps.executablePath ?? process.execPath
-      if (win32.isAbsolute(executablePath)) {
-        const installDirectory = win32.dirname(executablePath)
-        let hasNsisUninstaller = false
-        try {
-          const entries = (deps.directoryEntries ?? readdirSync)(installDirectory)
-          hasNsisUninstaller =
-            entries.filter((entry) => /^Uninstall .+\.exe$/i.test(entry)).length === 1
-        } catch {
-          // A missing or unreadable directory is not a confirmed NSIS installation.
-        }
-        if (hasNsisUninstaller) {
-          // NsisUpdater otherwise relies on registry discovery when it starts the downloaded installer.
-          // Pin confirmed NSIS installs, but never turn a portable ZIP into an install in its folder.
-          this.updater.installDirectory = installDirectory
-        }
-      }
-    }
     // Resolve the effective arch: an x64 app under Rosetta on Apple Silicon downloads the arm64
     // artifact (electron-updater does the same), so promote x64 → arm64 to match the correct size.
     const rawArch = deps.arch ?? process.arch
