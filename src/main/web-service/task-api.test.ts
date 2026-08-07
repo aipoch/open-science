@@ -83,8 +83,13 @@ describe('HeadlessTaskApi adapter', () => {
       throw new Error(`Unexpected Task command: ${channel}`)
     })
     const ids = ['message-1', 'run-1', 'assistant-1']
+    const agent = createAgent({
+      prompt: vi.fn(async (_request, observer) => {
+        observer?.onProviderPromptAccepted?.()
+      })
+    })
     const api = new HeadlessTaskApi(
-      { commands: commandsFrom(invoke), agent: createAgent() },
+      { commands: commandsFrom(invoke), agent },
       { createId: () => ids.shift() ?? 'generated-id', now: () => 1 }
     )
     const phases: string[] = []
@@ -93,7 +98,13 @@ describe('HeadlessTaskApi adapter', () => {
     const run = await api.startRun({ project: project.id, prompt: 'Research this.' })
     await api.waitForRun(run.id)
 
-    expect(phases).toEqual(['accepted', 'session-ready', 'prompt-dispatched', 'completed'])
+    expect(phases).toEqual([
+      'accepted',
+      'session-ready',
+      'prompt-dispatched',
+      'provider-accepted',
+      'completed'
+    ])
     unsubscribe()
     api.dispose()
   })
@@ -224,11 +235,14 @@ describe('HeadlessTaskApi adapter', () => {
 
     expect(agent.listAttachedSessionIds).toHaveBeenCalledOnce()
     expect(agent.setPermissionProfile).toHaveBeenCalledWith(existing.id, 'auto')
-    expect(agent.prompt).toHaveBeenCalledWith({
-      sessionId: existing.id,
-      promptMessageId: 'attached-user',
-      text: 'Continue research.'
-    })
+    expect(agent.prompt).toHaveBeenCalledWith(
+      {
+        sessionId: existing.id,
+        promptMessageId: 'attached-user',
+        text: 'Continue research.'
+      },
+      { onProviderPromptAccepted: expect.any(Function) }
+    )
     expect(invoke.mock.calls.every(([channel]) => !String(channel).startsWith('acp:'))).toBe(true)
     expect(invoke).toHaveBeenCalledWith('artifacts:finalize-run', taskCallerContext(), [
       { claimId: 'artifact-claim', messageId: 'attached-agent' }
@@ -324,11 +338,14 @@ describe('HeadlessTaskApi adapter', () => {
       projectId: project.id,
       permissionProfile: 'ask'
     })
-    expect(agent.prompt).toHaveBeenCalledWith({
-      sessionId: 'session-context',
-      promptMessageId: expect.any(String),
-      text: 'Research with remote context.'
-    })
+    expect(agent.prompt).toHaveBeenCalledWith(
+      {
+        sessionId: 'session-context',
+        promptMessageId: expect.any(String),
+        text: 'Research with remote context.'
+      },
+      { onProviderPromptAccepted: expect.any(Function) }
+    )
     expect(context.isAuthorizationCurrent()).toBe(false)
 
     await api.runWithCallerContext(context, () => api.releaseArtifact('resource-context'))
