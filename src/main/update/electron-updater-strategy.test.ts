@@ -102,10 +102,27 @@ describe('ElectronUpdaterStrategy', () => {
       currentVersion: '0.2.0',
       platform: 'win32',
       executablePath: 'D:\\Apps\\Open Science\\open-science.exe',
+      isNsisInstallation: () => true,
       broadcast: vi.fn()
     })
 
     expect(updater.installDirectory).toBe('D:\\Apps\\Open Science')
+  })
+
+  it('does not pin portable Windows builds to their extraction directory', () => {
+    const updater = new FakeUpdater()
+    const isNsisInstallation = vi.fn(() => false)
+    new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      platform: 'win32',
+      executablePath: 'D:\\Portable\\Open Science\\open-science.exe',
+      isNsisInstallation,
+      broadcast: vi.fn()
+    })
+
+    expect(isNsisInstallation).toHaveBeenCalledWith('D:\\Portable\\Open Science')
+    expect(updater.installDirectory).toBeUndefined()
   })
 
   it('maps check → available with restart applyKind', async () => {

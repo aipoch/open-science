@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { win32 } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, win32 } from 'node:path'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -50,6 +51,7 @@ export type ElectronUpdaterDeps = {
   currentVersion?: string
   platform?: NodeJS.Platform
   executablePath?: string
+  isNsisInstallation?: (installDirectory: string) => boolean
   arch?: string
   broadcast?: UpdateBroadcast
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
@@ -206,9 +208,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.platform === 'win32') {
       const executablePath = deps.executablePath ?? process.execPath
       if (win32.isAbsolute(executablePath)) {
-        // NsisUpdater otherwise relies on registry discovery when it starts the downloaded installer.
-        // Pin the directory so assisted installs that selected a custom location are upgraded in place.
-        this.updater.installDirectory = win32.dirname(executablePath)
+        const installDirectory = win32.dirname(executablePath)
+        const isNsisInstallation =
+          deps.isNsisInstallation ??
+          ((directory: string) => existsSync(join(directory, `Uninstall ${APP.name}.exe`)))
+        if (isNsisInstallation(installDirectory)) {
+          // NsisUpdater otherwise relies on registry discovery when it starts the downloaded installer.
+          // Pin confirmed NSIS installs, but never turn a portable ZIP into an install in its folder.
+          this.updater.installDirectory = installDirectory
+        }
       }
     }
     // Resolve the effective arch: an x64 app under Rosetta on Apple Silicon downloads the arm64

@@ -202,6 +202,9 @@ const withTimeout = (promise, description, timeoutMs = UPDATE_TIMEOUT_MS) =>
 
 const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
   const application = await electron.launch({ executablePath: executable, env, timeout: 60_000 })
+  const child = application.process()
+  child.stdout?.on('data', (chunk) => process.stdout.write(`[electron stdout] ${chunk}`))
+  child.stderr?.on('data', (chunk) => process.stderr.write(`[electron stderr] ${chunk}`))
   try {
     const page = await application.firstWindow({ timeout: 60_000 })
     await page.waitForFunction(() => Boolean(globalThis.window?.api?.update), undefined, {
@@ -388,6 +391,9 @@ const main = async () => {
       versionedFeed: true,
       previousInstallerCacheVerified: true
     })
+    // Persist download evidence before installation. If NSIS later fails, the artifact still proves
+    // whether electron-updater reached the intended differential path.
+    await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
     await waitFor(
@@ -412,7 +418,6 @@ const main = async () => {
       env
     })
     await profileGuard.verifyCycle('current', currentConfigRoot)
-    await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
     console.log('Windows electron-updater differential certification completed successfully.')
   } catch (error) {
     primaryError = error
