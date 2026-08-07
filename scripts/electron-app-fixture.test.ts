@@ -19,7 +19,7 @@ describe('Electron E2E cleanup', () => {
   })
 
   it('keeps a graceful close on the normal path', async () => {
-    const forceClose = vi.fn()
+    const forceClose = vi.fn(async () => undefined)
 
     await closeElectronApplicationForCleanup(
       { close: () => Promise.resolve(), forceClose },
@@ -32,7 +32,7 @@ describe('Electron E2E cleanup', () => {
   it('force-closes a fixture-owned process after the graceful budget', async () => {
     vi.useFakeTimers()
     const closing = deferred()
-    const forceClose = vi.fn(() => closing.resolve())
+    const forceClose = vi.fn(async () => closing.resolve())
     const cleanup = closeElectronApplicationForCleanup(
       { close: () => closing.promise, forceClose },
       { gracefulTimeoutMs: 100, forcedTimeoutMs: 100 }
@@ -44,22 +44,28 @@ describe('Electron E2E cleanup', () => {
     expect(forceClose).toHaveBeenCalledOnce()
   })
 
-  it('force-closes after a graceful close error', async () => {
-    const forceClose = vi.fn()
+  it('awaits forced reaping before propagating a graceful close error', async () => {
+    const reaping = deferred()
+    const forceClose = vi.fn(() => reaping.promise)
+    let cleanupError: unknown
+    const cleanup = closeElectronApplicationForCleanup(
+      { close: () => Promise.reject(new Error('close failed')), forceClose },
+      { gracefulTimeoutMs: 100, forcedTimeoutMs: 100 }
+    ).catch((error: unknown) => {
+      cleanupError = error
+    })
 
-    await expect(
-      closeElectronApplicationForCleanup(
-        { close: () => Promise.reject(new Error('close failed')), forceClose },
-        { gracefulTimeoutMs: 100, forcedTimeoutMs: 100 }
-      )
-    ).rejects.toThrow('close failed')
+    await vi.waitFor(() => expect(forceClose).toHaveBeenCalledOnce())
+    expect(cleanupError).toBeUndefined()
 
-    expect(forceClose).toHaveBeenCalledOnce()
+    reaping.resolve()
+    await cleanup
+    expect(cleanupError).toEqual(new Error('close failed'))
   })
 
   it('fails within a second bound when forced cleanup cannot reap the process', async () => {
     vi.useFakeTimers()
-    const forceClose = vi.fn()
+    const forceClose = vi.fn(() => new Promise<void>(() => undefined))
     const cleanup = closeElectronApplicationForCleanup(
       { close: () => new Promise<void>(() => undefined), forceClose },
       { gracefulTimeoutMs: 100, forcedTimeoutMs: 50 }

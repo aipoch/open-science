@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import { terminateProcessTree } from '../../src/main/process-tree'
 import { RendererFailureGate } from './renderer-failure-gate'
 
 const APP_ROOT = resolve(process.cwd())
@@ -39,7 +40,7 @@ type ShortcutModifier = 'alt' | 'control' | 'meta' | 'shift'
 
 type ElectronCleanupTarget = {
   close: () => Promise<void>
-  forceClose: () => void
+  forceClose: () => Promise<void>
 }
 
 type ElectronCleanupOptions = {
@@ -66,23 +67,23 @@ const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
   { gracefulTimeoutMs, forcedTimeoutMs }: ElectronCleanupOptions
 ): Promise<void> => {
+  const forceCloseWithinBudget = async (): Promise<void> => {
+    if (await settlesWithin(target.forceClose(), forcedTimeoutMs)) return
+    throw new Error(`Electron E2E forced close did not finish within ${forcedTimeoutMs}ms.`)
+  }
+
   let closeError: unknown
   const closing = target.close().catch((error: unknown) => {
     closeError = error
   })
   if (await settlesWithin(closing, gracefulTimeoutMs)) {
     if (closeError === undefined) return
-    target.forceClose()
+    await forceCloseWithinBudget()
     throw closeError
   }
 
-  target.forceClose()
-  if (await settlesWithin(closing, forcedTimeoutMs)) {
-    if (closeError !== undefined) throw closeError
-    return
-  }
-
-  throw new Error(`Electron E2E forced close did not finish within ${forcedTimeoutMs}ms.`)
+  await forceCloseWithinBudget()
+  if (closeError !== undefined) throw closeError
 }
 
 type ElectronApp = {
@@ -442,11 +443,13 @@ class ElectronAppHarness implements ElectronApp {
     await closeElectronApplicationForCleanup(
       {
         close: () => application.close(),
-        forceClose: () => {
-          application.process().kill()
+        forceClose: async () => {
+          const result = await terminateProcessTree(application.process())
+          if (!result.reaped)
+            throw new Error('Electron E2E forced close did not reap the process tree.')
         }
       },
-      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 5_000 }
+      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 10_000 }
     )
   }
 }
