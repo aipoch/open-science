@@ -113,14 +113,10 @@ export function renderSkillDoc(connectorId: string): string {
 // loads the matching connector. Keeping this document to conventions prevents every enabled connector
 // from consuming the initial context window while still steering calls through the approved host.mcp
 // path instead of raw HTTP.
-export function renderConnectorInstructions(connectorIds: string[]): string {
-  const enabledConnectorIds = [
-    ...new Set(
-      connectorIds.filter((id) => CONNECTOR_CATALOG.some((connector) => connector.id === id))
-    )
-  ]
-  if (enabledConnectorIds.length === 0) return ''
-  const availableSkills = enabledConnectorIds.map((id) => `\`mcp-${id}\``).join(', ')
+export function renderConnectorInstructions(skillNames: string[]): string {
+  const enabledSkillNames = [...new Set(skillNames.filter((name) => /^mcp-[a-z0-9-]+$/.test(name)))]
+  if (enabledSkillNames.length === 0) return ''
+  const availableSkills = enabledSkillNames.map((name) => `\`${name}\``).join(', ')
 
   return (
     `# Open Science data connector conventions\n\n` +
