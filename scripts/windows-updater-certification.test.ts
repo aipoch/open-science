@@ -1,15 +1,39 @@
 import { load } from 'js-yaml'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  invokeWebRpc,
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('drives updater commands through the authenticated headless RPC', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ protocolVersion: 1, ok: true, result: { state: 'ready' } })
+    )
+
+    await expect(
+      invokeWebRpc({
+        endpoint: 'http://127.0.0.1:4321',
+        auth: 'token=test-token',
+        protocolVersion: 1,
+        channel: 'update:download',
+        fetchImpl
+      })
+    ).resolves.toEqual({ state: 'ready' })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:4321/rpc/update%3Adownload?token=test-token',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ protocolVersion: 1, args: [] })
+      })
+    )
+  })
+
   it('points the installed updater at a local feed without weakening its signing policy', () => {
     const result = buildLocalUpdaterConfig(
       'provider: generic\nurl: https://example.test\nupdaterCacheDirName: app-updater\npublisherName: Old Signer\n',

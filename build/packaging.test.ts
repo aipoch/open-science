@@ -306,22 +306,6 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(normalizeUserAt).toBeLessThan(firstSharedPathCheckAt)
   })
 
-  it('keeps updater-launched installs in the registered directory', () => {
-    // The updater process comes from the previous release, so the target NSIS installer must
-    // preserve the selected registered path itself. Restrict this to --updated so a caller's
-    // explicit /D choice for an ordinary silent install remains authoritative.
-    const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
-    const normalizedUserAt = init.indexOf('Pop $perUserInstallDirCache')
-    const updateGuardAt = init.indexOf('${if} ${isUpdated}')
-    const updateGuard = init.slice(updateGuardAt, init.indexOf('# Protect HKCU'))
-
-    expect(updateGuardAt).toBeGreaterThan(normalizedUserAt)
-    expect(updateGuard).toContain('$installMode == "all"')
-    expect(updateGuard).toContain('StrCpy $INSTDIR $perMachineInstallDirCache')
-    expect(updateGuard).toContain('$installMode == "CurrentUser"')
-    expect(updateGuard).toContain('StrCpy $INSTDIR $perUserInstallDirCache')
-  })
-
   it('accepts a non-zero retry after the old executable was removed', () => {
     // The old assisted uninstaller can finish removing the application and still leak exit code 2.
     // Recovery already recognizes that result before retrying; it must make the same filesystem

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
@@ -10,18 +11,21 @@ import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
-import { _electron as electron } from 'playwright'
 
 import {
   cleanupSmokeRoot,
   createUpgradeProfileGuard,
+  fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
   installAndProbe,
   launchAndProbe,
+  parsePackagedAppEndpoint,
   runProcess,
+  terminateProcessTree,
   uninstallAndVerify,
   waitFor,
+  waitForShutdownExit,
   windowsProfileEnvironment
 } from './windows-installer-smoke.mjs'
 
@@ -200,38 +204,113 @@ const withTimeout = (promise, description, timeoutMs = UPDATE_TIMEOUT_MS) =>
     )
   })
 
+const observeChildExit = (child) =>
+  new Promise((resolveExit, rejectExit) => {
+    child.once('error', rejectExit)
+    child.once('exit', resolveExit)
+  })
+
+const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
+  const response = await fetchWithTimeout(
+    `${endpoint}/rpc/${encodeURIComponent(channel)}?${auth}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ protocolVersion, args: [] })
+    },
+    UPDATE_TIMEOUT_MS,
+    fetchImpl
+  )
+  const payload = await response.json()
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(
+      `Headless updater RPC ${channel} failed with HTTP ${response.status}: ${JSON.stringify(payload)}`
+    )
+  }
+  return payload.result
+}
+
 const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
-  const application = await electron.launch({ executablePath: executable, env, timeout: 60_000 })
-  const child = application.process()
-  child.stdout?.on('data', (chunk) => process.stdout.write(`[electron stdout] ${chunk}`))
-  child.stderr?.on('data', (chunk) => process.stderr.write(`[electron stderr] ${chunk}`))
+  // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
+  // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
+  // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
+  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+    env,
+    windowsHide: true
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk) => {
+    stdout += chunk
+    process.stdout.write(`[electron stdout] ${chunk}`)
+  })
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk
+    process.stderr.write(`[electron stderr] ${chunk}`)
+  })
+  const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const exit = observeChildExit(child)
   try {
-    const page = await application.firstWindow({ timeout: 60_000 })
-    await page.waitForFunction(() => Boolean(globalThis.window?.api?.update), undefined, {
-      timeout: 60_000
-    })
+    const { endpoint, auth } = await Promise.race([
+      waitFor('the updater app web service', async () => parsePackagedAppEndpoint(output())),
+      exit.then((code) => {
+        throw new Error(`Updater app exited before becoming healthy (${code}).\n${output()}`)
+      })
+    ])
+    const bootstrapResponse = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
+    if (!bootstrapResponse.ok) {
+      throw new Error(`Updater app bootstrap returned HTTP ${bootstrapResponse.status}.`)
+    }
+    const bootstrap = await bootstrapResponse.json()
+    if (bootstrap.platform !== 'win32' || !Number.isInteger(bootstrap.rpcProtocolVersion)) {
+      throw new Error(`Unexpected updater app bootstrap: ${JSON.stringify(bootstrap)}`)
+    }
+
     const checked = await withTimeout(
-      page.evaluate(() => globalThis.window.api.update.check()),
+      invokeWebRpc({
+        endpoint,
+        auth,
+        protocolVersion: bootstrap.rpcProtocolVersion,
+        channel: 'update:check'
+      }),
       'electron-updater check'
     )
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     const downloaded = await withTimeout(
-      page.evaluate(() => globalThis.window.api.update.download()),
+      invokeWebRpc({
+        endpoint,
+        auth,
+        protocolVersion: bootstrap.rpcProtocolVersion,
+        channel: 'update:download'
+      }),
       'electron-updater differential download'
     )
     if (downloaded.state !== 'ready' || downloaded.applyKind !== 'restart') {
       throw new Error(`Unexpected updater download result: ${JSON.stringify(downloaded)}`)
     }
 
-    const closed = withTimeout(application.waitForEvent('close'), 'electron-updater restart')
-    await page.evaluate(() => {
-      void globalThis.window.api.update.apply()
+    const closed = waitForShutdownExit(exit, child, output)
+    const applied = await invokeWebRpc({
+      endpoint,
+      auth,
+      protocolVersion: bootstrap.rpcProtocolVersion,
+      channel: 'update:apply'
     })
-    await closed
+    if (applied.state !== 'applying') {
+      throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
+    }
+    const exitCode = await closed
+    if (exitCode !== 0) throw new Error(`Updater app exited with ${exitCode}.\n${output()}`)
   } catch (error) {
-    await application.close().catch(() => {})
+    await terminateProcessTree(child)
+    const processOutput = output().trim()
+    if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
+      error.message += `\n${processOutput}`
+    }
     throw error
   }
 }
@@ -458,6 +537,7 @@ if (invokedAsScript) {
 export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  invokeWebRpc,
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths
