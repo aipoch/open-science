@@ -900,6 +900,42 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.conversationGraph?.messages[0]?.failedAt).toBe(7)
   })
 
+  it('restores an active user turn as one durable interrupted message', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 5 },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Continue the analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 5
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({ id: 'prompt-1', interrupted: true })
+    ])
+    expect(restored?.conversationGraph?.messages).toEqual([
+      expect.objectContaining({ id: 'prompt-1', interrupted: true })
+    ])
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
   it('loads sessions that predate persisted activities', () => {
     const session = normalizeSessionFile({
       id: 'session-1',
@@ -932,17 +968,21 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips the agent backend identity and run model used for diagnostics', () => {
+  it('round-trips agent, provider, backend, and model identity', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:codex-isolated',
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      providerContinuityToken: 'bridge-generation-1',
       agentModel: 'gpt-5.6-sol'
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
     expect(session?.agentBackendId).toBe('codex:codex-isolated')
+    expect(session?.providerSessionId).toBe('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
+    expect(session?.providerContinuityToken).toBe('bridge-generation-1')
     expect(session?.agentModel).toBe('gpt-5.6-sol')
   })
 

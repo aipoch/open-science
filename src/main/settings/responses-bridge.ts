@@ -60,6 +60,9 @@ export type ResponsesBridgeNamespacedTool = {
 export type ResponsesBridgeConnection = {
   baseUrl: string
   token: string
+  // Opaque, non-secret identity for this in-memory bridge instance. Session recovery compares it to
+  // avoid resuming Codex history after the hidden reasoning cache has been lost.
+  continuityToken?: string
   // Absent is the legacy Chat Completions bridge. Native Responses compatibility stays on the
   // Responses wire protocol and opts in explicitly so framework config can preserve its model.
   kind?: 'responses-compatibility'
@@ -1245,7 +1248,11 @@ export class ResponsesBridge {
       const address = server.address()
       if (!address || typeof address === 'string')
         throw new Error('Responses bridge did not bind a port')
-      this.connection = { baseUrl: `http://127.0.0.1:${address.port}/v1`, token }
+      this.connection = {
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        token,
+        continuityToken: randomBytes(16).toString('hex')
+      }
       return this.connection
     } catch (error) {
       await this.close().catch(() => undefined)

@@ -67,6 +67,7 @@ export class AcpProviderSessionAdopter {
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
+    let adoptedProviderSessionId: string | undefined
     let identity = request.identity
     try {
       const startupBackend = this.deps.currentBackend()
@@ -105,6 +106,7 @@ export class AcpProviderSessionAdopter {
       provisionalSession = await request.connection.agent
         .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
         .start()
+      adoptedProviderSessionId = provisionalSession.sessionId
 
       const reserved = this.deps.reserveIdentity(identity, [
         stableAppSessionId,
@@ -172,6 +174,10 @@ export class AcpProviderSessionAdopter {
       }
       return {
         sessionId: stableAppSessionId,
+        ...(adoptedProviderSessionId ? { providerSessionId: adoptedProviderSessionId } : {}),
+        ...(backend.providerContinuityToken
+          ? { providerContinuityToken: backend.providerContinuityToken }
+          : {}),
         cwd: request.cwd,
         frameworkId: backend.framework.id,
         ...(backend.backendId ? { backendId: backend.backendId } : {}),

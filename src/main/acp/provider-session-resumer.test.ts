@@ -279,6 +279,7 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session',
       cwd: resolve('/moved-workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
@@ -394,6 +395,7 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session',
       cwd: resolve('/workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
@@ -529,13 +531,30 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order).toContain('state callback')
   })
 
-  it('preserves the advertised-resume failure without allocating capabilities', async () => {
+  it('targets the persisted provider Session id instead of the stable application alias', async () => {
+    const harness = createHarness()
+
+    const response = await harness.resume({ providerSessionId: 'provider-session' })
+
+    expect(harness.request.mock.calls[0]?.[1]).toMatchObject({
+      sessionId: 'provider-session'
+    })
+    expect(response).toMatchObject({
+      sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session'
+    })
+  })
+
+  it('fresh-adopts when resume capability is not advertised', async () => {
     const harness = createHarness({ supportsResume: false })
 
-    await expect(harness.resume()).rejects.toThrow('ACP agent does not support session resume.')
+    await expect(harness.resume()).resolves.toMatchObject({
+      sessionId: 'stable-app-session',
+      contextReset: true
+    })
 
     expect(harness.request).not.toHaveBeenCalled()
-    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.adopt).toHaveBeenCalledOnce()
     expect(harness.order).not.toContain('capability provision')
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
   })

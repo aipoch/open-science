@@ -151,12 +151,23 @@ export type PersistedChatMessage = {
   // Stable terminal timestamps survive later artifact/upload reconciliation that advances updatedAt.
   completedAt?: number
   failedAt?: number
+  // Durable marker for a user turn whose provider interaction ended without a terminal response.
+  // Resume preserves this exact Message node; it never creates a replacement prompt.
+  interrupted?: true
   updatedAt: number
 }
 
 export type PersistedActiveRun = {
   promptMessageId: string
   startedAt: number
+}
+
+export type PersistedSessionResumeRecovery = {
+  kind: 'resume-required'
+  cause: 'app-restart' | 'connection-lost'
+  // References a user Message on the active Branch. Optional for interrupted control operations
+  // such as compaction, where there is no prompt to annotate.
+  promptMessageId?: string
 }
 
 export type PersistedToolActivityStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
@@ -213,6 +224,11 @@ export type PersistedChatSession = {
   // Identifies the provider/profile session store within a framework so a restored session is never
   // resumed against an incompatible backend (for example Codex shared profile vs isolated login).
   agentBackendId?: string
+  // Actual provider identity when it differs from the stable app Session id after adoption.
+  providerSessionId?: string
+  // Opaque identity of an in-memory provider bridge. A mismatch forces fresh adoption because hidden
+  // reasoning state is intentionally not serialized.
+  providerContinuityToken?: string
   // Model selected when the latest run started. Kept with the session so a later settings change
   // cannot misattribute a failed run's diagnostic report.
   agentModel?: string
@@ -248,6 +264,12 @@ export type PersistedChatSession = {
   activities?: PersistedToolActivity[]
   activityGroups?: PersistedActivityGroup[]
   activeRun?: PersistedActiveRun
+  // Survives renderer/app restarts so a failed Resume remains retryable without reconstructing the
+  // state from an error string or re-sending the interrupted prompt.
+  resumeRecovery?: PersistedSessionResumeRecovery
+  // A fresh provider adoption has no conversation context. The next user-authored turn replays only
+  // completed active-Branch history before this interrupted prompt, never the prompt itself.
+  pendingHistoryReplayBeforeMessageId?: string
   error?: string
   // Whether a failed run's error is worth a GitHub issue. False for a recognized failure (a provider/
   // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
@@ -605,6 +627,21 @@ const normalizeMessageAfterRestore = (message: PersistedChatMessage): PersistedC
       }
     : message
 
+const markInterruptedPrompt = (
+  messages: PersistedChatMessage[],
+  promptMessageId: string | undefined
+): PersistedChatMessage[] => {
+  if (!promptMessageId) return messages
+  return messages.map((message) =>
+    message.id === promptMessageId && message.role === 'user'
+      ? { ...message, interrupted: true }
+      : message
+  )
+}
+
+const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
+  [...messages].reverse().find((message) => message.role === 'user')?.id
+
 // Restores interrupted sessions as retryable errors because runtime state is gone.
 const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedChatSession => {
   if (
@@ -618,7 +655,23 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
     }
   }
   if (!isSessionInterrupted(session.status)) {
-    return session
+    const legacyInterrupted =
+      session.resumeRecovery === undefined && session.error === INTERRUPTED_SESSION_ERROR
+    const promptMessageId =
+      session.resumeRecovery?.promptMessageId ??
+      (legacyInterrupted ? latestUserMessageId(session.messages) : undefined)
+    const resumeRecovery =
+      session.resumeRecovery ??
+      (legacyInterrupted
+        ? ({ kind: 'resume-required', cause: 'app-restart', promptMessageId } as const)
+        : undefined)
+    return resumeRecovery
+      ? {
+          ...session,
+          resumeRecovery,
+          messages: markInterruptedPrompt(session.messages, promptMessageId)
+        }
+      : session
   }
 
   // An approved Plan is durable execution authority, but its provider interaction is not. Restore
@@ -640,8 +693,18 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
     ...session,
     status: 'error',
     activeRun: undefined,
+    resumeRecovery: {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      ...(session.activeRun?.promptMessageId
+        ? { promptMessageId: session.activeRun.promptMessageId }
+        : {})
+    },
     error: session.error ?? INTERRUPTED_SESSION_ERROR,
-    messages: session.messages.map(normalizeMessageAfterRestore)
+    messages: markInterruptedPrompt(
+      session.messages.map(normalizeMessageAfterRestore),
+      session.activeRun?.promptMessageId
+    )
   }
 }
 
@@ -1147,6 +1210,7 @@ const sanitizeMessage = (
   if (images) sanitized.images = images
   if (turnUsage) sanitized.turnUsage = turnUsage
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
+  if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
   if (role === 'agent' && sanitized.status === 'complete') {
     sanitized.completedAt = completedAt ?? sanitized.updatedAt
   }
@@ -1406,6 +1470,19 @@ const sanitizeActiveRun = (activeRun: unknown): PersistedActiveRun | undefined =
   return promptMessageId && startedAt !== undefined ? { promptMessageId, startedAt } : undefined
 }
 
+const sanitizeSessionResumeRecovery = (
+  recovery: unknown
+): PersistedSessionResumeRecovery | undefined => {
+  if (!isRecord(recovery) || recovery.kind !== 'resume-required') return undefined
+  if (recovery.cause !== 'app-restart' && recovery.cause !== 'connection-lost') return undefined
+  const promptMessageId = asString(recovery.promptMessageId)
+  return {
+    kind: 'resume-required',
+    cause: recovery.cause,
+    ...(promptMessageId ? { promptMessageId } : {})
+  }
+}
+
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
 const sanitizeSession = (
   session: unknown,
@@ -1455,9 +1532,12 @@ const sanitizeSession = (
     updatedAt: asNumber(session.updatedAt) ?? 0
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
+  const resumeRecovery = sanitizeSessionResumeRecovery(session.resumeRecovery)
   const error = asString(session.error)
   const agentFrameworkId = asString(session.agentFrameworkId) as AgentFrameworkId | undefined
   const agentBackendId = asString(session.agentBackendId)
+  const providerSessionId = asString(session.providerSessionId)
+  const providerContinuityToken = asString(session.providerContinuityToken)
   const agentModel = asString(session.agentModel)
   const enabledComputeHosts = Array.isArray(session.enabledComputeHosts)
     ? session.enabledComputeHosts.filter(
@@ -1466,6 +1546,7 @@ const sanitizeSession = (
     : []
 
   if (activeRun) sanitized.activeRun = activeRun
+  if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
   if (error && session.errorReportable === false) sanitized.errorReportable = false
@@ -1473,7 +1554,13 @@ const sanitizeSession = (
     sanitized.agentFrameworkId = agentFrameworkId
   }
   if (agentBackendId) sanitized.agentBackendId = agentBackendId
+  if (providerSessionId) sanitized.providerSessionId = providerSessionId
+  if (providerContinuityToken) sanitized.providerContinuityToken = providerContinuityToken
   if (agentModel) sanitized.agentModel = agentModel
+  const pendingHistoryReplayBeforeMessageId = asString(session.pendingHistoryReplayBeforeMessageId)
+  if (pendingHistoryReplayBeforeMessageId) {
+    sanitized.pendingHistoryReplayBeforeMessageId = pendingHistoryReplayBeforeMessageId
+  }
   // Restore the pin only from an explicit true so malformed or legacy files stay unpinned.
   if (session.pinned === true) sanitized.pinned = true
   const archivedAt = asNumber(session.archivedAt)
@@ -1505,9 +1592,8 @@ const sanitizeSession = (
     sanitized.activeRun = undefined
   }
 
-  // Normalize interrupted runtime state before constructing a graph for legacy sessions. Otherwise
-  // the compatibility message list becomes an error while the newly-created canonical graph retains
-  // a streaming message and later projects that stale state back into the UI.
+  // Normalize before graph creation so a legacy flat transcript never seeds a streaming message or
+  // loses the active prompt identity while activeRun is cleared.
   sanitized = normalizeSessionAfterRestore(sanitized)
 
   if (session.conversationGraph !== undefined) {
@@ -1525,6 +1611,39 @@ const sanitizeSession = (
       createdAt: sanitized.createdAt,
       updatedAt: sanitized.updatedAt
     })
+  }
+
+  // Normalize only after resolving the canonical active Branch. Recovery references and the durable
+  // interrupted marker must never be inferred from an abandoned Branch.
+  sanitized = normalizeSessionAfterRestore(sanitized)
+  const activeUserMessageIds = new Set(
+    sanitized.messages.filter((message) => message.role === 'user').map((message) => message.id)
+  )
+  if (
+    sanitized.resumeRecovery?.promptMessageId &&
+    !activeUserMessageIds.has(sanitized.resumeRecovery.promptMessageId)
+  ) {
+    sanitized.resumeRecovery = {
+      kind: 'resume-required',
+      cause: sanitized.resumeRecovery.cause
+    }
+  }
+  if (
+    sanitized.pendingHistoryReplayBeforeMessageId &&
+    !activeUserMessageIds.has(sanitized.pendingHistoryReplayBeforeMessageId)
+  ) {
+    sanitized.pendingHistoryReplayBeforeMessageId = undefined
+  }
+  const recoveryPromptMessageId = sanitized.resumeRecovery?.promptMessageId
+  if (recoveryPromptMessageId && sanitized.conversationGraph) {
+    sanitized.conversationGraph = {
+      ...sanitized.conversationGraph,
+      messages: sanitized.conversationGraph.messages.map((message) =>
+        message.id === recoveryPromptMessageId && message.role === 'user'
+          ? { ...message, interrupted: true }
+          : message
+      )
+    }
   }
 
   return sanitizeSessionMessageImages(sanitized)

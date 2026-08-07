@@ -1,4 +1,5 @@
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentModelRoute } from '../agent-framework'
 
 type AcpSessionResumePolicyInput = Readonly<{
   appSessionId: string
@@ -7,6 +8,9 @@ type AcpSessionResumePolicyInput = Readonly<{
   currentFrameworkId: AgentFrameworkId
   previousBackendId?: string
   currentBackendId?: string
+  currentModelRoute?: AgentModelRoute
+  previousProviderContinuityToken?: string
+  currentProviderContinuityToken?: string
   resumeCapabilityAdvertised: boolean
 }>
 
@@ -15,6 +19,8 @@ type AcpSessionResumeAdoptionReason =
   | 'backend-changed'
   | 'codex-provider-session-id-incompatible'
   | 'opencode-provider-session-id-incompatible-with-claude'
+  | 'resume-capability-not-advertised'
+  | 'provider-continuity-lost'
 
 const isCodexProviderSessionId = (sessionId: string): boolean =>
   /^(?:urn:uuid:)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
@@ -37,13 +43,6 @@ type AcpSessionResumeDecision =
         reason: AcpSessionResumeAdoptionReason
         contextReset: true
       }>)
-  | (AcpSessionResumeDecisionIdentity &
-      Readonly<{
-        action: 'fail'
-        reason: 'resume-capability-not-advertised'
-        contextReset: false
-        message: 'ACP agent does not support session resume.'
-      }>)
 
 type AcpSessionResumeAdoptableFailureReason =
   | 'resource-not-found-code'
@@ -51,7 +50,6 @@ type AcpSessionResumeAdoptableFailureReason =
   | 'session-service-failure'
   | 'unresumable-error-kind'
   | 'legacy-unresumable-details'
-  | 'legacy-internal-error-without-details'
 
 type AcpSessionResumeAuthoritativeFailureReason =
   | 'unrecognized-error'
@@ -178,6 +176,21 @@ class AcpSessionResumePolicy {
       })
     }
 
+    if (
+      input.currentModelRoute === 'codex-bridge' &&
+      (!input.previousProviderContinuityToken ||
+        !input.currentProviderContinuityToken ||
+        input.previousProviderContinuityToken !== input.currentProviderContinuityToken)
+    ) {
+      return Object.freeze({
+        action: 'adopt',
+        reason: 'provider-continuity-lost',
+        appSessionId: input.appSessionId,
+        providerSessionId,
+        contextReset: true
+      })
+    }
+
     if (input.currentFrameworkId === 'codex' && !isCodexProviderSessionId(providerSessionId)) {
       return Object.freeze({
         action: 'adopt',
@@ -200,12 +213,11 @@ class AcpSessionResumePolicy {
 
     if (!input.resumeCapabilityAdvertised) {
       return Object.freeze({
-        action: 'fail',
+        action: 'adopt',
         reason: 'resume-capability-not-advertised',
         appSessionId: input.appSessionId,
         providerSessionId,
-        contextReset: false,
-        message: 'ACP agent does not support session resume.'
+        contextReset: true
       })
     }
 
@@ -227,7 +239,7 @@ class AcpSessionResumePolicy {
     if (!message.readable) return authoritativeFailure('uninspectable-error')
     if (
       typeof message.value === 'string' &&
-      /resource not found|session not found/i.test(message.value)
+      /resource not found|session not found|no rollout found for thread id/i.test(message.value)
     ) {
       return adoptableFailure('session-not-found-message')
     }
@@ -262,9 +274,7 @@ class AcpSessionResumePolicy {
     if (describesUnresumableSession(details.value)) {
       return adoptableFailure('legacy-unresumable-details')
     }
-    return details.value === undefined
-      ? adoptableFailure('legacy-internal-error-without-details')
-      : authoritativeFailure('unrelated-internal-error')
+    return authoritativeFailure('unrelated-internal-error')
   }
 }
 

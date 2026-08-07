@@ -157,6 +157,15 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(bubbleRow?.classList.contains('w-full')).toBe(true)
   })
 
+  it('labels an interrupted user turn without creating another message item', async () => {
+    await renderItem(createMessage({ interrupted: true }))
+
+    expect(container.querySelectorAll('[data-slot="user-message-bubble"]')).toHaveLength(1)
+    expect(container.querySelector('[data-slot="user-message-interrupted"]')?.textContent).toBe(
+      '该轮已中断'
+    )
+  })
+
   it('renders copy and edit actions next to user bubbles only', async () => {
     await renderItem(createMessage())
 

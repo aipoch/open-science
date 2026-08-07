@@ -60,6 +60,8 @@ export type BindPendingSessionInput = {
   cwd?: string
   agentFrameworkId?: PersistedChatSession['agentFrameworkId']
   agentBackendId?: PersistedChatSession['agentBackendId']
+  providerSessionId?: PersistedChatSession['providerSessionId']
+  providerContinuityToken?: PersistedChatSession['providerContinuityToken']
 }
 
 export type AppendMessageResult = {

@@ -78,9 +78,8 @@ type SendWorkspaceMessageInput = {
   referencedArtifacts?: FileReference[]
   // Structured mention segments of the draft, persisted so the sent bubble renders styled pills.
   parts?: MessagePart[]
-  // Set by the interrupted-resume path when its own resume already reset the agent's context. The
-  // internal re-resume below runs against an already-attached session and can't report the reset
-  // again, so this forces the prior turns to be replayed as a history preamble on the re-sent turn.
+  // Internal recovery seam for operations that intentionally replace provider context (for example
+  // context-overflow retry). Ordinary Session Resume never sets this or re-sends a prompt.
   forceHistoryReplay?: boolean
   // Current Provider capability, injected by the hook so replay can omit unsupported image media.
   supportsImageInput?: boolean
@@ -160,14 +159,6 @@ type ResendEditedWorkspaceMessageOptions = {
   supportsImageInput?: boolean
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
-  agentModel?: string
-  historyReplayDescriptor?: HistoryReplayDescriptor
-  onSendPreparationStateChange?: SendPreparationStateChange
-  drainRuntimeEvents?: RuntimeEventDrain
-}
-
-type ResumeInterruptedWorkspaceSessionOptions = {
-  supportsImageInput?: boolean
   agentModel?: string
   historyReplayDescriptor?: HistoryReplayDescriptor
   onSendPreparationStateChange?: SendPreparationStateChange
@@ -709,7 +700,9 @@ const startPendingSessionPrompt = (
       sessionId: runtimeSessionId,
       cwd: sessionCwd,
       agentFrameworkId: createdSession.frameworkId,
-      agentBackendId: createdSession.backendId
+      agentBackendId: createdSession.backendId,
+      providerSessionId: createdSession.providerSessionId,
+      providerContinuityToken: createdSession.providerContinuityToken
     })
 
     if (!bound) return
@@ -1046,9 +1039,17 @@ const sendWorkspaceMessage = async (
             sessionProjectName,
             currentSession?.permissionProfile ?? permissionProfile
           )
-          useSessionStore
-            .getState()
-            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+          useSessionStore.getState().markResumed(
+            targetSessionId,
+            reset
+              ? {
+                  agentFrameworkId: reset.frameworkId,
+                  agentBackendId: reset.backendId,
+                  providerSessionId: reset.providerSessionId,
+                  providerContinuityToken: reset.providerContinuityToken
+                }
+              : undefined
+          )
           agentContextResetPerformed = true
         }
         branchContextResetPerformed = true
@@ -1070,13 +1071,23 @@ const sendWorkspaceMessage = async (
           currentSession?.permissionProfile ?? permissionProfile,
           currentSession?.agentFrameworkId,
           currentSession?.agentBackendId,
-          currentSession?.specialistId
+          currentSession?.specialistId,
+          currentSession?.providerSessionId,
+          currentSession?.providerContinuityToken
         )
 
         contextResetFromResume = Boolean(resumeResult?.contextReset)
-        useSessionStore
-          .getState()
-          .markResumed(targetSessionId, resumeResult?.frameworkId, resumeResult?.backendId)
+        useSessionStore.getState().markResumed(
+          targetSessionId,
+          resumeResult
+            ? {
+                agentFrameworkId: resumeResult.frameworkId,
+                agentBackendId: resumeResult.backendId,
+                providerSessionId: resumeResult.providerSessionId,
+                providerContinuityToken: resumeResult.providerContinuityToken
+              }
+            : undefined
+        )
 
         // A provider may resume an existing selected-runtime session without resetting its hidden
         // history. Branch isolation and text-only models both require a fresh context in that case.
@@ -1087,9 +1098,17 @@ const sendWorkspaceMessage = async (
             sessionProjectName,
             currentSession?.permissionProfile ?? permissionProfile
           )
-          useSessionStore
-            .getState()
-            .markResumed(targetSessionId, reset?.frameworkId, reset?.backendId)
+          useSessionStore.getState().markResumed(
+            targetSessionId,
+            reset
+              ? {
+                  agentFrameworkId: reset.frameworkId,
+                  agentBackendId: reset.backendId,
+                  providerSessionId: reset.providerSessionId,
+                  providerContinuityToken: reset.providerContinuityToken
+                }
+              : undefined
+          )
           contextResetFromResume = true
         }
 
@@ -1122,10 +1141,18 @@ const sendWorkspaceMessage = async (
         ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
         : -1
     if (truncateFromMessageId && historyCutIndex < 0) return undefined
+    const resumeReplayCutMessageId = preparedSession?.pendingHistoryReplayBeforeMessageId
+    const resumeReplayCutIndex =
+      resumeReplayCutMessageId && preparedSession
+        ? preparedSession.messages.findIndex((message) => message.id === resumeReplayCutMessageId)
+        : -1
+    if (resumeReplayCutMessageId && resumeReplayCutIndex < 0) return undefined
     const historyMessages = (
       preparedSession && historyCutIndex >= 0
         ? preparedSession.messages.slice(0, historyCutIndex)
-        : preparedSession?.messages
+        : preparedSession && resumeReplayCutIndex >= 0
+          ? preparedSession.messages.slice(0, resumeReplayCutIndex)
+          : preparedSession?.messages
     )?.filter((message) => message.id !== preparedSession?.pendingContextReplayMessageId)
 
     // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
@@ -1156,16 +1183,15 @@ const sendWorkspaceMessage = async (
     // appendUserMessage can reject stale session ids after local deletion or hydration changes.
     if (!appended) return undefined
 
-    // Replay prior turns when this resume reset the agent's context, or the caller already knows a reset
-    // happened (interrupted-resume path — its internal re-resume above hits an already-attached session
-    // and can't report the reset again). historyMessages ends before the newly appended user message,
-    // so this is the prior conversation only — the turn being sent is not duplicated in.
+    // Replay prior turns only after an intentional context replacement. historyMessages ends before
+    // the newly appended user message, so the turn being sent is never duplicated into its preamble.
     if (
       (branchContextResetPerformed ||
         contextResetFromResume ||
         forceHistoryReplay ||
         specialistSwitchReplay ||
-        preparedSession?.pendingContextReplayMessageId) &&
+        preparedSession?.pendingContextReplayMessageId ||
+        resumeReplayCutMessageId) &&
       historyMessages
     ) {
       const replay = buildWorkspaceReplay(
@@ -1202,7 +1228,8 @@ const sendWorkspaceMessage = async (
       contextResetFromResume ||
       forceHistoryReplay ||
       specialistSwitchReplay ||
-      preparedSession?.pendingContextReplayMessageId
+      preparedSession?.pendingContextReplayMessageId ||
+      resumeReplayCutMessageId
     )
 
     let promptAttachments = effectiveAttachments
@@ -1264,6 +1291,11 @@ const sendWorkspaceMessage = async (
         if (preparedSession?.pendingContextReplayMessageId) {
           useSessionStore.getState().clearPendingContextReplay(targetSessionId, appended.messageId)
         }
+        if (resumeReplayCutMessageId) {
+          useSessionStore
+            .getState()
+            .clearPendingHistoryReplay(targetSessionId, resumeReplayCutMessageId)
+        }
         return snapshot
       })
       .catch((error) => {
@@ -1310,11 +1342,9 @@ const sendWorkspaceMessage = async (
   return pending
 }
 
-// Finds the interrupted user turn to continue after a reconnect: the most recent user message that
-// has no successful assistant reply after it (a half-streamed reply is failed on disconnect, so it
-// does not count). Returns undefined when the last turn was already answered, so a redundant Resume
-// does not re-send it.
-const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefined => {
+// Finds the unanswered user turn used only by the explicit context-overflow retry workflow. Manual
+// Session Resume never calls this helper and never dispatches an existing prompt.
+const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefined => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
 
@@ -1333,10 +1363,7 @@ const findInterruptedUserTurn = (messages: ChatMessage[]): ChatMessage | undefin
 // removeMessage creates an abandoned Branch before retry. If preparation fails before the shared send
 // appends a replacement prompt, restore the exact transcript/graph projection while preserving newer
 // runtime metadata and the failure recorded on the live session.
-const restoreRemovedTurnProjection = (
-  sessionBeforeRemoval: ChatSession,
-  options?: { interrupted?: boolean }
-): void => {
+const restoreRemovedTurnProjection = (sessionBeforeRemoval: ChatSession): void => {
   useSessionStore.setState((state) => ({
     sessions: state.sessions.map((session) => {
       if (session.id !== sessionBeforeRemoval.id) return session
@@ -1346,15 +1373,6 @@ const restoreRemovedTurnProjection = (
         messages: sessionBeforeRemoval.messages,
         conversationGraph: sessionBeforeRemoval.conversationGraph,
         filesRevision: sessionBeforeRemoval.filesRevision,
-        ...(options?.interrupted
-          ? {
-              status: 'error' as const,
-              activeRun: undefined,
-              interrupted: true,
-              compacting: undefined,
-              error: session.error ?? sessionBeforeRemoval.error
-            }
-          : {}),
         updatedAt: Date.now()
       }
     })
@@ -1365,30 +1383,20 @@ const restoreRemovedTurnProjection = (
 // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
 const resumeInterruptedWorkspaceSession = async (
   runtime: WorkspaceMessageRuntime,
-  sessionId: string,
-  {
-    supportsImageInput,
-    agentModel,
-    historyReplayDescriptor,
-    onSendPreparationStateChange,
-    drainRuntimeEvents
-  }: ResumeInterruptedWorkspaceSessionOptions = {}
+  sessionId: string
 ): Promise<void> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
   if (!session) return
 
-  const interruptedTurn = findInterruptedUserTurn(session.messages)
   const runtimeAlreadyAttached = runtime.state.sessionIds.includes(sessionId)
 
-  // Already attached and no unanswered retry remains (e.g. a redundant click after a prior resume):
-  // just clear the banner. A failed post-resume preparation deliberately keeps `interrupted` set so a
-  // second click skips provider resume but still re-attempts the preserved prompt below.
-  if (runtimeAlreadyAttached && !interruptedTurn) {
+  // Resume is reconnect-only. ACP session/resume restores provider context but does not start a turn;
+  // an already-attached session therefore only needs its recovery gate cleared.
+  if (runtimeAlreadyAttached) {
     useSessionStore.getState().markResumed(sessionId)
     return
   }
-  if (runtimeAlreadyAttached) useSessionStore.getState().markResumed(sessionId)
 
   // Empty string is treated as missing; fall back to runtime cwd
   const resumeCwd = session.cwd || runtime.state.cwd
@@ -1398,62 +1406,35 @@ const resumeInterruptedWorkspaceSession = async (
     return
   }
 
-  let contextReset = false
-
-  if (!runtimeAlreadyAttached) {
-    try {
-      const resumeResult = await runtime.resumeSession(
-        sessionId,
-        resumeCwd,
-        session.projectId,
-        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-        session.agentFrameworkId,
-        session.agentBackendId,
-        session.specialistId
-      )
-      // Adopting a fresh agent session (framework switch, or an unresumable restart) wipes the agent's
-      // context; capture that so the re-sent turn below replays the transcript. The shared send path's
-      // own re-resume can't observe this — by then the session is already attached.
-      contextReset = Boolean(resumeResult?.contextReset)
-      useSessionStore
-        .getState()
-        .markResumed(sessionId, resumeResult?.frameworkId, resumeResult?.backendId)
-    } catch (error) {
-      useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
-      return
-    }
-  }
-
-  // Continue the interrupted turn if it never got a successful reply. Removing the stale user message
-  // first avoids a duplicate bubble, since the shared send path re-appends and re-prompts it once.
-  if (!interruptedTurn) return
-
-  useSessionStore.getState().removeMessage(sessionId, interruptedTurn.id)
-
-  const resent = await sendWorkspaceMessage(
-    runtime,
-    {
+  try {
+    const resumeResult = await runtime.resumeSession(
       sessionId,
-      text: interruptedTurn.content,
-      attachments: (interruptedTurn.uploads ?? []).map((upload) =>
-        toRuntimeUploadedAttachment(upload, session.projectId)
-      ),
-      parts: interruptedTurn.parts,
-      cwd: resumeCwd,
-      projectId: session.projectId,
-      permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-      // Replay the prior conversation when this resume adopted a fresh agent session.
-      forceHistoryReplay: contextReset,
-      requireExistingSession: true,
-      supportsImageInput,
-      agentModel,
-      historyReplayDescriptor
-    },
-    onSendPreparationStateChange,
-    drainRuntimeEvents
-  )
-
-  if (!resent) restoreRemovedTurnProjection(session, { interrupted: true })
+      resumeCwd,
+      session.projectId,
+      session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+      session.agentFrameworkId,
+      session.agentBackendId,
+      session.specialistId,
+      session.providerSessionId,
+      session.providerContinuityToken
+    )
+    useSessionStore.getState().markResumed(
+      sessionId,
+      resumeResult
+        ? {
+            agentFrameworkId: resumeResult.frameworkId,
+            agentBackendId: resumeResult.backendId,
+            providerSessionId: resumeResult.providerSessionId,
+            providerContinuityToken: resumeResult.providerContinuityToken,
+            pendingHistoryReplayBeforeMessageId: resumeResult.contextReset
+              ? session.resumeRecovery?.promptMessageId
+              : undefined
+          }
+        : undefined
+    )
+  } catch (error) {
+    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+  }
 }
 
 // After an auto-recovery, ignore further overflow events for this session for a short window so a retry
@@ -1533,7 +1514,7 @@ const recoverContextOverflowWorkspaceSession = async (
 
   // The unanswered user turn is what we re-send; if the last turn already got a reply there is nothing
   // to retry (a stray late overflow event), so bail before disturbing the agent session.
-  const interruptedTurn = findInterruptedUserTurn(session.messages)
+  const interruptedTurn = findUnansweredUserTurn(session.messages)
 
   if (!interruptedTurn) return false
 
@@ -2109,25 +2090,8 @@ const useWorkspaceAgentRuntime = (): {
   // Explicitly re-attaches an interrupted session's ACP runtime so the user can keep chatting. On
   // success the composer is unlocked; on failure the interrupted banner stays so a retry stays possible.
   const resumeInterruptedSession = useCallback(
-    (sessionId: string): Promise<void> => {
-      const session = useSessionStore
-        .getState()
-        .sessions.find((candidate) => candidate.id === sessionId)
-      return resumeInterruptedWorkspaceSession(runtime, sessionId, {
-        supportsImageInput,
-        agentModel: session?.agentModel,
-        historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
-        onSendPreparationStateChange: handleSendPreparationStateChange,
-        drainRuntimeEvents
-      })
-    },
-    [
-      runtime,
-      supportsImageInput,
-      getSessionHistoryReplayDescriptor,
-      handleSendPreparationStateChange,
-      drainRuntimeEvents
-    ]
+    (sessionId: string): Promise<void> => resumeInterruptedWorkspaceSession(runtime, sessionId),
+    [runtime]
   )
 
   // Sends a cancellation request while the runtime waits for the eventual stop event.

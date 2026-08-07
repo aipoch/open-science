@@ -2333,6 +2333,13 @@ describe('session store', () => {
 
     it('markResumed clears the interrupted state so the composer is usable', () => {
       hydrateInterrupted({
+        providerSessionId: 'provider-session-old',
+        providerContinuityToken: 'bridge-generation-old',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
         messages: [
           {
             id: 'prompt-1',
@@ -2364,7 +2371,13 @@ describe('session store', () => {
         ]
       })
 
-      useSessionStore.getState().markResumed('resumable-session', 'codex', 'codex:codex-isolated')
+      useSessionStore.getState().markResumed('resumable-session', {
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:codex-isolated',
+        providerSessionId: 'provider-session-new',
+        providerContinuityToken: 'bridge-generation-new',
+        pendingHistoryReplayBeforeMessageId: 'prompt-1'
+      })
       const session = useSessionStore.getState().sessions[0]
 
       expect(session.interrupted).toBeUndefined()
@@ -2372,6 +2385,10 @@ describe('session store', () => {
       expect(session.status).toBe('idle')
       expect(session.agentFrameworkId).toBe('codex')
       expect(session.agentBackendId).toBe('codex:codex-isolated')
+      expect(session.providerSessionId).toBe('provider-session-new')
+      expect(session.providerContinuityToken).toBe('bridge-generation-new')
+      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.pendingHistoryReplayBeforeMessageId).toBe('prompt-1')
       expect(session.messages[1]).toMatchObject({
         responseToMessageId: 'prompt-1',
         completedAt: 13,
@@ -2407,9 +2424,28 @@ describe('session store', () => {
       expect(session.interrupted).toBe(true)
       expect(session.error).toBe('Connection lost — Resume to reconnect and continue.')
       expect(session.activeRun).toBeUndefined()
-      // The user prompt is preserved so Resume can continue it; the streamed reply is failed off.
-      expect(session.messages[0]).toMatchObject({ role: 'user', content: 'Read the files' })
+      expect(session.resumeRecovery).toMatchObject({
+        kind: 'resume-required',
+        cause: 'connection-lost',
+        promptMessageId: session.messages[0].id
+      })
+      // The exact user node remains visible and is never re-sent by Resume; the partial reply fails off.
+      expect(session.messages[0]).toMatchObject({
+        role: 'user',
+        content: 'Read the files',
+        interrupted: true
+      })
+      expect(
+        session.conversationGraph?.messages.find((message) => message.id === session.messages[0].id)
+      ).toMatchObject({ interrupted: true })
       expect(session.messages[1]).toMatchObject({ content: 'I started', status: 'error' })
+      const persisted = toPersistedSession(session)
+      expect(persisted.resumeRecovery).toEqual(session.resumeRecovery)
+      expect(
+        persisted.conversationGraph?.messages.find(
+          (message) => message.id === session.messages[0].id
+        )
+      ).toMatchObject({ interrupted: true })
     })
 
     it('markDisconnected preserves a specific reason in the Resume banner', () => {
@@ -2554,6 +2590,7 @@ describe('session store public contract', () => {
         'clearArtifactError',
         'clearBranchContextReset',
         'clearPendingContextReplay',
+        'clearPendingHistoryReplay',
         'clearPermissionPending',
         'clearSelection',
         'clearSpecialistSwitchResetRequired',

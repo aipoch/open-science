@@ -182,6 +182,7 @@ describe('AcpProviderSessionAdopter', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
+      providerSessionId: 'fresh-provider-session',
       cwd: '/workspace',
       frameworkId: 'claude-code',
       backendId: 'claude-code',

@@ -477,7 +477,12 @@ export type AcpCreateSessionRequest = {
 }
 
 export type AcpCreateSessionResponse = {
+  // Stable application identity used by renderer state and IPC routing.
   sessionId: string
+  // Actual ACP/provider identity. It can differ after fresh adoption under a stable app id and must
+  // survive app restart so the next session/resume targets the provider's real session.
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd?: string
   frameworkId?: AgentFrameworkId
   backendId?: string
@@ -489,6 +494,8 @@ export type AcpCreateSessionResponse = {
 
 export type AcpResumeSessionRequest = {
   sessionId: string
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd: string
   projectName?: string
   permissionProfile?: PermissionProfileId

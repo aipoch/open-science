@@ -6011,8 +6011,18 @@ describe('ACP runtime session management', () => {
     initializeCanFinish.resolve(undefined)
 
     await expect(Promise.all([firstSession, secondSession])).resolves.toEqual([
-      { sessionId: 'remote-session-1', cwd: resolve('/workspace'), frameworkId: 'claude-code' },
-      { sessionId: 'remote-session-2', cwd: resolve('/workspace'), frameworkId: 'claude-code' }
+      {
+        sessionId: 'remote-session-1',
+        providerSessionId: 'remote-session-1',
+        cwd: resolve('/workspace'),
+        frameworkId: 'claude-code'
+      },
+      {
+        sessionId: 'remote-session-2',
+        providerSessionId: 'remote-session-2',
+        cwd: resolve('/workspace'),
+        frameworkId: 'claude-code'
+      }
     ])
     expect(spawnCount).toBe(1)
     expect(runtime.getSnapshot().sessionIds).toEqual(['remote-session-1', 'remote-session-2'])
@@ -6162,6 +6172,7 @@ describe('ACP runtime session management', () => {
 
     expect(session).toEqual({
       sessionId: 'remote-session-2',
+      providerSessionId: 'remote-session-2',
       cwd: resolve('/second-workspace'),
       frameworkId: 'claude-code'
     })
@@ -11911,35 +11922,22 @@ describe('ACP runtime session management', () => {
     ).toThrow('No user task is available')
   })
 
-  it('adopts a fresh session when the agent returns a generic Internal error on resume', async () => {
+  it('preserves a generic Internal resume error as authoritative', async () => {
     const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeInternalError: true })
-    const events: Array<{ sessionId?: string; text?: string }> = []
+    const fakeAgent = startFakeAgent(process, [], { resumeInternalError: true })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      callbacks: {
-        onEvent: (event) => events.push({ sessionId: event.sessionId, text: event.text })
-      }
+      spawnAgent: () => asAgentProcess(process)
     })
 
-    // Resume fails with -32603 "Internal error" (what a restarted agent returns instead of a clean
-    // not-found). It must still be adopted onto a fresh agent session so the thread is not dead-ended.
-    const resumed = await runtime.resumeSession({
-      sessionId: 'restarted-session',
-      cwd: '/workspace'
-    })
-    expect(resumed.sessionId).toBe('restarted-session')
-
-    await runtime.sendPrompt({ sessionId: 'restarted-session', text: 'keep going' })
-
-    expect(fakeAgent.prompts).toEqual([{ sessionId: 'adopted-session-1', text: 'keep going' }])
-    expect(events).toEqual(
-      expect.arrayContaining([
-        { sessionId: 'restarted-session', text: 'reply for adopted-session-1' }
-      ])
-    )
+    await expect(
+      runtime.resumeSession({
+        sessionId: 'restarted-session',
+        cwd: '/workspace'
+      })
+    ).rejects.toMatchObject({ code: -32603, message: 'Internal error' })
+    expect(fakeAgent.newSessions).toEqual([])
   })
 
   it('adopts a fresh session when the ACP agent wraps a resume failure in Internal error details', async () => {
@@ -12242,6 +12240,7 @@ describe('ACP runtime session management', () => {
     // Adopted onto opencode under the same app id, with context reset so soft-replay can run.
     expect(resumed).toEqual({
       sessionId: 'claude-session-1',
+      providerSessionId: 'opencode-session-1',
       cwd: resolve('/workspace'),
       frameworkId: 'opencode',
       contextReset: true
@@ -12289,6 +12288,7 @@ describe('ACP runtime session management', () => {
     const created = await runtime.createSession({ cwd: '/workspace' })
     expect(created).toEqual({
       sessionId: 'shared-session-1',
+      providerSessionId: 'shared-session-1',
       cwd: resolve('/workspace'),
       frameworkId: 'codex',
       backendId: 'codex:codex-shared'
@@ -12305,6 +12305,7 @@ describe('ACP runtime session management', () => {
 
     expect(resumed).toEqual({
       sessionId: 'shared-session-1',
+      providerSessionId: 'isolated-session-1',
       cwd: resolve('/workspace'),
       frameworkId: 'codex',
       backendId: 'codex:codex-isolated',
@@ -16464,7 +16465,7 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('rejects restored sessions when the agent does not advertise resume support', async () => {
+  it('fresh-adopts restored sessions when the agent does not advertise resume support', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, [], { supportsResume: false })
     const runtime = new AcpRuntime({
@@ -16478,8 +16479,9 @@ describe('ACP runtime session management', () => {
         sessionId: 'remote-session-1',
         cwd: '/workspace'
       })
-    ).rejects.toThrow(/does not support session resume/)
+    ).resolves.toMatchObject({ sessionId: 'remote-session-1', contextReset: true })
     expect(fakeAgent.resumedSessions).toEqual([])
+    expect(fakeAgent.newSessions).toHaveLength(1)
   })
 
   it('keeps a pending permission available when prompt cancellation fails', async () => {

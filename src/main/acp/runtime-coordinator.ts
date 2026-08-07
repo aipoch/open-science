@@ -827,7 +827,11 @@ class AcpRuntimeCoordinator {
           ...(session.previousFrameworkId
             ? { previousFrameworkId: session.previousFrameworkId }
             : {}),
-          ...(session.previousBackendId ? { previousBackendId: session.previousBackendId } : {})
+          ...(session.previousBackendId ? { previousBackendId: session.previousBackendId } : {}),
+          ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
+          ...(session.providerContinuityToken
+            ? { providerContinuityToken: session.providerContinuityToken }
+            : {})
         }
         resumeInFlight = runtime.resumeSession(resumeRequest).then((response) => {
           this.sessionRuntimes.set(response.sessionId, runtime)

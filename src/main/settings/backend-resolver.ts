@@ -753,6 +753,9 @@ export class AgentBackendResolver {
         framework,
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
+        ...(modelRoute === 'codex-bridge' && responsesBridge?.continuityToken
+          ? { providerContinuityToken: responsesBridge.continuityToken }
+          : {}),
         executablePath,
         env: {
           ...(modelConfig.env ?? {}),

@@ -61,7 +61,9 @@ const createAcpTaskAgentPort = (
       projectName: request.projectId,
       permissionProfile: request.permissionProfile,
       previousFrameworkId: request.previousFrameworkId,
-      previousBackendId: request.previousBackendId
+      previousBackendId: request.previousBackendId,
+      providerSessionId: request.providerSessionId,
+      providerContinuityToken: request.providerContinuityToken
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),

@@ -55,6 +55,8 @@ type TaskPreviewResourcePort = {
 
 type TaskAgentSession = {
   sessionId: string
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd?: string
   frameworkId?: AgentFrameworkId
   backendId?: string
@@ -68,6 +70,8 @@ type TaskAgentCreateSessionRequest = {
 
 type TaskAgentResumeSessionRequest = {
   sessionId: string
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd: string
   projectId: string
   permissionProfile: PermissionProfileId
@@ -458,7 +462,9 @@ class TaskRunner {
           sessionId: existing.id,
           cwd: existing.cwd,
           frameworkId: existing.agentFrameworkId,
-          backendId: existing.agentBackendId
+          backendId: existing.agentBackendId,
+          providerSessionId: existing.providerSessionId,
+          providerContinuityToken: existing.providerContinuityToken
         }
       } else {
         sessionInfo = await this.dependencies.agent.resumeSession({
@@ -467,7 +473,9 @@ class TaskRunner {
           projectId: project.id,
           permissionProfile,
           previousFrameworkId: existing.agentFrameworkId,
-          previousBackendId: existing.agentBackendId
+          previousBackendId: existing.agentBackendId,
+          providerSessionId: existing.providerSessionId,
+          providerContinuityToken: existing.providerContinuityToken
         })
       }
     } else {
@@ -486,6 +494,8 @@ class TaskRunner {
           permissionProfile,
           agentFrameworkId: sessionInfo.frameworkId ?? existing.agentFrameworkId,
           agentBackendId: sessionInfo.backendId ?? existing.agentBackendId,
+          providerSessionId: sessionInfo.providerSessionId ?? existing.providerSessionId,
+          providerContinuityToken: sessionInfo.providerContinuityToken,
           messages: [...existing.messages, userMessage],
           activeRun: { promptMessageId: userMessageId, startedAt: now },
           error: undefined,
@@ -500,6 +510,8 @@ class TaskRunner {
           permissionProfile,
           agentFrameworkId: sessionInfo.frameworkId,
           agentBackendId: sessionInfo.backendId,
+          providerSessionId: sessionInfo.providerSessionId,
+          providerContinuityToken: sessionInfo.providerContinuityToken,
           messages: [userMessage],
           activeRun: { promptMessageId: userMessageId, startedAt: now },
           createdAt: now,

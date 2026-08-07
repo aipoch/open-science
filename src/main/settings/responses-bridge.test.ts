@@ -694,6 +694,8 @@ describe('Responses-compatible bridge conversion', () => {
     const connection = await bridge.start()
 
     try {
+      expect(connection.continuityToken).toMatch(/^[0-9a-f]{32}$/)
+      expect((await bridge.start()).continuityToken).toBe(connection.continuityToken)
       const response = await fetch(`${connection.baseUrl}/responses`, {
         method: 'POST',
         headers: {

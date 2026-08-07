@@ -432,7 +432,15 @@ export const createSessionMessageGraphOwner = <
     return { sessionId, messageId: userMessage.id }
   },
 
-  bindPendingSession: ({ pendingSessionId, sessionId, cwd, agentFrameworkId, agentBackendId }) => {
+  bindPendingSession: ({
+    pendingSessionId,
+    sessionId,
+    cwd,
+    agentFrameworkId,
+    agentBackendId,
+    providerSessionId,
+    providerContinuityToken
+  }) => {
     if (!pendingSessionId || !sessionId) return undefined
 
     const state = get()
@@ -454,6 +462,8 @@ export const createSessionMessageGraphOwner = <
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,
+              providerSessionId: providerSessionId ?? session.providerSessionId,
+              providerContinuityToken: providerContinuityToken ?? session.providerContinuityToken,
               updatedAt: now
             }
           : session

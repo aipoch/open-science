@@ -151,6 +151,7 @@ describe('AcpProviderSessionCreator', () => {
 
     expect(result).toEqual({
       sessionId: 'provider-session',
+      providerSessionId: 'provider-session',
       cwd: resolve('/workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'

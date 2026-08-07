@@ -247,6 +247,7 @@ export type ResolvedAgentBackend = {
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string
   modelRoute?: AgentModelRoute
+  providerContinuityToken?: string
   executablePath: string
   env: Record<string, string>
   args?: string[]

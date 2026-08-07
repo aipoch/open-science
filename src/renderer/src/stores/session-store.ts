@@ -45,9 +45,16 @@ type SessionStore = SessionStoreData &
     clearSelection: () => void
     markResumed: (
       sessionId: string,
-      agentFrameworkId?: PersistedChatSession['agentFrameworkId'],
-      agentBackendId?: PersistedChatSession['agentBackendId']
+      update?: Pick<
+        PersistedChatSession,
+        | 'agentFrameworkId'
+        | 'agentBackendId'
+        | 'providerSessionId'
+        | 'providerContinuityToken'
+        | 'pendingHistoryReplayBeforeMessageId'
+      >
     ) => void
+    clearPendingHistoryReplay: (sessionId: string, beforeMessageId: string) => void
     markDisconnected: (sessionId: string, reason?: string) => void
     setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
     clearBranchContextReset: (sessionId: string) => void
@@ -97,7 +104,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   ...createSessionRunProjectionOwner<SessionStore>(set, get),
 
   // Clears the interrupted/error state after a successful resume so the composer is usable again.
-  markResumed: (sessionId, agentFrameworkId, agentBackendId) => {
+  markResumed: (sessionId, update) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
@@ -107,11 +114,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               error: undefined,
               errorReportable: undefined,
               interrupted: undefined,
-              agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
-              agentBackendId: agentBackendId ?? session.agentBackendId,
+              resumeRecovery: undefined,
+              agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
+              agentBackendId: update?.agentBackendId ?? session.agentBackendId,
+              providerSessionId: update?.providerSessionId ?? session.providerSessionId,
+              providerContinuityToken:
+                update === undefined
+                  ? session.providerContinuityToken
+                  : update.providerContinuityToken,
+              pendingHistoryReplayBeforeMessageId:
+                update?.pendingHistoryReplayBeforeMessageId ??
+                session.pendingHistoryReplayBeforeMessageId,
               compacting: undefined,
               updatedAt: Date.now()
             }
+          : session
+      )
+    }))
+  },
+
+  clearPendingHistoryReplay: (sessionId, beforeMessageId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && session.pendingHistoryReplayBeforeMessageId === beforeMessageId
+          ? { ...session, pendingHistoryReplayBeforeMessageId: undefined }
           : session
       )
     }))

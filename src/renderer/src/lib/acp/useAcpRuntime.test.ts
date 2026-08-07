@@ -300,7 +300,7 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.compactSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
   })
 
-  it('forwards the previous framework id into the resume payload for a framework switch', async () => {
+  it('forwards prior runtime and provider identity into the resume payload', async () => {
     const { result } = await mountRuntime()
 
     await act(async () => {
@@ -309,7 +309,11 @@ describe('useAcpRuntime payload construction', () => {
         '/workspace/project',
         'Project',
         'ask',
-        'opencode'
+        'opencode',
+        'opencode:provider-a',
+        'specialist-1',
+        'provider-session-1',
+        'bridge-generation-1'
       )
     })
 
@@ -318,7 +322,11 @@ describe('useAcpRuntime payload construction', () => {
       cwd: '/workspace/project',
       projectName: 'Project',
       permissionProfile: 'ask',
-      previousFrameworkId: 'opencode'
+      previousFrameworkId: 'opencode',
+      previousBackendId: 'opencode:provider-a',
+      specialistId: 'specialist-1',
+      providerSessionId: 'provider-session-1',
+      providerContinuityToken: 'bridge-generation-1'
     })
   })
 

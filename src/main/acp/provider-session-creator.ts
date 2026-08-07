@@ -160,6 +160,10 @@ export class AcpProviderSessionCreator {
       log.info('createSession: completed successfully', this.deps.diagnosticContext())
       return {
         sessionId: session.sessionId,
+        providerSessionId: session.sessionId,
+        ...(backend.providerContinuityToken
+          ? { providerContinuityToken: backend.providerContinuityToken }
+          : {}),
         cwd,
         frameworkId: backend.framework.id,
         ...(backend.backendId ? { backendId: backend.backendId } : {})

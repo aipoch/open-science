@@ -126,7 +126,52 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it('fails a same-backend resume when the Agent did not advertise resume support', () => {
+  it.each([
+    { previous: undefined, current: 'bridge-current' },
+    { previous: 'bridge-old', current: 'bridge-current' },
+    { previous: 'bridge-old', current: undefined }
+  ])(
+    'fresh-adopts Codex Bridge when hidden reasoning continuity is unavailable',
+    ({ previous, current }) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.decide({
+          appSessionId: 'stable-app-session',
+          providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+          previousFrameworkId: 'codex',
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-bridge',
+          previousProviderContinuityToken: previous,
+          currentProviderContinuityToken: current,
+          resumeCapabilityAdvertised: true
+        })
+      ).toMatchObject({
+        action: 'adopt',
+        reason: 'provider-continuity-lost',
+        contextReset: true
+      })
+    }
+  )
+
+  it('resumes Codex Bridge while its hidden reasoning cache is continuous', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.decide({
+        appSessionId: 'stable-app-session',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        previousFrameworkId: 'codex',
+        currentFrameworkId: 'codex',
+        currentModelRoute: 'codex-bridge',
+        previousProviderContinuityToken: 'bridge-current',
+        currentProviderContinuityToken: 'bridge-current',
+        resumeCapabilityAdvertised: true
+      })
+    ).toMatchObject({ action: 'resume', reason: 'compatible', contextReset: false })
+  })
+
+  it('fresh-adopts when the Agent did not advertise resume support', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(
@@ -139,12 +184,11 @@ describe('ACP Session resume policy', () => {
         resumeCapabilityAdvertised: false
       })
     ).toEqual({
-      action: 'fail',
+      action: 'adopt',
       reason: 'resume-capability-not-advertised',
       appSessionId: 'stable-app-session',
       providerSessionId: 'stable-app-session',
-      contextReset: false,
-      message: 'ACP agent does not support session resume.'
+      contextReset: true
     })
   })
 
@@ -161,6 +205,20 @@ describe('ACP Session resume policy', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(policy.classifyFailure({ code: -32603, message: 'Session not found' })).toEqual({
+      disposition: 'adoptable',
+      reason: 'session-not-found-message'
+    })
+  })
+
+  it('classifies Codex missing-rollout resume failures as adoptable', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure({
+        code: -32603,
+        message: 'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+    ).toEqual({
       disposition: 'adoptable',
       reason: 'session-not-found-message'
     })
@@ -255,12 +313,12 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it('keeps the legacy detail-free Internal error adoptable', () => {
+  it('keeps an opaque detail-free Internal error authoritative', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(policy.classifyFailure({ code: -32603, message: 'Internal error' })).toEqual({
-      disposition: 'adoptable',
-      reason: 'legacy-internal-error-without-details'
+      disposition: 'authoritative',
+      reason: 'unrelated-internal-error'
     })
   })
 

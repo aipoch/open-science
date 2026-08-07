@@ -200,7 +200,11 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => ({
   ...session,
   permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
   activities: session.activities?.map(hydrateToolActivity),
-  interrupted: session.error === INTERRUPTED_SESSION_ERROR ? true : undefined
+  interrupted:
+    session.resumeRecovery?.kind === 'resume-required' ||
+    session.error === INTERRUPTED_SESSION_ERROR
+      ? true
+      : undefined
 })
 
 const matchesPersistedPlanProjection = (
@@ -233,7 +237,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
-    interrupted: source.interrupted,
+    interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
     agentStatus: source.agentStatus,

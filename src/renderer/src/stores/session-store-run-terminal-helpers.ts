@@ -268,15 +268,65 @@ export const projectCompactionFailed = (session: ChatSession, error: string): Ch
       }
     : session
 
-export const projectDisconnectedSession = (session: ChatSession, error: string): ChatSession => ({
-  ...session,
-  ...CLEARED_AGENT_RUN_STATE,
-  status: 'error',
-  interrupted: true,
-  error,
-  errorReportable: undefined,
-  messages: failStreamingMessages(session.messages),
-  activities: failOpenActivities(session.activities),
-  activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
-  updatedAt: Date.now()
-})
+export const projectDisconnectedSession = (session: ChatSession, error: string): ChatSession => {
+  const now = Date.now()
+  const promptMessageId = session.activeRun?.promptMessageId
+  const messages = failStreamingMessages(session.messages, now).map((message) =>
+    message.id === promptMessageId && message.role === 'user'
+      ? { ...message, interrupted: true as const, updatedAt: now }
+      : message
+  )
+  const activities = failOpenActivities(session.activities)
+  const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
+  const resumeRecovery = {
+    kind: 'resume-required' as const,
+    cause: 'connection-lost' as const,
+    ...(promptMessageId ? { promptMessageId } : {})
+  }
+  let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
+  try {
+    conversationGraph = synchronizeSessionGraph(
+      { ...session, messages, activities, activityGroups },
+      messages,
+      now
+    )
+    if (promptMessageId) {
+      conversationGraph = {
+        ...conversationGraph,
+        messages: conversationGraph.messages.map((message) =>
+          message.id === promptMessageId && message.role === 'user'
+            ? { ...message, interrupted: true, updatedAt: now }
+            : message
+        )
+      }
+    }
+  } catch (cause) {
+    return {
+      ...settleConversationGraphSyncFailure(session, {
+        messages,
+        activities,
+        activityGroups,
+        now,
+        cause,
+        runError: error
+      }),
+      interrupted: true,
+      resumeRecovery
+    }
+  }
+  return {
+    ...session,
+    ...CLEARED_AGENT_RUN_STATE,
+    status: 'error',
+    interrupted: true,
+    resumeRecovery,
+    error,
+    errorReportable: undefined,
+    messages,
+    activities,
+    activityGroups,
+    conversationGraph,
+    conversationGraphSyncBlocked: undefined,
+    updatedAt: now
+  }
+}
