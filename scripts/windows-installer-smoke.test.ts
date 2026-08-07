@@ -209,6 +209,39 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).rejects.toThrow(/timed out after 25ms/)
   })
 
+  it('terminates and awaits an aborted process', async () => {
+    const controller = new AbortController()
+    let finishTermination: (() => void) | undefined
+    const termination = new Promise<void>((resolve) => {
+      finishTermination = resolve
+    })
+    const terminate = vi.fn(async (child: { kill: () => unknown }): Promise<void> => {
+      await termination
+      child.kill()
+    })
+    const result = runProcess(
+      process.execPath,
+      ['-e', 'setInterval(() => undefined, 1_000)'],
+      { signal: controller.signal, timeoutMs: 60_000 },
+      terminate
+    )
+
+    controller.abort(new Error('installer watcher cancelled'))
+    await vi.waitFor(() => expect(terminate).toHaveBeenCalledOnce())
+    await expect(
+      Promise.race([
+        result.then(
+          () => 'settled',
+          () => 'settled'
+        ),
+        Promise.resolve('pending')
+      ])
+    ).resolves.toBe('pending')
+
+    finishTermination?.()
+    await expect(result).rejects.toThrow('installer watcher cancelled')
+  })
+
   it('writes and verifies the upgrade sentinel in the app-reported config root', async () => {
     const profile = await mkdtemp(join(tmpdir(), 'open-science-upgrade-profile-'))
     const configRoot = join(profile, '.open-science')

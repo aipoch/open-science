@@ -232,7 +232,7 @@ const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImp
   return payload.result
 }
 
-const waitForInstallerExit = async ({ installer, env, runProcessImpl = runProcess }) => {
+const waitForInstallerExit = async ({ installer, env, signal, runProcessImpl = runProcess }) => {
   const script = String.raw`
 Add-Type -TypeDefinition @'
 using System;
@@ -296,6 +296,7 @@ exit $exitCode
   return runProcessImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
     allowNonZero: true,
     env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
+    signal,
     timeoutMs: 370_000
   })
 }
@@ -327,6 +328,8 @@ const runElectronUpdater = async ({
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
   const diagnosticOutput = () => redactPackagedAppOutput(output())
   const exit = observeChildExit(child)
+  const installerObserver = new AbortController()
+  let installerExit
   try {
     const { endpoint, auth } = await Promise.race([
       waitFor('the updater app web service', async () => parsePackagedAppEndpoint(output())),
@@ -374,7 +377,14 @@ const runElectronUpdater = async ({
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
     // racing the new executable and to retain the real installer exit code when the handoff fails.
-    const installerExit = waitForInstallerExit({ installer: expectedInstaller, env })
+    installerExit = waitForInstallerExit({
+      installer: expectedInstaller,
+      env,
+      signal: installerObserver.signal
+    })
+    // The observer starts before update:apply to avoid racing detached NSIS. Mark its rejection as
+    // handled immediately; the original promise is still awaited below or during failure cleanup.
+    void installerExit.catch(() => undefined)
     const closed = waitForShutdownExit(exit, child, diagnosticOutput)
     const applied = await invokeWebRpc({
       endpoint,
@@ -396,7 +406,10 @@ const runElectronUpdater = async ({
       )
     }
   } catch (error) {
-    await terminateProcessTree(child)
+    installerObserver.abort(
+      new Error('Updater installer observation cancelled after updater failure.')
+    )
+    await Promise.all([terminateProcessTree(child), installerExit?.catch(() => undefined)])
     const processOutput = diagnosticOutput().trim()
     if (error instanceof Error) {
       error.message = redactPackagedAppOutput(error.message)

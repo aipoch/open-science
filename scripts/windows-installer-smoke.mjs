@@ -218,7 +218,8 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
     let stdout = ''
     let stderr = ''
     let settled = false
-    let timedOut = false
+    let stopping = false
+    let abortProcess
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -233,29 +234,46 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (abortProcess) options.signal?.removeEventListener('abort', abortProcess)
       if (error) rejectProcess(error)
       else resolveProcess({ code, stdout, stderr })
     }
 
-    const timer = setTimeout(() => {
-      timedOut = true
-      const finishTimeout = () => {
-        finish(
-          new Error(
-            `${basename(executable)} timed out after ${options.timeoutMs ?? PROCESS_TIMEOUT_MS}ms.`
-          )
-        )
-      }
+    const stopProcess = (error) => {
+      if (settled || stopping) return
+      stopping = true
+      clearTimeout(timer)
       void Promise.resolve()
         .then(() => terminate(child))
-        .then(finishTimeout, finishTimeout)
+        .then(
+          () => finish(error),
+          () => finish(error)
+        )
+    }
+
+    const timer = setTimeout(() => {
+      stopProcess(
+        new Error(
+          `${basename(executable)} timed out after ${options.timeoutMs ?? PROCESS_TIMEOUT_MS}ms.`
+        )
+      )
     }, options.timeoutMs ?? PROCESS_TIMEOUT_MS)
 
+    abortProcess = () => {
+      stopProcess(
+        options.signal.reason instanceof Error
+          ? options.signal.reason
+          : new Error(`${basename(executable)} was aborted.`)
+      )
+    }
+    options.signal?.addEventListener('abort', abortProcess, { once: true })
+    if (options.signal?.aborted) abortProcess()
+
     child.once('error', (error) => {
-      if (!timedOut) finish(error)
+      if (!stopping) finish(error)
     })
     child.once('exit', (code) => {
-      if (timedOut) return
+      if (stopping) return
       if (code !== 0 && !options.allowNonZero) {
         finish(
           new Error(

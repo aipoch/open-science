@@ -47,12 +47,14 @@ describe('Windows updater certification', () => {
   })
 
   it('observes the detached NSIS installer and preserves its exit code', async () => {
+    const controller = new AbortController()
     const runProcessImpl = vi.fn(async () => ({ code: 2, stdout: '', stderr: 'installer failed' }))
 
     await expect(
       waitForInstallerExit({
         installer: 'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe',
         env: { LOCALAPPDATA: 'C:\\profile' },
+        signal: controller.signal,
         runProcessImpl
       })
     ).resolves.toEqual({ code: 2, stdout: '', stderr: 'installer failed' })
@@ -68,6 +70,7 @@ describe('Windows updater certification', () => {
           OPEN_SCIENCE_INSTALLER_WATCH_TARGET:
             'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe'
         }),
+        signal: controller.signal,
         timeoutMs: 370_000
       })
     )
