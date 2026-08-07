@@ -1494,6 +1494,47 @@ describe('ACP runtime migration write-gate', () => {
   })
 })
 
+describe('ACP runtime provider prompt acceptance', () => {
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const)(
+    'reports provider acceptance after the first %s update',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['acceptance-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const onProviderPromptAccepted = vi.fn()
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onProviderPromptAccepted },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+
+      expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
+      expect(onProviderPromptAccepted).toHaveBeenCalledWith(session.sessionId, undefined)
+    }
+  )
+})
+
 describe('ACP runtime session management', () => {
   it('keeps the current primary capability set separate from reviewer-only authority', async () => {
     const root = await createTemporaryRoot()

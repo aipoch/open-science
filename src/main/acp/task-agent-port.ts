@@ -13,6 +13,10 @@ type AcpTaskAgentRuntime = {
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
+  sendPromptObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
 
@@ -65,11 +69,15 @@ const createAcpTaskAgentPort = (
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
-  prompt: async (request) => {
+  prompt: async (request, observer) => {
     const acpRequest = toAcpPromptRequest(request)
     const tracked = notifications?.trackPrompt(acpRequest)
     try {
-      await runtime.sendPrompt(acpRequest)
+      if (observer?.onProviderPromptAccepted) {
+        await runtime.sendPromptObserved(acpRequest, observer.onProviderPromptAccepted)
+      } else {
+        await runtime.sendPrompt(acpRequest)
+      }
     } catch (error) {
       if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
       throw error

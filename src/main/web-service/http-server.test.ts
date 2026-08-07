@@ -173,11 +173,27 @@ describe('startWebHttpServer', () => {
   it('releases its application-event subscription when listening fails', async () => {
     const unsubscribe = vi.fn()
     const subscribe = vi.fn(() => unsubscribe)
+    const unsubscribeProgress = vi.fn()
+    const subscribeProgress = vi.fn(() => unsubscribeProgress)
     const options = {
       host: '127.0.0.1',
       token: 'test-token',
       staticRoot: '/unused',
       applicationEvents: { subscribe },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress,
+        listProjects: vi.fn(),
+        createProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
       rpc: {
         channels: () => [],
         invoke: vi.fn(async () => undefined),
@@ -201,12 +217,17 @@ describe('startWebHttpServer', () => {
 
     expect(subscribe).toHaveBeenCalledOnce()
     expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(subscribeProgress).toHaveBeenCalledOnce()
+    expect(unsubscribeProgress).toHaveBeenCalledOnce()
 
     const retry = await startWebHttpServer({ ...options, port: 0 })
     expect(subscribe).toHaveBeenCalledTimes(2)
     expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(subscribeProgress).toHaveBeenCalledTimes(2)
+    expect(unsubscribeProgress).toHaveBeenCalledOnce()
     await retry.close()
     expect(unsubscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribeProgress).toHaveBeenCalledTimes(2)
   })
 
   it('authenticates, invokes direct commands, and delivers projected events once in order', async () => {
@@ -657,6 +678,7 @@ describe('startWebHttpServer', () => {
     }
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
@@ -1207,8 +1229,16 @@ describe('startWebHttpServer', () => {
       taskContexts.push(context)
       return operation()
     }
+    let publishProgress:
+      ((event: import('../../shared/task-api').TaskRunProgressEvent) => void) | undefined
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      subscribeProgress: vi.fn((listener) => {
+        publishProgress = listener
+        return () => {
+          publishProgress = undefined
+        }
+      }),
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
@@ -1270,6 +1300,36 @@ describe('startWebHttpServer', () => {
     servers.push(server)
     const base = `http://127.0.0.1:${server.port}`
     const headers = { authorization: 'Bearer test-token' }
+
+    const progressSocket = new WebSocket(
+      `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`
+    )
+    await new Promise<void>((resolve) => progressSocket.once('open', resolve))
+    const progressMessage = new Promise<unknown>((resolve) =>
+      progressSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
+    )
+    publishProgress?.({
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      phase: 'provider-accepted',
+      timestamp: 250,
+      elapsedMs: 249,
+      heartbeat: false
+    })
+    await expect(progressMessage).resolves.toEqual({
+      type: 'run.progress',
+      data: {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        phase: 'provider-accepted',
+        timestamp: 250,
+        elapsedMs: 249,
+        heartbeat: false
+      }
+    })
+    progressSocket.close()
 
     const projects = await fetch(`${base}/api/v1/projects`, { headers })
     expect(projects.status).toBe(200)
@@ -1420,6 +1480,7 @@ describe('startWebHttpServer', () => {
     )
     const tasks = {
       runWithCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
@@ -1487,6 +1548,7 @@ describe('startWebHttpServer', () => {
     )
     const tasks = {
       runWithCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),

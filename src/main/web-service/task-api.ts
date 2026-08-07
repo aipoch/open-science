@@ -12,6 +12,7 @@ import type {
   AcquiredTaskArtifact,
   StartTaskRunRequest,
   TaskRun,
+  TaskRunProgressEvent,
   TaskSessionSummary
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
@@ -155,6 +156,10 @@ class HeadlessTaskApi {
 
   cancelRun(runId: string): Promise<TaskRun> {
     return this.runner.cancelRun(runId)
+  }
+
+  subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
+    return this.runner.subscribeProgress(listener)
   }
 
   listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {

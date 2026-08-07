@@ -71,10 +71,26 @@ type ActivePromptRequest = {
 }
 
 type PromptAcceptance = {
-  promise: Promise<void>
   resolve: () => void
   reject: (error: unknown) => void
   settled: boolean
+}
+
+const observePromptAcceptance = (onAccepted: () => void): PromptAcceptance => {
+  const acceptance: PromptAcceptance = {
+    resolve: () => undefined,
+    reject: () => undefined,
+    settled: false
+  }
+  acceptance.resolve = () => {
+    if (acceptance.settled) return
+    acceptance.settled = true
+    onAccepted()
+  }
+  acceptance.reject = () => {
+    acceptance.settled = true
+  }
+  return acceptance
 }
 
 type PendingSessionDrain = {
@@ -552,10 +568,24 @@ class AcpRuntimeCoordinator {
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
+    return this.sendObservedPrompt(request)
+  }
+
+  sendPromptObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): ReturnType<AcpRuntime['sendPrompt']> {
+    return this.sendObservedPrompt(request, observePromptAcceptance(onProviderPromptAccepted))
+  }
+
+  private sendObservedPrompt(
+    request: AcpPromptRequest,
+    acceptance?: PromptAcceptance
+  ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
-    if (!this.promptAdmissionGuard) return this.dispatchPrompt(request, undefined, 'sendPrompt')
+    if (!this.promptAdmissionGuard) return this.dispatchPrompt(request, acceptance, 'sendPrompt')
     return this.promptAdmissionGuard(request.sessionId).then(() =>
-      this.dispatchPrompt(request, undefined, 'sendPrompt')
+      this.dispatchPrompt(request, acceptance, 'sendPrompt')
     )
   }
 
@@ -568,11 +598,11 @@ class AcpRuntimeCoordinator {
   startContinuation(request: AcpPromptRequest): Promise<void> {
     let resolve!: () => void
     let reject!: (error: unknown) => void
+    const accepted = new Promise<void>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
     const acceptance: PromptAcceptance = {
-      promise: new Promise<void>((promiseResolve, promiseReject) => {
-        resolve = promiseResolve
-        reject = promiseReject
-      }),
       resolve: () => undefined,
       reject: () => undefined,
       settled: false
@@ -591,7 +621,7 @@ class AcpRuntimeCoordinator {
     void this.dispatchPrompt(request, acceptance, 'sendAppContinuation').catch((error) =>
       acceptance.reject(error)
     )
-    return acceptance.promise
+    return accepted
   }
 
   private dispatchPrompt(

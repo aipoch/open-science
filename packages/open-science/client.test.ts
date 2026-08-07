@@ -320,6 +320,21 @@ describe('OpenScienceClient', () => {
         data: { sessionId: 'session-1', requestId: 'permission-1' }
       })
     })
+    const third = events.next()
+    FakeWebSocket.instance.emit('message', {
+      data: JSON.stringify({
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'provider-accepted',
+          timestamp: 250,
+          elapsedMs: 249,
+          heartbeat: false
+        }
+      })
+    })
 
     await expect(first).resolves.toEqual({
       value: PUBLIC_TERMINAL_FIXTURE,
@@ -329,6 +344,21 @@ describe('OpenScienceClient', () => {
       value: {
         type: 'permission.requested',
         data: { sessionId: 'session-1', requestId: 'permission-1' }
+      },
+      done: false
+    })
+    await expect(third).resolves.toEqual({
+      value: {
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'provider-accepted',
+          timestamp: 250,
+          elapsedMs: 249,
+          heartbeat: false
+        }
       },
       done: false
     })

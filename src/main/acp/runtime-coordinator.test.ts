@@ -34,7 +34,7 @@ const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
   new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
 
 const createFakeRuntime = (options: {
-  frameworkId: 'claude-code' | 'codex'
+  frameworkId: 'claude-code' | 'opencode' | 'codex'
   sessionIds: string[]
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
@@ -255,6 +255,54 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex shared runtime', 'codex']
+  ] as const)(
+    'observes provider acceptance through %s without changing completion',
+    async (_route, frameworkId) => {
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({ frameworkId, sessionIds: ['session-1'], callbacks }).runtime
+      )
+      const session = await coordinator.createSession()
+      const onProviderPromptAccepted = vi.fn()
+
+      await coordinator.sendPromptObserved(
+        { sessionId: session.sessionId, text: 'Research this.' },
+        onProviderPromptAccepted
+      )
+
+      expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('does not report provider acceptance when dispatch fails before acceptance', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeProviderPromptAccepted: async () => {
+            throw new Error('provider rejected before acceptance')
+          }
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+    const onProviderPromptAccepted = vi.fn()
+
+    await expect(
+      coordinator.sendPromptObserved(
+        { sessionId: session.sessionId, text: 'Research this.' },
+        onProviderPromptAccepted
+      )
+    ).rejects.toThrow('provider rejected before acceptance')
+
+    expect(onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
   it('retains a sanitized app-visible Specialist handoff failure until session deletion', async () => {
     const forwardedEvents: AcpRuntimeEvent[] = []
     const created: ReturnType<typeof createFakeRuntime>[] = []

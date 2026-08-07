@@ -1,5 +1,24 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type RunProgressPhase =
+  | 'accepted'
+  | 'session-ready'
+  | 'prompt-dispatched'
+  | 'provider-accepted'
+  | 'first-visible-output'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type RunProgress = {
+  runId: string
+  sessionId: string
+  projectId: string
+  phase: RunProgressPhase
+  timestamp: number
+  elapsedMs: number
+  heartbeat: boolean
+}
 
 export type Project = {
   id: string
@@ -86,10 +105,10 @@ export class OpenScienceClient {
   events(options?: {
     signal?: AbortSignal
     WebSocket?: typeof globalThis.WebSocket
-  }): AsyncIterable<{
-    type: 'run.event' | 'permission.requested'
-    data: unknown
-  }> & { ready: Promise<void> }
+  }): AsyncIterable<
+    | { type: 'run.progress'; data: RunProgress }
+    | { type: 'run.event' | 'permission.requested'; data: unknown }
+  > & { ready: Promise<void> }
 }
 
 export function connectToOpenScience(options?: {

@@ -446,6 +446,65 @@ describe('task CLI', () => {
     )
   })
 
+  it('prints provider-neutral Run progress and liveness heartbeats while waiting', async () => {
+    const events = async function* (): AsyncGenerator<{
+      type: string
+      data: Record<string, unknown>
+    }> {
+      yield {
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'prompt-dispatched',
+          timestamp: 1,
+          elapsedMs: 0,
+          heartbeat: false
+        }
+      }
+      yield {
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'prompt-dispatched',
+          timestamp: 10_001,
+          elapsedMs: 10_000,
+          heartbeat: true
+        }
+      }
+    }
+    const client = {
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        output: 'Done',
+        artifacts: []
+      })
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      parseCliArgs(['run', '--project', 'project-1', '--prompt', 'Research this.', '--wait']),
+      { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true, log }
+    )
+
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      'Prompt dispatched to the agent.',
+      'Still waiting for the provider (10s elapsed).',
+      'Done'
+    ])
+  })
+
   it('stops only the CLI event wait when a timeout occurs by default', async () => {
     const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
       code: 'timeout'

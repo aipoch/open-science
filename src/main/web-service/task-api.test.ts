@@ -75,6 +75,29 @@ describe('HeadlessTaskApi adapter', () => {
     )
   })
 
+  it('exposes Task Run progress through one subscription seam', async () => {
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const ids = ['message-1', 'run-1', 'assistant-1']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent: createAgent() },
+      { createId: () => ids.shift() ?? 'generated-id', now: () => 1 }
+    )
+    const phases: string[] = []
+    const unsubscribe = api.subscribeProgress((event) => phases.push(event.phase))
+
+    const run = await api.startRun({ project: project.id, prompt: 'Research this.' })
+    await api.waitForRun(run.id)
+
+    expect(phases).toEqual(['accepted', 'session-ready', 'prompt-dispatched', 'completed'])
+    unsubscribe()
+    api.dispose()
+  })
+
   it('maps public query and artifact commands to the compatibility façade', async () => {
     const session: PersistedChatSession = {
       id: 'session-query',

@@ -26,6 +26,8 @@ import type {
   StartTaskRunRequest,
   TaskApiErrorCode,
   TaskRun,
+  TaskRunProgressEvent,
+  TaskRunProgressPhase,
   TaskSessionSummary
 } from '../../shared/task-api'
 
@@ -85,6 +87,10 @@ type TaskAgentPromptRequest = {
   resumeFallback?: { historyPreamble?: string }
 }
 
+type TaskAgentPromptObserver = {
+  onProviderPromptAccepted?: () => void
+}
+
 type TaskAgentPort = {
   withSessionAvailable<Result>(
     projectId: string,
@@ -95,7 +101,7 @@ type TaskAgentPort = {
   createSession(request: TaskAgentCreateSessionRequest): Promise<TaskAgentSession>
   resumeSession(request: TaskAgentResumeSessionRequest): Promise<TaskAgentSession>
   setPermissionProfile(sessionId: string, profile: PermissionProfileId): Promise<void>
-  prompt(request: TaskAgentPromptRequest): Promise<void>
+  prompt(request: TaskAgentPromptRequest, observer?: TaskAgentPromptObserver): Promise<void>
   cancelPrompt(sessionId: string): Promise<void>
 }
 
@@ -121,6 +127,11 @@ type TaskRunnerDependencies = {
 type MutableTaskRun = TaskRun & {
   events: AcpRuntimeEvent[]
   completion: Promise<void>
+  promptMessageId: string
+  progressPhase: TaskRunProgressPhase
+  providerAccepted: boolean
+  firstVisibleOutput: boolean
+  heartbeatTimer?: ReturnType<typeof setTimeout>
   cancellation?: {
     accepted: boolean
     dispatch: Promise<void>
@@ -144,6 +155,12 @@ class PartialTaskCompletionError extends Error {
 }
 
 const MAX_RETAINED_RUNS = 200
+const TASK_RUN_HEARTBEAT_INTERVAL_MS = 10_000
+
+const isVisibleProviderEvent = (event: AcpRuntimeEvent): boolean =>
+  event.role !== 'user' &&
+  event.kind !== 'raw' &&
+  Boolean(event.text?.trim() || event.title?.trim() || getAcpRuntimeEventImage(event))
 
 const cloneRun = (run: MutableTaskRun): TaskRun => ({
   id: run.id,
@@ -220,6 +237,7 @@ class TaskRunnerError extends Error {
 class TaskRunner {
   private readonly runs = new Map<string, MutableTaskRun>()
   private readonly activeRunBySession = new Map<string, string>()
+  private readonly progressListeners = new Set<(event: TaskRunProgressEvent) => void>()
   private readonly unsubscribeEvents: () => void
 
   constructor(private readonly dependencies: TaskRunnerDependencies) {
@@ -230,6 +248,13 @@ class TaskRunner {
 
   dispose(): void {
     this.unsubscribeEvents()
+    for (const run of this.runs.values()) this.stopHeartbeat(run)
+    this.progressListeners.clear()
+  }
+
+  subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
+    this.progressListeners.add(listener)
+    return () => this.progressListeners.delete(listener)
   }
 
   listProjects(): Promise<Project[]> {
@@ -351,11 +376,18 @@ class TaskRunner {
       startedAt: this.dependencies.now(),
       artifacts: [],
       events: [],
+      promptMessageId: session.activeRun!.promptMessageId,
+      progressPhase: 'accepted' as const,
+      providerAccepted: false,
+      firstVisibleOutput: false,
       completion: Promise.resolve()
     } satisfies MutableTaskRun
 
     this.pruneRuns()
     this.runs.set(runId, run)
+    this.publishProgress(run, 'accepted')
+    this.publishProgress(run, 'session-ready')
+    this.scheduleHeartbeat(run)
     run.completion = this.executeRun(
       run,
       session,
@@ -531,15 +563,25 @@ class TaskRunner {
     let promptError: unknown
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
     try {
-      await this.dependencies.agent.prompt({
-        sessionId: session.id,
-        promptMessageId: session.activeRun!.promptMessageId,
-        text: prompt,
-        ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
-        ...(historyPreamble ? { historyPreamble } : {}),
-        ...(contextReset ? { contextReset: true } : {}),
-        ...(resumeFallback ? { resumeFallback } : {})
-      })
+      this.publishProgress(run, 'prompt-dispatched')
+      await this.dependencies.agent.prompt(
+        {
+          sessionId: session.id,
+          promptMessageId: session.activeRun!.promptMessageId,
+          text: prompt,
+          ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
+          ...(historyPreamble ? { historyPreamble } : {}),
+          ...(contextReset ? { contextReset: true } : {}),
+          ...(resumeFallback ? { resumeFallback } : {})
+        },
+        {
+          onProviderPromptAccepted: () => {
+            if (run.status !== 'running' || run.providerAccepted) return
+            run.providerAccepted = true
+            this.publishProgress(run, 'provider-accepted')
+          }
+        }
+      )
     } catch (error) {
       promptError = error
       cancellationAtPromptFailure = run.cancellation
@@ -582,6 +624,8 @@ class TaskRunner {
     const completedAt = this.dependencies.now()
     run.completedAt = completedAt
     if (terminalCancellationAccepted) run.cancelledAt = completedAt
+    this.stopHeartbeat(run)
+    this.publishProgress(run, terminalCancellationAccepted ? 'cancelled' : 'completed')
   }
 
   private async failRun(
@@ -608,6 +652,8 @@ class TaskRunner {
     run.output = completed?.output
     run.artifacts = completed?.artifacts ?? []
     run.completedAt = this.dependencies.now()
+    this.stopHeartbeat(run)
+    this.publishProgress(run, 'failed')
     await this.dependencies.sessions.save(failed).catch(() => undefined)
   }
 
@@ -755,7 +801,63 @@ class TaskRunner {
   private captureEvent(event: AcpRuntimeEvent): void {
     if (!event.sessionId) return
     for (const run of this.runs.values()) {
-      if (run.status === 'running' && run.sessionId === event.sessionId) run.events.push(event)
+      if (run.status !== 'running' || run.sessionId !== event.sessionId) continue
+      if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
+        continue
+      }
+      run.events.push(event)
+      if (
+        run.providerAccepted &&
+        !run.firstVisibleOutput &&
+        event.promptMessageId === run.promptMessageId &&
+        isVisibleProviderEvent(event)
+      ) {
+        run.firstVisibleOutput = true
+        this.stopHeartbeat(run)
+        this.publishProgress(run, 'first-visible-output')
+      }
+    }
+  }
+
+  private scheduleHeartbeat(run: MutableTaskRun): void {
+    this.stopHeartbeat(run)
+    run.heartbeatTimer = setTimeout(() => {
+      run.heartbeatTimer = undefined
+      if (run.status !== 'running' || run.firstVisibleOutput) return
+      this.publishProgress(run, run.progressPhase, true)
+      this.scheduleHeartbeat(run)
+    }, TASK_RUN_HEARTBEAT_INTERVAL_MS)
+    run.heartbeatTimer.unref?.()
+  }
+
+  private stopHeartbeat(run: MutableTaskRun): void {
+    if (!run.heartbeatTimer) return
+    clearTimeout(run.heartbeatTimer)
+    run.heartbeatTimer = undefined
+  }
+
+  private publishProgress(
+    run: MutableTaskRun,
+    phase: TaskRunProgressPhase,
+    heartbeat = false
+  ): void {
+    const timestamp = this.dependencies.now()
+    if (!heartbeat) run.progressPhase = phase
+    const event: TaskRunProgressEvent = Object.freeze({
+      runId: run.id,
+      sessionId: run.sessionId,
+      projectId: run.projectId,
+      phase,
+      timestamp,
+      elapsedMs: Math.max(0, timestamp - run.startedAt),
+      heartbeat
+    })
+    for (const listener of this.progressListeners) {
+      try {
+        listener(event)
+      } catch {
+        // Public observability is best-effort and must never change Run execution or terminalization.
+      }
     }
   }
 
@@ -798,6 +900,7 @@ export type {
   CreateTaskProjectRequest,
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
+  TaskAgentPromptObserver,
   TaskAgentPromptRequest,
   TaskAgentResumeSessionRequest,
   TaskAgentSession,

@@ -1,14 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { TaskRunProgressEvent } from '../../shared/task-api'
 import type { ApplicationEvent } from '../application-events'
 import {
   projectPublicTaskEvent,
+  projectPublicTaskProgressEvent,
   projectTaskRuntimeEvent,
   projectWebRendererEvent
 } from './application-event-projections'
 
 describe('application event projections', () => {
+  it('projects Task-owned progress without routing it through renderer events', () => {
+    const progress: TaskRunProgressEvent = {
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      phase: 'provider-accepted',
+      timestamp: 1_700_000_000_000,
+      elapsedMs: 250,
+      heartbeat: false
+    }
+
+    expect(projectPublicTaskProgressEvent(progress)).toEqual({
+      type: 'run.progress',
+      data: progress
+    })
+  })
+
   it('passes terminal usage metadata through every eligible surface without recomputation', () => {
     const payload: AcpRuntimeEvent = {
       id: 'event-1',

@@ -5,6 +5,26 @@ import type { PersistedSessionStatus } from './session-persistence'
 
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
+export type TaskRunProgressPhase =
+  | 'accepted'
+  | 'session-ready'
+  | 'prompt-dispatched'
+  | 'provider-accepted'
+  | 'first-visible-output'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type TaskRunProgressEvent = {
+  runId: string
+  sessionId: string
+  projectId: string
+  phase: TaskRunProgressPhase
+  timestamp: number
+  elapsedMs: number
+  heartbeat: boolean
+}
+
 export type StartTaskRunRequest = {
   project: string
   prompt: string
