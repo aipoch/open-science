@@ -68,9 +68,12 @@ class ConnectorRuntimeSettingsProjection {
       this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
       for (const { server, error } of customSync.failures) {
         this.reportError(
-          new Error(`Failed to sync custom MCP server "${customConnectorSlug(server)}" skill docs`, {
-            cause: error
-          })
+          new Error(
+            `Failed to sync custom MCP server "${customConnectorSlug(server)}" skill docs`,
+            {
+              cause: error
+            }
+          )
         )
       }
     } catch (error) {
