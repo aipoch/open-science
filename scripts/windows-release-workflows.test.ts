@@ -87,14 +87,31 @@ describe('post-merge Windows validation', () => {
     const build = readWorkflow('build.yml')
     const job = build.jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
+    const prepareMacSigning = findStep(job, 'Prepare macOS signing keychain')
     const packageStep = findStep(job, 'Build & package')
+    const cleanupMacSigning = findStep(job, 'Clean up macOS signing keychain')
 
     expect(names).not.toContain('Require Windows signing credentials')
     expect(names).not.toContain('Verify Windows Authenticode signature')
-    expect(packageStep.env).toMatchObject({
-      CSC_LINK: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}",
-      CSC_KEY_PASSWORD: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}"
+    expect(prepareMacSigning).toMatchObject({
+      id: 'mac_signing',
+      if: "${{ matrix.platform == 'mac' && !inputs.nightly }}"
     })
+    expect(prepareMacSigning.run).toContain('security create-keychain -p "$keychain_password"')
+    expect(prepareMacSigning.run).toContain('-P "${MAC_CSC_KEY_PASSWORD:-}"')
+    expect(prepareMacSigning.run).toContain('-k "$keychain_password"')
+    expect(prepareMacSigning.run).toContain("grep -q 'Developer ID Application:'")
+    expect(packageStep.env).toEqual({
+      CSC_KEYCHAIN: '${{ steps.mac_signing.outputs.keychain }}'
+    })
+    expect(packageStep.run).toContain(
+      'if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then'
+    )
+    expect(cleanupMacSigning).toMatchObject({
+      if: "${{ always() && steps.mac_signing.outputs.keychain != '' }}"
+    })
+    expect(cleanupMacSigning.run).toContain('security delete-keychain "$MAC_SIGNING_KEYCHAIN"')
+    expect(cleanupMacSigning.run).toContain('rm -f "$MAC_SIGNING_CERTIFICATE"')
     expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
     expect(packageStep.run).not.toContain('publisherName')
   })

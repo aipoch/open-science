@@ -183,23 +183,66 @@ jobs:
           node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
             "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
 
+      # electron-builder 26.15.3 creates its temporary keychain with a random password but invokes
+      # `security set-key-partition-list -k` with the P12 password. macOS 26 Intel rejects that
+      # mismatch with SecKeychainUnlock. Import the certificate ourselves with the correct password
+      # for each boundary, then give electron-builder only the prepared keychain path.
+      - name: Prepare macOS signing keychain
+        id: mac_signing
+        if: ${{ matrix.platform == 'mac' && !inputs.nightly }}
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MAC_CSC_LINK:-}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::MAC_CSC_LINK not set — the macOS package will use an ad-hoc signature."
+            exit 0
+          fi
+
+          keychain="$RUNNER_TEMP/open-science-signing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.name }}.keychain-db"
+          certificate="$RUNNER_TEMP/open-science-signing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.name }}.p12"
+          keychain_password=$(openssl rand -base64 32)
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
+          echo "certificate=$certificate" >> "$GITHUB_OUTPUT"
+
+          printf '%s' "$MAC_CSC_LINK" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" \
+            -P "${MAC_CSC_KEY_PASSWORD:-}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/productbuild
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain"
+          security find-identity -v -p codesigning "$keychain" | \
+            grep -q 'Developer ID Application:'
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
       # macOS signing: this step only SIGNS (Developer ID), it never notarizes. Notarization +
       # stapling is decoupled into notarize-mac.yml so the build never blocks on Apple's servers
-      # (see that workflow and release.yml). electron-builder auto-imports CSC_LINK (base64 .p12)
-      # to sign a stable build; with no cert — or for any nightly (kept ad-hoc for speed) — signing
-      # is skipped and the afterPack hook (build/adhoc-sign.cjs) applies a valid ad-hoc signature so
-      # Gatekeeper shows the bypassable "unidentified developer" prompt instead of "damaged". Linux
-      # has no signing concept. All secrets are optional — the build works with none set.
+      # (see that workflow and release.yml). The workflow imports the base64 P12 into an isolated
+      # keychain above and electron-builder consumes only that keychain path. With no cert — or for
+      # any nightly (kept ad-hoc for speed) — Developer ID signing is skipped and the afterPack hook
+      # (build/adhoc-sign.cjs) applies a valid ad-hoc signature so Gatekeeper shows the bypassable
+      # "unidentified developer" prompt instead of "damaged". Linux has no signing concept. All
+      # secrets are optional — the build works with none set.
       - name: Build & package
         id: package
         shell: bash
         env:
-          # Windows remains unsigned until a code-signing certificate is provisioned.
-          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          # Windows remains unsigned until a code-signing certificate is provisioned. Stable macOS
+          # jobs consume the explicitly prepared keychain without exposing CSC_LINK to electron-builder.
+          CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
         run: |
           npm run build:e2e
           npm run build:web
@@ -211,7 +254,7 @@ jobs:
             base=$(node -p "require('./package.json').version")
             eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
           fi
-          if [ "${{ matrix.platform }}" = "mac" ] && [ "${{ inputs.nightly }}" != "true" ] && [ -n "$CSC_LINK" ]; then
+          if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
             #
@@ -225,11 +268,9 @@ jobs:
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
               -c.mac.notarize=false
           else
-            # No cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own signing.
-            # GitHub injects unset secrets as EMPTY strings, and electron-builder mis-reads an empty
-            # CSC_LINK as a certificate path — it resolves to the cwd and dies with
-            # "<repo path> not a file". Drop the empty vars and disable auto-discovery so it skips
-            # signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
+            # No prepared cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own
+            # signing. Drop any inherited certificate variables and disable auto-discovery so the
+            # afterPack hook (build/adhoc-sign.cjs) remains the only signer.
             unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             unsigned_args=()
@@ -240,6 +281,17 @@ jobs:
             fi
             npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
           fi
+
+      - name: Clean up macOS signing keychain
+        if: ${{ always() && steps.mac_signing.outputs.keychain != '' }}
+        shell: bash
+        env:
+          MAC_SIGNING_CERTIFICATE: ${{ steps.mac_signing.outputs.certificate }}
+          MAC_SIGNING_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
+        run: |
+          set -euo pipefail
+          security delete-keychain "$MAC_SIGNING_KEYCHAIN" || true
+          rm -f "$MAC_SIGNING_CERTIFICATE"
 
       - name: Resolve packaged Electron executable
         id: packaged_app
