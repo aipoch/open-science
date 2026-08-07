@@ -8,8 +8,10 @@ import {
   getModifiers,
   isClassDeclaration,
   isConstructorDeclaration,
+  isExportDeclaration,
   isIdentifier,
   isMethodDeclaration,
+  isNamedExports,
   isNewExpression,
   isParameter,
   isPropertyDeclaration,
@@ -25,6 +27,7 @@ import { describe, expect, it } from 'vitest'
 const productionFiles = [
   'mutation-owner.ts',
   'mutation-projection.ts',
+  'query-owner.ts',
   'query-support.ts',
   'repository.ts'
 ] as const
@@ -102,10 +105,23 @@ const newExpressionSites = (sourceFile: SourceFile, className: string): string[]
   return sites
 }
 
+const namedExports = (sourceFile: SourceFile): string[] =>
+  sourceFile.statements
+    .filter(isExportDeclaration)
+    .flatMap((statement) =>
+      statement.exportClause && isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.map(
+            (element) => `${statement.isTypeOnly ? 'type' : 'value'}:${element.name.text}`
+          )
+        : []
+    )
+    .sort()
+
 describe('Project Files repository architecture', () => {
   const facadeFile = sourceFileFor('repository.ts')
   const facade = classFrom('repository.ts', 'ManagedFileIndexRepository')
-  const owner = classFrom('mutation-owner.ts', 'ProjectFilesMutationOwner')
+  const mutationOwner = classFrom('mutation-owner.ts', 'ProjectFilesMutationOwner')
+  const queryOwner = classFrom('query-owner.ts', 'ProjectFilesQueryOwner')
 
   it('keeps every production module within the completion gate', () => {
     for (const [file, source] of sources) {
@@ -132,15 +148,42 @@ describe('Project Files repository architecture', () => {
     )
   })
 
-  it('composes one mutation owner without shadow lifecycle state', () => {
+  it('keeps the established facade constructor, factory and export inventory', () => {
+    const constructors = facade.members.filter(isConstructorDeclaration)
+    expect(constructors).toHaveLength(1)
+    expect(constructors[0].parameters.map((parameter) => memberName(parameter.name))).toEqual([
+      'getClient',
+      'dataRoot'
+    ])
+    expect(newExpressionSites(facadeFile, 'ManagedFileIndexRepository')).toEqual([
+      'outside-constructor'
+    ])
+    expect(namedExports(facadeFile)).toEqual(
+      [
+        'value:createManagedFileIndexRepository',
+        'value:ManagedFileIndexRepository',
+        'type:ManagedFileSoftDeleteToken',
+        'type:ProjectFilesClient',
+        'type:ProjectFilesClientFactory',
+        'type:ProjectFilesClientProvider'
+      ].sort()
+    )
+  })
+
+  it('composes one mutation owner and one query owner without shadow lifecycle state', () => {
     expect(newExpressionSites(facadeFile, 'ProjectFilesMutationOwner')).toEqual(['constructor'])
-    expect(fields(facade)).toEqual(['dataRoot', 'getClient', 'mutationOwner'])
-    expect(fields(owner)).toEqual([
+    expect(newExpressionSites(facadeFile, 'ProjectFilesQueryOwner')).toEqual(['constructor'])
+    expect(fields(facade)).toEqual(['mutationOwner', 'queryOwner'])
+    expect(fields(mutationOwner)).toEqual([
       'dataRoot',
       'getClient',
       'incompleteSessions',
       'isReconciliationIncomplete'
     ])
+    expect(fields(queryOwner)).toEqual(['dataRoot', 'getClient', 'readIndexComplete'])
+    expect(publicMethods(queryOwner)).toEqual(
+      ['getOverview', 'listArtifactGroups', 'listFiles', 'searchArtifacts'].sort()
+    )
   })
 
   it('keeps Prisma writes and mutation state out of stateless support modules', () => {
@@ -149,5 +192,13 @@ describe('Project Files repository architecture', () => {
     expect(supportSource).not.toContain('incompleteSessions')
     expect(supportSource).not.toContain('isReconciliationIncomplete')
     expect(supportSource).not.toMatch(/from ['"].*\/repository['"]/)
+  })
+
+  it('keeps query orchestration read-only and completeness state in the mutation owner', () => {
+    const querySource = sources.get('query-owner.ts')!
+    expect(querySource).not.toMatch(/\.(?:create|delete|update|updateMany|upsert)\s*\(\s*\{/)
+    expect(querySource).not.toContain('incompleteSessions')
+    expect(querySource).not.toContain('isReconciliationIncomplete')
+    expect(querySource).not.toMatch(/from ['"].*\/repository['"]/)
   })
 })
