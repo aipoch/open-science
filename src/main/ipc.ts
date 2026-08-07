@@ -73,6 +73,7 @@ import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
 import { createNotificationInboxController } from './notifications/notification-inbox-controller'
+import { registerNotificationInboxIpcAdapter } from './notifications/notification-inbox-ipc'
 import { NotificationInboxDbRepository } from './notifications/notification-inbox-repository'
 import { bindNotificationInboxDeletionRuntime } from './notifications/notification-inbox-runtime'
 import {
@@ -816,6 +817,7 @@ const createApplicationModules = async (
   // This lets partial recovery open an already-loaded conversation while retaining an omitted one
   // for retry, without an older IPC round trip clearing a newer click target.
   declareElectronAdapter('task-notifications', () => {
+    registerNotificationInboxIpcAdapter(notificationInbox)
     ipcMainHandle('notifications:peek-pending-open-session', () =>
       taskNotifications.peekPendingOpenSession()
     )

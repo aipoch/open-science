@@ -22,6 +22,7 @@ const indexSource = readSource('src/main/index.ts')
 const runtimeSource = readSource('src/main/application-runtime.ts')
 const compositionSource = readSource('src/main/application-command-composition.ts')
 const ipcRegistrySource = readSource('src/main/ipc-handler-registry.ts')
+const notificationIpcSource = readSource('src/main/notifications/notification-inbox-ipc.ts')
 const webAdapterSources = [
   'src/main/application-command-client.ts',
   'src/main/tasks/task-runner.ts',
@@ -31,6 +32,13 @@ const webAdapterSources = [
 ].map(readSource)
 const legacyAdapterBlock = compact(
   between(ipcSource, "declareElectronAdapter('desktop-utilities'", 'const electronSenderFor')
+)
+const notificationAdapterBlock = compact(
+  between(
+    ipcSource,
+    "declareElectronAdapter('task-notifications'",
+    '// One MCP client manager backs both dispatch'
+  )
 )
 const dependencyBlock = compact(
   between(
@@ -131,6 +139,18 @@ describe('production application command wiring', () => {
     expect(returnedViews).toContain('remoteWeb: applicationCommandComposition.remoteWeb')
     expect(returnedViews).toContain('task: applicationCommandComposition.task')
     expect(occurrences(returnedViews, 'applicationCommandComposition.')).toBe(3)
+  })
+
+  it('installs every notification inbox request on the Electron adapter', () => {
+    expect(notificationAdapterBlock).toContain(
+      'registerNotificationInboxIpcAdapter(notificationInbox)'
+    )
+    expect(notificationIpcSource).toContain("ipcMainHandle('notifications:get-snapshot'")
+    expect(notificationIpcSource).toContain("ipcMainHandle('notifications:mark-read'")
+    expect(notificationIpcSource).toContain("ipcMainHandle('notifications:mark-all-read'")
+    expect(notificationIpcSource).toContain('owner.getSnapshot()')
+    expect(notificationIpcSource).toContain('owner.markRead(')
+    expect(notificationIpcSource).toContain('owner.markAllRead(')
   })
 
   it('adds transport adapters after composition and disposes the router before its owners', () => {

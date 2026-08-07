@@ -42,6 +42,10 @@ import type { GithubCommandOwner } from './github-ipc'
 import type { LocalFsService } from './local-fs/service'
 import type { LogsCommandOwner } from './logs-ipc'
 import {
+  requireNotificationMarkAllReadRequest,
+  requireNotificationMarkReadRequest
+} from './notifications/notification-inbox-requests'
+import {
   canManagePairing,
   isDesktopCaller,
   requireDesktopCaller,
@@ -322,32 +326,6 @@ const localCommand = <Result>(
     throw new Error(`Channel only available from the local app: ${channel}`)
   }
   return invoke()
-}
-
-const requireNotificationMarkReadRequest = (value: unknown): NotificationMarkReadRequest => {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    !Array.isArray((value as { ids?: unknown }).ids) ||
-    !(value as { ids: unknown[] }).ids.every((id) => typeof id === 'string')
-  ) {
-    throw new Error('Invalid notifications:mark-read request.')
-  }
-  return value as NotificationMarkReadRequest
-}
-
-const requireNotificationMarkAllReadRequest = (value: unknown): NotificationMarkAllReadRequest => {
-  const throughSequence = (value as { throughSequence?: unknown } | null)?.throughSequence
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    typeof throughSequence !== 'number' ||
-    !Number.isSafeInteger(throughSequence) ||
-    throughSequence < 0
-  ) {
-    throw new Error('Invalid notifications:mark-all-read request.')
-  }
-  return value as NotificationMarkAllReadRequest
 }
 
 // Production composition registers all bounded command groups atomically; this group must not be
