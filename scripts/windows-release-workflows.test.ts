@@ -263,9 +263,9 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
       'npm ci --ignore-scripts --no-audit --no-fund'
     )
-    expect(findStep(upgrade, 'Download current Windows installer').run).toContain(
-      'gh release download $env:CURRENT_TAG'
-    )
+    const current = findStep(upgrade, 'Download current Windows installer')
+    expect(current.run).toContain('gh release download $env:CURRENT_TAG')
+    expect(current.run).toContain("--pattern 'latest.yml'")
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')

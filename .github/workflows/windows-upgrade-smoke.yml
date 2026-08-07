@@ -52,7 +52,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force current | Out-Null
-          gh release download $env:CURRENT_TAG --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir current
+          gh release download $env:CURRENT_TAG --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --pattern 'latest.yml' --dir current
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Download previous stable Windows installer
