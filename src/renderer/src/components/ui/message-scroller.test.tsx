@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 describe('MessageScrollerItem', () => {
-  it('keeps mutable transcript rows in normal layout and paint flow', async () => {
+  it('contains stable rows while keeping mutable rows in normal paint flow', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -33,7 +33,10 @@ describe('MessageScrollerItem', () => {
           <MessageScroller>
             <MessageScrollerViewport>
               <MessageScrollerContent>
-                <MessageScrollerItem messageId="message-1">Streaming message</MessageScrollerItem>
+                <MessageScrollerItem messageId="stable-message">Stable message</MessageScrollerItem>
+                <MessageScrollerItem messageId="streaming-message" disableContainment>
+                  Streaming message
+                </MessageScrollerItem>
               </MessageScrollerContent>
             </MessageScrollerViewport>
           </MessageScroller>
@@ -41,9 +44,13 @@ describe('MessageScrollerItem', () => {
       )
     })
 
-    const item = container.querySelector<HTMLElement>("[data-message-id='message-1']")
-    expect(item).not.toBeNull()
-    expect(item?.className).not.toContain('content-visibility')
-    expect(item?.className).not.toContain('contain-intrinsic-size')
+    const stableItem = container.querySelector<HTMLElement>("[data-message-id='stable-message']")
+    const streamingItem = container.querySelector<HTMLElement>(
+      "[data-message-id='streaming-message']"
+    )
+    expect(stableItem?.className).toContain('[content-visibility:auto]')
+    expect(stableItem?.className).toContain('[contain-intrinsic-size:auto_10rem]')
+    expect(streamingItem?.className).not.toContain('content-visibility')
+    expect(streamingItem?.className).not.toContain('contain-intrinsic-size')
   })
 })

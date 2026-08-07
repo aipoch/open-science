@@ -20,9 +20,12 @@ vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): JSX.Element => <div>{children}</div>
   const Item = ({
     children,
+    disableContainment,
     messageId
-  }: PropsWithChildren<{ messageId?: string }>): JSX.Element => (
-    <div data-message-id={messageId}>{children}</div>
+  }: PropsWithChildren<{ disableContainment?: boolean; messageId?: string }>): JSX.Element => (
+    <div data-message-id={messageId} data-disable-containment={disableContainment || undefined}>
+      {children}
+    </div>
   )
   const Button = (): JSX.Element => <button type="button">Scroll to end</button>
 
@@ -530,6 +533,7 @@ describe('WorkspaceMessageScroller loading render', () => {
 
     expect(timelinePositions.every((position) => position >= 0)).toBe(true)
     expect(timelinePositions).toEqual([...timelinePositions].sort((left, right) => left - right))
+    expect(html).toContain('data-message-id="reply-2" data-disable-containment="true"')
   })
 
   it('shows tool interaction during permission waits and hides it without an active run', async () => {
