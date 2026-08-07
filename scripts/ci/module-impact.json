@@ -147,6 +147,7 @@
       "ownerPaths": [
         "src/main/artifacts/provenance-canonical.ts",
         "src/main/artifacts/provenance-execution-evidence.ts",
+        "src/main/artifacts/provenance-message-finalization.ts",
         "src/main/artifacts/provenance-message-snapshot.ts",
         "src/main/artifacts/provenance-producer-capture.ts",
         "src/main/artifacts/provenance-repository.ts",

@@ -47,6 +47,13 @@ import {
   parseArtifactExecutionSnapshot,
   validateArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
+import {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError,
+  ArtifactProvenanceMessageFinalizer,
+  validateDurableMessageOwnership,
+  type ArtifactFinalizationProofReason
+} from './provenance-message-finalization'
 import { toCheck, toReview } from '../reviewer/repository'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
@@ -120,155 +127,10 @@ export type ArtifactProjectReconciliationSnapshot = {
   readonly [artifactProjectReconciliationState]: ArtifactProjectReconciliationState
 }
 
-type ArtifactFinalizationContext = Pick<
+type PreparedArtifactFinalizationContext = Pick<
   FinalizeArtifactVersionsRequest,
-  | 'rootFrameId'
-  | 'agentFrameId'
-  | 'messageBranchId'
-  | 'runtimeSegmentId'
-  | 'promptMessageId'
-  | 'messageId'
+  'rootFrameId' | 'agentFrameId' | 'messageBranchId' | 'runtimeSegmentId' | 'promptMessageId'
 >
-
-type PreparedArtifactFinalizationContext = Omit<ArtifactFinalizationContext, 'messageId'>
-
-export type ArtifactFinalizationProofReason =
-  | 'claim-context-missing'
-  | 'claim-version-ids-missing'
-  | 'root-frame-mismatch'
-  | 'branch-frame-mismatch'
-  | 'runtime-segment-missing'
-  | 'prompt-ownership-mismatch'
-  | 'message-not-durable'
-  | 'message-ownership-mismatch'
-  | 'version-ids-missing'
-  | 'version-ids-duplicate'
-  | 'version-not-eligible'
-  | 'version-omitted-from-claim'
-  | 'version-message-conflict'
-  | 'version-evidence-invalid'
-  | 'execution-snapshot-missing'
-  | 'execution-snapshot-corrupt'
-  | 'execution-outside-ancestry'
-  | 'execution-snapshot-invalid'
-
-export class ArtifactFinalizationProofError extends Error {
-  constructor(
-    readonly reasonCode: ArtifactFinalizationProofReason,
-    message: string,
-    cause?: unknown
-  ) {
-    super(message, cause === undefined ? undefined : { cause })
-    this.name = 'ArtifactFinalizationProofError'
-  }
-}
-
-export class ArtifactOwnershipPersistenceRaceError extends ArtifactFinalizationProofError {
-  constructor(message = 'Artifact finalization ownership is not durable yet.') {
-    super('message-not-durable', message)
-    this.name = 'ArtifactOwnershipPersistenceRaceError'
-  }
-}
-
-type ArtifactFinalizationProofRequest = FinalizeArtifactVersionsRequest
-
-type ArtifactFinalizationProofVersion = PersistedVersionFileRecord & {
-  messageId: string | null
-  rootFrameId: string
-  agentFrameId: string
-  messageBranchId: string
-  runtimeSegmentId: string
-  promptMessageId: string
-  notebookSessionId: string | null
-  producerRunIndex: number | null
-  executionSnapshotChecksum: string | null
-  executionSnapshotStorageKey: string | null
-  executionSnapshotSchemaVersion: number | null
-  evidenceJson: string
-  artifact: { projectId: string; sessionId: string }
-}
-
-const validateDurableMessageOwnership = (
-  session: PersistedChatSession,
-  context: ArtifactFinalizationContext
-): { messageBranchAncestry: string[]; messageAncestry: string[] } => {
-  const graph = materializeSessionConversationGraph(session).conversationGraph!
-  if (graph.rootFrameId !== context.rootFrameId) {
-    throw new ArtifactFinalizationProofError(
-      'root-frame-mismatch',
-      'Artifact finalization root Frame does not match the durable Session graph.'
-    )
-  }
-  const frame = graph.frames.find((candidate) => candidate.id === context.agentFrameId)
-  const branch = graph.branches.find((candidate) => candidate.id === context.messageBranchId)
-  if (!frame || !branch || branch.agentFrameId !== frame.id) {
-    throw new ArtifactFinalizationProofError(
-      'branch-frame-mismatch',
-      'Artifact finalization Branch does not belong to the declared Agent Frame.'
-    )
-  }
-  const segment = graph.runtimeSegments.find(
-    (candidate) =>
-      candidate.id === context.runtimeSegmentId && candidate.agentFrameId === context.agentFrameId
-  )
-  if (!segment) {
-    throw new ArtifactFinalizationProofError(
-      'runtime-segment-missing',
-      'Artifact finalization Runtime Segment is not durable.'
-    )
-  }
-  const path = resolveMessageBranchPath(graph, context.messageBranchId)
-  const promptIndex = path.findIndex((message) => message.id === context.promptMessageId)
-  const finalIndex = path.findIndex((message) => message.id === context.messageId)
-  const promptMessage = path[promptIndex]
-  const finalMessage = path[finalIndex]
-  // Message status is lifecycle state, not ownership proof. The runtime creates an Artifact claim only
-  // after the provider turn terminates, while the renderer may not have applied its following stop event
-  // yet; an internal disk load can also normalize that still-streaming node to error. Frame, Branch,
-  // Runtime Segment, role, and ordered path identity remain the fail-closed ownership boundary.
-  if (
-    promptIndex < 0 ||
-    !promptMessage ||
-    promptMessage.role !== 'user' ||
-    promptMessage.status !== 'complete' ||
-    promptMessage.agentFrameId !== context.agentFrameId ||
-    promptMessage.introducedOnBranchId !== context.messageBranchId ||
-    promptMessage.runtimeSegmentId !== context.runtimeSegmentId
-  ) {
-    throw new ArtifactFinalizationProofError(
-      'prompt-ownership-mismatch',
-      'Artifact finalization prompt does not match the declared durable ownership.'
-    )
-  }
-  if (finalIndex < 0 || !finalMessage) {
-    throw new ArtifactOwnershipPersistenceRaceError(
-      'Artifact finalization message is not durable yet.'
-    )
-  }
-  if (
-    finalIndex <= promptIndex ||
-    finalMessage.role !== 'agent' ||
-    finalMessage.agentFrameId !== context.agentFrameId ||
-    finalMessage.introducedOnBranchId !== context.messageBranchId ||
-    finalMessage.runtimeSegmentId !== context.runtimeSegmentId
-  ) {
-    throw new ArtifactFinalizationProofError(
-      'message-ownership-mismatch',
-      'Artifact finalization message does not match the declared durable ownership.'
-    )
-  }
-  const branches = new Map(graph.branches.map((candidate) => [candidate.id, candidate]))
-  const branchAncestry: string[] = []
-  let current: typeof branch | undefined = branch
-  while (current) {
-    branchAncestry.unshift(current.id)
-    current = current.parentBranchId ? branches.get(current.parentBranchId) : undefined
-  }
-  return {
-    messageBranchAncestry: branchAncestry,
-    messageAncestry: path.slice(0, finalIndex + 1).map((message) => message.id)
-  }
-}
 
 // Resolves the one agent message produced by the prepared prompt turn. It deliberately considers only
 // messages before the next user prompt on the declared Branch and Runtime Segment; choosing a latest
@@ -332,182 +194,6 @@ const assertSafeSegment = (value: string, label: string): string => {
     throw new Error(`Invalid ${label}: ${value}`)
   }
   return value
-}
-
-const normalizeArtifactFinalizationProofRequest = (
-  request: ArtifactFinalizationProofRequest
-): ArtifactFinalizationProofRequest => {
-  if (!Array.isArray(request.artifactVersionIds) || request.artifactVersionIds.length === 0) {
-    throw new ArtifactFinalizationProofError(
-      'version-ids-missing',
-      'Artifact Version ids are required for finalization.'
-    )
-  }
-  const artifactVersionIds = request.artifactVersionIds.map((versionId) =>
-    assertSafeSegment(versionId, 'artifact version id')
-  )
-  if (new Set(artifactVersionIds).size !== artifactVersionIds.length) {
-    throw new ArtifactFinalizationProofError(
-      'version-ids-duplicate',
-      'Artifact Version ids must be unique.'
-    )
-  }
-
-  return {
-    ...request,
-    artifactVersionIds,
-    projectId: assertSafeSegment(request.projectId, 'project id'),
-    appSessionId: assertSafeSegment(request.appSessionId, 'session id'),
-    artifactRunId: assertSafeSegment(request.artifactRunId, 'artifact run id'),
-    rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
-    agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
-    messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
-    runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
-    promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
-    messageId: assertSafeSegment(request.messageId, 'message id')
-  }
-}
-
-const loadArtifactFinalizationProofVersions = async (
-  client: Pick<PrismaClient, 'artifactVersion'>,
-  request: ArtifactFinalizationProofRequest
-): Promise<ArtifactFinalizationProofVersion[]> =>
-  client.artifactVersion.findMany({
-    where: {
-      artifactRunId: request.artifactRunId,
-      rootFrameId: request.rootFrameId,
-      agentFrameId: request.agentFrameId,
-      messageBranchId: request.messageBranchId,
-      runtimeSegmentId: request.runtimeSegmentId,
-      promptMessageId: request.promptMessageId,
-      state: { in: ['pending', 'finalized'] },
-      artifact: { is: { projectId: request.projectId, sessionId: request.appSessionId } }
-    },
-    include: { artifact: true },
-    orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
-  })
-
-const validateArtifactFinalizationProof = (
-  matching: readonly ArtifactFinalizationProofVersion[],
-  request: ArtifactFinalizationProofRequest
-): void => {
-  const matchingIds = new Set(matching.map((version) => version.id))
-  const expectedIds = new Set(request.artifactVersionIds)
-  const missingExpectedVersionId = request.artifactVersionIds.find(
-    (versionId) => !matchingIds.has(versionId)
-  )
-  if (missingExpectedVersionId) {
-    throw new ArtifactFinalizationProofError(
-      'version-not-eligible',
-      `Artifact Version is no longer eligible for finalization: ${missingExpectedVersionId}`
-    )
-  }
-  const unexpectedMatchingVersion = matching.find((version) => !expectedIds.has(version.id))
-  if (unexpectedMatchingVersion) {
-    throw new ArtifactFinalizationProofError(
-      'version-omitted-from-claim',
-      `Artifact Version was omitted from the finalization claim: ${unexpectedMatchingVersion.id}`
-    )
-  }
-
-  const conflicting = matching.find(
-    (version) => version.messageId && version.messageId !== request.messageId
-  )
-  if (conflicting) {
-    throw new ArtifactFinalizationProofError(
-      'version-message-conflict',
-      `Artifact Version ${conflicting.id} is already finalized to a different message.`
-    )
-  }
-
-  const durableBranchIds = new Set(request.messageBranchAncestry ?? [request.messageBranchId])
-  const durableMessageIds = new Set(
-    request.messageAncestry ?? [request.promptMessageId, request.messageId]
-  )
-  for (const version of matching) {
-    try {
-      const parsedEvidence = JSON.parse(version.evidenceJson) as Partial<ArtifactVersionEvidence>
-      if (
-        !parsedEvidence ||
-        typeof parsedEvidence !== 'object' ||
-        (parsedEvidence.producer?.state !== 'available' &&
-          parsedEvidence.producer?.state !== 'unavailable')
-      ) {
-        throw new ArtifactFinalizationProofError(
-          'version-evidence-invalid',
-          `Artifact Version evidence is invalid: ${version.id}`
-        )
-      }
-      const evidence = parsedEvidence as ArtifactVersionEvidence
-
-      if (!version.executionSnapshotJson) {
-        const hasProducerOrExecutionFields =
-          version.notebookSessionId !== null ||
-          version.producerRunId !== null ||
-          version.producerRunIndex !== null ||
-          version.executionSnapshotChecksum !== null ||
-          version.executionSnapshotStorageKey !== null ||
-          version.executionSnapshotSchemaVersion !== null
-        const isProvenUnavailableWithoutExecution =
-          evidence.producer.state === 'unavailable' &&
-          evidence.execution_status?.state === 'unavailable' &&
-          Array.isArray(evidence.inputs) &&
-          evidence.inputs.length === 0 &&
-          evidence.execution_snapshot_checksum === undefined &&
-          evidence.reproduction_code === undefined
-        if (hasProducerOrExecutionFields || !isProvenUnavailableWithoutExecution) {
-          throw new ArtifactFinalizationProofError(
-            'execution-snapshot-missing',
-            `Artifact Version execution snapshot is missing: ${version.id}`
-          )
-        }
-        continue
-      }
-
-      if (
-        !version.executionSnapshotChecksum ||
-        sha256(version.executionSnapshotJson) !== version.executionSnapshotChecksum
-      ) {
-        throw new ArtifactFinalizationProofError(
-          'execution-snapshot-corrupt',
-          `Artifact Version execution snapshot is corrupt: ${version.id}`
-        )
-      }
-      const snapshot = parseArtifactExecutionSnapshot(version.executionSnapshotJson)
-      validateArtifactExecutionSnapshot(snapshot, {
-        rootFrameId: version.rootFrameId,
-        agentFrameId: version.agentFrameId,
-        messageBranchId: version.messageBranchId,
-        promptMessageId: version.promptMessageId,
-        producerRunId: version.producerRunId,
-        producerRunIndex: version.producerRunIndex,
-        executionSnapshotChecksum: version.executionSnapshotChecksum,
-        evidence
-      })
-      const outsideDurableAncestry = snapshot.runs.some(
-        (run) =>
-          !durableBranchIds.has(run.messageBranchId) ||
-          (run.promptMessageId
-            ? !durableMessageIds.has(run.promptMessageId)
-            : run.messageBranchId !== request.messageBranchId)
-      )
-      if (outsideDurableAncestry) {
-        throw new ArtifactFinalizationProofError(
-          'execution-outside-ancestry',
-          `Artifact Version execution snapshot is outside the durable Branch ancestry: ${version.id}`
-        )
-      }
-    } catch (error) {
-      if (error instanceof ArtifactFinalizationProofError) throw error
-      throw new ArtifactFinalizationProofError(
-        'execution-snapshot-invalid',
-        error instanceof Error
-          ? error.message
-          : `Artifact Version execution snapshot is invalid: ${version.id}`,
-        error
-      )
-    }
-  }
 }
 
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -668,6 +354,7 @@ class ArtifactProvenanceRepository {
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
+  private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly producerCapture: ArtifactProvenanceProducerCapture
   private readonly versionWriter: ArtifactProvenanceVersionWriter
 
@@ -683,6 +370,12 @@ class ArtifactProvenanceRepository {
       getClient: options.getClient,
       notebookRepository,
       createId: this.createId
+    })
+    this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
+      getClient: options.getClient,
+      loadSession: options.loadSession,
+      projectVersionFile: (version, projectId, appSessionId) =>
+        this.toArtifactVersionFile(version, projectId, appSessionId)
     })
     this.versionWriter = new ArtifactProvenanceVersionWriter({
       storageRoot: options.storageRoot,
@@ -1052,75 +745,12 @@ class ArtifactProvenanceRepository {
     }
   }
 
-  private async loadFinalizationSession(
-    request: FinalizeArtifactVersionsRequest
-  ): Promise<PersistedChatSession> {
-    if (!this.options.loadSession) {
-      throw new Error('Artifact finalization requires the durable Session graph authority.')
-    }
-    const durableSession = await this.options.loadSession(request.projectId, request.appSessionId)
-    if (
-      !durableSession ||
-      durableSession.projectId !== request.projectId ||
-      durableSession.id !== request.appSessionId
-    ) {
-      throw new Error('Artifact finalization durable Session graph is unavailable.')
-    }
-    return durableSession
-  }
-
   async validateFinalizationOwnership(request: FinalizeArtifactVersionsRequest): Promise<void> {
-    const durableSession = await this.loadFinalizationSession(request)
-    validateDurableMessageOwnership(durableSession, request)
+    return this.messageFinalizer.validateOwnership(request)
   }
 
   async finalizeRun(request: FinalizeArtifactVersionsRequest): Promise<ArtifactVersionFile[]> {
-    const durableSession = await this.loadFinalizationSession(request)
-    return this.finalizeRunWithDurableSession(request, durableSession)
-  }
-
-  private async finalizeRunWithDurableSession(
-    request: FinalizeArtifactVersionsRequest,
-    durableSession: PersistedChatSession
-  ): Promise<ArtifactVersionFile[]> {
-    const ancestry = validateDurableMessageOwnership(durableSession, request)
-    return this.finalizeVerifiedRun({ ...request, ...ancestry })
-  }
-
-  private async finalizeVerifiedRun(
-    request: ArtifactFinalizationProofRequest
-  ): Promise<ArtifactVersionFile[]> {
-    const normalizedRequest = normalizeArtifactFinalizationProofRequest(request)
-    const client = await this.options.getClient()
-    const versions = await client.$transaction(async (transaction) => {
-      const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
-      // Validate the complete proof from the same transaction that commits message ownership. Recovery
-      // does not touch compatibility storage until this transaction succeeds.
-      validateArtifactFinalizationProof(matching, normalizedRequest)
-
-      await transaction.artifactVersion.updateMany({
-        where: {
-          id: { in: matching.map((version) => version.id) },
-          state: 'pending'
-        },
-        data: { state: 'finalized', messageId: normalizedRequest.messageId }
-      })
-
-      return transaction.artifactVersion.findMany({
-        where: {
-          id: { in: matching.map((version) => version.id) },
-          state: 'finalized'
-        },
-        include: { artifact: true },
-        orderBy: [{ artifactId: 'asc' }, { versionNumber: 'asc' }]
-      })
-    })
-
-    return Promise.all(
-      versions.map((version) =>
-        this.toArtifactVersionFile(version, version.artifact.projectId, version.artifact.sessionId)
-      )
-    )
+    return this.messageFinalizer.finalizeRun(request)
   }
 
   async listRunVersions(request: {
@@ -1373,22 +1003,17 @@ class ArtifactProvenanceRepository {
         ) {
           continue
         }
-        let proof:
-          | {
-              messageId: string
-              ancestry: ReturnType<typeof validateDurableMessageOwnership>
-            }
-          | undefined
+        let proof: { messageId: string } | undefined
         try {
           const messageId =
             marker.messageId ?? inferDurableFinalizationMessageId(durableSession, markerContext)
           if (messageId) {
+            validateDurableMessageOwnership(durableSession, {
+              ...markerContext,
+              messageId
+            })
             proof = {
-              messageId,
-              ancestry: validateDurableMessageOwnership(durableSession, {
-                ...markerContext,
-                messageId
-              })
+              messageId
             }
           }
         } catch {
@@ -1404,13 +1029,12 @@ class ArtifactProvenanceRepository {
         // consumed verbatim, so recovery can never widen or narrow a modern runtime claim.
         const markerVersionIds =
           marker.artifactVersionIds ?? runVersions.map((version) => version.id)
-        const finalizationRequest: ArtifactFinalizationProofRequest = {
+        const finalizationRequest: FinalizeArtifactVersionsRequest = {
           projectId,
           appSessionId,
           artifactRunId,
           ...markerContext,
           messageId: proof.messageId,
-          ...proof.ancestry,
           artifactVersionIds: markerVersionIds
         }
         let finalized: ArtifactVersionFile[]
@@ -1418,7 +1042,10 @@ class ArtifactProvenanceRepository {
           // Commit complete ownership and execution proof before the irreversible compatibility move.
           // A crash or I/O failure after this point leaves a finalized-but-unlinked Version, which the
           // candidate selector above deliberately retries on the next startup.
-          finalized = await this.finalizeVerifiedRun(finalizationRequest)
+          finalized = await this.messageFinalizer.finalizeRunWithDurableSession(
+            finalizationRequest,
+            durableSession
+          )
         } catch (error) {
           if (error instanceof ArtifactFinalizationProofError) continue
           throw error
@@ -2527,5 +2154,9 @@ class ArtifactProvenanceRepository {
   }
 }
 
-export { ArtifactProvenanceRepository }
-export type { ArtifactProvenanceRepositoryOptions }
+export {
+  ArtifactFinalizationProofError,
+  ArtifactOwnershipPersistenceRaceError,
+  ArtifactProvenanceRepository
+}
+export type { ArtifactFinalizationProofReason, ArtifactProvenanceRepositoryOptions }
