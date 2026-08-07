@@ -151,6 +151,8 @@ Open Science is an independent product built from scratch. It is not a proxy, un
 
 ## Design Principles
 
+Open Science is shaped by a small set of principles that govern how code, data, models, and human oversight fit together.
+
 - **Open by default.** Source code, formats, connectors, and skills should remain inspectable and forkable.
 - **Multi-provider with explicit compatibility.** The app validates provider configuration and makes endpoint requirements visible instead of treating every API protocol as interchangeable.
 - **Local-first and data-aware.** Keep project state local, surface external data flows, and make autonomy opt-in.
@@ -161,7 +163,7 @@ Open Science is an independent product built from scratch. It is not a proxy, un
 
 ## Core Capabilities
 
-This section describes durable product capabilities rather than a version-specific inventory. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
+Open Science combines project management, multi-model agent execution, Python and R notebooks, scientific data connectors, immutable artifact versions with provenance, and permissioned human-in-the-loop control in one local workspace. The installed app and [latest release notes](https://github.com/aipoch/open-science/releases/latest) are the source of truth for changing catalogs, packaging details, and newly added options.
 
 | Area                         | Core capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -324,6 +326,8 @@ The product roadmap and capability status are maintained in [ROADMAP.md](ROADMAP
 Skills and connectors can execute code or send data externally. Review their source, license, scripts, and network behavior before enabling them.
 
 ## What This Is Not
+
+Open Science is a research execution and record-keeping tool, not a generic chat wrapper, unofficial client, or substitute for scientific review.
 
 - **Not just a chat UI.** The product is organized around persistent projects, execution, files, artifacts, and reviewable tool activity.
 - **Not an unofficial client for another product.** It is an independent implementation with its own codebase, data model, interface, and roadmap.
