@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "session_renderer": {
+      "ownerPaths": ["src/renderer/src/stores/session-store.ts"],
+      "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
+      "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
+      "testFiles": {
+        "owner": ["src/renderer/src/stores/session-store.test.ts"],
+        "contract": ["src/shared/session-persistence.test.ts"],
+        "consumer": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"]
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "workspace_runtime": {
+      "ownerPaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
+      "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
+      "consumerModules": ["workspace_page"],
+      "testFiles": {
+        "owner": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"],
+        "contract": [
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"
+        ],
+        "consumer": ["src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx"]
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "project_files_view": {
+      "ownerPaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
+      "interfacePaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
+      "consumerModules": ["workspace_page"],
+      "testFiles": {
+        "owner": ["src/renderer/src/pages/workspace/ProjectFilesView.test.tsx"],
+        "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
+        "consumer": []
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "workspace_page": {
+      "ownerPaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
+      "interfacePaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/renderer/src/pages/workspace/WorkspacePage.draft-preservation.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx"
+        ],
+        "contract": [],
+        "consumer": []
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "artifact_storage": {
+      "ownerPaths": ["src/main/artifacts/repository.ts"],
+      "interfacePaths": ["src/main/artifacts/repository.ts"],
+      "consumerModules": ["artifact_provenance"],
+      "testFiles": {
+        "owner": [
+          "src/main/artifacts/repository.test.ts",
+          "src/main/artifacts/repository.rollback.test.ts"
+        ],
+        "contract": ["src/main/artifacts/ipc.test.ts"],
+        "consumer": ["src/main/artifacts/provenance-repository.test.ts"]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "upload_repository": {
+      "ownerPaths": ["src/main/uploads/repository.ts"],
+      "interfacePaths": ["src/main/uploads/repository.ts"],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": ["src/main/uploads/repository.test.ts"],
+        "contract": ["src/main/uploads/ipc.test.ts"],
+        "consumer": ["src/main/session-persistence/deletion-integration.test.ts"]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "project_files_repository": {
+      "ownerPaths": ["src/main/project-files/repository.ts"],
+      "interfacePaths": ["src/main/project-files/repository.ts"],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": ["src/main/project-files/repository.test.ts"],
+        "contract": ["src/main/project-files/ipc.test.ts"],
+        "consumer": ["src/main/session-persistence/deletion-integration.test.ts"]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "artifact_provenance": {
+      "ownerPaths": ["src/main/artifacts/provenance-repository.ts"],
+      "interfacePaths": ["src/main/artifacts/provenance-repository.ts"],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": ["src/main/artifacts/provenance-repository.test.ts"],
+        "contract": ["src/main/artifacts/ipc.test.ts"],
+        "consumer": [
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "session_persistence": {
+      "ownerPaths": ["src/main/session-persistence/coordinator.ts"],
+      "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": ["src/main/session-persistence/coordinator.test.ts"],
+        "contract": ["src/shared/session-persistence.test.ts"],
+        "consumer": [
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    }
+  }
+}
