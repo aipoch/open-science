@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -9,6 +9,15 @@ import { classifyChanges, parseNameStatus } from './classify-pr-changes.mjs'
 
 const readManifest = (): ReturnType<JSON['parse']> =>
   JSON.parse(readFileSync(resolve('scripts/ci/change-impact.json'), 'utf8'))
+
+const listSourceFiles = (directory: string): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    return entry.isDirectory() ? listSourceFiles(path) : [path]
+  })
+
+const windowsRuntimeSignal =
+  /['"]win32['"]|powershell|taskkill(?:\.exe)?|windowsHide|SystemRoot|WINDIR|USERPROFILE|ProgramFiles|LOCALAPPDATA|APPDATA/i
 
 describe('pull request change classification', () => {
   it('publishes a Git revision plan for GitHub Actions callers', () => {
@@ -317,6 +326,7 @@ describe('pull request change classification', () => {
     ['ACL behavior', 'src/main/notebook/micromamba-cache-acl.integration.test.ts'],
     ['storage', 'src/main/storage/ipc.ts'],
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
+    ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
@@ -505,5 +515,24 @@ describe('pull request change classification', () => {
       ])
     )
     expect(plan.lanes).not.toContain('e2e_accessibility_windows')
+  })
+
+  it('covers every production source file with an explicit Windows runtime signal', () => {
+    const sourceFiles = ['src/main', 'src/preload', 'src/shared']
+      .flatMap((directory) => listSourceFiles(resolve(directory)))
+      .filter((path) => /\.(?:ts|tsx)$/.test(path) && !/\.(?:test|spec)\.(?:ts|tsx)$/.test(path))
+      .filter((path) => windowsRuntimeSignal.test(readFileSync(path, 'utf8')))
+      .map((path) => relative(process.cwd(), path).replaceAll('\\', '/'))
+
+    const uncoveredFiles = sourceFiles.filter((path) => {
+      const plan = classifyChanges([{ path, status: 'modified' }])
+      return (
+        !plan.roots.includes('windows_sensitive') ||
+        !plan.lanes.includes('e2e_functional_windows') ||
+        !plan.lanes.includes('e2e_workspace_windows')
+      )
+    })
+
+    expect(uncoveredFiles).toEqual([])
   })
 })
