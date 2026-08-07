@@ -139,6 +139,33 @@ describe('TiffPreviewContent', () => {
     expect(container.querySelector('[aria-label="Reset zoom"]')).not.toBeNull()
   })
 
+  it('renders a left-aligned intrinsic thumbnail without the full zoom frame', async () => {
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <TiffPreviewContent
+          path="/workspace/chart.tiff"
+          name="chart.tiff"
+          variant="thumbnail"
+          align="start"
+        />
+      )
+    })
+
+    await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
+
+    const canvas = container.querySelector('canvas')
+    expect(canvas?.parentElement?.className).toContain('justify-start')
+    expect(canvas?.parentElement?.className).toContain('[&_canvas]:rounded-lg')
+    expect(canvas?.parentElement?.className).toContain('[&_canvas]:border-border-200')
+    expect(canvas?.className).toContain('max-h-full')
+    expect(canvas?.className).toContain('max-w-full')
+    expect(canvas?.className).toContain('h-auto')
+    expect(canvas?.className).toContain('w-auto')
+    expect(canvas?.classList.contains('size-full')).toBe(false)
+    expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
+  })
+
   it('navigates between pages in a multi-page TIFF', async () => {
     const bytes = decodeTiffFixture(LZW_MULTIPAGE_TIFF)
     vi.mocked(fetch).mockImplementation(

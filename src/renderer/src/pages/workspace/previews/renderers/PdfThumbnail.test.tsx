@@ -146,6 +146,33 @@ describe('PdfThumbnail', () => {
     expect(container.querySelector('img')?.className).not.toContain('object-cover')
   })
 
+  it('can frame the rendered page at its intrinsic aspect ratio', async () => {
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/workspace/intrinsic-plot.pdf"
+          name="intrinsic-plot.pdf"
+          source="local"
+          size={4096}
+          mtimeMs={1}
+          fit="intrinsic"
+          align="start"
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    const image = container.querySelector('img')
+    expect(image?.parentElement?.className).toContain('justify-start')
+    expect(image?.className).toContain('max-h-full')
+    expect(image?.className).toContain('max-w-full')
+    expect(image?.className).toContain('h-auto')
+    expect(image?.className).toContain('w-auto')
+    expect(image?.className).toContain('rounded-lg')
+    expect(image?.className).toContain('border-border-200')
+    expect(image?.classList.contains('size-full')).toBe(false)
+  })
+
   it('recovers silently after a pending path disappears and the finalized path succeeds', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.mocked(window.api.previewResources.acquire)

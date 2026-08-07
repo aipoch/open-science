@@ -109,7 +109,9 @@ const TiffPreviewContent = ({
   sessionId,
   mimeType,
   size,
-  mtimeMs
+  mtimeMs,
+  variant = 'interactive',
+  align = 'center'
 }: {
   path: string
   name: string
@@ -119,6 +121,8 @@ const TiffPreviewContent = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
+  variant?: 'interactive' | 'thumbnail'
+  align?: 'start' | 'center'
 }): React.JSX.Element => {
   const resourceKey = createPreviewResourceKey({
     projectId,
@@ -297,6 +301,23 @@ const TiffPreviewContent = ({
     result.requestKey !== requestKey
   ) {
     return <PreviewLoadingContent title="Decoding TIFF image" />
+  }
+
+  if (variant === 'thumbnail') {
+    return (
+      <div
+        className={`relative flex size-full items-center overflow-hidden [&_canvas]:rounded-lg [&_canvas]:border [&_canvas]:border-border-200 ${align === 'start' ? 'justify-start' : 'justify-center'}`}
+      >
+        <TiffCanvas page={result.page} name={name} fit="intrinsic" onError={handleDrawError} />
+        {result.page.pageCount > 1 ? (
+          <TiffPageControls
+            pageIndex={result.page.pageIndex}
+            pageCount={result.page.pageCount}
+            onPageChange={setPageIndex}
+          />
+        ) : null}
+      </div>
+    )
   }
 
   return (

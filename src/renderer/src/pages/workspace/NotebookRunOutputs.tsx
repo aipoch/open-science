@@ -12,7 +12,9 @@ import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
-const figureImageClassName = 'block max-h-[32rem] w-auto max-w-none shrink-0 object-contain'
+const figureImageClassName =
+  'block h-auto max-h-[16rem] w-auto max-w-full rounded-lg border border-border-200 object-contain'
+const figurePreviewFrameClassName = 'h-64 w-full'
 
 // Drops a single trailing newline so streamed text doesn't render an extra blank line.
 const trimTrailingNewline = (text: string): string => text.replace(/\n$/u, '')
@@ -310,9 +312,11 @@ const WorkingFileImage = ({ figure }: { figure: WorkingFileNotebookFigure }): Re
 }
 
 const WorkingFileFigurePreview = ({
-  figure
+  figure,
+  align
 }: {
   figure: WorkingFileNotebookFigure
+  align: 'start' | 'center'
 }): React.JSX.Element => {
   const previewProps = {
     path: figure.path,
@@ -325,16 +329,16 @@ const WorkingFileFigurePreview = ({
 
   if (figure.previewKind === 'tiff') {
     return (
-      <div className="h-80 w-full" data-testid="notebook-output-tiff">
-        <TiffPreviewContent {...previewProps} />
+      <div className={figurePreviewFrameClassName} data-testid="notebook-output-tiff">
+        <TiffPreviewContent {...previewProps} variant="thumbnail" align={align} />
       </div>
     )
   }
 
   if (figure.previewKind === 'pdf') {
     return (
-      <div className="h-80 w-full" data-testid="notebook-output-pdf">
-        <PdfThumbnail {...previewProps} fit="contain" />
+      <div className={figurePreviewFrameClassName} data-testid="notebook-output-pdf">
+        <PdfThumbnail {...previewProps} fit="intrinsic" align={align} />
       </div>
     )
   }
@@ -343,9 +347,11 @@ const WorkingFileFigurePreview = ({
 }
 
 const NotebookRunFigureOutputs = ({
-  run
+  run,
+  align = 'center'
 }: {
   run: NotebookRunRecord
+  align?: 'start' | 'center'
 }): React.JSX.Element | null => {
   const figures = resolveNotebookRunFigures(run)
 
@@ -354,15 +360,10 @@ const NotebookRunFigureOutputs = ({
   return (
     <div className="mt-2 space-y-2" data-testid="notebook-figure-outputs">
       {figures.map((figure) => (
-        <div
-          key={figure.key}
-          data-testid="notebook-figure-output"
-          role="region"
-          aria-label={`Scrollable figure preview: ${figure.name}`}
-          tabIndex={0}
-          className="overflow-x-auto overflow-y-hidden rounded-lg border border-border-200 bg-bg-100"
-        >
-          <div className="flex min-h-24 w-max min-w-full items-center justify-center">
+        <div key={figure.key} data-testid="notebook-figure-output" className="w-full">
+          <div
+            className={`flex min-h-24 w-full items-center ${align === 'start' ? 'justify-start' : 'justify-center'}`}
+          >
             {figure.source === 'captured' ? (
               <img
                 data-testid="notebook-output-image"
@@ -372,7 +373,7 @@ const NotebookRunFigureOutputs = ({
                 draggable={false}
               />
             ) : (
-              <WorkingFileFigurePreview figure={figure} />
+              <WorkingFileFigurePreview figure={figure} align={align} />
             )}
           </div>
         </div>

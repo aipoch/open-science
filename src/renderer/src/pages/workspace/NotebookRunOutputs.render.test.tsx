@@ -8,11 +8,25 @@ import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 
 vi.mock('./previews/renderers/PdfThumbnail', () => ({
-  PdfThumbnail: ({ name }: { name: string }) => <div data-testid="notebook-output-pdf">{name}</div>
+  PdfThumbnail: ({ name, fit, align }: { name: string; fit?: string; align?: string }) => (
+    <div data-testid="mock-pdf-thumbnail" data-fit={fit} data-align={align}>
+      {name}
+    </div>
+  )
 }))
 vi.mock('./previews/renderers/TiffPreview', () => ({
-  TiffPreviewContent: ({ name }: { name: string }) => (
-    <div data-testid="notebook-output-tiff">{name}</div>
+  TiffPreviewContent: ({
+    name,
+    variant,
+    align
+  }: {
+    name: string
+    variant?: string
+    align?: string
+  }) => (
+    <div data-testid="mock-tiff-preview" data-variant={variant} data-align={align}>
+      {name}
+    </div>
   )
 }))
 
@@ -90,20 +104,19 @@ describe('NotebookRunOutputs', () => {
     expect(textOutput?.hasAttribute('open')).toBe(true)
     expect(textOutput?.contains(figure)).toBe(false)
     expect(figure?.querySelectorAll('[data-testid="notebook-output-image"]')).toHaveLength(1)
-    expect(figure?.className).toContain('border-border-200')
-    expect(figure?.className).toContain('overflow-x-auto')
+    expect(figure?.className).not.toContain('border-border-200')
+    expect(figure?.className).not.toContain('overflow-x-auto')
     expect(figure?.className).not.toContain('border-border-100')
     expect(figure?.className).not.toContain('shadow')
-    expect(figure?.getAttribute('role')).toBe('region')
-    expect(figure?.getAttribute('aria-label')).toBe('Scrollable figure preview: Figure 1')
-    expect(figure?.getAttribute('tabindex')).toBe('0')
-    expect(image.className).toContain('max-h-[32rem]')
-    expect(image.className).toContain('max-w-none')
+    expect(figure?.firstElementChild?.className).toContain('justify-center')
+    expect(image.className).toContain('max-h-[16rem]')
+    expect(image.className).toContain('max-w-full')
     expect(image.className).toContain('w-auto')
-    expect(image.className).toContain('shrink-0')
-    expect(image.className).not.toContain('w-full')
-    expect(figure?.firstElementChild?.className).toContain('w-max')
-    expect(figure?.firstElementChild?.className).toContain('min-w-full')
+    expect(image.className).toContain('h-auto')
+    expect(image.className).toContain('object-contain')
+    expect(image.className).toContain('rounded-lg')
+    expect(image.className).toContain('border-border-200')
+    expect(image.classList.contains('w-full')).toBe(false)
   })
 
   it('shows every captured figure from the same run in its own frame', () => {
@@ -251,6 +264,20 @@ describe('NotebookRunOutputs', () => {
     expect(container.querySelector('[data-testid="notebook-output-pdf"]')?.textContent).toBe(
       'fourth.pdf'
     )
+    const tiffPreview = container.querySelector('[data-testid="notebook-output-tiff"]')
+    const pdfPreview = container.querySelector('[data-testid="notebook-output-pdf"]')
+    expect(tiffPreview?.className).toContain('h-64')
+    expect(tiffPreview?.className).not.toContain('border-border-200')
+    expect(tiffPreview?.className).not.toContain('bg-bg-100')
+    expect(pdfPreview?.className).toContain('h-64')
+    expect(pdfPreview?.className).not.toContain('border-border-200')
+    expect(pdfPreview?.className).not.toContain('bg-bg-100')
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="mock-tiff-preview"]')?.dataset
+    ).toMatchObject({ variant: 'thumbnail', align: 'center' })
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="mock-pdf-thumbnail"]')?.dataset
+    ).toMatchObject({ fit: 'intrinsic', align: 'center' })
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(
       Array.from(container.querySelectorAll('img'), (image) => image.getAttribute('src'))

@@ -156,7 +156,7 @@ const WorkspaceToolDetailsRow = ({
       onToggle={onToggle}
     >
       {details.sections.map(renderSection)}
-      {notebookRun ? <NotebookRunFigureOutputs run={notebookRun} /> : null}
+      {notebookRun ? <NotebookRunFigureOutputs run={notebookRun} align="start" /> : null}
     </WorkspaceToolActivityRowButton>
   )
 }

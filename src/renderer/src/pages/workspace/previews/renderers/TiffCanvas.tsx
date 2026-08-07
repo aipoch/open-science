@@ -10,7 +10,7 @@ const TiffCanvas = ({
 }: {
   page: DecodedTiffPage
   name: string
-  fit?: 'contain' | 'cover'
+  fit?: 'contain' | 'cover' | 'intrinsic'
   onError: (error: Error) => void
 }): React.JSX.Element => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -36,7 +36,13 @@ const TiffCanvas = ({
       ref={canvasRef}
       role="img"
       aria-label={name}
-      className={fit === 'cover' ? 'size-full object-cover object-top' : 'size-full object-contain'}
+      className={
+        fit === 'cover'
+          ? 'size-full object-cover object-top'
+          : fit === 'intrinsic'
+            ? 'block h-auto max-h-full w-auto max-w-full object-contain'
+            : 'size-full object-contain'
+      }
     />
   )
 }

@@ -269,7 +269,8 @@ export const PdfThumbnail = ({
   mimeType,
   size,
   mtimeMs,
-  fit = 'cover'
+  fit = 'cover',
+  align = 'center'
 }: {
   path: string
   name: string
@@ -279,7 +280,8 @@ export const PdfThumbnail = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
-  fit?: 'cover' | 'contain'
+  fit?: 'cover' | 'contain' | 'intrinsic'
+  align?: 'start' | 'center'
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({
     projectId,
@@ -328,12 +330,23 @@ export const PdfThumbnail = ({
   }, [mimeType, path, projectId, requestKey, sessionId, shouldRender, source])
 
   return (
-    <div ref={setElement} className="size-full">
+    <div
+      ref={setElement}
+      className={
+        fit === 'intrinsic'
+          ? `flex size-full items-center ${align === 'start' ? 'justify-start' : 'justify-center'}`
+          : 'size-full'
+      }
+    >
       {cached ? (
         <img
           src={cached.url}
           alt={`Preview of ${name}`}
-          className={`size-full object-top ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
+          className={
+            fit === 'intrinsic'
+              ? 'block h-auto max-h-full w-auto max-w-full rounded-lg border border-border-200 object-contain'
+              : `size-full object-top ${fit === 'contain' ? 'object-contain' : 'object-cover'}`
+          }
           loading="lazy"
           decoding="async"
           draggable={false}
