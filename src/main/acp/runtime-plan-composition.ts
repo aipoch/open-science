@@ -179,7 +179,27 @@ const composeAcpRuntimePlanWorkflow = (
       const executionBinding = interactions.executionBindingFor(input.sessionId)
       const result = await service.respond({ ...identity, decision, interactionIsLive })
       if (requiresHumanFeedback && authorization) {
-        interactions.consumeAgentDecisionAuthorization(authorization)
+        const authorizationConsumed = interactions.consumeAgentDecisionAuthorization(authorization)
+        const currentInteraction = sessionInteractions.current(input.sessionId)
+        if (
+          !authorizationConsumed ||
+          currentInteraction?.kind !== 'prompt' ||
+          currentInteraction.sequence !== authorization.interactionSequence
+        ) {
+          safeLogInfo('Session Plan response discarded', {
+            projectId: input.projectId,
+            sessionId: input.sessionId,
+            artifactVersionId: result.projection.artifactVersionId,
+            revision: result.projection.revision,
+            source: 'agent-after-feedback',
+            decision,
+            reason: 'authorization-revoked'
+          })
+          throw new PlanCommandError(
+            'interaction-mismatch',
+            'The Session Plan decision authorization was revoked before the response completed.'
+          )
+        }
       }
       if (decision === 'approved') {
         bindExecutionToCurrentInteraction(input.sessionId, result.projection.artifactVersionId)

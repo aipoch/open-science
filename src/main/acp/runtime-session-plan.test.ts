@@ -607,6 +607,48 @@ describe('AcpRuntime Session Plan seam', () => {
     })
   })
 
+  it('rejects an Agent decision whose authorization is revoked while the response is pending', async () => {
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    interactions.authorizeAgentDecision({
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    })
+    let markRespondStarted!: () => void
+    let finishRespond!: () => void
+    const respondStarted = new Promise<void>((resolve) => {
+      markRespondStarted = resolve
+    })
+    const respondGate = new Promise<void>((resolve) => {
+      finishRespond = resolve
+    })
+    service.respond.mockImplementationOnce(async () => {
+      markRespondStarted()
+      await respondGate
+      return {
+        projection: {
+          ...projection('version-1'),
+          approval: 'approved' as const,
+          lifecycle: 'approved' as const
+        },
+        changed: true
+      }
+    })
+
+    const approved = runtime.callSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'approve'
+    })
+    await respondStarted
+    interactions.releaseAgentDecisionAuthorization('session-1', 7)
+    setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
+    finishRespond()
+
+    await expect(approved).rejects.toMatchObject({ code: 'interaction-mismatch' })
+    expect(interactions.executionBindingFor('session-1')).toBeUndefined()
+  })
+
   it('routes feedback as a visible user Message and resumes the blocked interaction', async () => {
     const onEvent = vi.fn()
     const { runtime } = createRuntimeHarness({ onEvent })
