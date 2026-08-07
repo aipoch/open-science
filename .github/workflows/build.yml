@@ -6,8 +6,9 @@ name: Build
 # place. Publishing is done by the caller, not here.
 #
 # `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
-# Prisma query engine). macOS uses native ARM64 and Intel runners so packaged-app certification does
-# not execute across architectures; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
+# Prisma query engine). macOS uses native ARM64 and Intel macOS 26 runners so packaged-app
+# certification does not execute across architectures and Xcode 26 can compile the Icon Composer
+# asset; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
 on:
   workflow_call:
     inputs:
@@ -75,15 +76,16 @@ jobs:
       - id: set
         shell: bash
         run: |
-          # Run each macOS package on its native architecture so P0, visual, and package smoke can
-          # execute the produced app. Windows' engine is query_engine-windows.dll.node (no `lib`
+          # Run each macOS package on its native macOS 26 architecture so P0, visual, and package
+          # smoke can execute the produced app while Xcode 26 compiles build/icon.icon. Windows'
+          # engine is query_engine-windows.dll.node (no `lib`
           # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
           # subdir/bin_os/bin_arch drive the notebook runtime staging step: `subdir` is the conda
           # platform whose micromamba + offline bundle to fetch, and bin_os/bin_arch are the
           # resources/bin/<os>/<arch> path electron-builder.yml reads the micromamba binary from.
           mac='[
-            {"name":"macos-arm64","os":"macos-14","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64","subdir":"osx-arm64","bin_os":"mac","bin_arch":"arm64"},
-            {"name":"macos-x64","os":"macos-15-intel","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib","subdir":"osx-64","bin_os":"mac","bin_arch":"x64"}
+            {"name":"macos-arm64","os":"macos-26","platform":"mac","eb_args":"--mac --arm64","engine_keep":"darwin-arm64","subdir":"osx-arm64","bin_os":"mac","bin_arch":"arm64"},
+            {"name":"macos-x64","os":"macos-26-intel","platform":"mac","eb_args":"--mac --x64","engine_keep":"darwin.dylib","subdir":"osx-64","bin_os":"mac","bin_arch":"x64"}
           ]'
           rest='[
             {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node","subdir":"linux-64","bin_os":"linux","bin_arch":"x64"},
@@ -108,7 +110,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     # Keep native dependencies and packaged binaries compatible with the app's declared macOS 12
-    # minimum even though the native Intel builder runs on macOS 15.
+    # minimum even though the native builders run on macOS 26.
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'mac' && '12.0' || '' }}
 
@@ -125,6 +127,12 @@ jobs:
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: npm ci
+
+      # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
+      # instead of much later in packaging if the runner image ever loses its Xcode 26 selection.
+      - name: Verify Icon Composer build tools
+        if: ${{ matrix.platform == 'mac' }}
+        run: actool --version
 
       # Installers do not carry a managed-runtime bundle. Stable/nightly builds therefore fail closed
       # unless the exact immutable manifest required by this app version and platform is already live

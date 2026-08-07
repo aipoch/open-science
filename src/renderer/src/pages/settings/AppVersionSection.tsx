@@ -1,6 +1,6 @@
 import { Download, RefreshCw } from 'lucide-react'
 
-import logoUrl from '@/assets/logo.png'
+import { AppLogo } from '@/components/AppLogo'
 import { Button } from '@/components/ui/button'
 import { useUpdateStore } from '@/stores/update-store'
 import { APP } from '../../../../shared/app-config'
@@ -44,7 +44,7 @@ const AppVersionSection = (): React.JSX.Element => {
       <SettingsRow
         label={
           <div className="flex min-w-0 items-center gap-3">
-            <img src={logoUrl} alt="" className="size-12 rounded-lg" />
+            <AppLogo className="size-12 rounded-lg" />
             <div className="min-w-0">
               <p className="flex items-baseline gap-2">
                 <span className="text-sm font-semibold text-foreground">{APP.name}</span>

@@ -36,6 +36,7 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // General app settings. Hosts the Diagnostics (log file) tools and the community/connect links. The log
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
+  const isMac = window.api.platform === 'darwin'
   const [logPath, setLogPath] = useState<string | null>(null)
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [isOpening, setIsOpening] = useState(false)
@@ -112,7 +113,11 @@ const GeneralPanel = (): React.JSX.Element => {
       >
         <SettingsRow
           label="Theme"
-          description="Follow the system setting, or force light or dark."
+          description={
+            isMac
+              ? 'Follow the system setting, or force light or dark. The Dock icon follows the resolved theme.'
+              : 'Follow the system setting, or force light or dark.'
+          }
           className="pt-0"
           controlClassName="flex justify-end"
         >
@@ -191,7 +196,9 @@ const GeneralPanel = (): React.JSX.Element => {
         </p>
       </SettingsSection>
 
-      <AppIconSection />
+      {/* macOS uses the adaptive build/icon.icon for the installed app and binds its live Dock icon
+          to Theme. Hiding the independent picker prevents two controls from racing each other. */}
+      {!isMac ? <AppIconSection /> : null}
 
       <SettingsSection
         title="Diagnostics"

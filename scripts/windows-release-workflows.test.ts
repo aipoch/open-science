@@ -110,8 +110,8 @@ describe('post-merge Windows validation', () => {
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
-    expect(setup.run).toContain('"name":"macos-arm64","os":"macos-14"')
-    expect(setup.run).toContain('"name":"macos-x64","os":"macos-15-intel"')
+    expect(setup.run).toContain('"name":"macos-arm64","os":"macos-26"')
+    expect(setup.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
     expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )

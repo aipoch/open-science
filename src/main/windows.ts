@@ -27,7 +27,8 @@ import {
   isFindInPageChord,
   isWindowFindAppearance,
   type CloseClassification,
-  type CloseConfirmChoice
+  type CloseConfirmChoice,
+  type WindowFindAppearance
 } from '../shared/window-controls'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
@@ -98,6 +99,8 @@ type MainWindowCloseOptions = {
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
   requestQuit: (confirmed?: boolean) => void
+  // The renderer's resolved Theme also drives native platform appearance (notably the macOS Dock).
+  onAppearanceChanged?: (appearance: WindowFindAppearance) => void
 }
 
 const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
@@ -157,6 +160,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
     if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
     findOverlay.updateAppearance(appearance)
+    opts?.onAppearanceChanged?.(appearance)
   }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)

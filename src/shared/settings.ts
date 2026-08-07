@@ -323,9 +323,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
-// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
-// baked into the build and never changes).
+// Both are built-in assets; the independent choice is applied at runtime to non-macOS app windows and
+// the Windows tray glyph. macOS instead uses its Icon Composer asset for the installed app and binds
+// the running Dock icon to General > Theme (the static installed icon in Explorer/taskbar is baked in).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -396,7 +396,7 @@ export type SettingsSnapshot = {
   conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
-  // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
+  // The selected built-in app-icon look for non-macOS windows and the Windows tray. Defaults to 'light'.
   appIconVariant: AppIconVariant
 }
 

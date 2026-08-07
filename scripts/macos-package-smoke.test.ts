@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   artifactVersion,
+  assertPackagedResources,
   findAppBundle,
   findArtifact,
   packagedLaunchArguments,
@@ -72,5 +73,32 @@ describe('macOS package smoke', () => {
       '--open-science-headless',
       '--serve=0'
     ])
+  })
+
+  it('requires the adaptive icon catalog and its legacy ICNS fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-macos-app-'))
+    roots.push(root)
+    const appBundle = join(root, 'Open Science.app')
+    const executableDirectory = join(appBundle, 'Contents', 'MacOS')
+    const resources = join(appBundle, 'Contents', 'Resources')
+    await Promise.all([
+      mkdir(executableDirectory, { recursive: true }),
+      mkdir(resources, { recursive: true })
+    ])
+    await Promise.all([
+      writeFile(join(executableDirectory, 'Open Science'), ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba'), ''),
+      writeFile(join(resources, 'Assets.car'), ''),
+      writeFile(join(resources, 'icon.icns'), '')
+    ])
+
+    await expect(assertPackagedResources(appBundle)).resolves.toEqual({
+      executable: join(executableDirectory, 'Open Science'),
+      micromamba: join(resources, 'micromamba')
+    })
+
+    await rm(join(resources, 'Assets.car'))
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow()
   })
 })

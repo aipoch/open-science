@@ -99,6 +99,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   include: build/installer.nsh
 mac:
+  # Compile the Icon Composer package into the app bundle (Assets.car + an ICNS fallback for
+  # pre-Tahoe macOS). This is intentionally separate from dmg.icon below: the mounted installer
+  # volume still uses the legacy, explicitly-designed ICNS artwork.
+  icon: build/icon.icon
+  darkModeSupport: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)
   # and up; below this the OS refuses to launch. Independent of the CI build runner's macOS version.
@@ -119,6 +124,9 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  # The DMG volume icon does not consume the app's Icon Composer asset catalog. Keep the existing
+  # ICNS dedicated to the mounted disk image instead of electron-builder's generated app fallback.
+  icon: build/icon.icns
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
   # Keep the installed launcher filename aligned with Electron's Linux app_id/WM_CLASS so desktop

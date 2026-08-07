@@ -83,7 +83,7 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
-  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, protocol } =
+  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, nativeTheme, protocol } =
     await import('electron')
 
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
@@ -154,8 +154,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('../../resources/tray.png?asset')
   ])
 
-  // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; macOS Dock and Linux use
-  // lossless 1024px PNGs. The settings preview is built from the same platform-specific source.
+  // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; the macOS runtime Dock
+  // Theme override and Linux use matching lossless 1024px PNGs. The installed macOS icon itself is
+  // build/icon.icon (electron-builder.yml), not either runtime PNG.
   const iconVariantPaths =
     process.platform === 'win32'
       ? { light: iconWindows, dark: iconDarkWindows }
@@ -363,15 +364,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         controller: unreadTaskController,
         onError: (error) => log.warn('unread task IPC failed', error)
       })
-      // Apply the persisted icon variant now and keep it in sync as windows come and go. Created
-      // unconditionally — even a headless launch can later surface a desktop window on a plain second
-      // launch (routeSecondInstance -> showMainWindow), and that window plus any live icon-setting
-      // change must still pick up the variant. Construction is safe headless: the dock is set on macOS
-      // (as the pre-existing startup code did unconditionally) and the window loop is a no-op until the
-      // browser-window-created listener sees the first window. The controller owns the macOS dock icon.
+      // Restore the independent icon variant off macOS and create the macOS Theme/Dock controller.
+      // macOS deliberately leaves the packaged Icon Composer icon untouched until a renderer announces
+      // its Theme; after that, nativeTheme keeps System mode live even with no BrowserWindow open.
       const initialVariant = await settingsService.getAppIconVariant()
       appIconControllerBox.current = createAppIconController({
-        electron: { app, getAllWindows: () => BrowserWindow.getAllWindows(), nativeImage },
+        electron: {
+          app,
+          getAllWindows: () => BrowserWindow.getAllWindows(),
+          nativeImage,
+          nativeTheme
+        },
         variantPaths: iconVariantPaths,
         initialVariant
       })
@@ -404,6 +407,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         unreadTaskController,
         mainWindowGetterBox,
         settingsService,
+        appIconControllerBox,
         appTrayBox,
         // Read through the controller (not a snapshot) so a tray created after a settings change —
         // e.g. a headless web client flipping the variant mid-startup — starts on the live value.
@@ -482,6 +486,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               ctx.mainWindowGetterBox.current?.()
             ),
             createConfirmClose: ctx.createConfirmClose,
+            onAppearanceChanged: (appearance) =>
+              ctx.appIconControllerBox.current?.setAppearance(appearance),
             log: ctx.log,
             flushLogs
           },

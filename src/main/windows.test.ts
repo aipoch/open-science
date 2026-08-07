@@ -380,23 +380,37 @@ describe('close chord interception', () => {
   })
 
   it('forwards valid theme changes from this renderer to the overlay manager', () => {
-    createMainWindow()
+    const onAppearanceChanged = vi.fn()
+    createMainWindow({
+      classifyClose: () => 'close',
+      resolveCloseAction: () => Promise.resolve('cancel'),
+      requestQuit: vi.fn(),
+      onAppearanceChanged
+    })
     const window = currentWindow!
     const appearance = { theme: 'dark', followsSystem: false }
 
     fireAppearance(window.webContents, appearance)
 
     expect(findOverlayMock.updateAppearance).toHaveBeenCalledWith(appearance)
+    expect(onAppearanceChanged).toHaveBeenCalledWith(appearance)
   })
 
   it('rejects malformed theme changes and messages from another renderer', () => {
-    createMainWindow()
+    const onAppearanceChanged = vi.fn()
+    createMainWindow({
+      classifyClose: () => 'close',
+      resolveCloseAction: () => Promise.resolve('cancel'),
+      requestQuit: vi.fn(),
+      onAppearanceChanged
+    })
     const window = currentWindow!
 
     fireAppearance(window.webContents, { theme: 'sepia', followsSystem: false })
     fireAppearance({}, { theme: 'dark', followsSystem: false })
 
     expect(findOverlayMock.updateAppearance).not.toHaveBeenCalled()
+    expect(onAppearanceChanged).not.toHaveBeenCalled()
   })
 
   it('unregisters the window-scoped theme listener with the same handler on close', () => {

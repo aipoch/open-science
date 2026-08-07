@@ -14,7 +14,8 @@ import {
 import type {
   CloseClassification,
   CloseConfirmChoice,
-  CloseConfirmVariant
+  CloseConfirmVariant,
+  WindowFindAppearance
 } from '../shared/window-controls'
 
 // Menu action callbacks the tray is wired to.
@@ -31,7 +32,11 @@ export type AppLifecycleDeps = {
     classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
     requestQuit: (confirmed?: boolean) => void
+    onAppearanceChanged?: (appearance: WindowFindAppearance) => void
   }) => BrowserWindow
+  // Receives the resolved renderer Theme. Optional so headless/tests and older compositions remain
+  // decoupled from platform icon behavior.
+  onAppearanceChanged?: (appearance: WindowFindAppearance) => void
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
@@ -149,7 +154,8 @@ export const installAppLifecycle = (
       requestQuit: (confirmed = true) => {
         quitConfirmed = confirmed
         deps.quit()
-      }
+      },
+      ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
     })
 
     // isVisible() is also false for minimized Windows windows. Track explicit hide/show events so

@@ -87,7 +87,11 @@ const assertPackagedResources = async (appBundle) => {
   const paths = [
     join(appBundle, 'Contents', 'MacOS', 'Open Science'),
     join(resources, 'app.asar'),
-    join(resources, 'micromamba')
+    join(resources, 'micromamba'),
+    // electron-builder compiles build/icon.icon into the adaptive catalog and also emits an ICNS
+    // fallback for macOS releases that predate Icon Composer.
+    join(resources, 'Assets.car'),
+    join(resources, 'icon.icns')
   ]
   for (const path of paths) await access(path)
   return { executable: paths[0], micromamba: paths[2] }

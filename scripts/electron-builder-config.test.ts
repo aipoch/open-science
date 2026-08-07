@@ -61,3 +61,35 @@ describe('electron-builder Linux desktop identity', () => {
     expect(desktopBaseName).toBe(executableName)
   })
 })
+
+describe('electron-builder macOS icons', () => {
+  it('uses Icon Composer for the app and keeps the legacy ICNS for the DMG volume', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      mac?: { icon?: string; darkModeSupport?: boolean }
+      dmg?: { icon?: string }
+    }
+
+    expect(config.mac?.icon).toBe('build/icon.icon')
+    expect(config.mac?.darkModeSupport).toBe(true)
+    expect(config.dmg?.icon).toBe('build/icon.icns')
+
+    const iconComposer = JSON.parse(
+      readFileSync(join(process.cwd(), 'build', 'icon.icon', 'icon.json'), 'utf8')
+    ) as {
+      'fill-specializations'?: Array<{ appearance?: string }>
+      groups?: Array<{
+        layers?: Array<{ 'fill-specializations'?: Array<{ appearance?: string }> }>
+      }>
+    }
+    expect(iconComposer['fill-specializations']?.some((item) => item.appearance === 'dark')).toBe(
+      true
+    )
+    expect(
+      iconComposer.groups?.some((group) =>
+        group.layers?.some((layer) =>
+          layer['fill-specializations']?.some((item) => item.appearance === 'dark')
+        )
+      )
+    ).toBe(true)
+  })
+})
