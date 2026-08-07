@@ -31,6 +31,14 @@ const safeLogError = (message: string, error: unknown): void => {
   }
 }
 
+const safeLogInfo = (message: string, fields: Record<string, unknown>): void => {
+  try {
+    log.info(message, fields)
+  } catch {
+    // Plan state and the original operation result take precedence over diagnostics.
+  }
+}
+
 // Composes ACP-facing Session Plan application policy around the authoritative Plan, interaction,
 // Artifact, durable-branch, and publication owners. It owns no mutable state of its own.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
@@ -126,6 +134,12 @@ const composeAcpRuntimePlanWorkflow = (
         interactions.release(input.sessionId, result.projection.artifactVersionId)
         throw error
       }
+      safeLogInfo('Session Plan generated', {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: result.projection.artifactVersionId,
+        revision: result.projection.revision
+      })
       publishProjection(input.sessionId, result.projection)
       return approval
     }
@@ -141,16 +155,47 @@ const composeAcpRuntimePlanWorkflow = (
       expectedRevision: projection.revision
     }
     if (input.operation === 'approve' || input.operation === 'reject') {
-      const interactionIsLive = sessionInteractions.current(input.sessionId) !== undefined
+      const interaction = sessionInteractions.current(input.sessionId)
+      const interactionIsLive = interaction !== undefined
       const decision = input.operation === 'approve' ? 'approved' : 'rejected'
+      const requiresHumanFeedback = projection.approval === 'pending'
+      const authorization =
+        interaction?.kind === 'prompt'
+          ? {
+              sessionId: input.sessionId,
+              artifactVersionId: projection.artifactVersionId,
+              interactionSequence: interaction.sequence
+            }
+          : undefined
+      if (
+        requiresHumanFeedback &&
+        (!authorization || !interactions.isAgentDecisionAuthorized(authorization))
+      ) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'A pending Session Plan decision requires post-generation human feedback.'
+        )
+      }
       const executionBinding = interactions.executionBindingFor(input.sessionId)
       const result = await service.respond({ ...identity, decision, interactionIsLive })
+      if (requiresHumanFeedback && authorization) {
+        interactions.consumeAgentDecisionAuthorization(authorization)
+      }
       if (decision === 'approved') {
         bindExecutionToCurrentInteraction(input.sessionId, result.projection.artifactVersionId)
       } else if (executionBinding) {
         interactions.releaseExecution(input.sessionId, executionBinding.interactionSequence)
       }
       interactions.resolveApproval(input.sessionId, result)
+      safeLogInfo('Session Plan response accepted', {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: result.projection.artifactVersionId,
+        revision: result.projection.revision,
+        source: requiresHumanFeedback ? 'agent-after-feedback' : 'agent-continuation',
+        decision,
+        changed: result.changed
+      })
       publishProjection(input.sessionId, result.projection)
       return result
     }
@@ -197,6 +242,14 @@ const composeAcpRuntimePlanWorkflow = (
       status: update.status,
       ...(update.notes ? { notes: update.notes } : {})
     })
+    safeLogInfo('Session Plan step status updated', {
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      artifactVersionId: result.projection.artifactVersionId,
+      revision: result.projection.revision,
+      status: update.status,
+      changed: result.changed
+    })
     publishProjection(input.sessionId, result.projection)
     return result
   }
@@ -217,10 +270,23 @@ const composeAcpRuntimePlanWorkflow = (
     await assertVisibleToDurableBranch(input.projectId, input.sessionId, current)
     const result = await service.respond({ ...input, interactionIsLive })
     if ('projection' in result) {
+      const interaction = sessionInteractions.current(input.sessionId)
       if (interactionIsLive && result.projection.approval === 'approved') {
         bindExecutionToCurrentInteraction(input.sessionId, result.projection.artifactVersionId)
       }
+      if (interaction?.kind === 'prompt') {
+        interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
+      }
       if (interactionIsLive) interactions.resolveApproval(input.sessionId, result)
+      safeLogInfo('Session Plan response accepted', {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: result.projection.artifactVersionId,
+        revision: result.projection.revision,
+        source: 'human-button',
+        decision: result.projection.approval,
+        changed: result.changed
+      })
       publishProjection(input.sessionId, result.projection)
       return result
     }
@@ -242,7 +308,27 @@ const composeAcpRuntimePlanWorkflow = (
     } catch (error) {
       safeLogError('Routed user Message projection callback failed', error)
     }
-    interactions.resolveApproval(input.sessionId, result)
+    const interaction = sessionInteractions.current(input.sessionId)
+    if (!interaction || interaction.kind !== 'prompt') {
+      throw new Error('The paused Session Plan interaction is no longer available.')
+    }
+    const authorization = {
+      sessionId: input.sessionId,
+      artifactVersionId: result.artifactVersionId,
+      interactionSequence: interaction.sequence
+    }
+    interactions.authorizeAgentDecision(authorization)
+    if (!interactions.resolveApproval(input.sessionId, result)) {
+      interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
+      throw new Error('The paused Session Plan interaction is no longer available.')
+    }
+    safeLogInfo('Session Plan feedback routed', {
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      artifactVersionId: result.artifactVersionId,
+      revision: current.revision,
+      source: 'human-feedback'
+    })
     return result
   }
 
@@ -332,6 +418,7 @@ const composeAcpRuntimePlanWorkflow = (
           interactionIsLive: true
         })
         .then((result) => {
+          interactions.releaseAgentDecisionAuthorization(request.sessionId, interaction.sequence)
           if (decision === 'approve') authorized = result.projection
           else {
             protectedPending = result.projection
@@ -340,6 +427,15 @@ const composeAcpRuntimePlanWorkflow = (
             }
           }
           interactions.resolveApproval(request.sessionId, result)
+          safeLogInfo('Session Plan response accepted', {
+            projectId: continuation.projectId,
+            sessionId: request.sessionId,
+            artifactVersionId: result.projection.artifactVersionId,
+            revision: result.projection.revision,
+            source: 'human-button',
+            decision: result.projection.approval,
+            changed: result.changed
+          })
           publishProjection(request.sessionId, result.projection)
           return committed()
         })
@@ -351,6 +447,7 @@ const composeAcpRuntimePlanWorkflow = (
     interaction: AcpPromptSessionInteractionScope
   ): void => {
     interactions.releaseExecution(sessionId, interaction.sequence)
+    interactions.releaseAgentDecisionAuthorization(sessionId, interaction.sequence)
     if (interaction.promptMessageId) {
       rejectApprovalForInteraction(
         sessionId,

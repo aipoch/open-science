@@ -556,6 +556,11 @@ describe('AcpRuntime Session Plan seam', () => {
 
   it('does not release a successor execution when an older rejection finishes late', async () => {
     const { runtime, interactions, service } = createRuntimeHarness({})
+    interactions.authorizeAgentDecision({
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    })
     interactions.bindExecution({
       sessionId: 'session-1',
       interactionSequence: 6,

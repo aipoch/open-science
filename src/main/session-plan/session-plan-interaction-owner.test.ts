@@ -36,6 +36,76 @@ describe('SessionPlanInteractionOwner', () => {
     expect(owner.interactionIdFor('session-1', 'version-2')).toBeUndefined()
   })
 
+  it('authorizes an Agent decision only for one exact Artifact Version and interaction', () => {
+    const owner = new SessionPlanInteractionOwner()
+
+    owner.authorizeAgentDecision({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      interactionSequence: 7
+    })
+
+    expect(
+      owner.isAgentDecisionAuthorized({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: 7
+      })
+    ).toBe(true)
+    expect(
+      owner.isAgentDecisionAuthorized({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-2',
+        interactionSequence: 7
+      })
+    ).toBe(false)
+    expect(
+      owner.consumeAgentDecisionAuthorization({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: 7
+      })
+    ).toBe(true)
+    expect(
+      owner.consumeAgentDecisionAuthorization({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: 7
+      })
+    ).toBe(false)
+  })
+
+  it('invalidates Agent decision authority on Plan replacement and exact interaction release', () => {
+    const owner = new SessionPlanInteractionOwner()
+    owner.authorizeAgentDecision({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      interactionSequence: 7
+    })
+
+    expect(owner.releaseAgentDecisionAuthorization('session-1', 6)).toBe(false)
+    owner.register({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-2',
+      interactionId: 'interaction-2'
+    })
+    expect(
+      owner.isAgentDecisionAuthorized({
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        interactionSequence: 7
+      })
+    ).toBe(false)
+
+    owner.authorizeAgentDecision({
+      sessionId: 'session-1',
+      artifactVersionId: 'version-2',
+      interactionSequence: 8
+    })
+    expect(owner.releaseAgentDecisionAuthorization('session-1', 7)).toBe(false)
+    expect(owner.releaseAgentDecisionAuthorization('session-1', 8)).toBe(true)
+  })
+
   it('settles a parked approval exactly once', async () => {
     const owner = new SessionPlanInteractionOwner()
     const approval = owner.parkApproval('session-1', 'interaction-1')
