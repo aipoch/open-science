@@ -208,8 +208,10 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
 // domToDoc still reads the full name back from textContent / the stored filename attribute.
 const CHIP_BASE_CLASS =
   'inline-block max-w-[220px] truncate align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+// Artifact chips are click-to-preview, so they opt out of text selection entirely — a click must
+// not paint the select-all highlight.
 const ARTIFACT_CHIP_BASE_CLASS =
-  'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+  'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-none'
 
 // Render a skill chip span: an atomic, non-editable blue mention token. Exported so the mention hook
 // inserts the exact same markup it re-renders here, and the styling can never drift between the two.
