@@ -151,6 +151,7 @@
         "src/main/artifacts/provenance-message-finalization.ts",
         "src/main/artifacts/provenance-message-snapshot.ts",
         "src/main/artifacts/provenance-producer-capture.ts",
+        "src/main/artifacts/provenance-read-model.ts",
         "src/main/artifacts/provenance-repository.ts",
         "src/main/artifacts/provenance-staging-recovery.ts",
         "src/main/artifacts/provenance-storage.ts",

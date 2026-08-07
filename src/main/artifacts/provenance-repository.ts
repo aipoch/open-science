@@ -1,24 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { readFile, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { PrismaClient } from '@prisma/client'
 
 import type {
-  ArtifactExecutionSnapshot,
   ArtifactLineageProvenance,
-  ArtifactMessageSnapshotFile,
   ArtifactVersionDescriptor,
-  ArtifactVersionEvidence,
   ArtifactVersionFile,
   ArtifactVersionProvenance,
   CreateArtifactVersionRequest,
   FinalizeArtifactVersionsRequest,
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest,
-  PersistedArtifactExecutionSnapshot,
-  ProvenanceExecutionInputFile,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
@@ -33,13 +28,8 @@ import {
   type PersistedVersionFileRecord
 } from './provenance-version-writer'
 import { NotebookRunRepository } from '../notebook/repository'
-import type { NotebookRunInputFile } from '../../shared/notebook'
 import { canonicalJson, sha256 } from './provenance-canonical'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
-import {
-  parseArtifactExecutionSnapshot,
-  validateArtifactExecutionSnapshot
-} from './provenance-execution-evidence'
 import {
   ArtifactFinalizationProofError,
   ArtifactOwnershipPersistenceRaceError,
@@ -52,18 +42,9 @@ import {
 } from './provenance-finalization-recovery'
 import { ArtifactProvenanceStagingRecovery } from './provenance-staging-recovery'
 import { ArtifactProvenanceUnindexedRecovery } from './provenance-unindexed-recovery'
-import { readOptionalFile, resolveStorageKey, storageKey } from './provenance-storage'
-import { toCheck, toReview } from '../reviewer/repository'
-import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
-import { flagStaleReviews } from '../reviewer/stale-reviews'
-import type {
-  ReviewFindingDispositionOutcome,
-  ReviewFindingDispositionTrigger,
-  ReviewScopeSnapshotBlock,
-  ReviewWithProvenanceEvidence
-} from '../../shared/reviewer'
+import { resolveStorageKey, storageKey } from './provenance-storage'
+import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { sanitizeActivityGroup, sanitizeToolActivity } from '../../shared/session-persistence'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -126,82 +107,6 @@ const hasServerInferredProducer = (evidenceJson: string): boolean => {
   }
 }
 
-type PersistedExecutionInputRow = {
-  ordinal: number
-  inputFileVersionId: string
-  sourceKind: string
-  sourceFileId: string
-  sourceVersionNumber: number | null
-  sourceCreatedAt: Date | null
-  sourceProjectId: string
-  sourceSessionId: string
-  filename: string
-  contentType: string | null
-  sizeBytes: bigint
-  checksum: string
-  storageKey: string
-  strongestAssociation: string
-}
-
-const validateArtifactExecutionInputs = (
-  snapshot: PersistedArtifactExecutionSnapshot,
-  evidence: ArtifactVersionEvidence,
-  rows: PersistedExecutionInputRow[]
-): void => {
-  const snapshotKeys = new Set(
-    snapshot.inputFiles.map((input) => `${input.sourceKind}\0${input.inputFileVersionId}`)
-  )
-  const invalidRunKey = snapshot.runs.some((run) =>
-    run.inputFileVersionKeys.some(
-      (input) => !snapshotKeys.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
-    )
-  )
-  const invalidInput = snapshot.inputFiles.some((input, ordinal) => {
-    const evidenceInput = evidence.inputs[ordinal]
-    const row = rows[ordinal]
-    return (
-      !evidenceInput ||
-      !row ||
-      evidenceInput.ordinal !== ordinal ||
-      row.ordinal !== ordinal ||
-      input.inputFileVersionId !== evidenceInput.input_file_version_id ||
-      input.inputFileVersionId !== row.inputFileVersionId ||
-      input.sourceKind !== evidenceInput.source_kind ||
-      input.sourceKind !== row.sourceKind ||
-      input.sourceFileId !== evidenceInput.source_file_id ||
-      input.sourceFileId !== row.sourceFileId ||
-      input.sourceVersionNumber !== evidenceInput.source_version_number ||
-      input.sourceVersionNumber !== (row.sourceVersionNumber ?? undefined) ||
-      input.sourceCreatedAt !== evidenceInput.source_created_at ||
-      input.sourceCreatedAt !== row.sourceCreatedAt?.toISOString() ||
-      input.sourceProjectId !== evidenceInput.source_project_id ||
-      input.sourceProjectId !== row.sourceProjectId ||
-      input.sourceSessionId !== evidenceInput.source_session_id ||
-      input.sourceSessionId !== row.sourceSessionId ||
-      input.filename !== evidenceInput.filename ||
-      input.filename !== row.filename ||
-      input.contentType !== evidenceInput.content_type ||
-      input.contentType !== (row.contentType ?? undefined) ||
-      input.sizeBytes !== evidenceInput.size_bytes ||
-      input.sizeBytes !== Number(row.sizeBytes) ||
-      input.checksum !== evidenceInput.checksum ||
-      input.checksum !== row.checksum ||
-      input.storageKey !== evidenceInput.storage_key ||
-      input.storageKey !== row.storageKey ||
-      input.association !== evidenceInput.strongest_association ||
-      input.association !== row.strongestAssociation
-    )
-  })
-  if (
-    invalidRunKey ||
-    invalidInput ||
-    snapshot.inputFiles.length !== evidence.inputs.length ||
-    snapshot.inputFiles.length !== rows.length
-  ) {
-    throw new Error('Artifact Version execution snapshot input metadata mismatch.')
-  }
-}
-
 class ArtifactProvenanceRepository {
   private readonly compatibilityRepository: ArtifactRepository
   private readonly createId: () => string
@@ -210,6 +115,7 @@ class ArtifactProvenanceRepository {
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly producerCapture: ArtifactProvenanceProducerCapture
+  private readonly readModel: ArtifactProvenanceReadModel
   private readonly stagingRecovery: ArtifactProvenanceStagingRecovery
   private readonly unindexedRecovery: ArtifactProvenanceUnindexedRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
@@ -222,6 +128,19 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    this.readModel = new ArtifactProvenanceReadModel({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient,
+      loadSession: options.loadSession,
+      createId: this.createId,
+      durability: this.durability,
+      reconcileSession: (projectId, appSessionId) => this.reconcileSession(projectId, appSessionId),
+      projectVersionDescriptor: (version, projectId, appSessionId) =>
+        this.toDescriptor(version, projectId, appSessionId),
+      resolveVersionContent: (request) => this.resolveVersionContent(request),
+      resolveVersionDerivedPath: (request, filename) =>
+        this.resolveVersionDerivedPath(request, filename)
+    })
     this.producerCapture = new ArtifactProvenanceProducerCapture({
       getClient: options.getClient,
       notebookRepository,
@@ -396,40 +315,6 @@ class ArtifactProvenanceRepository {
     return this.toArtifactVersionFile(existing, projectId, appSessionId)
   }
 
-  // SQLite is the normal read authority. A missing reconciliation mirror must not turn a GET into a
-  // filesystem mutation (or make a read-only/Windows volume fail); an existing mirror is still
-  // checked byte-for-byte so conflicting durable evidence remains fail-closed.
-  private async readCanonicalMirror(
-    path: string,
-    canonical: string,
-    checksum: string,
-    corruptMessage: string
-  ): Promise<string> {
-    if (sha256(canonical) !== checksum) throw new Error(corruptMessage)
-    const bytes = await readOptionalFile(path)
-    if (!bytes) return canonical
-    const value = bytes.toString('utf8')
-    if (value !== canonical || sha256(bytes) !== checksum) throw new Error(corruptMessage)
-    return value
-  }
-
-  private async projectExecutionInput(
-    input: NotebookRunInputFile
-  ): Promise<ProvenanceExecutionInputFile> {
-    const { storageKey: inputStorageKey, ...safeInput } = input
-    const content = await readOptionalFile(
-      resolveStorageKey(this.options.storageRoot, inputStorageKey)
-    )
-    return {
-      ...safeInput,
-      availability: !content
-        ? { state: 'unavailable', reason: 'input-content-missing' }
-        : sha256(content) === input.checksum
-          ? { state: 'available' }
-          : { state: 'unavailable', reason: 'input-content-corrupt' }
-    }
-  }
-
   async validateFinalizationOwnership(request: FinalizeArtifactVersionsRequest): Promise<void> {
     return this.messageFinalizer.validateOwnership(request)
   }
@@ -515,361 +400,14 @@ class ArtifactProvenanceRepository {
   async getLineage(
     request: GetArtifactLineageRequest
   ): Promise<ArtifactLineageProvenance | undefined> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
-    let artifactId: string
-    try {
-      artifactId = assertSafeSegment(request.artifactId, 'artifact id')
-    } catch {
-      // Legacy managed-file ids can contain Session/message/filename segments. They never identify a
-      // native lineage, so absence is the compatible result rather than an IPC-visible validation error.
-      return undefined
-    }
-    const client = await this.options.getClient()
-    let lineage = await client.artifactLineage.findFirst({
-      where: { id: artifactId, projectId, sessionId: appSessionId },
-      include: {
-        originSession: true,
-        versions: {
-          where: { state: { in: ['pending', 'finalized'] } },
-          orderBy: [{ versionNumber: 'asc' }, { id: 'asc' }]
-        }
-      }
-    })
-    if (!lineage) {
-      await this.reconcileSession(projectId, appSessionId)
-      lineage = await client.artifactLineage.findFirst({
-        where: { id: artifactId, projectId, sessionId: appSessionId },
-        include: {
-          originSession: true,
-          versions: {
-            where: { state: { in: ['pending', 'finalized'] } },
-            orderBy: [{ versionNumber: 'asc' }, { id: 'asc' }]
-          }
-        }
-      })
-    }
-    if (!lineage) return undefined
-
-    const versions = await Promise.all(
-      lineage.versions.map(async (version) =>
-        this.toDescriptor(version, projectId, lineage.sessionId)
-      )
-    )
-    return {
-      artifactId: lineage.id,
-      filename: lineage.filename,
-      originSession: {
-        sessionId: lineage.sessionId,
-        state: lineage.originSession.state as 'active' | 'deleting' | 'deleted',
-        title: lineage.originSession.titleSnapshot ?? undefined,
-        deletedAt: lineage.originSession.deletedAt?.toISOString()
-      },
-      versions
-    }
+    return this.readModel.getLineage(request)
   }
 
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
-    sections: { execution: boolean; messages: boolean; review: boolean } = {
-      execution: true,
-      messages: true,
-      review: true
-    }
+    sections?: { execution: boolean; messages: boolean; review: boolean }
   ): Promise<ArtifactVersionProvenance> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const appSessionId = assertSafeSegment(request.appSessionId, 'app session id')
-    const artifactId = assertSafeSegment(request.artifactId, 'artifact id')
-    const versionId = assertSafeSegment(request.versionId, 'version id')
-    const client = await this.options.getClient()
-    let version = await client.artifactVersion.findFirst({
-      where: {
-        id: versionId,
-        artifactId,
-        state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId, sessionId: appSessionId } }
-      },
-      include: {
-        artifact: true,
-        messageSnapshot: true,
-        inputs: { orderBy: { ordinal: 'asc' } }
-      }
-    })
-    if (!version) {
-      await this.reconcileSession(projectId, appSessionId)
-      version = await client.artifactVersion.findFirst({
-        where: {
-          id: versionId,
-          artifactId,
-          state: { in: ['pending', 'finalized'] },
-          artifact: { is: { projectId, sessionId: appSessionId } }
-        },
-        include: {
-          artifact: true,
-          messageSnapshot: true,
-          inputs: { orderBy: { ordinal: 'asc' } }
-        }
-      })
-    }
-    if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
-
-    const evidencePath = resolveStorageKey(this.options.storageRoot, version.evidenceStorageKey)
-    const evidenceMirror = await this.readCanonicalMirror(
-      evidencePath,
-      version.evidenceJson,
-      version.evidenceChecksum,
-      `Artifact Version evidence is corrupt: ${versionId}`
-    )
-    const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
-    const contentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-    const contentStatus: ArtifactVersionProvenance['contentStatus'] = await readFile(contentPath)
-      .then((content) =>
-        sha256(content) === version.checksum
-          ? ({ state: 'available' } as const)
-          : ({ state: 'unavailable', reason: 'checksum-mismatch' } as const)
-      )
-      .catch((error: unknown) => {
-        if (
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: unknown }).code === 'ENOENT'
-        ) {
-          return { state: 'unavailable', reason: 'missing' } as const
-        }
-        throw error
-      })
-
-    let execution: ArtifactExecutionSnapshot | undefined
-    if (
-      sections.execution &&
-      version.executionSnapshotJson &&
-      version.executionSnapshotChecksum &&
-      version.executionSnapshotStorageKey
-    ) {
-      const executionMirror = await this.readCanonicalMirror(
-        resolveStorageKey(this.options.storageRoot, version.executionSnapshotStorageKey),
-        version.executionSnapshotJson,
-        version.executionSnapshotChecksum,
-        `Artifact Version execution snapshot is corrupt: ${versionId}`
-      )
-      const persistedExecution = parseArtifactExecutionSnapshot(executionMirror)
-      validateArtifactExecutionSnapshot(persistedExecution, {
-        rootFrameId: version.rootFrameId,
-        agentFrameId: version.agentFrameId,
-        messageBranchId: version.messageBranchId,
-        promptMessageId: version.promptMessageId,
-        producerRunId: version.producerRunId,
-        producerRunIndex: version.producerRunIndex,
-        executionSnapshotChecksum: version.executionSnapshotChecksum,
-        evidence
-      })
-      validateArtifactExecutionInputs(persistedExecution, evidence, version.inputs)
-      execution = {
-        ...persistedExecution,
-        inputFiles: await Promise.all(
-          persistedExecution.inputFiles.map((input) => this.projectExecutionInput(input))
-        )
-      }
-    }
-
-    let messages: ArtifactVersionProvenance['messages'] = {
-      state: 'unavailable',
-      reason: sections.messages ? 'message-snapshot-pending' : 'not-loaded'
-    }
-    if (sections.messages && version.messageSnapshot?.state === 'ready') {
-      try {
-        const serializedSnapshot = await readFile(
-          resolveStorageKey(this.options.storageRoot, version.messageSnapshot.storageKey),
-          'utf8'
-        )
-        const snapshotChecksum = sha256(serializedSnapshot)
-        if (
-          version.messageSnapshot.checksum &&
-          version.messageSnapshot.checksum !== snapshotChecksum
-        ) {
-          throw new Error('Message snapshot checksum mismatch.')
-        }
-        const snapshot = JSON.parse(serializedSnapshot) as ArtifactMessageSnapshotFile
-        const hasValidPath = snapshot.messages.every(
-          (message, index) =>
-            index === 0 || message.parentMessageId === snapshot.messages[index - 1]?.id
-        )
-        if (
-          (snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3) ||
-          snapshot.snapshotId !== version.messageSnapshot.id ||
-          snapshot.rootFrameId !== version.rootFrameId ||
-          snapshot.agentFrameId !== version.agentFrameId ||
-          snapshot.messageBranchId !== version.messageBranchId ||
-          snapshot.terminalMessageId !== version.messageId ||
-          snapshot.messages.length !== version.messageSnapshot.messageCount ||
-          snapshot.messages.at(-1)?.id !== version.messageId ||
-          !hasValidPath
-        ) {
-          throw new Error('Message snapshot metadata mismatch.')
-        }
-        if (
-          snapshot.schemaVersion === 3 &&
-          (!Array.isArray(snapshot.activities) || !Array.isArray(snapshot.activityGroups))
-        ) {
-          throw new Error('Message snapshot activity metadata mismatch.')
-        }
-        if (!version.messageSnapshot.checksum) {
-          const updated = await client.artifactMessageSnapshot.updateMany({
-            where: { id: version.messageSnapshot.id, state: 'ready', checksum: '' },
-            data: { checksum: snapshotChecksum }
-          })
-          if (updated.count !== 1) throw new Error('Message snapshot checksum backfill raced.')
-        }
-        const rawActivities = snapshot.schemaVersion === 3 ? snapshot.activities : []
-        const rawActivityGroups = snapshot.schemaVersion === 3 ? snapshot.activityGroups : []
-        const activities = rawActivities.flatMap((activity) => {
-          const sanitized = sanitizeToolActivity(activity)
-          return sanitized ? [sanitized] : []
-        })
-        const activityGroups = rawActivityGroups.flatMap((group) => {
-          const sanitized = sanitizeActivityGroup(group)
-          return sanitized ? [sanitized] : []
-        })
-        const activityIds = new Set(activities.map((activity) => activity.id))
-        if (
-          activities.length !== rawActivities.length ||
-          activityGroups.length !== rawActivityGroups.length ||
-          activityGroups.some((group) =>
-            group.activityIds.some((activityId) => !activityIds.has(activityId))
-          )
-        ) {
-          throw new Error('Message snapshot activity metadata mismatch.')
-        }
-        messages = { state: 'available', items: snapshot.messages, activities, activityGroups }
-      } catch {
-        messages = { state: 'unavailable', reason: 'message-snapshot-corrupt' }
-      }
-    }
-
-    let review: ArtifactVersionProvenance['review'] = {
-      state: 'unavailable',
-      reason: sections.review ? 'not-triggered' : 'not-loaded'
-    }
-    if (sections.review) {
-      const reviewRows = await client.review.findMany({
-        where: { projectId, sessionId: version.artifact.sessionId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
-      })
-      const provenanceReviews: ReviewWithProvenanceEvidence[] = await Promise.all(
-        reviewRows.map(async (reviewRow) => {
-          const [checkRows, snapshot] = await Promise.all([
-            client.finding.findMany({
-              where: { reviewId: reviewRow.id },
-              orderBy: [{ sortIndex: 'asc' }, { id: 'asc' }]
-            }),
-            client.reviewScopeSnapshot.findUnique({ where: { reviewId: reviewRow.id } })
-          ])
-          let scopeSnapshot: ReviewWithProvenanceEvidence['scopeSnapshot'] = {
-            state: 'unavailable',
-            reason: snapshot ? 'pending' : 'legacy'
-          }
-          if (snapshot?.state === 'ready') {
-            try {
-              const payload = JSON.parse(snapshot.snapshotJson) as {
-                schemaVersion?: unknown
-                blocks?: unknown
-              }
-              if (
-                (payload.schemaVersion !== 1 && payload.schemaVersion !== 2) ||
-                !Array.isArray(payload.blocks) ||
-                sha256(snapshot.snapshotJson) !== snapshot.checksum
-              ) {
-                throw new Error('Review scope snapshot checksum mismatch.')
-              }
-              scopeSnapshot = {
-                state: 'available',
-                blocks: payload.blocks as ReviewScopeSnapshotBlock[]
-              }
-            } catch {
-              scopeSnapshot = { state: 'unavailable', reason: 'corrupt' }
-            }
-          }
-          return {
-            ...toReview(reviewRow),
-            checks: checkRows.map(toCheck),
-            scopeSnapshot
-          }
-        })
-      )
-      // Active Sessions are re-resolved before their verdict is projected so edits cannot make an old
-      // pass look current. Deleted origins intentionally keep their frozen historical verdict: there is
-      // no live conversation to recompute and Provenance never offers a re-run from this surface.
-      const origin = await client.fileOriginSession.findUnique({
-        where: {
-          projectId_sessionId: { projectId, sessionId: version.artifact.sessionId }
-        },
-        select: { state: true }
-      })
-      let sourceSessionUnavailable = false
-      let resolvedReviews = provenanceReviews
-      if (this.options.loadSession && origin?.state === 'active') {
-        const session = await this.options
-          .loadSession(projectId, version.artifact.sessionId)
-          .catch(() => undefined)
-        if (
-          !session ||
-          session.projectId !== projectId ||
-          session.id !== version.artifact.sessionId
-        ) {
-          sourceSessionUnavailable = provenanceReviews.length > 0
-        } else {
-          resolvedReviews = (
-            await flagStaleReviews(
-              provenanceReviews,
-              session,
-              this.options.storageRoot,
-              (request) => this.resolveVersionContent(request)
-            )
-          ).map((review, index) => ({ ...provenanceReviews[index]!, stale: review.stale }))
-        }
-      }
-      const findingIds = resolvedReviews.flatMap((candidate) =>
-        candidate.checks.map((check) => check.id)
-      )
-      const dispositionRows =
-        findingIds.length > 0
-          ? await client.reviewFindingDisposition.findMany({
-              where: { sourceFindingId: { in: findingIds } },
-              orderBy: [{ createdAt: 'asc' }, { sequence: 'asc' }, { id: 'asc' }]
-            })
-          : []
-      if (sourceSessionUnavailable) {
-        review = { state: 'unavailable', reason: 'source-session-unavailable' }
-      } else {
-        const projection = selectReviewChainForArtifactVersion({
-          selectedVersionId: versionId,
-          versionMessageId: version.messageId ?? undefined,
-          reviews: resolvedReviews,
-          dispositions: dispositionRows.map((disposition) => ({
-            id: disposition.id,
-            sourceFindingId: disposition.sourceFindingId,
-            causeReviewId: disposition.causeReviewId ?? undefined,
-            sequence: disposition.sequence,
-            trigger: disposition.trigger as ReviewFindingDispositionTrigger,
-            outcome: disposition.outcome as ReviewFindingDispositionOutcome,
-            note: disposition.note ?? undefined,
-            assessedArtifactVersionId: disposition.assessedArtifactVersionId ?? undefined,
-            createdAt: disposition.createdAt.getTime()
-          }))
-        })
-        if (projection) review = { state: 'available', value: projection }
-      }
-    }
-
-    return {
-      descriptor: await this.toDescriptor(version, projectId, version.artifact.sessionId),
-      contentStatus,
-      evidence,
-      execution,
-      messages,
-      review
-    }
+    return this.readModel.getVersionProvenance(request, sections)
   }
 
   // Resolves the stable Version ids embedded in copied historical messages. This intentionally
@@ -925,77 +463,38 @@ class ArtifactProvenanceRepository {
   async getVersionCore(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<ArtifactVersionProvenance> {
-    return this.getVersionProvenance(request, {
-      execution: false,
-      messages: false,
-      review: false
-    })
+    return this.readModel.getVersionCore(request)
   }
 
   async getVersionExecution(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<Pick<ArtifactVersionProvenance, 'execution'>> {
-    const value = await this.getVersionProvenance(request, {
-      execution: true,
-      messages: false,
-      review: false
-    })
-    return { execution: value.execution }
+    return this.readModel.getVersionExecution(request)
   }
 
   async getVersionMessages(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<Pick<ArtifactVersionProvenance, 'messages'>> {
-    const value = await this.getVersionProvenance(request, {
-      execution: false,
-      messages: true,
-      review: false
-    })
-    return { messages: value.messages }
+    return this.readModel.getVersionMessages(request)
   }
 
   async getVersionReview(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<Pick<ArtifactVersionProvenance, 'review'>> {
-    const value = await this.getVersionProvenance(request, {
-      execution: false,
-      messages: false,
-      review: true
-    })
-    return { review: value.review }
+    return this.readModel.getVersionReview(request)
   }
 
   async readCodeReconstructionCache(
     request: GetArtifactVersionProvenanceRequest
   ): Promise<string | undefined> {
-    const path = await this.resolveVersionDerivedPath(request, 'code-reconstruction.json')
-    return readFile(path, 'utf8').catch((error: unknown) => {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        (error as { code?: unknown }).code === 'ENOENT'
-      ) {
-        return undefined
-      }
-      throw error
-    })
+    return this.readModel.readCodeReconstructionCache(request)
   }
 
   async writeCodeReconstructionCache(
     request: GetArtifactVersionProvenanceRequest,
     serialized: string
   ): Promise<void> {
-    const path = await this.resolveVersionDerivedPath(request, 'code-reconstruction.json')
-    const temporaryPath = `${path}.${this.createId()}.tmp`
-    try {
-      await writeFile(temporaryPath, serialized, { encoding: 'utf8', flag: 'wx' })
-      await this.durability.syncFile(temporaryPath)
-      await rename(temporaryPath, path)
-      await this.durability.syncDirectory(dirname(path))
-    } finally {
-      await rm(temporaryPath, { force: true }).catch(() => undefined)
-    }
+    return this.readModel.writeCodeReconstructionCache(request, serialized)
   }
 
   private async resolveVersionDerivedPath(
