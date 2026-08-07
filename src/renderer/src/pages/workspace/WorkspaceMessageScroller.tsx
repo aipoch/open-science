@@ -51,9 +51,12 @@ import {
   createArtifactVersionLocator,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
+import { useNotebookRunsById } from './use-notebook-runs-by-id'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
@@ -333,6 +336,7 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  notebookReference,
   onSendEditedMessage,
   handoffLifecycleSource,
   onRetryHandoff
@@ -340,6 +344,7 @@ const WorkspaceMessageScrollerImpl = ({
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
   const historicalArtifactsByVersionId = useHistoricalArtifactDescriptors(activeSession)
+  const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
   // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
@@ -857,6 +862,7 @@ const WorkspaceMessageScrollerImpl = ({
                       onToggleGroup={toggleActivityGroup}
                       expansionOverrides={activityExpansionOverrides}
                       onToggleRow={toggleActivityRow}
+                      notebookRunsById={notebookRunsById}
                       jobsByActivityId={jobsByActivityId}
                       onOpenJobDetail={handleOpenJobDetail}
                     />
@@ -946,6 +952,9 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
+  previous.notebookReference?.projectName === next.notebookReference?.projectName &&
+  previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
 const WorkspaceMessageScroller = memo(

@@ -5,6 +5,7 @@ import { ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import type { JobSummary } from '../../../../shared/compute'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceToolActivityRow } from './WorkspaceToolActivityRow'
@@ -32,6 +33,8 @@ type WorkspaceActivityGroupProps = {
   onToggleGroup: (groupId: string) => void
   expansionOverrides: ActivityExpansionOverrides
   onToggleRow: (activityId: string, nextExpanded: boolean) => void
+  // Full runs are an ephemeral local projection keyed by the compact transcript runId.
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   // Map of job_id → JobSummary for jobs bound to activities in this group.
@@ -67,6 +70,7 @@ const WorkspaceActivityGroup = ({
   onToggleGroup,
   expansionOverrides,
   onToggleRow,
+  notebookRunsById,
   contentPaddingClassName,
   jobsByActivityId,
   onOpenJobDetail
@@ -130,6 +134,11 @@ const WorkspaceActivityGroup = ({
                         <WorkspaceToolDetailsRow
                           activity={activity}
                           details={toolDetails}
+                          notebookRun={
+                            toolDetails.notebookRunId
+                              ? notebookRunsById?.get(toolDetails.notebookRunId)
+                              : undefined
+                          }
                           isExpanded={isRowExpanded}
                           onToggle={onToggleRow}
                         />

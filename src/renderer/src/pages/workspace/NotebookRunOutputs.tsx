@@ -1,10 +1,11 @@
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
+import { getFileExtension, getImageMimeTypeForExtension } from './preview-support'
+import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
-// Shared "cell output" area for the notebook panel and the session dialog. Renders the structured
-// run.outputs[] — text streams and echoed results as text, figures inline as images — so repl echoes
-// (display text/plain) and plots (display image/png) show instead of only text.stdout/stderr. Older
-// runs persisted before outputs[] existed fall back to the flattened text streams. Text bodies render
-// ANSI SGR color codes as styled spans (terminal-like) rather than raw escape characters.
+// Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
+// are intentionally separate: text owns its collapse control, while every figure stays visible in an
+// individual frame. Older runs without outputs[] fall back to flattened text streams. ANSI SGR codes
+// render as styled spans (terminal-like) rather than raw escape characters.
 
 const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
@@ -135,34 +136,120 @@ const renderAnsi = (text: string): React.ReactNode => {
 
 // --- output rendering ---
 
-// Renders one display bundle: each image mime inline, every other (text) mime as a text block.
-const NotebookDisplayOutput = ({ data }: { data: Record<string, string> }): React.JSX.Element => (
-  <>
-    {Object.entries(data).map(([mime, payload], index) =>
-      mime.startsWith('image/') ? (
-        <img
-          key={index}
-          data-testid="notebook-output-image"
-          src={`data:${mime};base64,${payload}`}
-          alt="Figure output"
-          className="max-h-80 max-w-full rounded border border-border-200 object-contain"
-          draggable={false}
-        />
-      ) : (
+type CapturedNotebookFigure = {
+  source: 'captured'
+  key: string
+  mimeType: string
+  payload: string
+  name: string
+}
+
+type WorkingFileNotebookFigure = {
+  source: 'working-file'
+  key: string
+  path: string
+  name: string
+  mimeType: string
+  size?: number
+  mtimeMs?: number
+}
+
+type NotebookRunFigure = CapturedNotebookFigure | WorkingFileNotebookFigure
+
+const getWorkingFileName = (relativePath: string, path: string): string => {
+  const candidate = relativePath || path
+  return candidate.split(/[\\/]/u).pop() || candidate
+}
+
+const resolveWorkingFileFigures = (run: NotebookRunRecord): WorkingFileNotebookFigure[] =>
+  run.workingFiles.flatMap((file, index): WorkingFileNotebookFigure[] => {
+    const name = getWorkingFileName(file.relativePath, file.path)
+    const mimeType = getImageMimeTypeForExtension(getFileExtension(name))
+
+    if (!mimeType) return []
+
+    return [
+      {
+        source: 'working-file',
+        key: `working-file-${index}-${file.path}`,
+        path: file.path,
+        name,
+        mimeType,
+        size: file.size,
+        mtimeMs: file.mtimeMs
+      }
+    ]
+  })
+
+// The UI prefers kernel-captured figures because a save call often points at the same open figure.
+// Saved image files are a fallback for explicit save-and-close workflows, where the kernel has no
+// live figure left to capture. Keeping this policy here gives every notebook surface identical
+// all-images behavior without changing the compact result returned to the agent.
+const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] => {
+  const captured: CapturedNotebookFigure[] = []
+
+  run.outputs.forEach((output, outputIndex) => {
+    if (output.type !== 'display') return
+
+    Object.entries(output.data).forEach(([mimeType, payload], mimeIndex) => {
+      if (!mimeType.startsWith('image/')) return
+
+      captured.push({
+        source: 'captured',
+        key: `captured-${outputIndex}-${mimeIndex}`,
+        mimeType,
+        payload,
+        name: `Figure ${captured.length + 1}`
+      })
+    })
+  })
+
+  if (captured.length > 0) return captured
+
+  return resolveWorkingFileFigures(run)
+}
+
+const formatNotebookRunFigureMeta = (run: NotebookRunRecord): string | undefined => {
+  const figureCount = resolveNotebookRunFigures(run).length
+
+  if (figureCount === 0) return undefined
+
+  const savedNames = resolveWorkingFileFigures(run).map((figure) => figure.name)
+  const parts = [`${figureCount} figure${figureCount === 1 ? '' : 's'}`]
+
+  if (savedNames.length > 0) parts.push(`Saved: ${savedNames.join(', ')}`)
+
+  return parts.join(' · ')
+}
+
+// Renders only the textual part of a display bundle. Figure mimes have a separate, always-visible
+// surface below the independently collapsible text output.
+const NotebookDisplayTextOutput = ({
+  data
+}: {
+  data: Record<string, string>
+}): React.JSX.Element | null => {
+  const textEntries = Object.entries(data).filter(([mime]) => !mime.startsWith('image/'))
+
+  if (textEntries.length === 0) return null
+
+  return (
+    <>
+      {textEntries.map(([mime, payload]) => (
         <pre
-          key={index}
+          key={mime}
           data-testid="notebook-output-text"
           className={`${preClassName} text-text-200`}
         >
           {renderAnsi(payload)}
         </pre>
-      )
-    )}
-  </>
-)
+      ))}
+    </>
+  )
+}
 
 // Renders one structured output entry, or null when it carries no visible content.
-const renderOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {
+const renderTextOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {
   switch (output.type) {
     case 'stream': {
       const text = trimTrailingNewline(output.text)
@@ -214,7 +301,7 @@ const renderOutput = (output: NotebookOutput, index: number): React.JSX.Element 
       )
     }
     case 'display':
-      return <NotebookDisplayOutput key={index} data={output.data} />
+      return <NotebookDisplayTextOutput key={index} data={output.data} />
     default:
       return null
   }
@@ -230,34 +317,147 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
   if (stdout.trim().length === 0 && stderr.trim().length === 0) return null
 
   return (
-    <div className="mt-2 space-y-1" data-testid="notebook-run-outputs">
+    <>
       {stdout.trim().length > 0 ? (
         <pre className={`${preClassName} text-text-200`}>{renderAnsi(stdout)}</pre>
       ) : null}
       {stderr.trim().length > 0 ? (
         <pre className={`${preClassName} text-danger-000`}>{renderAnsi(stderr)}</pre>
       ) : null}
-    </div>
+    </>
   )
 }
 
-// Renders the captured output for one run, preferring structured outputs and falling back to text.
-const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  let rendered: React.JSX.Element[]
+
   if (run.outputs.length > 0) {
-    const rendered = run.outputs
-      .map((output, index) => renderOutput(output, index))
+    rendered = run.outputs
+      .map((output, index) => renderTextOutput(output, index))
       .filter((node): node is React.JSX.Element => node !== null)
+  } else {
+    const legacy = <LegacyTextOutput run={run} />
+    const hasLegacyText = [run.text.stdout, run.text.stderr, run.text.traceback].some(
+      (value) => value.trim().length > 0
+    )
+    rendered = hasLegacyText ? [legacy] : []
+  }
 
-    if (rendered.length === 0) return null
+  if (rendered.length === 0) return null
 
+  return (
+    <details open className="group mt-2" data-testid="notebook-text-output">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs text-text-300">
+        <span aria-hidden="true" className="transition-transform group-open:rotate-90">
+          ▸
+        </span>
+        <span className="group-open:hidden">Show output</span>
+        <span className="hidden group-open:inline">Hide output</span>
+      </summary>
+      <div className="space-y-1 pt-1">{rendered}</div>
+    </details>
+  )
+}
+
+const WorkingFileFigureImage = ({
+  figure
+}: {
+  figure: WorkingFileNotebookFigure
+}): React.JSX.Element => {
+  const state = useManagedPreviewResource({
+    source: 'local',
+    path: figure.path,
+    mimeType: figure.mimeType,
+    size: figure.size,
+    mtimeMs: figure.mtimeMs
+  })
+
+  if (state.status === 'loading' || state.status === 'idle') {
+    return <div className="py-10 text-center text-xs text-text-300">Loading image…</div>
+  }
+
+  if (state.status === 'error') {
     return (
-      <div className="mt-2 space-y-1" data-testid="notebook-run-outputs">
-        {rendered}
+      <div className="py-10 text-center text-xs text-danger-000">
+        {figure.name} couldn&apos;t be loaded for preview
       </div>
     )
   }
 
-  return <LegacyTextOutput run={run} />
+  return (
+    <img
+      data-testid="notebook-output-image"
+      src={state.resource.url}
+      alt={figure.name}
+      className="max-h-[32rem] w-full object-contain"
+      draggable={false}
+    />
+  )
 }
 
-export { NotebookRunOutputs }
+const NotebookRunFigureOutputs = ({
+  run
+}: {
+  run: NotebookRunRecord
+}): React.JSX.Element | null => {
+  const figures = resolveNotebookRunFigures(run)
+
+  if (figures.length === 0) return null
+
+  return (
+    <div className="mt-2 space-y-2" data-testid="notebook-figure-outputs">
+      {figures.map((figure) => (
+        <div
+          key={figure.key}
+          data-testid="notebook-figure-output"
+          className="rounded-xl border border-border-100 bg-bg-000 p-2 shadow-sm"
+        >
+          <div className="flex min-h-24 items-center justify-center overflow-hidden rounded-lg border border-border-200 bg-bg-100">
+            {figure.source === 'captured' ? (
+              <img
+                data-testid="notebook-output-image"
+                src={`data:${figure.mimeType};base64,${figure.payload}`}
+                alt={figure.name}
+                className="max-h-[32rem] w-full object-contain"
+                draggable={false}
+              />
+            ) : (
+              <WorkingFileFigureImage figure={figure} />
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Composes the two independent output surfaces used by the notebook panel and session dialog.
+const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  const hasText =
+    run.outputs.some((output) => {
+      if (output.type === 'stream' || output.type === 'text') return output.text.trim().length > 0
+      if (output.type === 'json' || output.type === 'error') return true
+      return Object.keys(output.data).some((mime) => !mime.startsWith('image/'))
+    }) ||
+    (run.outputs.length === 0 &&
+      [run.text.stdout, run.text.stderr, run.text.traceback].some(
+        (value) => value.trim().length > 0
+      ))
+  const hasFigures = resolveNotebookRunFigures(run).length > 0
+
+  if (!hasText && !hasFigures) return null
+
+  return (
+    <div data-testid="notebook-run-outputs">
+      <NotebookRunTextOutputs run={run} />
+      <NotebookRunFigureOutputs run={run} />
+    </div>
+  )
+}
+
+export {
+  formatNotebookRunFigureMeta,
+  NotebookRunFigureOutputs,
+  NotebookRunOutputs,
+  resolveNotebookRunFigures
+}
