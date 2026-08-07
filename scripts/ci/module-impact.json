@@ -93,16 +93,19 @@
       "ownerPaths": [
         "src/main/uploads/repository.ts",
         "src/main/uploads/active-transfer-owner.ts",
+        "src/main/uploads/legacy-recovery-owner.ts",
         "src/main/uploads/managed-upload-resolver.ts",
         "src/main/uploads/staged-publication-owner.ts",
-        "src/main/uploads/storage-helpers.ts"
+        "src/main/uploads/storage-helpers.ts",
+        "src/main/uploads/verified-legacy-cleanup-owner.ts"
       ],
       "interfacePaths": ["src/main/uploads/repository.ts"],
       "consumerModules": ["session_persistence"],
       "testFiles": {
         "owner": [
           "src/main/uploads/repository.test.ts",
-          "src/main/uploads/repository.characterization.test.ts"
+          "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/repository.architecture.test.ts"
         ],
         "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
         "consumer": [
