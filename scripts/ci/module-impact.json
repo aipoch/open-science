@@ -104,7 +104,11 @@
       "testFiles": {
         "owner": ["src/main/project-files/repository.test.ts"],
         "contract": ["src/main/project-files/ipc.test.ts"],
-        "consumer": ["src/main/session-persistence/deletion-integration.test.ts"]
+        "consumer": [
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts"
+        ]
       },
       "capabilityOverlays": ["windows_sensitive"],
       "fallbackCapability": "main_runtime"

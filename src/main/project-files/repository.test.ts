@@ -1068,7 +1068,12 @@ describe('ManagedFileIndexRepository', () => {
       'message-1',
       'result.txt'
     )
-    await writeManagedFile(artifactPath, 'result')
+    const uploadSessionId = 'session-upload'
+    const uploadPath = join(storageRoot, 'uploads', 'default-project', uploadSessionId, 'input.csv')
+    await Promise.all([
+      writeManagedFile(artifactPath, 'result'),
+      writeManagedFile(uploadPath, 'sample,value')
+    ])
     await repository.syncSession(
       createSession({
         artifacts: [
@@ -1076,12 +1081,47 @@ describe('ManagedFileIndexRepository', () => {
         ]
       })
     )
+    await repository.syncSession(
+      createSession({
+        id: uploadSessionId,
+        messages: [
+          {
+            id: 'message-upload',
+            role: 'user',
+            content: 'Analyze this upload',
+            status: 'complete',
+            eventIds: [],
+            uploads: [
+              {
+                id: 'upload-1',
+                sessionId: uploadSessionId,
+                name: 'input.csv',
+                originalName: 'input.csv',
+                path: uploadPath,
+                size: 12
+              }
+            ],
+            createdAt: 1_710_000_000_100,
+            updatedAt: 1_710_000_000_200
+          }
+        ]
+      })
+    )
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 2,
+      uploadCount: 1,
+      artifactCount: 1
+    })
 
     const token = await repository.softDeleteProject(PROJECT_ID)
     expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(0)
 
     await repository.restoreProject(PROJECT_ID, token)
-    expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(1)
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 2,
+      uploadCount: 1,
+      artifactCount: 1
+    })
   })
 
   it('preserves incomplete state when session and project deletion are compensated', async () => {
@@ -1179,6 +1219,145 @@ describe('ManagedFileIndexRepository', () => {
       limit: 24
     })
     expect(files.items.map((file) => file.name)).toEqual(['current.txt'])
+  })
+
+  it('keeps an indexed revision as an idempotent no-op until the revision advances', async () => {
+    const originalPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'original.txt'
+    )
+    const replacementPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-2',
+      'replacement.txt'
+    )
+    await Promise.all([
+      writeManagedFile(originalPath, 'original'),
+      writeManagedFile(replacementPath, 'replacement')
+    ])
+    const original = createSession({
+      filesRevision: 4,
+      artifacts: [
+        { id: 'original', kind: 'managed-file', path: originalPath, name: 'original.txt' }
+      ]
+    })
+    const replacement = createSession({
+      filesRevision: 4,
+      artifacts: [
+        {
+          id: 'replacement',
+          kind: 'managed-file',
+          path: replacementPath,
+          name: 'replacement.txt'
+        }
+      ]
+    })
+
+    await expect(repository.syncSession(original)).resolves.toEqual(['artifact'])
+    await expect(repository.syncSession(replacement)).resolves.toEqual([])
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 24
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ sourceFileId: 'original', name: 'original.txt' })],
+      totalCount: 1
+    })
+
+    await expect(repository.syncSession({ ...replacement, filesRevision: 5 })).resolves.toEqual([
+      'artifact'
+    ])
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        limit: 24
+      })
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ sourceFileId: 'replacement', name: 'replacement.txt' })],
+      totalCount: 1
+    })
+  })
+
+  it('restores session and project deletions only for their matching operation token', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+    await writeManagedFile(artifactPath, 'result')
+    await repository.syncSession(
+      createSession({
+        artifacts: [
+          { id: 'artifact-1', kind: 'managed-file', path: artifactPath, name: 'result.txt' }
+        ]
+      })
+    )
+
+    const sessionToken = await repository.softDeleteSession(PROJECT_ID, SESSION_ID)
+    await repository.restoreSession(PROJECT_ID, SESSION_ID, 'different-session-operation')
+    expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(0)
+    await repository.restoreSession(PROJECT_ID, SESSION_ID, sessionToken)
+    await repository.restoreSession(PROJECT_ID, SESSION_ID, sessionToken)
+    expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(1)
+
+    const projectToken = await repository.softDeleteProject(PROJECT_ID)
+    await repository.restoreProject(PROJECT_ID, 'different-project-operation')
+    expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(0)
+    await repository.restoreProject(PROJECT_ID, projectToken)
+    await repository.restoreProject(PROJECT_ID, projectToken)
+    expect((await repository.getOverview(PROJECT_ID)).totalCount).toBe(1)
+  })
+
+  it('reconciles repeated complete scans without changing the visible projection', async () => {
+    const artifactPath = join(
+      storageRoot,
+      'artifacts',
+      'default-project',
+      SESSION_ID,
+      'message-1',
+      'result.txt'
+    )
+    await writeManagedFile(artifactPath, 'result')
+    const session = createSession({
+      artifacts: [
+        { id: 'artifact-1', kind: 'managed-file', path: artifactPath, name: 'result.txt' }
+      ]
+    })
+    await repository.syncSession(session)
+
+    await repository.reconcileActiveSessions([session])
+    await repository.reconcileActiveSessions([session])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 1,
+      isIndexComplete: true
+    })
+
+    await repository.reconcileActiveSessions([])
+    await repository.reconcileActiveSessions([])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 0,
+      isIndexComplete: true
+    })
+
+    await repository.reconcileActiveSessions([session])
+    await repository.reconcileActiveSessions([session])
+    await expect(repository.getOverview(PROJECT_ID)).resolves.toMatchObject({
+      totalCount: 1,
+      isIndexComplete: true
+    })
   })
 
   it('updates file ordering metadata when an indexed file changes revision', async () => {
@@ -1386,6 +1565,22 @@ describe('ManagedFileIndexRepository', () => {
         limit: 2
       })
     ).rejects.toThrow(/cursor.*collection/i)
+    await expect(
+      repository.listFiles({
+        projectId: PROJECT_ID,
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-b' },
+        cursor: first.nextCursor,
+        limit: 2
+      })
+    ).rejects.toThrow(/cursor.*collection/i)
+    await expect(
+      repository.listFiles({
+        projectId: 'project-b',
+        collection: { kind: 'sessionArtifacts', sessionId: SESSION_ID },
+        cursor: first.nextCursor,
+        limit: 2
+      })
+    ).rejects.toThrow(/cursor.*collection/i)
   })
 
   it('paginates the flat picker collection and binds its cursor to that collection', async () => {
@@ -1468,6 +1663,13 @@ describe('ManagedFileIndexRepository', () => {
     expect(new Set([...first.items, ...second.items].map((group) => group.sessionId))).toEqual(
       new Set(['session-a', 'session-b'])
     )
+    await expect(
+      repository.listArtifactGroups({
+        projectId: 'project-b',
+        cursor: first.nextCursor,
+        limit: 1
+      })
+    ).rejects.toThrow(/cursor.*collection/i)
   })
 
   it('loads all search overview counts with one database query', async () => {
@@ -1832,6 +2034,17 @@ describe('ManagedFileIndexRepository', () => {
       otherFiles.slice(0, 5).map((file) => file.name)
     )
     expect(first.isIndexComplete).toBe(true)
+
+    await expect(
+      repository.searchArtifacts({
+        primaryProjectId: 'project-b',
+        otherProjectIds: [],
+        filenameContains: 'SIN',
+        primaryLimit: 2,
+        primaryCursor: first.primary.nextCursor,
+        otherLimit: 0
+      })
+    ).rejects.toThrow(/cursor.*global artifact search/i)
 
     await expect(
       repository.searchArtifacts({

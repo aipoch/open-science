@@ -2865,6 +2865,7 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(fileIndex.syncSession).toHaveBeenCalledTimes(1)
     expect(fileIndex.syncSession).toHaveBeenCalledWith(survivor)
+    expect(onFilesChanged).toHaveBeenCalledTimes(2)
     expect(onFilesChanged).toHaveBeenNthCalledWith(1, {
       projectId: 'project-1',
       sessionId: 'session-2',
@@ -3585,6 +3586,7 @@ describe('SessionPersistenceCoordinator', () => {
 
     await coordinator.saveSession(createSession())
 
+    expect(onFilesChanged).toHaveBeenCalledOnce()
     expect(onFilesChanged).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -3609,6 +3611,7 @@ describe('SessionPersistenceCoordinator', () => {
     )
 
     expect(repository.saveSession).toHaveBeenCalledOnce()
+    expect(onFilesChanged).toHaveBeenCalledOnce()
     expect(onFilesChanged).toHaveBeenCalledWith({
       projectId: 'project-1',
       sources: ['artifact', 'upload'],
