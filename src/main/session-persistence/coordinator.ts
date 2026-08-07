@@ -172,6 +172,7 @@ type AppendUserMessageToInteractionCommand = Readonly<{
   sessionId: string
   interactionId: string
   content: string
+  beforePersist?: () => void
 }>
 
 class SessionRuntimeContextRevisionConflictError extends Error {
@@ -806,6 +807,7 @@ class SessionPersistenceCoordinator {
         throw new Error('Cannot mutate a session that has been deleted.')
       }
       const session = await this.loadRuntimeContextSession(projectId, sessionId, 'patch')
+      command.beforePersist?.()
       const timestamp = Math.max(session.updatedAt + 1, Date.now())
       const message: PersistedChatMessage = {
         id: `message-${randomUUID()}`,

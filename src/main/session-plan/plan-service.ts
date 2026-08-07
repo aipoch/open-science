@@ -59,6 +59,7 @@ type PlanServiceDependencies = Readonly<{
     sessionId: string
     content: string
     interactionId: string
+    beforePersist?: () => void
   }) => Promise<PersistedChatMessage>
   now?: () => number
   createId?: () => string
@@ -73,6 +74,10 @@ type PlanIdentityCommand = Readonly<{
 
 type PlanDecisionCommitPrecondition = Readonly<{
   beforeDecisionCommit?: () => boolean
+}>
+
+type PlanFeedbackCommitPrecondition = Readonly<{
+  beforeFeedbackPersist?: () => void
 }>
 
 type PlanDecisionResult = { projection: ActivePlanProjection; changed: boolean }
@@ -183,17 +188,20 @@ class PlanService {
       PlanDecisionCommitPrecondition
   ): Promise<PlanDecisionResult>
   async respond(
-    input: Readonly<{ projectId: string; sessionId: string; feedback: string }>
+    input: Readonly<{ projectId: string; sessionId: string; feedback: string }> &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanFeedbackResult>
   async respond(
     input: PlanResponseCommand &
       Readonly<{ interactionIsLive?: boolean }> &
-      PlanDecisionCommitPrecondition
+      PlanDecisionCommitPrecondition &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanResponseResult>
   async respond(
     input: PlanResponseCommand &
       Readonly<{ interactionIsLive?: boolean }> &
-      PlanDecisionCommitPrecondition
+      PlanDecisionCommitPrecondition &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanResponseResult> {
     if (input.decision === undefined) {
       const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
@@ -218,7 +226,8 @@ class PlanService {
         projectId: input.projectId,
         sessionId: input.sessionId,
         content: text,
-        interactionId
+        interactionId,
+        ...(input.beforeFeedbackPersist ? { beforePersist: input.beforeFeedbackPersist } : {})
       })
       this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
       return {

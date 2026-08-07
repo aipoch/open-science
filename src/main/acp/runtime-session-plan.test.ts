@@ -827,9 +827,12 @@ describe('AcpRuntime Session Plan seam', () => {
     const respondGate = new Promise<void>((resolve) => {
       finishRespond = resolve
     })
+    let messagePersisted = false
     service.respond.mockImplementationOnce(async (input) => {
       markRespondStarted()
       await respondGate
+      input.beforeFeedbackPersist?.()
+      messagePersisted = true
       interactions.release('session-1', 'version-1')
       return {
         kind: 'feedback' as const,
@@ -860,6 +863,7 @@ describe('AcpRuntime Session Plan seam', () => {
 
     await expect(response).rejects.toThrow('no longer available')
     await expect(pendingApproval).resolves.toBeInstanceOf(Error)
+    expect(messagePersisted).toBe(false)
     expect(interactions.approvalInteractionIdFor('session-1')).toBeUndefined()
     expect(
       interactions.isAgentDecisionAuthorized({

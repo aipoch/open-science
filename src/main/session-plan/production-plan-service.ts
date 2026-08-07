@@ -52,7 +52,8 @@ const createProductionPlanService = ({
         projectId: input.projectId,
         sessionId: input.sessionId,
         interactionId: input.interactionId,
-        content: input.content
+        content: input.content,
+        ...(input.beforePersist ? { beforePersist: input.beforePersist } : {})
       }),
     isRevisionConflict: (error) => error instanceof SessionRuntimeContextRevisionConflictError
   })
