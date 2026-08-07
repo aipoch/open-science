@@ -124,7 +124,8 @@ const canvasToPngBlob = (canvas: HTMLCanvasElement): Promise<Blob> =>
 // Renders and encodes only the first page, then tears down all PDF.js state.
 const renderFirstPage = async (
   resource: ManagedPreviewResource,
-  signal: AbortSignal
+  signal: AbortSignal,
+  renderWidth: number
 ): Promise<RenderedThumbnail> => {
   if (signal.aborted) throw createAbortError()
 
@@ -158,7 +159,7 @@ const renderFirstPage = async (
     if (signal.aborted) throw createAbortError()
 
     const baseViewport = page.getViewport({ scale: 1 })
-    const scale = THUMBNAIL_WIDTH / baseViewport.width
+    const scale = renderWidth / baseViewport.width
     const viewport = page.getViewport({ scale })
     const canvas = window.document.createElement('canvas')
     const context = canvas.getContext('2d')
@@ -183,7 +184,8 @@ const renderFirstPage = async (
 // Creates one cancellable resource-and-render pipeline for a versioned file identity.
 const createThumbnailJob = (
   requestKey: string,
-  request: AcquireManagedPreviewRequest
+  request: AcquireManagedPreviewRequest,
+  renderWidth: number
 ): ThumbnailJob => {
   const abortController = new AbortController()
   const promise = runWithRenderSlot(async () => {
@@ -199,7 +201,7 @@ const createThumbnailJob = (
         return
       }
 
-      const entry = await renderFirstPage(resource, abortController.signal)
+      const entry = await renderFirstPage(resource, abortController.signal, renderWidth)
       if (abortController.signal.aborted) {
         URL.revokeObjectURL(entry.url)
         throw createAbortError()
@@ -233,10 +235,11 @@ const createThumbnailJob = (
 
 const subscribeThumbnailJob = (
   requestKey: string,
-  request: AcquireManagedPreviewRequest
+  request: AcquireManagedPreviewRequest,
+  renderWidth: number
 ): { promise: Promise<void>; unsubscribe: () => void } => {
   // Duplicate tiles share one acquire/render job; the final subscriber owns cancellation.
-  const job = thumbnailJobs.get(requestKey) ?? createThumbnailJob(requestKey, request)
+  const job = thumbnailJobs.get(requestKey) ?? createThumbnailJob(requestKey, request, renderWidth)
   job.subscribers += 1
   let subscribed = true
 
@@ -270,7 +273,8 @@ export const PdfThumbnail = ({
   size,
   mtimeMs,
   fit = 'cover',
-  align = 'center'
+  align = 'center',
+  renderWidth = THUMBNAIL_WIDTH
 }: {
   path: string
   name: string
@@ -282,8 +286,9 @@ export const PdfThumbnail = ({
   mtimeMs?: number
   fit?: 'cover' | 'contain' | 'intrinsic'
   align?: 'start' | 'center'
+  renderWidth?: number
 }): React.JSX.Element => {
-  const requestKey = createPreviewResourceKey({
+  const resourceKey = createPreviewResourceKey({
     projectId,
     sessionId,
     source,
@@ -292,6 +297,7 @@ export const PdfThumbnail = ({
     size,
     mtimeMs
   })
+  const requestKey = `${resourceKey}:pdf-thumbnail:${renderWidth}`
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
   const [result, setResult] = useState<{ requestKey: string; status: 'ready' | 'error' } | null>(
     null
@@ -305,12 +311,16 @@ export const PdfThumbnail = ({
   useEffect(() => {
     if (!shouldRender) return
 
-    const subscription = subscribeThumbnailJob(requestKey, {
-      source,
-      path,
-      ...createPreviewRequestScope({ projectId, sessionId, source, path }),
-      ...(mimeType ? { mimeType } : {})
-    })
+    const subscription = subscribeThumbnailJob(
+      requestKey,
+      {
+        source,
+        path,
+        ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+        ...(mimeType ? { mimeType } : {})
+      },
+      renderWidth
+    )
     let subscribed = true
     void subscription.promise
       .then(() => {
@@ -327,14 +337,14 @@ export const PdfThumbnail = ({
       subscribed = false
       subscription.unsubscribe()
     }
-  }, [mimeType, path, projectId, requestKey, sessionId, shouldRender, source])
+  }, [mimeType, path, projectId, renderWidth, requestKey, sessionId, shouldRender, source])
 
   return (
     <div
       ref={setElement}
       className={
         fit === 'intrinsic'
-          ? `flex size-full items-center ${align === 'start' ? 'justify-start' : 'justify-center'}`
+          ? `flex w-full ${cached ? 'items-start' : 'h-64 items-center'} ${align === 'start' ? 'justify-start' : 'justify-center'}`
           : 'size-full'
       }
     >
@@ -344,7 +354,7 @@ export const PdfThumbnail = ({
           alt={`Preview of ${name}`}
           className={
             fit === 'intrinsic'
-              ? 'block h-auto max-h-full w-auto max-w-full rounded-lg border border-border-200 object-contain'
+              ? 'block h-64 w-auto max-w-full rounded-lg border border-border-200 object-contain'
               : `size-full object-top ${fit === 'contain' ? 'object-contain' : 'object-cover'}`
           }
           loading="lazy"

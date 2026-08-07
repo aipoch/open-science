@@ -8,8 +8,23 @@ import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 
 vi.mock('./previews/renderers/PdfThumbnail', () => ({
-  PdfThumbnail: ({ name, fit, align }: { name: string; fit?: string; align?: string }) => (
-    <div data-testid="mock-pdf-thumbnail" data-fit={fit} data-align={align}>
+  PdfThumbnail: ({
+    name,
+    fit,
+    align,
+    renderWidth
+  }: {
+    name: string
+    fit?: string
+    align?: string
+    renderWidth?: number
+  }) => (
+    <div
+      data-testid="mock-pdf-thumbnail"
+      data-fit={fit}
+      data-align={align}
+      data-render-width={renderWidth}
+    >
       {name}
     </div>
   )
@@ -269,7 +284,8 @@ describe('NotebookRunOutputs', () => {
     expect(tiffPreview?.className).toContain('h-64')
     expect(tiffPreview?.className).not.toContain('border-border-200')
     expect(tiffPreview?.className).not.toContain('bg-bg-100')
-    expect(pdfPreview?.className).toContain('h-64')
+    expect(pdfPreview?.className).toContain('min-h-24')
+    expect(pdfPreview?.classList.contains('h-64')).toBe(false)
     expect(pdfPreview?.className).not.toContain('border-border-200')
     expect(pdfPreview?.className).not.toContain('bg-bg-100')
     expect(
@@ -277,7 +293,7 @@ describe('NotebookRunOutputs', () => {
     ).toMatchObject({ variant: 'thumbnail', align: 'center' })
     expect(
       container.querySelector<HTMLElement>('[data-testid="mock-pdf-thumbnail"]')?.dataset
-    ).toMatchObject({ fit: 'intrinsic', align: 'center' })
+    ).toMatchObject({ fit: 'intrinsic', align: 'center', renderWidth: '768' })
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(
       Array.from(container.querySelectorAll('img'), (image) => image.getAttribute('src'))

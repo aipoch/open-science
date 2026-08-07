@@ -33,6 +33,7 @@ describe('PdfThumbnail', () => {
   let container: HTMLDivElement
   let root: Root
   let getPage: ReturnType<typeof vi.fn>
+  let getViewport: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -40,11 +41,12 @@ describe('PdfThumbnail', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
+    getViewport = vi.fn(({ scale }: { scale: number }) => ({
+      width: 100 * scale,
+      height: 140 * scale
+    }))
     getPage = vi.fn().mockResolvedValue({
-      getViewport: vi.fn(({ scale }: { scale: number }) => ({
-        width: 100 * scale,
-        height: 140 * scale
-      })),
+      getViewport,
       render: vi.fn(() => ({ promise: Promise.resolve() })),
       cleanup: vi.fn()
     })
@@ -157,6 +159,7 @@ describe('PdfThumbnail', () => {
           mtimeMs={1}
           fit="intrinsic"
           align="start"
+          renderWidth={768}
         />
       )
       await flushMicrotasks()
@@ -164,13 +167,15 @@ describe('PdfThumbnail', () => {
 
     const image = container.querySelector('img')
     expect(image?.parentElement?.className).toContain('justify-start')
-    expect(image?.className).toContain('max-h-full')
+    expect(image?.parentElement?.className).toContain('w-full')
+    expect(image?.parentElement?.classList.contains('size-full')).toBe(false)
+    expect(image?.className).toContain('h-64')
     expect(image?.className).toContain('max-w-full')
-    expect(image?.className).toContain('h-auto')
     expect(image?.className).toContain('w-auto')
     expect(image?.className).toContain('rounded-lg')
     expect(image?.className).toContain('border-border-200')
     expect(image?.classList.contains('size-full')).toBe(false)
+    expect(getViewport).toHaveBeenLastCalledWith({ scale: 7.68 })
   })
 
   it('recovers silently after a pending path disappears and the finalized path succeeds', async () => {

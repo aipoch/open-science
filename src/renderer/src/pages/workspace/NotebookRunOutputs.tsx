@@ -14,7 +14,8 @@ const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
 const figureImageClassName =
   'block h-auto max-h-[16rem] w-auto max-w-full rounded-lg border border-border-200 object-contain'
-const figurePreviewFrameClassName = 'h-64 w-full'
+const tiffPreviewFrameClassName = 'h-64 w-full'
+const pdfPreviewFrameClassName = 'min-h-24 w-full'
 
 // Drops a single trailing newline so streamed text doesn't render an extra blank line.
 const trimTrailingNewline = (text: string): string => text.replace(/\n$/u, '')
@@ -329,7 +330,7 @@ const WorkingFileFigurePreview = ({
 
   if (figure.previewKind === 'tiff') {
     return (
-      <div className={figurePreviewFrameClassName} data-testid="notebook-output-tiff">
+      <div className={tiffPreviewFrameClassName} data-testid="notebook-output-tiff">
         <TiffPreviewContent {...previewProps} variant="thumbnail" align={align} />
       </div>
     )
@@ -337,8 +338,8 @@ const WorkingFileFigurePreview = ({
 
   if (figure.previewKind === 'pdf') {
     return (
-      <div className={figurePreviewFrameClassName} data-testid="notebook-output-pdf">
-        <PdfThumbnail {...previewProps} fit="intrinsic" align={align} />
+      <div className={pdfPreviewFrameClassName} data-testid="notebook-output-pdf">
+        <PdfThumbnail {...previewProps} fit="intrinsic" align={align} renderWidth={768} />
       </div>
     )
   }
