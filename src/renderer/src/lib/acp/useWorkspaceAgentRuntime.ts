@@ -1149,7 +1149,9 @@ const sendWorkspaceMessage = async (
       resumeReplayCutMessageId && preparedSession
         ? preparedSession.messages.findIndex((message) => message.id === resumeReplayCutMessageId)
         : -1
-    if (resumeReplayCutMessageId && resumeReplayCutIndex < 0) return undefined
+    // A Branch switch can remove the interrupted prompt named by the recovery cutoff. In that case
+    // replay the selected Branch in full; keep the marker until prompt acceptance so a failed send
+    // remains retryable and switching back can still apply the original cutoff.
     const historyMessages = (
       preparedSession && historyCutIndex >= 0
         ? preparedSession.messages.slice(0, historyCutIndex)

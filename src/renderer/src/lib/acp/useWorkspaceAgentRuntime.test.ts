@@ -3189,6 +3189,72 @@ describe('resuming an interrupted session on demand', () => {
     ).toHaveLength(3)
   })
 
+  it('replays the selected branch when it no longer contains the recovery cutoff', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the baseline data',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The baseline is ready.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const interrupted = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Apply the original transformation',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    useSessionStore.getState().truncateSessionFromMessage('session-1', interrupted?.messageId ?? '')
+
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({
+      kind: 'before-message',
+      messageId: interrupted?.messageId
+    })
+    runtime.state = createSnapshot(['session-1'])
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Apply an alternative transformation',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    await flushRuntimeTasks()
+
+    expect(sent).toBeDefined()
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
+    expect(preamble).toContain('Inspect the baseline data')
+    expect(preamble).toContain('The baseline is ready.')
+    expect(preamble).not.toContain('Apply the original transformation')
+    expect(preamble).not.toContain('Apply an alternative transformation')
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+  })
+
   it('replays full history after fresh adoption recovers an interrupted compaction', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
