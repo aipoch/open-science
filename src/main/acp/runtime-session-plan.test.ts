@@ -735,6 +735,45 @@ describe('AcpRuntime Session Plan seam', () => {
     expect(attempts).toBe(2)
   })
 
+  it('preserves a successor execution binding after an idempotent Agent approval', async () => {
+    const { runtime, interactions, service, setCurrentInteraction } = createRuntimeHarness({})
+    const authorization = {
+      sessionId: 'session-1',
+      interactionSequence: 7,
+      artifactVersionId: 'version-1'
+    }
+    interactions.authorizeAgentDecision(authorization)
+    service.respond.mockImplementationOnce(async (input) => {
+      expect(input.beforeDecisionCommit).toBeTypeOf('function')
+      setCurrentInteraction({ sequence: 8, promptMessageId: 'interaction-2' })
+      interactions.bindExecution({
+        sessionId: 'session-1',
+        interactionSequence: 8,
+        artifactVersionId: 'version-1'
+      })
+      return {
+        projection: {
+          ...projection('version-1'),
+          approval: 'approved' as const,
+          lifecycle: 'approved' as const
+        },
+        changed: false
+      }
+    })
+
+    await runtime.callSessionPlan({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'approve'
+    })
+
+    expect(interactions.executionBindingFor('session-1')).toEqual({
+      artifactVersionId: 'version-1',
+      interactionSequence: 8
+    })
+    expect(interactions.isAgentDecisionAuthorized(authorization)).toBe(false)
+  })
+
   it('routes feedback as a visible user Message and resumes the blocked interaction', async () => {
     const onEvent = vi.fn()
     const { runtime } = createRuntimeHarness({ onEvent })
