@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join, win32 } from 'node:path'
+import { readdirSync } from 'node:fs'
+import { win32 } from 'node:path'
 import { autoUpdater, CancellationToken } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
@@ -51,7 +51,7 @@ export type ElectronUpdaterDeps = {
   currentVersion?: string
   platform?: NodeJS.Platform
   executablePath?: string
-  pathExists?: (path: string) => boolean
+  directoryEntries?: (path: string) => string[]
   arch?: string
   broadcast?: UpdateBroadcast
   // Factory for the per-download cancellation token; defaults to electron-updater's CancellationToken.
@@ -209,10 +209,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       const executablePath = deps.executablePath ?? process.execPath
       if (win32.isAbsolute(executablePath)) {
         const installDirectory = win32.dirname(executablePath)
-        // electron-builder derives the uninstaller from PRODUCT_FILENAME, which is the configured
-        // executable name here ("Uninstall open-science.exe"), not the display product name.
-        const uninstaller = join(installDirectory, `Uninstall ${win32.basename(executablePath)}`)
-        if ((deps.pathExists ?? existsSync)(uninstaller)) {
+        let hasNsisUninstaller = false
+        try {
+          const entries = (deps.directoryEntries ?? readdirSync)(installDirectory)
+          hasNsisUninstaller =
+            entries.filter((entry) => /^Uninstall .+\.exe$/i.test(entry)).length === 1
+        } catch {
+          // A missing or unreadable directory is not a confirmed NSIS installation.
+        }
+        if (hasNsisUninstaller) {
           // NsisUpdater otherwise relies on registry discovery when it starts the downloaded installer.
           // Pin confirmed NSIS installs, but never turn a portable ZIP into an install in its folder.
           this.updater.installDirectory = installDirectory

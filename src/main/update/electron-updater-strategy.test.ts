@@ -97,35 +97,33 @@ describe('ElectronUpdaterStrategy', () => {
 
   it('pins Windows NSIS updates to the current installation directory', () => {
     const updater = new FakeUpdater()
-    const pathExists = vi.fn(() => true)
+    const directoryEntries = vi.fn(() => ['open-science.exe', 'Uninstall Open Science.exe'])
     new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'win32',
       executablePath: 'D:\\Apps\\Open Science\\open-science.exe',
-      pathExists,
+      directoryEntries,
       broadcast: vi.fn()
     })
 
-    expect(pathExists).toHaveBeenCalledWith('D:\\Apps\\Open Science\\Uninstall open-science.exe')
+    expect(directoryEntries).toHaveBeenCalledWith('D:\\Apps\\Open Science')
     expect(updater.installDirectory).toBe('D:\\Apps\\Open Science')
   })
 
   it('does not pin portable Windows builds to their extraction directory', () => {
     const updater = new FakeUpdater()
-    const pathExists = vi.fn(() => false)
+    const directoryEntries = vi.fn(() => ['open-science.exe', 'resources'])
     new ElectronUpdaterStrategy({
       updater,
       currentVersion: '0.2.0',
       platform: 'win32',
       executablePath: 'D:\\Portable\\Open Science\\open-science.exe',
-      pathExists,
+      directoryEntries,
       broadcast: vi.fn()
     })
 
-    expect(pathExists).toHaveBeenCalledWith(
-      'D:\\Portable\\Open Science\\Uninstall open-science.exe'
-    )
+    expect(directoryEntries).toHaveBeenCalledWith('D:\\Portable\\Open Science')
     expect(updater.installDirectory).toBeUndefined()
   })
 
