@@ -30,11 +30,15 @@ const NetworkStatusIndicator = ({
             aria-label="No internet connection"
             className={
               variant === 'pill'
-                ? 'inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80'
+                ? 'inline-flex h-8 items-center gap-1 rounded-full border border-danger-000/20 bg-danger-000/10 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/30 hover:bg-danger-000/15'
                 : 'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-danger-000 transition-colors duration-150 ease-out hover:bg-danger-900'
             }
           >
-            <WifiOff className="size-4" strokeWidth={2} aria-hidden="true" />
+            <WifiOff
+              className={variant === 'pill' ? 'size-3.5' : 'size-4'}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
             {variant === 'pill' ? <span>Offline</span> : null}
           </button>
         </TooltipTrigger>

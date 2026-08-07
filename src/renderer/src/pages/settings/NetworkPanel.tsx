@@ -17,6 +17,10 @@ const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const actionButtonClassName =
   'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50'
 
+// Minimum time the Checking… row stays visible after a probe starts, so a fast answer reads as
+// a deliberate check instead of a flash.
+const MIN_CHECKING_MS = 500
+
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
 type NetworkView = { kind: 'list' | 'configure' }
@@ -58,21 +62,36 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const probeConnectivity = useCallback((): void => {
     const checkConnectivity = window.api?.network?.checkConnectivity
     const generation = ++probeGenerationRef.current
+    const startedAt = Date.now()
+
+    // Switch the row back to Checking… for this probe. A microtask keeps the effect caller
+    // free of synchronous setState and still lands well before any network probe resolves.
+    void Promise.resolve().then(() => {
+      if (probeGenerationRef.current === generation) setConnectivity(null)
+    })
+
+    const applyReachable = (reachable: boolean): void => {
+      const apply = (): void => {
+        if (probeGenerationRef.current === generation) {
+          setConnectivity(reachable ? 'reachable' : 'unreachable')
+        }
+      }
+      const remaining = MIN_CHECKING_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        setTimeout(apply, remaining)
+      } else {
+        apply()
+      }
+    }
 
     if (!checkConnectivity) {
       // Web surface has no probe bridge; fall back to the navigator.onLine signal, which is
       // the best information available there.
-      void Promise.resolve().then(() => {
-        if (probeGenerationRef.current === generation) setConnectivity('reachable')
-      })
+      void Promise.resolve().then(() => applyReachable(true))
       return
     }
 
-    void checkConnectivity().then((reachable) => {
-      if (probeGenerationRef.current === generation) {
-        setConnectivity(reachable ? 'reachable' : 'unreachable')
-      }
-    })
+    void checkConnectivity().then(applyReachable)
   }, [])
 
   // Load once when the list view mounts while online, and re-pull whenever connectivity comes
