@@ -635,11 +635,30 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
+      # The trusted pre-migration classifier can still select this lane while this workflow lands.
+      # The new manifest never emits it, so ordinary PRs do not pay this Windows accessibility cost.
+      - name: Run legacy Windows accessibility compatibility
+        id: e2e_accessibility_windows
+        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
+        continue-on-error: true
+        run: npm run test:e2e:accessibility
+      - name: Upload legacy accessibility failure artifacts
+        if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: accessibility-e2e-windows-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 5
+          if-no-files-found: warn
       - name: Enforce selected Windows E2E checks
         if: ${{ always() }}
         shell: bash
         env:
           BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
+          E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
         run: |
@@ -654,6 +673,7 @@ jobs:
           check build_electron "$BUILD_ELECTRON_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
+          check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"
           exit "$failed"
 
   gate:

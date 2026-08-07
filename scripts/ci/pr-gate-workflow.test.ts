@@ -268,8 +268,35 @@ describe('PR Gate workflow', () => {
     const windowsRuns = workflow.jobs.windows_e2e.steps?.map(({ run }) => run).filter(Boolean)
     expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
     expect(windowsRuns).toEqual(
-      expect.arrayContaining(['npm run test:e2e:journey', 'npm run test:e2e:workspace'])
+      expect.arrayContaining([
+        'npm run test:e2e:journey',
+        'npm run test:e2e:workspace',
+        'npm run test:e2e:accessibility'
+      ])
     )
+  })
+
+  it('runs Windows accessibility only for a legacy selected lane', () => {
+    const compatibility = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Run legacy Windows accessibility compatibility'
+    )
+    const enforce = workflow.jobs.windows_e2e.steps?.find(
+      ({ name }) => name === 'Enforce selected Windows E2E checks'
+    )
+
+    expect(manifest.laneOrder).not.toContain('e2e_accessibility_windows')
+    expect(compatibility).toMatchObject({
+      id: 'e2e_accessibility_windows',
+      'continue-on-error': true,
+      run: 'npm run test:e2e:accessibility'
+    })
+    expect(compatibility?.if).toContain(
+      "contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows')"
+    )
+    expect(enforce?.env).toMatchObject({
+      E2E_ACCESSIBILITY_OUTCOME: '${{ steps.e2e_accessibility_windows.outcome }}'
+    })
+    expect(enforce?.run).toContain('check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"')
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {
