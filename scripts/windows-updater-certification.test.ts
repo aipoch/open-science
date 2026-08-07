@@ -7,7 +7,8 @@ import {
   invokeWebRpc,
   parseArguments,
   parseSingleRange,
-  rewriteFeedPaths
+  rewriteFeedPaths,
+  waitForInstallerExit
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
@@ -30,6 +31,33 @@ describe('Windows updater certification', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ protocolVersion: 1, args: [] })
+      })
+    )
+  })
+
+  it('observes the detached NSIS installer and preserves its exit code', async () => {
+    const runProcessImpl = vi.fn(async () => ({ code: 2, stdout: '', stderr: 'installer failed' }))
+
+    await expect(
+      waitForInstallerExit({
+        installer: 'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe',
+        env: { LOCALAPPDATA: 'C:\\profile' },
+        runProcessImpl
+      })
+    ).resolves.toEqual({ code: 2, stdout: '', stderr: 'installer failed' })
+    expect(runProcessImpl).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.arrayContaining([
+        '-Command',
+        expect.stringContaining('Get-CimInstance -ClassName Win32_Process')
+      ]),
+      expect.objectContaining({
+        allowNonZero: true,
+        env: expect.objectContaining({
+          OPEN_SCIENCE_INSTALLER_WATCH_TARGET:
+            'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe'
+        }),
+        timeoutMs: 370_000
       })
     )
   })

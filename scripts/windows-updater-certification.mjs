@@ -230,7 +230,75 @@ const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImp
   return payload.result
 }
 
-const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
+const waitForInstallerExit = async ({ installer, env, runProcessImpl = runProcess }) => {
+  const script = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class OpenScienceProcessObserver
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetExitCodeProcess(IntPtr handle, out uint exitCode);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+$target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)
+$deadline = [DateTime]::UtcNow.AddMinutes(1)
+$candidate = $null
+do {
+  $candidate = Get-CimInstance -ClassName Win32_Process -Filter "Name = '$([IO.Path]::GetFileName($target).Replace("'", "''"))'" |
+    Where-Object {
+      $_.ExecutablePath -and
+      [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase)
+    } |
+    Select-Object -First 1
+  if (-not $candidate) { Start-Sleep -Milliseconds 50 }
+} while (-not $candidate -and [DateTime]::UtcNow -lt $deadline)
+if (-not $candidate) {
+  [Console]::Error.Write("The updater installer process did not appear at $target.")
+  exit 124
+}
+$access = 0x00100000 -bor 0x00001000
+$handle = [OpenScienceProcessObserver]::OpenProcess($access, $false, [uint32]$candidate.ProcessId)
+if ($handle -eq [IntPtr]::Zero) {
+  [Console]::Error.Write("Could not observe updater installer process $($candidate.ProcessId).")
+  exit 126
+}
+$wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 300000)
+if ($wait -eq 0x00000102) {
+  [OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+  [Console]::Error.Write("The updater installer process $($candidate.ProcessId) did not exit.")
+  exit 125
+}
+[uint32]$exitCode = 0
+if ($wait -ne 0 -or -not [OpenScienceProcessObserver]::GetExitCodeProcess($handle, [ref]$exitCode)) {
+  [OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+  [Console]::Error.Write("Could not read updater installer exit code for process $($candidate.ProcessId).")
+  exit 126
+}
+[OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+[Console]::Out.Write("installer pid=$($candidate.ProcessId) exit=$exitCode")
+exit $exitCode
+`.trim()
+  return runProcessImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    allowNonZero: true,
+    env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
+    timeoutMs: 370_000
+  })
+}
+
+const runElectronUpdater = async ({ executable, env, expectedVersion, expectedInstaller }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
   // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
@@ -293,6 +361,10 @@ const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
       throw new Error(`Unexpected updater download result: ${JSON.stringify(downloaded)}`)
     }
 
+    // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
+    // installation handoff finished. Attach a read-only watcher before applying the update to avoid
+    // racing the new executable and to retain the real installer exit code when the handoff fails.
+    const installerExit = waitForInstallerExit({ installer: expectedInstaller, env })
     const closed = waitForShutdownExit(exit, child, output)
     const applied = await invokeWebRpc({
       endpoint,
@@ -305,6 +377,13 @@ const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
     }
     const exitCode = await closed
     if (exitCode !== 0) throw new Error(`Updater app exited with ${exitCode}.\n${output()}`)
+    const installerResult = await installerExit
+    console.log(`Updater installer observation: ${installerResult.stdout}`)
+    if (installerResult.code !== 0) {
+      throw new Error(
+        `Updater installer exited with ${installerResult.code}.${installerResult.stderr ? `\n${installerResult.stderr}` : ''}`
+      )
+    }
   } catch (error) {
     await terminateProcessTree(child)
     const processOutput = output().trim()
@@ -457,7 +536,13 @@ const main = async () => {
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
-      expectedVersion: currentVersion
+      expectedVersion: currentVersion,
+      expectedInstaller: join(
+        env.LOCALAPPDATA,
+        updateConfig.updaterCacheDirName,
+        'pending',
+        basename(currentInstaller)
+      )
     })
     const installerBytes = (await stat(currentInstaller)).size
     observation = assertDifferentialObservation({
@@ -538,6 +623,7 @@ export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   invokeWebRpc,
+  waitForInstallerExit,
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths
