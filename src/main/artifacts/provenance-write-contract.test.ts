@@ -4,6 +4,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { NotebookRunInputFile } from '../../shared/notebook'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -180,7 +181,13 @@ describe('artifact provenance allocation and write identity', () => {
 
 const appendNotebookRun = async (
   value: Fixture,
-  input: { runId: string; filename: string; payload: string; ownsSource: boolean }
+  input: {
+    runId: string
+    filename: string
+    payload: string
+    ownsSource: boolean
+    inputFiles?: NotebookRunInputFile[]
+  }
 ): Promise<{ path: string; sizeBytes: number; mtimeMs: number }> => {
   const document = await value.notebookRepository.loadOrCreate({
     projectName: 'project-1',
@@ -206,7 +213,7 @@ const appendNotebookRun = async (
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
-      inputFiles: [],
+      inputFiles: input.inputFiles ?? [],
       workingFiles: input.ownsSource
         ? [
             {
@@ -356,5 +363,163 @@ describe('artifact provenance producer and source validation', () => {
     expect(JSON.parse(row.evidenceJson)).toMatchObject({
       producer: { state: 'unavailable', reason: 'producer-source-unverifiable' }
     })
+  })
+
+  it('requires a Notebook Session for an inline declared producer', async () => {
+    const value = await fixture()
+    await value.stagePng('inline producer bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'producer-without-session-operation',
+          producerRunId: 'producer-run',
+          sourceKind: 'inline'
+        })
+      )
+    ).rejects.toThrow('producerRunId requires notebookSessionId in the active Artifact run.')
+  })
+
+  it('rejects an observed source outside both durable Notebook roots', async () => {
+    const value = await fixture()
+    await appendNotebookRun(value, {
+      runId: 'outside-root-run',
+      filename: 'plot.png',
+      payload: 'outside root bytes',
+      ownsSource: true
+    })
+    const outsidePath = join(value.storageRoot, 'outside-notebook-roots', 'plot.png')
+    await mkdir(dirname(outsidePath), { recursive: true })
+    await writeFile(outsidePath, createPngBytes('outside root bytes'))
+    const outsideStat = await stat(outsidePath)
+    await value.stagePng('outside root bytes')
+
+    const version = await value.repository.createVersion(
+      createArtifactVersionRequest({
+        writeOperationId: 'outside-root-observation-operation',
+        notebookSessionId: 'session-1',
+        producerRunId: 'outside-root-run',
+        sourceKind: 'localPath',
+        sourceFileObservation: {
+          path: await realpath(outsidePath),
+          sizeBytes: outsideStat.size,
+          mtimeMs: outsideStat.mtimeMs
+        }
+      })
+    )
+    const row = await value.client.artifactVersion.findUniqueOrThrow({
+      where: { id: version.versionId }
+    })
+
+    expect(row).toMatchObject({ producerRunId: null, producerRunIndex: null })
+    expect(JSON.parse(row.evidenceJson)).toMatchObject({
+      producer: { state: 'unavailable', reason: 'producer-source-unverifiable' },
+      execution_status: { state: 'unavailable', reason: 'producer-source-unverifiable' }
+    })
+  })
+})
+
+describe('artifact provenance input authority', () => {
+  const baseUploadInput = {
+    inputFileVersionId: 'missing-upload-version',
+    sourceKind: 'upload-version',
+    sourceFileId: 'upload-file-1',
+    sourceVersionNumber: 1,
+    sourceProjectId: 'project-1',
+    sourceSessionId: 'source-session-1',
+    filename: 'input.csv',
+    contentType: 'text/csv',
+    sizeBytes: 4,
+    checksum: 'b'.repeat(64),
+    storageKey: 'uploads/project-1/source-session-1/upload-file-1/input.csv',
+    association: 'resolver-accessed'
+  } as const satisfies NotebookRunInputFile
+
+  it.each([
+    {
+      name: 'cross-project input',
+      input: { ...baseUploadInput, sourceProjectId: 'other-project' },
+      error: 'Notebook input belongs to another Project: missing-upload-version'
+    },
+    {
+      name: 'corrupt Upload identity',
+      input: baseUploadInput,
+      error: 'Notebook Upload input identity is corrupt: missing-upload-version'
+    }
+  ])('rejects a $name', async ({ input, error }) => {
+    const value = await fixture()
+    const observation = await appendNotebookRun(value, {
+      runId: 'input-authority-run',
+      filename: 'plot.png',
+      payload: 'input authority bytes',
+      ownsSource: true,
+      inputFiles: [input]
+    })
+    await value.stagePng('input authority bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: `invalid-${input.sourceProjectId}-input-operation`,
+          notebookSessionId: 'session-1',
+          producerRunId: 'input-authority-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: observation
+        })
+      )
+    ).rejects.toThrow(error)
+    await expect(value.client.artifactVersion.count()).resolves.toBe(0)
+  })
+
+  it('rejects an Artifact input whose durable Version is not finalized', async () => {
+    const value = await fixture()
+    await value.stagePng('upstream bytes', 'upstream.png')
+    const upstream = await value.repository.createVersion(
+      createArtifactVersionRequest({
+        filename: 'upstream.png',
+        writeOperationId: 'pending-upstream-operation'
+      })
+    )
+    const upstreamRow = await value.client.artifactVersion.findUniqueOrThrow({
+      where: { id: upstream.versionId }
+    })
+    expect(upstreamRow.state).toBe('pending')
+    const observation = await appendNotebookRun(value, {
+      runId: 'pending-artifact-input-run',
+      filename: 'plot.png',
+      payload: 'derived bytes',
+      ownsSource: true,
+      inputFiles: [
+        {
+          inputFileVersionId: upstream.versionId,
+          sourceKind: 'artifact-version',
+          sourceFileId: upstream.artifactId,
+          sourceVersionNumber: upstream.versionNumber,
+          sourceCreatedAt: upstreamRow.createdAt.toISOString(),
+          sourceProjectId: 'project-1',
+          sourceSessionId: 'session-1',
+          filename: upstreamRow.filename,
+          contentType: upstreamRow.contentType ?? undefined,
+          sizeBytes: Number(upstreamRow.sizeBytes),
+          checksum: upstreamRow.checksum,
+          storageKey: upstreamRow.contentStorageKey,
+          association: 'resolver-accessed'
+        }
+      ]
+    })
+    await value.stagePng('derived bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'pending-artifact-input-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'pending-artifact-input-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: observation
+        })
+      )
+    ).rejects.toThrow(`Notebook Artifact input identity is corrupt: ${upstream.versionId}`)
+    await expect(value.client.artifactVersion.count()).resolves.toBe(1)
   })
 })

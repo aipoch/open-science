@@ -1,21 +1,18 @@
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import type { Prisma, PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
 
 import type {
-  ArtifactProducerUnavailableReason,
   ArtifactVersionFile,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type {
-  NotebookEnvironmentManifest,
-  NotebookRunEnvironmentCapture,
-  NotebookRunInputFile,
-  NotebookRunRecord
-} from '../../shared/notebook'
 import type { ArtifactDurability } from './durability'
 import { sha256 } from './provenance-canonical'
+import type {
+  ArtifactVersionProducerCapture,
+  PreparedArtifactVersionPersistence
+} from './provenance-producer-capture'
 import type { ArtifactRepository } from './repository'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -103,39 +100,6 @@ type StagingArtifactVersionRecord = PersistedVersionFileRecord & {
   executionSnapshotStorageKey: string | null
   artifact: { id: string; filename: string }
 }
-type ArtifactVersionProducerCapture =
-  | {
-      state: 'unavailable'
-      reason: ArtifactProducerUnavailableReason
-    }
-  | {
-      state: 'available'
-      notebookSessionId: string
-      producerRunId: string
-      producerRunIndex: number
-      associationMethod: 'agent-declared-and-session-validated' | 'server-inferred-file-observation'
-      kernelKind: NotebookRunRecord['kernelKind']
-      environmentName?: string
-      reproductionCode: string
-      executionJson: string
-      executionChecksum: string
-      inputFiles: NotebookRunInputFile[]
-      environmentCapture: NotebookRunEnvironmentCapture
-      environmentManifest?: NotebookEnvironmentManifest
-      environmentManifestChecksum?: string
-    }
-
-type PreparedArtifactVersionPersistence = {
-  notebookSessionId?: string
-  producerRunId?: string
-  producerRunIndex?: number
-  evidenceJson: string
-  evidenceChecksum: string
-  executionSnapshotJson?: string
-  executionSnapshotChecksum?: string
-  inputs?: Prisma.ArtifactVersionUncheckedCreateInput['inputs']
-}
-
 type PublishCompatibilityRouting = (
   version: PersistedVersionFileRecord,
   options?: CompatibilityRoutingPublicationOptions
@@ -489,10 +453,8 @@ class ArtifactProvenanceVersionWriter {
 
 export { ArtifactProvenanceVersionWriter, normalizeArtifactFilename }
 export type {
-  ArtifactVersionProducerCapture,
   CompatibilityRoutingPublicationOptions,
   PersistedVersionFileRecord,
-  PreparedArtifactVersionPersistence,
   PublishCompatibilityRouting,
   StagingArtifactVersionRecord
 }
