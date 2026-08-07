@@ -3,7 +3,7 @@ import type { NetworkInterfaceInfo } from 'node:os'
 
 import {
   createConnectionTypeResolver,
-  createInternetReachabilityChecker,
+  checkInternetReachability,
   parseHardwarePorts,
   selectActiveIpv4
 } from './network-info'
@@ -121,28 +121,25 @@ describe('createConnectionTypeResolver', () => {
 })
 
 // The checker reuses the onboarding probe; tests inject a fake probe so no real HTTPS happens.
-describe('createInternetReachabilityChecker', () => {
+describe('checkInternetReachability', () => {
   it('is reachable when any registry probe succeeds', async () => {
     const probe = vi.fn((registry: string) =>
       registry === 'npmjs' ? Promise.reject(new Error('down')) : Promise.resolve(12)
     )
-    const check = createInternetReachabilityChecker(probe as never)
 
-    await expect(check()).resolves.toBe(true)
+    await expect(checkInternetReachability(probe as never)).resolves.toBe(true)
   })
 
   it('is unreachable when every registry probe fails', async () => {
     const probe = vi.fn(() => Promise.reject(new Error('down')))
-    const check = createInternetReachabilityChecker(probe as never)
 
-    await expect(check()).resolves.toBe(false)
+    await expect(checkInternetReachability(probe as never)).resolves.toBe(false)
   })
 
   it('probes every registry', async () => {
     const probe = vi.fn(() => Promise.resolve(5))
-    const check = createInternetReachabilityChecker(probe as never)
 
-    await expect(check()).resolves.toBe(true)
+    await expect(checkInternetReachability(probe as never)).resolves.toBe(true)
     expect(probe).toHaveBeenCalledTimes(2)
   })
 })

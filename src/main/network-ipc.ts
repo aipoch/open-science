@@ -13,8 +13,8 @@ type NetworkCommandOwner = Readonly<{
 // internet required); checkConnectivity is a real end-to-end HTTPS probe reused from the
 // onboarding environment check, so it can tell "internet broken" apart from "link is up".
 const createNetworkCommandOwner = (): NetworkCommandOwner => ({
-  getInfo: () => getNetworkInfo(),
-  checkConnectivity: () => checkInternetReachability()
+  getInfo: getNetworkInfo,
+  checkConnectivity: checkInternetReachability
 })
 
 const registerNetworkIpcHandlers = (

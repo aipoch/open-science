@@ -13,21 +13,19 @@ type RegistryProbe = typeof probeRegistryReachability
 // probe against both package registries (registry root this time — the question here is "is the
 // internet usable", not "can we download a specific runtime package"). Reachable when either
 // registry answers 2xx; each probe carries the probe's own 5s timeout and they run in parallel.
-const createInternetReachabilityChecker =
-  (probe: RegistryProbe = probeRegistryReachability): (() => Promise<boolean>) =>
-  () => {
-    const registries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
-    return Promise.all(
-      registries.map((registry) =>
-        probe(registry).then(
-          () => true,
-          () => false
-        )
+const checkInternetReachability = (
+  probe: RegistryProbe = probeRegistryReachability
+): Promise<boolean> => {
+  const registries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
+  return Promise.all(
+    registries.map((registry) =>
+      probe(registry).then(
+        () => true,
+        () => false
       )
-    ).then((results) => results.some(Boolean))
-  }
-
-const checkInternetReachability = createInternetReachabilityChecker()
+    )
+  ).then((results) => results.some(Boolean))
+}
 
 // First non-internal IPv4 address across the active interfaces. Internal (loopback) and
 // IPv6-only interfaces are skipped; a machine with no such interface is treated as unknown.
@@ -118,6 +116,5 @@ export {
   selectActiveIpv4,
   parseHardwarePorts,
   createConnectionTypeResolver,
-  createInternetReachabilityChecker,
   checkInternetReachability
 }

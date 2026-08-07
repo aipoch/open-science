@@ -2,7 +2,7 @@ import { EthernetPort, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PackageMirror } from '../../../../shared/mirror'
-import type { NetworkInfo } from '../../../../shared/network'
+import type { NetworkConnectionType, NetworkInfo } from '../../../../shared/network'
 import type { EnvironmentCheckItem } from '../../../../shared/settings'
 import { EnvironmentCheckRow, PendingCheckRow } from '@/components/environment-check-row'
 import { Button } from '@/components/ui/button'
@@ -27,6 +27,12 @@ const NETWORK_CHECK_BASE = {
   id: 'install-network',
   label: 'Internet connection'
 } as const satisfies Pick<EnvironmentCheckItem, 'id' | 'label'>
+
+// Display labels for the main-process connection types; 'unknown' has no label and drops out.
+const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
+  wifi: 'Wi-Fi',
+  ethernet: 'Ethernet'
+}
 
 // Settings -> Network. The Network status section presents the network store's connectivity
 // (navigator.onLine link signal plus the store's shared end-to-end reachability probe) and the
@@ -112,15 +118,9 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   }
 
   // Connection type + IP fold into the check row's detail line, e.g. "Wi-Fi · 192.168.1.42".
+  const typeLabel = networkInfo ? CONNECTION_TYPE_LABELS[networkInfo.connectionType] : undefined
   const interfaceDetail =
-    [
-      networkInfo?.connectionType === 'wifi'
-        ? 'Wi-Fi'
-        : networkInfo?.connectionType === 'ethernet'
-          ? 'Ethernet'
-          : null,
-      networkInfo?.ipAddress ?? null
-    ]
+    [typeLabel ?? null, networkInfo?.ipAddress ?? null]
       .filter((part) => part !== null)
       .join(' · ') || undefined
 
