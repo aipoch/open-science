@@ -254,7 +254,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
               href={REMOTE_IT_DOWNLOAD_URL}
               target="_blank"
               rel="noreferrer"
-              className="font-medium text-primary underline-offset-2 hover:underline"
+              className="box-decoration-clone rounded-sm bg-primary/10 px-1 py-0.5 font-medium text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary"
             >
               Download Remote.It App
             </a>
