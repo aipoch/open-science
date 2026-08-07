@@ -80,7 +80,9 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() => this.ports.agent.resumeSession(request)),
         setPermissionProfile: (sessionId, profile) =>
           this.withCurrentCaller(() => this.ports.agent.setPermissionProfile(sessionId, profile)),
-        prompt: (request) => this.withCurrentCaller(() => this.ports.agent.prompt(request))
+        prompt: (request) => this.withCurrentCaller(() => this.ports.agent.prompt(request)),
+        cancelPrompt: (sessionId) =>
+          this.withCurrentCaller(() => this.ports.agent.cancelPrompt(sessionId))
       },
       artifacts: {
         finalizeRun: (request: FinalizeRunArtifactsRequest) =>
@@ -149,6 +151,10 @@ class HeadlessTaskApi {
 
   waitForRun(runId: string): Promise<TaskRun> {
     return this.runner.waitForRun(runId)
+  }
+
+  cancelRun(runId: string): Promise<TaskRun> {
+    return this.runner.cancelRun(runId)
   }
 
   listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {

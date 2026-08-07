@@ -670,6 +670,7 @@ describe('startWebHttpServer', () => {
         artifacts: []
       })),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn(),
       releaseArtifact: vi.fn()
@@ -744,6 +745,8 @@ describe('startWebHttpServer', () => {
       )
     ).toBe(401)
     expect(tasks.startRun).not.toHaveBeenCalled()
+    expect(await postAfterExpiringAuthorization('/api/v1/runs/run-1/cancel', {}, 3)).toBe(401)
+    expect(tasks.cancelRun).not.toHaveBeenCalled()
     const taskContext = taskContexts[0]
     expect(taskContext).toMatchObject({
       surface: 'task',
@@ -1228,6 +1231,17 @@ describe('startWebHttpServer', () => {
         output: 'Done',
         artifacts: []
       }),
+      cancelRun: vi.fn().mockResolvedValue({
+        id: 'run/1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'cancelled',
+        startedAt: 1,
+        cancelRequestedAt: 2,
+        cancelledAt: 3,
+        completedAt: 3,
+        artifacts: []
+      }),
       listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact/1', name: 'report.md' }]),
       acquireArtifact: vi.fn(),
       releaseArtifact: vi.fn(),
@@ -1317,6 +1331,28 @@ describe('startWebHttpServer', () => {
     const status = await fetch(`${base}/api/v1/runs/run-1`, { headers })
     expect(await status.json()).toMatchObject({ data: { status: 'completed', output: 'Done' } })
 
+    const cancelled = await fetch(`${base}/api/v1/runs/run%2F1/cancel`, {
+      method: 'POST',
+      headers
+    })
+    expect(cancelled.status).toBe(200)
+    expect(await cancelled.json()).toMatchObject({
+      data: { id: 'run/1', status: 'cancelled', cancelRequestedAt: 2, cancelledAt: 3 }
+    })
+    expect(tasks.cancelRun).toHaveBeenCalledWith('run/1')
+
+    tasks.cancelRun.mockRejectedValueOnce(
+      new TaskApiError('run_not_found', 'Run not found: missing')
+    )
+    const missingRun = await fetch(`${base}/api/v1/runs/missing/cancel`, {
+      method: 'POST',
+      headers
+    })
+    expect(missingRun.status).toBe(404)
+    expect(await missingRun.json()).toEqual({
+      error: { code: 'run_not_found', message: 'Run not found: missing' }
+    })
+
     tasks.startRun.mockRejectedValueOnce(
       new TaskApiError('session_busy', 'Session already has an active run: session-1')
     )
@@ -1390,6 +1426,7 @@ describe('startWebHttpServer', () => {
       getSession: vi.fn(),
       startRun: vi.fn(),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
         resourceId: 'resource-1',
@@ -1456,6 +1493,7 @@ describe('startWebHttpServer', () => {
       getSession: vi.fn(),
       startRun: vi.fn(),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
         resourceId: 'resource-disconnect',

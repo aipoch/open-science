@@ -13,6 +13,7 @@ type AcpTaskAgentRuntime = {
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
+  cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -73,7 +74,8 @@ const createAcpTaskAgentPort = (
       if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
       throw error
     }
-  }
+  },
+  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined)
 })
 
 export { createAcpTaskAgentPort }

@@ -21,5 +21,13 @@ const result = await client.waitForRun(run.id)
 console.log(result.output)
 ```
 
+To stop a still-running task instead of waiting for it, cancel it explicitly. Cancellation waits for
+provider work and application finalization to drain before returning the terminal Run:
+
+```js
+const cancelled = await client.cancelRun(run.id)
+console.log(cancelled.status) // cancelled
+```
+
 The client discovers the local daemon and reads its authentication token from the Open Science config
 directory. Tokens are sent in request headers and are never included in normal command output.

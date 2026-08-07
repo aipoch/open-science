@@ -31,6 +31,7 @@ describe('OpenScienceClient', () => {
         'getSession',
         'startRun',
         'getRun',
+        'cancelRun',
         'waitForRun',
         'listArtifacts',
         'downloadArtifact',
@@ -154,7 +155,42 @@ describe('OpenScienceClient', () => {
     }
   })
 
-  it('honors caller cancellation before polling without exposing a run-cancel operation', async () => {
+  it('cancels one run through the explicit server operation', async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      response(200, {
+        data: {
+          id: 'run/1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          status: 'cancelled',
+          startedAt: 1,
+          cancelRequestedAt: 2,
+          cancelledAt: 3,
+          completedAt: 3,
+          artifacts: []
+        }
+      })
+    )
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch
+    })
+
+    await expect(client.cancelRun('run/1')).resolves.toMatchObject({
+      id: 'run/1',
+      status: 'cancelled'
+    })
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:44100/api/v1/runs/run%2F1/cancel',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ authorization: 'Bearer secret-token' })
+      })
+    )
+  })
+
+  it('honors caller cancellation before polling without invoking run cancellation', async () => {
     const fetch = vi.fn()
     const client = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',
@@ -169,7 +205,7 @@ describe('OpenScienceClient', () => {
       cancellation
     )
     expect(fetch).not.toHaveBeenCalled()
-    expect(client).not.toHaveProperty('cancelRun')
+    expect(client.cancelRun).toEqual(expect.any(Function))
     expect(client).not.toHaveProperty('permissions')
     expect(client).not.toHaveProperty('specialists')
     expect(client).not.toHaveProperty('compute')

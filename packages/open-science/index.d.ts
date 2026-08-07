@@ -1,5 +1,5 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
-export type RunStatus = 'running' | 'completed' | 'failed'
+export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type Project = {
   id: string
@@ -16,6 +16,8 @@ export type Run = {
   projectId: string
   status: RunStatus
   startedAt: number
+  cancelRequestedAt?: number
+  cancelledAt?: number
   completedAt?: number
   output?: string
   error?: string
@@ -74,6 +76,7 @@ export class OpenScienceClient {
     skillIds?: string[]
   }): Promise<Run>
   getRun(runId: string): Promise<Run>
+  cancelRun(runId: string): Promise<Run>
   waitForRun(
     runId: string,
     options?: { pollIntervalMs?: number; signal?: AbortSignal; timeoutMs?: number }

@@ -42,6 +42,7 @@ const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => (
   })),
   setPermissionProfile: vi.fn<TaskAgentPort['setPermissionProfile']>(async () => undefined),
   prompt: vi.fn<TaskAgentPort['prompt']>(async () => undefined),
+  cancelPrompt: vi.fn<TaskAgentPort['cancelPrompt']>(async () => undefined),
   ...overrides
 })
 
@@ -341,5 +342,64 @@ describe('HeadlessTaskApi adapter', () => {
     expect(agent.listAttachedSessionIds).not.toHaveBeenCalled()
     expect(agent.createSession).not.toHaveBeenCalled()
     expect(agent.prompt).not.toHaveBeenCalled()
+  })
+
+  it('forwards run cancellation through the direct Agent port under the request caller context', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-cancel-context' })),
+      prompt: vi.fn(async () => promptGate),
+      cancelPrompt: vi.fn(async () => finishPrompt?.())
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent })
+    const context = createTaskCallerContext({ location: 'remote' })
+
+    const run = await api.startRun({ project: project.id, prompt: 'Cancel remotely.' })
+    const cancelled = await api.runWithCallerContext(context, () => api.cancelRun(run.id))
+
+    expect(cancelled).toMatchObject({ status: 'cancelled' })
+    expect(agent.cancelPrompt).toHaveBeenCalledWith('session-cancel-context')
+  })
+
+  it('does not enter the direct Agent port for cancellation after authorization expires', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-revoked-cancel' })),
+      prompt: vi.fn(async () => promptGate),
+      cancelPrompt: vi.fn(async () => finishPrompt?.())
+    })
+    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent })
+    let authorizationCurrent = false
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+    const run = await api.startRun({ project: project.id, prompt: 'Keep running.' })
+
+    await expect(api.runWithCallerContext(context, () => api.cancelRun(run.id))).rejects.toThrow(
+      'Caller authorization is no longer current.'
+    )
+    expect(agent.cancelPrompt).not.toHaveBeenCalled()
+
+    authorizationCurrent = true
+    await api.runWithCallerContext(context, () => api.cancelRun(run.id))
   })
 })

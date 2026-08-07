@@ -96,6 +96,7 @@ type TaskAgentPort = {
   resumeSession(request: TaskAgentResumeSessionRequest): Promise<TaskAgentSession>
   setPermissionProfile(sessionId: string, profile: PermissionProfileId): Promise<void>
   prompt(request: TaskAgentPromptRequest): Promise<void>
+  cancelPrompt(sessionId: string): Promise<void>
 }
 
 type TaskArtifactPort = {
@@ -120,6 +121,10 @@ type TaskRunnerDependencies = {
 type MutableTaskRun = TaskRun & {
   events: AcpRuntimeEvent[]
   completion: Promise<void>
+  cancellation?: {
+    accepted: boolean
+    dispatch: Promise<void>
+  }
 }
 
 type CompletedTaskSession = {
@@ -146,6 +151,8 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   projectId: run.projectId,
   status: run.status,
   startedAt: run.startedAt,
+  cancelRequestedAt: run.cancelRequestedAt,
+  cancelledAt: run.cancelledAt,
   completedAt: run.completedAt,
   output: run.output,
   error: run.error,
@@ -374,6 +381,42 @@ class TaskRunner {
     return cloneRun(run)
   }
 
+  async cancelRun(runId: string): Promise<TaskRun> {
+    const run = this.runs.get(runId)
+    if (!run) throw new TaskRunnerError('run_not_found', `Run not found: ${runId}`)
+    if (run.status !== 'running') return cloneRun(run)
+
+    const existingCancellation = run.cancellation
+    if (existingCancellation) {
+      await existingCancellation.dispatch
+      await run.completion
+      return cloneRun(run)
+    }
+
+    run.cancelRequestedAt = this.dependencies.now()
+    const cancellation = {
+      accepted: false,
+      dispatch: Promise.resolve()
+    }
+    run.cancellation = cancellation
+    cancellation.dispatch = Promise.resolve()
+      .then(() => this.dependencies.agent.cancelPrompt(run.sessionId))
+      .then(() => {
+        cancellation.accepted = true
+      })
+      .catch((error) => {
+        if (run.status === 'running' && run.cancellation === cancellation) {
+          run.cancellation = undefined
+          run.cancelRequestedAt = undefined
+        }
+        throw error
+      })
+
+    await cancellation.dispatch
+    await run.completion
+    return cloneRun(run)
+  }
+
   private reserveSession(sessionId: string, runId: string): void {
     const activeRunId = this.activeRunBySession.get(sessionId)
     if (activeRunId && activeRunId !== runId) {
@@ -486,6 +529,7 @@ class TaskRunner {
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
   ): Promise<void> {
     let promptError: unknown
+    let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
     try {
       await this.dependencies.agent.prompt({
         sessionId: session.id,
@@ -498,6 +542,7 @@ class TaskRunner {
       })
     } catch (error) {
       promptError = error
+      cancellationAtPromptFailure = run.cancellation
     }
 
     let completed: CompletedTaskSession | undefined
@@ -513,7 +558,10 @@ class TaskRunner {
       }
     }
 
-    const failure = completionError ?? promptError
+    const cancellation = run.cancellation
+    if (cancellation) await cancellation.dispatch.catch(() => undefined)
+    const promptFailureWasCancelled = cancellationAtPromptFailure?.accepted === true
+    const failure = completionError ?? (promptFailureWasCancelled ? undefined : promptError)
     if (failure) {
       await this.failRun(run, session, completed, failure)
       return
@@ -525,10 +573,15 @@ class TaskRunner {
       await this.failRun(run, session, completed, error)
       return
     }
-    run.status = 'completed'
+    const terminalCancellation = run.cancellation
+    if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
+    const terminalCancellationAccepted = terminalCancellation?.accepted === true
+    run.status = terminalCancellationAccepted ? 'cancelled' : 'completed'
     run.output = completed!.output
     run.artifacts = completed!.artifacts
-    run.completedAt = this.dependencies.now()
+    const completedAt = this.dependencies.now()
+    run.completedAt = completedAt
+    if (terminalCancellationAccepted) run.cancelledAt = completedAt
   }
 
   private async failRun(

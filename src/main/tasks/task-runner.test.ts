@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
@@ -49,6 +49,7 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       createSession: async () => ({ sessionId: 'session-created' }),
       resumeSession: async (request) => ({ sessionId: request.sessionId }),
       setPermissionProfile: async () => undefined,
+      cancelPrompt: async () => undefined,
       prompt: async () => undefined
     },
     artifacts: {
@@ -218,6 +219,7 @@ describe('TaskRunner', () => {
         }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'event-1',
@@ -301,6 +303,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => promptGate
       },
       createId: () => ids.shift() ?? 'generated-id'
@@ -347,6 +350,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession,
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => undefined
       }
     })
@@ -410,6 +414,7 @@ describe('TaskRunner', () => {
           return { sessionId: existing.id, cwd: existing.cwd, contextReset: true }
         },
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async (request) => {
           prompts.push(request)
         }
@@ -476,6 +481,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async (request) => {
           prompts.push(request)
         }
@@ -522,6 +528,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-artifact', cwd: '/workspace/artifact' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'artifact-event',
@@ -604,6 +611,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-save', cwd: '/workspace/save' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'save-event',
@@ -655,6 +663,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-partial', cwd: '/workspace/partial' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'artifact-first',
@@ -759,6 +768,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-tool', cwd: '/workspace/tool' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'tool-start',
@@ -838,6 +848,347 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('cancels one active run, retains partial output, and returns the Session to idle', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let rejectPrompt: ((error: Error) => void) | undefined
+    const promptGate = new Promise<void>((_resolve, reject) => {
+      rejectPrompt = reject
+    })
+    const savedSessions: PersistedChatSession[] = []
+    const cancelPrompt = vi.fn(async (sessionId: string) => {
+      emitEvent?.({
+        id: 'partial-output',
+        timestamp: 20,
+        kind: 'message',
+        level: 'info',
+        sessionId,
+        role: 'assistant',
+        text: 'Partial result.'
+      })
+      rejectPrompt?.(new Error('provider prompt cancelled'))
+    })
+    let time = 100
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['cancel-user', 'cancel-run', 'cancel-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })(),
+      now: () => ++time
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Long research.' })
+    const cancelled = await runner.cancelRun(started.id)
+
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+    expect(cancelPrompt).toHaveBeenCalledWith('session-cancel')
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      output: 'Partial result.',
+      cancelRequestedAt: expect.any(Number),
+      cancelledAt: expect.any(Number),
+      completedAt: expect.any(Number)
+    })
+    expect(cancelled.cancelledAt).toBe(cancelled.completedAt)
+    expect(savedSessions.at(-1)).toMatchObject({
+      id: 'session-cancel',
+      status: 'idle',
+      activeRun: undefined,
+      messages: [
+        expect.objectContaining({ role: 'user', content: 'Long research.' }),
+        expect.objectContaining({ role: 'agent', content: 'Partial result.' })
+      ]
+    })
+  })
+
+  it('deduplicates concurrent cancellation and treats terminal cancellation as a read', async () => {
+    let finishPrompt: (() => void) | undefined
+    let acceptCancellation: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const cancellationGate = new Promise<void>((resolve) => {
+      acceptCancellation = resolve
+    })
+    const cancelPrompt = vi.fn(async () => {
+      await cancellationGate
+      finishPrompt?.()
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-concurrent-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['concurrent-user', 'concurrent-run', 'concurrent-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Cancel once.' })
+    const first = runner.cancelRun(started.id)
+    const second = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    acceptCancellation?.()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: 'cancelled' }),
+      expect.objectContaining({ status: 'cancelled' })
+    ])
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('leaves a naturally terminal run unchanged when cancellation arrives late', async () => {
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-completed' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => undefined,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['completed-user', 'completed-run', 'completed-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Finish naturally.' })
+    await runner.waitForRun(started.id)
+
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({
+      status: 'completed',
+      cancelRequestedAt: undefined,
+      cancelledAt: undefined
+    })
+    expect(cancelPrompt).not.toHaveBeenCalled()
+  })
+
+  it('observes cancellation accepted while the final Session save is draining', async () => {
+    let finalSaveStarted: (() => void) | undefined
+    let releaseFinalSave: (() => void) | undefined
+    const finalSaveStart = new Promise<void>((resolve) => {
+      finalSaveStarted = resolve
+    })
+    const finalSaveGate = new Promise<void>((resolve) => {
+      releaseFinalSave = resolve
+    })
+    let saveCount = 0
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => {
+          saveCount += 1
+          if (saveCount === 2) {
+            finalSaveStarted?.()
+            await finalSaveGate
+          }
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-during-save' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => undefined,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['save-user', 'save-run', 'save-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Finish and persist.' })
+    await finalSaveStart
+    const cancellation = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    releaseFinalSave?.()
+
+    await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('keeps a real Prompt failure when cancellation is requested afterward', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finalizationStarted: (() => void) | undefined
+    let releaseFinalization: (() => void) | undefined
+    const finalizationStart = new Promise<void>((resolve) => {
+      finalizationStarted = resolve
+    })
+    const finalizationGate = new Promise<void>((resolve) => {
+      releaseFinalization = resolve
+    })
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-failure-before-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'failure-artifact',
+            timestamp: 20,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-failure-before-cancel',
+            artifactClaimId: 'claim-failure-before-cancel',
+            artifacts: []
+          })
+          throw new Error('provider failed before cancellation')
+        },
+        cancelPrompt
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          finalizationStarted?.()
+          await finalizationGate
+          return { ok: true, artifacts: [] }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['failure-user', 'failure-run', 'failure-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fail first.' })
+    await finalizationStart
+    const cancellation = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    releaseFinalization?.()
+
+    await expect(cancellation).resolves.toMatchObject({
+      status: 'failed',
+      error: 'provider failed before cancellation'
+    })
+  })
+
+  it('clears a rejected cancellation request while the run remains active', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const cancelPrompt = vi.fn(async () => {
+      throw new Error('cancel dispatch failed')
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-failure' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['failure-user', 'failure-run', 'failure-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Keep working.' })
+    await expect(runner.cancelRun(started.id)).rejects.toThrow('cancel dispatch failed')
+    expect(runner.getRun(started.id)).toMatchObject({
+      status: 'running',
+      cancelRequestedAt: undefined
+    })
+
+    finishPrompt?.()
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('lets Artifact finalization failure win after cancellation is accepted', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-artifact' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'cancel-artifact',
+            timestamp: 20,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-cancel-artifact',
+            artifactClaimId: 'claim-cancel-artifact',
+            artifacts: []
+          })
+          return promptGate
+        },
+        cancelPrompt: async () => finishPrompt?.()
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          throw new Error('artifact finalization failed')
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['artifact-user', 'artifact-run', 'artifact-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create then cancel.' })
+
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: 'artifact finalization failed'
+    })
+  })
+
   it('releases its runtime-event subscription when disposed', () => {
     let unsubscribeCount = 0
     const runner = createRunner({
@@ -864,6 +1215,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: `session-${++sessionCounter}` }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => undefined
       },
       createId: () => `id-${++idCounter}`,

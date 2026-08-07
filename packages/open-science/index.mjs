@@ -66,6 +66,10 @@ export class OpenScienceClient {
     return this.request(`/api/v1/runs/${encodeURIComponent(runId)}`)
   }
 
+  cancelRun(runId) {
+    return this.request(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+  }
+
   async waitForRun(runId, { pollIntervalMs = 250, signal, timeoutMs } = {}) {
     if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
       throw new TypeError('timeoutMs must be a positive number.')

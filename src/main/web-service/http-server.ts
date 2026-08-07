@@ -76,6 +76,7 @@ type WebServerOptions = {
     | 'getSession'
     | 'startRun'
     | 'getRun'
+    | 'cancelRun'
     | 'listArtifacts'
     | 'acquireArtifact'
     | 'releaseArtifact'
@@ -335,6 +336,15 @@ const handleTaskApiRequest = async (
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        return true
+      }
+      const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
+      if (cancelRunMatch && request.method === 'POST') {
+        await readJsonBody(request)
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
+        })
         return true
       }
       const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)

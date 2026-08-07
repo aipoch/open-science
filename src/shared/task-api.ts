@@ -3,7 +3,7 @@ import type { PermissionProfileId } from './permission-profiles'
 import type { Project } from './projects'
 import type { PersistedSessionStatus } from './session-persistence'
 
-export type TaskRunStatus = 'running' | 'completed' | 'failed'
+export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type StartTaskRunRequest = {
   project: string
@@ -19,6 +19,8 @@ export type TaskRun = {
   projectId: string
   status: TaskRunStatus
   startedAt: number
+  cancelRequestedAt?: number
+  cancelledAt?: number
   completedAt?: number
   output?: string
   error?: string
