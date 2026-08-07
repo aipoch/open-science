@@ -1,6 +1,6 @@
 import { link, mkdir, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
@@ -109,4 +109,47 @@ describe('Skill ZIP export', () => {
 
     expect(Object.keys(unzipSync(exported.archiveBytes))).toEqual(['SKILL.md'])
   })
+
+  it.each(['.hidden', '__MACOSX/metadata'])(
+    'refuses to export the importer-incompatible path %s',
+    async (path) => {
+      const root = await mkdtemp(join(tmpdir(), 'skill-export-unsafe-path-'))
+      roots.push(root)
+      await writeFile(join(root, 'SKILL.md'), '# Portable')
+      await mkdir(dirname(join(root, path)), { recursive: true })
+      await writeFile(join(root, path), 'not portable')
+
+      await expect(
+        buildSkillExportArchive({
+          id: 'personal-portable',
+          name: 'Portable',
+          description: '',
+          source: 'personal',
+          updatedAt: '2026-08-07T00:00:00.000Z',
+          sourceDir: root
+        })
+      ).rejects.toThrow('Skill path cannot be imported safely.')
+    }
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'refuses to export a POSIX filename containing a backslash',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'skill-export-backslash-'))
+      roots.push(root)
+      await writeFile(join(root, 'SKILL.md'), '# Portable')
+      await writeFile(join(root, 'references\\helper.py'), 'not portable')
+
+      await expect(
+        buildSkillExportArchive({
+          id: 'personal-portable',
+          name: 'Portable',
+          description: '',
+          source: 'personal',
+          updatedAt: '2026-08-07T00:00:00.000Z',
+          sourceDir: root
+        })
+      ).rejects.toThrow('Skill path cannot be imported safely.')
+    }
+  )
 })

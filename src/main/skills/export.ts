@@ -5,6 +5,7 @@ import { zipSync, type Zippable } from 'fflate'
 
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
+import { isUnsafeSkillArchivePath } from './zip-extract'
 
 const INTERNAL_SKILL_FILES = new Set(['.source.json', '.specialist-package.json'])
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
@@ -61,6 +62,9 @@ const collectFiles = async (
   for (const entry of entries) {
     if (!relativeDirectory && INTERNAL_SKILL_FILES.has(entry.name)) continue
     const relativePath = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name
+    if (isUnsafeSkillArchivePath(relativePath)) {
+      throw new Error('Skill path cannot be imported safely.')
+    }
     const absolutePath = join(directory, entry.name)
     const metadata = await lstat(absolutePath)
     if (metadata.isSymbolicLink() || (metadata.isFile() && metadata.nlink > 1)) {

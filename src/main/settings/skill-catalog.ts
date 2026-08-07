@@ -240,10 +240,12 @@ class SkillCatalogModule {
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {
-    const skill = (await this.catalog()).find((entry) => entry.id === id)
-    if (!skill) throw new Error(`Unknown skill: ${id}`)
-    if (skill.source === 'featured') throw new Error('Built-in Skills cannot be exported.')
-    return buildSkillExportArchive(skill)
+    if ((await this.skillRegistry.list()).some((entry) => entry.id === id)) {
+      throw new Error('Built-in Skills cannot be exported.')
+    }
+    const archive = await this.userSkills.withSkillReadLock(id, buildSkillExportArchive)
+    if (!archive) throw new Error(`Unknown skill: ${id}`)
+    return archive
   }
 
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {

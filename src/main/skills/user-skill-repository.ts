@@ -450,6 +450,20 @@ class UserSkillRepository {
     })
   }
 
+  // Keeps a user-Skill filesystem read inside the same owner lock as create, update, import, delete,
+  // and transaction recovery. The callback must finish reading before it returns; sourceDir is not a
+  // stable snapshot once this method settles.
+  async withSkillReadLock<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    return this.runExclusive(async () => {
+      await this.doRecoverImportedTransactions()
+      const skill = (await this.listSkillsInternal()).find((entry) => entry.id === id)
+      return skill ? read(skill) : undefined
+    })
+  }
+
   // The listing itself, without acquiring the lock or running recovery — call only from within a
   // critical section that has already recovered (avoids re-entrant locking / deadlock).
   private async listSkillsInternal(): Promise<BundledSkill[]> {
