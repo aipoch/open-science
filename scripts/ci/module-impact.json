@@ -144,17 +144,44 @@
       "fallbackCapability": "main_runtime"
     },
     "artifact_provenance": {
-      "ownerPaths": ["src/main/artifacts/provenance-repository.ts"],
-      "interfacePaths": ["src/main/artifacts/provenance-repository.ts"],
+      "ownerPaths": [
+        "src/main/artifacts/provenance-message-snapshot.ts",
+        "src/main/artifacts/provenance-repository.ts"
+      ],
+      "interfacePaths": [
+        "src/main/artifacts/provenance-message-snapshot.ts",
+        "src/main/artifacts/provenance-repository.ts"
+      ],
       "consumerModules": ["session_persistence"],
       "testFiles": {
         "owner": [
+          "src/main/artifacts/provenance-lifecycle-contract.test.ts",
+          "src/main/artifacts/provenance-message-snapshot.test.ts",
           "src/main/artifacts/provenance-repository.test.ts",
           "src/main/artifacts/provenance-write-contract.test.ts"
         ],
-        "contract": ["src/main/artifacts/ipc.test.ts"],
+        "contract": [
+          "src/main/artifacts/ipc.test.ts",
+          "src/main/artifacts/mcp-server.test.ts",
+          "src/main/data-content-application-commands.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/preload/index.test.ts"
+        ],
         "consumer": [
-          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts"
+          "src/main/acp/file-reference-resolver.test.ts",
+          "src/main/acp/runtime.test.ts",
+          "src/main/artifacts/code-reconstruction.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/main/reviewer/ipc.test.ts",
+          "src/main/session-artifact-file-resolver.test.ts",
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/tasks/task-runner.test.ts",
+          "src/renderer/src/lib/acp/workspace-events.test.ts",
+          "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
+          "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],
