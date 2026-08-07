@@ -189,6 +189,7 @@ type Overrides = Partial<{
   isHistoryBrowsing: boolean
   historyStatus: string
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
+  mentionPreviewContext: { sessionId: string; projectId?: string }
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -205,6 +206,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         isHistoryBrowsing={overrides.isHistoryBrowsing}
         historyStatus={overrides.historyStatus}
         onNavigateHistory={overrides.onNavigateHistory}
+        mentionPreviewContext={overrides.mentionPreviewContext}
       />
     )
   })
@@ -698,6 +700,61 @@ describe('ComposerEditor', () => {
 
     const chip = editor().querySelector<HTMLElement>('[data-mention-source="linked-folder"]')
     act(() => chip?.click())
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('opens an upload mention chip in the preview workbench on click after a successful probe', async () => {
+    renderEditor({
+      mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'up-1',
+            name: 'sequence.csv',
+            path: 'upload-version:default/session-1/up-1-v1',
+            source: 'upload'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="upload"]')
+    await act(async () => {
+      chip?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
+  })
+
+  it('keeps an upload mention chip inert when the probe fails', async () => {
+    ;(
+      window as unknown as { api: { uploads: { readPreview: ReturnType<typeof vi.fn> } } }
+    ).api.uploads.readPreview.mockRejectedValueOnce(new Error('gone'))
+    renderEditor({
+      mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'up-1',
+            name: 'sequence.csv',
+            path: 'upload-version:default/session-1/up-1-v1',
+            source: 'upload'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="upload"]')
+    await act(async () => {
+      chip?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
 
     expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })

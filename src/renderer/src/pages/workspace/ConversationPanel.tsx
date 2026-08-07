@@ -800,6 +800,11 @@ const ConversationPanel = ({
                           isHistoryBrowsing={isHistoryBrowsing}
                           historyStatus={historyStatus}
                           onNavigateHistory={onNavigateHistory}
+                          mentionPreviewContext={
+                            activeSession
+                              ? { sessionId: activeSession.id, projectId: activeSession.projectId }
+                              : undefined
+                          }
                         />
                       </div>
 

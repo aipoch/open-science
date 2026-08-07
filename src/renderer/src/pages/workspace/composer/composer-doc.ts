@@ -248,11 +248,11 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
     span.setAttribute('data-mention-version-id', node.versionId)
   }
   // Green mention pill for uploads/artifacts; dark gray for linked-folder paths. Both stay
-  // distinct from the blue skill chip. Linked-folder chips are clickable (open the preview panel),
-  // so they get the pointer cursor.
-  span.className = `${ARTIFACT_CHIP_BASE_CLASS} ${
+  // distinct from the blue skill chip. All mention chips open the preview panel on click, so
+  // they get the pointer cursor.
+  span.className = `${ARTIFACT_CHIP_BASE_CLASS} cursor-pointer ${
     linkedFolder
-      ? 'bg-path-chip text-path-chip-foreground cursor-pointer'
+      ? 'bg-path-chip text-path-chip-foreground'
       : 'bg-mention-chip text-mention-chip-foreground'
   }`
   const labelPrefix = linkedFolder ? '@path:' : '@'

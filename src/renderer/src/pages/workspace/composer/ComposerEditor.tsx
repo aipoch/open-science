@@ -7,6 +7,8 @@ import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
+import { createPreviewFileItemFromMention } from '../preview-file-item'
+import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
 import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
 import {
@@ -45,6 +47,9 @@ type ComposerEditorProps = {
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
+  // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
+  // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
+  mentionPreviewContext?: { sessionId: string; projectId?: string }
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -164,7 +169,8 @@ export const ComposerEditor = ({
   allowedSkillIds,
   isHistoryBrowsing = false,
   historyStatus = '',
-  onNavigateHistory
+  onNavigateHistory,
+  mentionPreviewContext
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
@@ -210,30 +216,68 @@ export const ComposerEditor = ({
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 
-  // Clicking a linked-folder `@path:` chip opens the file in the preview workbench, like the
-  // sent-message pill does. The chip only carries rootId + relativePath, so the absolute path is
-  // resolved through the granted-roots store; a revoked root makes the chip inert on click.
+  // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
+  // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
+  // (inert once the root is revoked); upload/artifact chips probe first so a stale chip stays
+  // inert, then open through the mention preview item.
   const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     const root = editorRef.current
     const chip = (event.target as HTMLElement).closest?.(
-      '[data-mention-source="linked-folder"]'
+      '[data-mention-type="artifact"]'
     ) as HTMLElement | null
     if (!root || !chip || !root.contains(chip)) return
-    const rootId = chip.getAttribute('data-mention-root-id')
-    const relativePath = chip.getAttribute('data-mention-relative-path')
-    if (!rootId || !relativePath) return
-    const grantedRoot = useGrantedFoldersStore
-      .getState()
-      .roots.find((candidate) => candidate.id === rootId)
-    if (!grantedRoot) return
+    const source = chip.getAttribute('data-mention-source')
+
+    if (source === 'linked-folder') {
+      const rootId = chip.getAttribute('data-mention-root-id')
+      const relativePath = chip.getAttribute('data-mention-relative-path')
+      if (!rootId || !relativePath) return
+      const grantedRoot = useGrantedFoldersStore
+        .getState()
+        .roots.find((candidate) => candidate.id === rootId)
+      if (!grantedRoot) return
+      event.preventDefault()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createPreviewFileItemFromLocal({
+          sessionId: LOCAL_PREVIEW_SESSION_ID,
+          path: resolveLocalPath(grantedRoot.path, relativePath, window.api?.platform ?? 'darwin'),
+          name: chip.getAttribute('data-mention-filename') ?? relativePath
+        })
+      )
+      return
+    }
+
+    if ((source !== 'upload' && source !== 'artifact') || !mentionPreviewContext) return
+    const path = chip.getAttribute('data-mention-path')
+    if (!path) return
     event.preventDefault()
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-      createPreviewFileItemFromLocal({
-        sessionId: LOCAL_PREVIEW_SESSION_ID,
-        path: resolveLocalPath(grantedRoot.path, relativePath, window.api?.platform ?? 'darwin'),
-        name: chip.getAttribute('data-mention-filename') ?? relativePath
-      })
-    )
+    const part: Parameters<typeof createPreviewFileItemFromMention>[0] = {
+      type: 'artifact',
+      id: chip.getAttribute('data-mention-id') ?? path,
+      name: chip.getAttribute('data-mention-filename') ?? path,
+      path,
+      source,
+      mimeType: chip.getAttribute('data-mention-mime-type') ?? undefined,
+      versionId: chip.getAttribute('data-mention-version-id') ?? undefined
+    }
+    const { sessionId, projectId } = mentionPreviewContext
+    void (async () => {
+      const read =
+        source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+      try {
+        await read({
+          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+          path,
+          maxBytes: 1,
+          encoding: 'utf8'
+        })
+      } catch {
+        return
+      }
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createPreviewFileItemFromMention(part, sessionId, projectId))
+    })()
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
