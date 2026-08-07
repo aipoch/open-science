@@ -90,8 +90,11 @@
       "interfacePaths": ["src/main/uploads/repository.ts"],
       "consumerModules": ["session_persistence"],
       "testFiles": {
-        "owner": ["src/main/uploads/repository.test.ts"],
-        "contract": ["src/main/uploads/ipc.test.ts"],
+        "owner": [
+          "src/main/uploads/repository.test.ts",
+          "src/main/uploads/repository.characterization.test.ts"
+        ],
+        "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
         "consumer": ["src/main/session-persistence/deletion-integration.test.ts"]
       },
       "capabilityOverlays": ["windows_sensitive"],
