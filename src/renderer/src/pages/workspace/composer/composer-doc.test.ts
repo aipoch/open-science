@@ -53,6 +53,23 @@ describe('docToText', () => {
     expect(docToText(doc)).toBe('compare @fig1.png and @clinical trial03.pdf')
   })
 
+  it('renders linked-folder artifact nodes as @<relativePath>', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'analyze ' },
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    }
+    expect(docToText(doc)).toBe('analyze @data/study.csv')
+  })
+
   it('returns an empty string for the empty doc', () => {
     expect(docToText(emptyDoc)).toBe('')
   })
@@ -353,6 +370,35 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(chip?.getAttribute('data-mention-path')).toBeNull()
     expect(chip?.getAttribute('data-mention-root-id')).toBe('root-1')
     expect(chip?.getAttribute('data-mention-relative-path')).toBe('data/study.csv')
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
+  it('renders a linked-folder chip as a dark-gray @ pill and still round-trips the plain name', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    const chip = root.querySelector('span[data-mention-source="linked-folder"]')
+    expect(chip?.className).toContain('bg-path-chip')
+    expect(chip?.className).toContain('text-path-chip-foreground')
+    expect(chip?.className).not.toContain('bg-mention-chip')
+    expect(chip?.textContent).toBe('@data/study.csv')
+    expect(chip?.getAttribute('title')).toBe('@data/study.csv')
+    // The `@` label must not leak into the doc: domToDoc recovers the name from the stored
+    // filename attribute, not from the visible label.
+    expect(chip?.getAttribute('data-mention-filename')).toBe('study.csv')
     expect(domToDoc(root)).toEqual(doc)
   })
 

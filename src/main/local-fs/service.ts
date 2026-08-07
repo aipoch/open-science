@@ -1,13 +1,39 @@
 import { hostname, userInfo } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { readdir, realpath, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { app, shell } from 'electron'
 
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
-import type { LocalDirEntry, LocalDirListing, LocalRoots } from '../../shared/local-fs'
-import { LOCAL_DIR_ENTRY_CAP, sortLocalEntries, validateLocalPath } from '../../shared/local-fs'
+import type {
+  GrantLocalRootRequest,
+  GrantedLocalRoot,
+  GrantedLocalRootAccess,
+  LocalDirEntry,
+  LocalDirListing,
+  LocalRoots,
+  RemoveGrantedLocalRootRequest,
+  SetGrantedLocalRootAccessRequest
+} from '../../shared/local-fs'
+import {
+  LOCAL_DIR_ENTRY_CAP,
+  sortLocalEntries,
+  validateGrantCandidate,
+  validateLocalPath
+} from '../../shared/local-fs'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+
+// The slice of the granted-roots repository the feature persists through. Structural so tests can
+// inject an in-memory store; production wires the SQLite-backed GrantedLocalRootsRepository.
+export type GrantedLocalRootsStore = {
+  list: () => Promise<GrantedLocalRoot[]>
+  // Insert-or-update-by-path: re-granting an already granted path updates its access while keeping
+  // the existing id. Returns the stored row.
+  upsertByPath: (root: GrantedLocalRoot) => Promise<GrantedLocalRoot>
+  setAccess: (id: string, access: GrantedLocalRootAccess) => Promise<void>
+  remove: (id: string) => Promise<void>
+}
 
 // Builds a user-facing machine name from the OS hostname (stripping a trailing ".local" that macOS
 // appends) with a possessive owner prefix when the login name is available — e.g. "roxi's MacBook".
@@ -29,14 +55,85 @@ const assertValidLocalPath = (path: string): void => {
   if (problem === 'control_chars') throw new Error('Local path contains invalid characters.')
 }
 
+// Guard against crafted renderer payloads: only the two declared access levels are persisted.
+const assertValidAccess = (access: GrantedLocalRootAccess): void => {
+  if (access !== 'ro' && access !== 'rw') throw new Error('Grant access must be "ro" or "rw".')
+}
+
 // Service for browsing and previewing arbitrary local files. Unlike the artifact/upload readers,
 // this deliberately does NOT confine paths to a storage root: the feature's contract is
 // "Home start, full-disk navigable". Path validation rejects only malformed input; sensitive-file
 // warnings are surfaced in the renderer (see isSensitiveLocalPath).
 export class LocalFsService {
+  // The granted-roots store is optional so existing call sites/tests that only browse keep working;
+  // granted-root operations fail loudly when persistence is not wired.
+  constructor(private readonly grantedRootsStore?: GrantedLocalRootsStore) {}
+
   // Absolute paths for the browser's initial location and "Go to → Home".
   getRoots(): LocalRoots {
     return { home: app.getPath('home'), machineName: buildMachineName() }
+  }
+
+  private requireGrantedRootsStore(): GrantedLocalRootsStore {
+    if (!this.grantedRootsStore) throw new Error('Granted local roots store is not configured.')
+    return this.grantedRootsStore
+  }
+
+  // Returns the folders the user has granted the app access to.
+  async listGrantedRoots(): Promise<GrantedLocalRoot[]> {
+    return this.requireGrantedRootsStore().list()
+  }
+
+  // Grants a folder (or updates its access when already granted) and returns the updated list.
+  // The candidate is canonicalized with realpath before validation and storage, so the recorded
+  // path is the same form the linked-folder resolver later confines against.
+  async grantRoot(request: GrantLocalRootRequest): Promise<GrantedLocalRoot[]> {
+    const store = this.requireGrantedRootsStore()
+    assertValidAccess(request.access)
+    assertValidLocalPath(request.path)
+    const resolvedPath = await realpath(request.path)
+    // Home must be canonicalized too: app.getPath('home') may sit behind a symlink (/var on
+    // macOS, /home mounts on some Linux setups), and comparing the realpath'd candidate against
+    // the verbatim string would fail every scope check.
+    const resolvedHome = await realpath(this.getRoots().home)
+    const roots = await store.list()
+    const verdict = validateGrantCandidate(resolvedPath, resolvedHome, roots, process.platform)
+    if (!verdict.ok) {
+      if (verdict.reason === 'is-home')
+        throw new Error('The home folder is already browsable; it cannot be granted.')
+      if (verdict.reason === 'out-of-scope')
+        throw new Error('That folder is outside the currently browsable scope.')
+      throw new Error('Local path must be absolute.')
+    }
+    // De-dupe on the resolved path: re-granting an already granted folder updates its access and
+    // keeps the existing id (the store upserts by path).
+    await store.upsertByPath({
+      id: randomUUID(),
+      path: resolvedPath,
+      name: basename(resolvedPath),
+      access: request.access
+    })
+    return store.list()
+  }
+
+  // Changes the access level of one granted root and returns the updated list.
+  async setGrantedRootAccess(
+    request: SetGrantedLocalRootAccessRequest
+  ): Promise<GrantedLocalRoot[]> {
+    const store = this.requireGrantedRootsStore()
+    assertValidAccess(request.access)
+    const roots = await store.list()
+    if (!roots.some((root) => root.id === request.id))
+      throw new Error(`Unknown granted root: ${request.id}`)
+    await store.setAccess(request.id, request.access)
+    return store.list()
+  }
+
+  // Revokes one granted root and returns the updated list.
+  async removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]> {
+    const store = this.requireGrantedRootsStore()
+    await store.remove(request.id)
+    return store.list()
   }
 
   // Lists one directory. Resolves symlinks/.. via realpath, sorts dirs-first, caps entry count.

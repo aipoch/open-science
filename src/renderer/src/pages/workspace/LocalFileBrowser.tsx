@@ -280,10 +280,14 @@ const LocalListing = ({
 }
 
 export const LocalFileBrowser = ({
-  onEntryCountChange
+  onEntryCountChange,
+  requestedPath
 }: {
   // Reports the visible entry count so the Files tab header can show it next to the source picker.
   onEntryCountChange?: (count: number | undefined) => void
+  // External navigation request (a granted folder picked in the filter menu). `nonce` makes repeat
+  // requests observable even for the same path; requests for the current directory are no-ops.
+  requestedPath?: { path: string; nonce: number }
 }): React.JSX.Element => {
   const [roots, setRoots] = useState<LocalRoots | null>(null)
   const [cwd, setCwd] = useState('')
@@ -297,6 +301,17 @@ export const LocalFileBrowser = ({
   useEffect(() => {
     onEntryCountChangeRef.current = onEntryCountChange
   }, [onEntryCountChange])
+
+  // Mirrors cwd for the requestedPath effect, which must compare against the latest location
+  // without re-running on every navigation.
+  const cwdRef = useRef('')
+  // Nonce of the last requestedPath already acted on; guards against re-navigation when the
+  // effect re-fires for unrelated renders. A request pending at mount counts as handled up
+  // front: the mount effect below navigates to it directly instead of landing in Home first.
+  const handledRequestNonceRef = useRef(requestedPath?.nonce ?? 0)
+  // A request already pending when the browser mounts replaces the initial Home landing instead
+  // of racing it.
+  const initialRequestedPathRef = useRef(requestedPath)
 
   // Clear the reported count when this container goes away, so the header stops showing a stale one.
   useEffect(
@@ -319,6 +334,7 @@ export const LocalFileBrowser = ({
         truncated: listing.truncated
       })
       setCwd(listing.resolvedPath)
+      cwdRef.current = listing.resolvedPath
       setAddressInput(listing.resolvedPath)
       onEntryCountChangeRef.current?.(listing.entries.length)
     } catch (err) {
@@ -330,7 +346,8 @@ export const LocalFileBrowser = ({
     }
   }, [])
 
-  // On mount: fetch roots + bookmarks, then land in Home.
+  // On mount: fetch roots + bookmarks, then land in Home — or in a path already requested before
+  // the browser mounted (its nonce is marked handled so the effect below doesn't re-navigate).
   useEffect(() => {
     void (async () => {
       const [fetchedRoots, fetchedBookmarks] = await Promise.all([
@@ -339,9 +356,18 @@ export const LocalFileBrowser = ({
       ])
       setRoots(fetchedRoots)
       setBookmarks(fetchedBookmarks)
-      await navigate(fetchedRoots.home)
+      const pendingRequest = initialRequestedPathRef.current
+      await navigate(pendingRequest?.path ?? fetchedRoots.home)
     })()
   }, [navigate])
+
+  // External navigation requests (granted folder picked in the filter menu) steer the browser.
+  useEffect(() => {
+    if (!requestedPath || requestedPath.nonce === handledRequestNonceRef.current) return
+    handledRequestNonceRef.current = requestedPath.nonce
+    if (!sameLocalDirectory(requestedPath.path, cwdRef.current, window.api.platform))
+      void navigate(requestedPath.path)
+  }, [requestedPath, navigate])
 
   const listing = state.kind === 'ok' ? state : null
   const currentPath = listing?.resolvedPath ?? cwd

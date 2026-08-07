@@ -18,10 +18,13 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Component
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
   createPreviewFileItemFromArtifact,
+  createPreviewFileItemFromLocal,
   createPreviewFileItemFromMention,
   createPreviewFileItemFromUpload
 } from './preview-file-item'
 import { createPreviewRequestScope } from './previews/preview-file-reader'
+import { resolveLocalPath } from '../../../../shared/local-fs'
+import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -572,7 +575,25 @@ const WorkspaceMessageScrollerImpl = ({
   const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
     if (!currentSessionId) return
     if (part.source === 'linked-folder') {
-      showMentionNotice('Linked-folder files are not available until the folder is connected.')
+      // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
+      // plus the mention's relative path gives the local file to preview. A revoked root keeps
+      // the "not available" notice.
+      const grantedState = useGrantedFoldersStore.getState()
+      const roots = grantedState.loaded
+        ? grantedState.roots
+        : await grantedState.refresh().catch(() => [])
+      const root = roots.find((candidate) => candidate.id === part.rootId)
+      if (!root) {
+        showMentionNotice('Linked-folder files are not available until the folder is connected.')
+        return
+      }
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createPreviewFileItemFromLocal({
+          sessionId: currentSessionId,
+          path: resolveLocalPath(root.path, part.relativePath, window.api.platform),
+          name: part.name
+        })
+      )
       return
     }
 

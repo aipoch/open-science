@@ -3,6 +3,7 @@ import type {
   AcpPermissionRequest,
   AcpContextUsage
 } from '../../../../shared/acp'
+import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
   PermissionProfileId,
@@ -56,10 +57,11 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
-import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
+import { appendArtifactMention, docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { ComposerContextUsage } from './ComposerContextUsage'
 import { ComposerModelPicker } from './ComposerModelPicker'
+import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
@@ -347,6 +349,13 @@ const ConversationPanel = ({
   const handleSubmit = (): void => {
     if (!canEditDraft) return
     onSendMessage(docToSkillIds(draftDoc))
+  }
+
+  // The "Your files" menu appends a linked-folder mention straight into the owned draft doc (the
+  // same appendArtifactMention path Global Search uses); ComposerEditor syncs the chip into the DOM.
+  const handleInsertFileReference = (reference: LinkedFolderFileReference): void => {
+    if (!canEditDraft) return
+    onDraftDocChange(appendArtifactMention(draftDoc, reference))
   }
 
   const handleBranchInNewSession = (): void => {
@@ -791,6 +800,11 @@ const ConversationPanel = ({
                           isHistoryBrowsing={isHistoryBrowsing}
                           historyStatus={historyStatus}
                           onNavigateHistory={onNavigateHistory}
+                          mentionPreviewContext={
+                            activeSession
+                              ? { sessionId: activeSession.id, projectId: activeSession.projectId }
+                              : undefined
+                          }
                         />
                       </div>
 
@@ -830,17 +844,31 @@ const ConversationPanel = ({
                               data-testid="menu-attach-files"
                               disabled={!canEditDraft || isUploadingAttachments}
                               onSelect={() => fileInputRef.current?.click()}
+                              // Two-line row matching the agent-controls menu style: the limits copy
+                              // lives inside the item so hover paints one shared background.
+                              className="items-center gap-2"
                             >
-                              <FileText className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Attach files
+                              <FileText
+                                className="size-4 shrink-0 text-text-200"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[13px] font-medium leading-5">
+                                  Attach files
+                                </span>
+                                <span
+                                  className="block text-[11px] leading-4 text-text-300"
+                                  data-testid="attachment-limits"
+                                >
+                                  Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
+                                  file. Large files are linked, not embedded.
+                                </span>
+                              </span>
                             </DropdownMenuItem>
-                            <div
-                              className="px-2 py-1.5 text-[11px] leading-4 text-text-300"
-                              data-testid="attachment-limits"
-                            >
-                              Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
-                              file. Large files are linked, not embedded.
-                            </div>
+                            <ComposerYourFilesMenu
+                              onInsertFileReference={handleInsertFileReference}
+                            />
                             <DropdownMenuSeparator />
                             {activeSession && activeBranchPlan ? (
                               <>
@@ -877,9 +905,16 @@ const ConversationPanel = ({
                               onSelect={() => {
                                 if (canEditDraft && !isRequestReviewDisabled) onRequestReview()
                               }}
+                              className="items-center gap-2"
                             >
-                              <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
-                              Request review
+                              <ScanEye
+                                className="size-4 shrink-0 text-text-200"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                              <span className="text-[13px] font-medium leading-5">
+                                Request review
+                              </span>
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

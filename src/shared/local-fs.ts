@@ -36,6 +36,28 @@ export type LocalRoots = {
 // provider_id, which never collides with this literal.
 export const LOCAL_BOOKMARKS_KEY = 'local'
 
+// A folder the user explicitly granted the app access to ("Grant folder access"). Stored in the
+// SQLite project DB (GrantedLocalRoot table; see src/main/local-fs/granted-roots-repository.ts);
+// the renderer manages the list and the linked-folder file-reference resolver confines reads to
+// these roots.
+export type GrantedLocalRoot = {
+  id: string
+  // Server-side realpath at grant time, so symlinked parents are captured canonically.
+  path: string
+  // Display label: basename of the granted path.
+  name: string
+  // Persistence/display only this iteration — no write enforcement reads this yet.
+  access: GrantedLocalRootAccess
+}
+
+export type GrantedLocalRootAccess = 'ro' | 'rw'
+
+// IPC request shapes for the granted-root channels (local-fs:*); shared so preload, main, and the
+// renderer agree on the payloads.
+export type GrantLocalRootRequest = { path: string; access: GrantedLocalRootAccess }
+export type SetGrantedLocalRootAccessRequest = { id: string; access: GrantedLocalRootAccess }
+export type RemoveGrantedLocalRootRequest = { id: string }
+
 // Max directory entries returned by a single listDir before truncation kicks in. Keeps the
 // renderer responsive on huge directories (e.g. node_modules).
 export const LOCAL_DIR_ENTRY_CAP = 5000
@@ -138,6 +160,43 @@ export const resolveLocalPath = (cwd: string, input: string, platform: string): 
   const separator = windows ? '\\' : '/'
   const base = cwd.replace(windows ? /[\\/]+$/ : /\/+$/, '')
   return `${base}${separator}${input}`
+}
+
+// Normalizes separators for scope comparisons: both POSIX and Windows separators count as
+// separators (the app ships on mac/win), and trailing separators are dropped so a root recorded
+// as "/data/" still matches "/data/x". Case is left alone — comparison is exact on purpose.
+const normalizePathForScope = (path: string): string => path.replace(/\\/g, '/').replace(/\/+$/, '')
+
+// True when `path` is `root` itself or lives inside it. The separator boundary in the startsWith
+// check matters: "/data2/x" must NOT count as within "/data".
+export const isPathWithin = (path: string, root: string): boolean => {
+  const candidate = normalizePathForScope(path)
+  const base = normalizePathForScope(root)
+  return candidate === base || candidate.startsWith(`${base}/`)
+}
+
+// True when `path` is browsable under the granted-roots scope model: inside home or inside any
+// granted root.
+export const canBrowseGrantedPath = (
+  path: string,
+  home: string,
+  roots: readonly GrantedLocalRoot[]
+): boolean => isPathWithin(path, home) || roots.some((root) => isPathWithin(path, root.path))
+
+// Validates a folder the user wants to grant. A grant candidate must already be browsable (within
+// home or an already-granted root) so granting can only ever extend scope one visible step at a
+// time; home itself is rejected because it is the implicit root and granting it would be a no-op.
+export const validateGrantCandidate = (
+  path: string,
+  home: string,
+  roots: readonly GrantedLocalRoot[],
+  platform: string
+): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' | 'out-of-scope' } => {
+  if (validateLocalPath(path, platform) !== undefined) return { ok: false, reason: 'not-absolute' }
+  if (normalizePathForScope(path) === normalizePathForScope(home))
+    return { ok: false, reason: 'is-home' }
+  if (!canBrowseGrantedPath(path, home, roots)) return { ok: false, reason: 'out-of-scope' }
+  return { ok: true }
 }
 
 const localPathRoot = (path: string, platform: string): string => {

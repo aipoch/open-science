@@ -33,6 +33,7 @@ import {
   isReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -354,6 +355,18 @@ const sanitizeComputeGrant = (value: unknown): StoredComputeGrant | undefined =>
   return { projectId, operation, providerId }
 }
 
+// Rebuilds one legacy granted local root, dropping records with missing required fields or an
+// unknown access level. Kept only for the one-time import into the GrantedLocalRoot table.
+const sanitizeGrantedLocalRoot = (value: unknown): GrantedLocalRoot | undefined => {
+  if (!isRecord(value)) return undefined
+  const id = asString(value.id)
+  const path = asString(value.path)
+  const name = asString(value.name)
+  const access = asString(value.access)
+  if (!id || !path || !name || (access !== 'ro' && access !== 'rw')) return undefined
+  return { id, path, name, access }
+}
+
 // Rebuilds the connectors block from allowed fields only.
 export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined => {
   if (!isRecord(value)) return undefined
@@ -619,6 +632,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (computeGrants && computeGrants.length > 0) {
     settings.computeGrants = computeGrants
+  }
+
+  // Legacy granted local roots ("Grant folder access"): well-formed entries are preserved so the
+  // one-time import into the GrantedLocalRoot table can read them; corrupt entries are dropped.
+  // Production never appends to this field — the import removes it once the rows land in the DB.
+  const grantedLocalRoots = Array.isArray(value.grantedLocalRoots)
+    ? value.grantedLocalRoots
+        .map(sanitizeGrantedLocalRoot)
+        .filter((root): root is GrantedLocalRoot => root !== undefined)
+    : undefined
+
+  if (grantedLocalRoots && grantedLocalRoots.length > 0) {
+    settings.grantedLocalRoots = grantedLocalRoots
   }
 
   return settings
@@ -1249,6 +1275,16 @@ class SettingsRepository {
         [providerId]: folders
       }
     }))
+  }
+
+  // Removes the legacy settings.grantedLocalRoots field after the one-time import into the
+  // GrantedLocalRoot table has landed every row. Production never writes this field again.
+  async clearGrantedLocalRoots(): Promise<void> {
+    await this.mutate((settings) => {
+      const next = { ...settings }
+      delete next.grantedLocalRoots
+      return next
+    })
   }
 
   // Read-modify-write over the connectors block, seeding an empty block on first mutation.

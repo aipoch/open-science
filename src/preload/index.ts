@@ -551,7 +551,13 @@ const api: OpenScienceAPI = {
     readPreview: (request) => electronRendererContracts.invoke('localFs.readPreview', request),
     getRoots: () => electronRendererContracts.invoke('localFs.getRoots'),
     reveal: (path) => electronRendererContracts.invoke('localFs.reveal', path),
-    openPath: (path) => electronRendererContracts.invoke('localFs.openPath', path)
+    openPath: (path) => electronRendererContracts.invoke('localFs.openPath', path),
+    listGrantedRoots: () => electronRendererContracts.invoke('localFs.listGrantedRoots'),
+    grantRoot: (request) => electronRendererContracts.invoke('localFs.grantRoot', request),
+    setGrantedRootAccess: (request) =>
+      electronRendererContracts.invoke('localFs.setGrantedRootAccess', request),
+    removeGrantedRoot: (request) =>
+      electronRendererContracts.invoke('localFs.removeGrantedRoot', request)
   },
   notebook: {
     // Notebook commands stay behind typed IPC so renderer code never talks to local RPC directly.

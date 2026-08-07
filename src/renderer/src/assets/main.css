@@ -61,6 +61,8 @@
   --color-mention-chip-foreground: var(--mention-chip-foreground);
   --color-skill-chip: var(--skill-chip);
   --color-skill-chip-foreground: var(--skill-chip-foreground);
+  --color-path-chip: var(--path-chip);
+  --color-path-chip-foreground: var(--path-chip-foreground);
   --color-rail-card-bg: hsl(var(--rail-card-bg));
   /* Routed through var() so .dark can strengthen elevation — subtle black shadows vanish on dark
      surfaces, so the dark theme uses higher-opacity values (defined in :root / .dark below). */
@@ -114,6 +116,9 @@
   /* Blue pill for composer skill `/` mention chips. */
   --skill-chip: hsl(214 95% 90%);
   --skill-chip-foreground: hsl(222 63% 47%);
+  /* Dark gray pill for linked-folder `@path:` mention chips, distinct from the green/blue ones. */
+  --path-chip: hsl(43 3% 32%);
+  --path-chip-foreground: hsl(60 14% 96%);
   --always-black: 0 0% 0%;
   --background: #fafaf8;
   --foreground: #202321;
@@ -181,6 +186,10 @@
   --mention-chip-foreground: hsl(140 45% 72%);
   --skill-chip: hsl(217 45% 26%);
   --skill-chip-foreground: hsl(214 90% 80%);
+  /* Flipped for dark: a light gray pill with dark text keeps the `@path:` chip neutral against the
+     dark-green/dark-blue mention chips. */
+  --path-chip: hsl(48 6% 78%);
+  --path-chip-foreground: hsl(43 3% 18%);
   --background: #1a1a18;
   --foreground: #e8e6df;
   --card: #26251f;

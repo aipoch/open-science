@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ComposerEditor } from './ComposerEditor'
 import { emptyDoc, type ComposerDoc } from './composer-doc'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
@@ -168,6 +173,8 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+  usePreviewWorkbenchStore.setState({ items: [], activeItemId: undefined })
 })
 
 // Default no-op props; individual tests override the ones they assert on.
@@ -182,6 +189,7 @@ type Overrides = Partial<{
   isHistoryBrowsing: boolean
   historyStatus: string
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
+  mentionPreviewContext: { sessionId: string; projectId?: string }
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -198,6 +206,7 @@ const renderEditor = (overrides: Overrides = {}): void => {
         isHistoryBrowsing={overrides.isHistoryBrowsing}
         historyStatus={overrides.historyStatus}
         onNavigateHistory={overrides.onNavigateHistory}
+        mentionPreviewContext={overrides.mentionPreviewContext}
       />
     )
   })
@@ -642,5 +651,111 @@ describe('ComposerEditor', () => {
 
     expect(editor().querySelector('[data-mention-type="artifact"]')).toBeNull()
     expect(onDocChange).toHaveBeenLastCalledWith(emptyDoc)
+  })
+
+  it('opens a linked-folder chip in the preview workbench on click', () => {
+    useGrantedFoldersStore.setState({
+      ...createInitialGrantedFoldersState(),
+      roots: [{ id: 'root-1', path: '/Users/roxi/data', name: 'data', access: 'ro' }],
+      loaded: true
+    })
+    renderEditor({
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'linked-1',
+            name: 'study.csv',
+            source: 'linked-folder',
+            rootId: 'root-1',
+            relativePath: 'study.csv'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="linked-folder"]')
+    act(() => chip?.click())
+
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      'local:/Users/roxi/data/study.csv'
+    )
+  })
+
+  it('keeps a linked-folder chip inert on click when its root is revoked', () => {
+    renderEditor({
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'linked-1',
+            name: 'study.csv',
+            source: 'linked-folder',
+            rootId: 'root-1',
+            relativePath: 'study.csv'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="linked-folder"]')
+    act(() => chip?.click())
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('opens an upload mention chip in the preview workbench on click after a successful probe', async () => {
+    renderEditor({
+      mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'up-1',
+            name: 'sequence.csv',
+            path: 'upload-version:default/session-1/up-1-v1',
+            source: 'upload'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="upload"]')
+    await act(async () => {
+      chip?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('up-1')
+  })
+
+  it('keeps an upload mention chip inert when the probe fails', async () => {
+    ;(
+      window as unknown as { api: { uploads: { readPreview: ReturnType<typeof vi.fn> } } }
+    ).api.uploads.readPreview.mockRejectedValueOnce(new Error('gone'))
+    renderEditor({
+      mentionPreviewContext: { sessionId: 'session-1', projectId: 'default' },
+      doc: {
+        nodes: [
+          {
+            type: 'artifact',
+            id: 'up-1',
+            name: 'sequence.csv',
+            path: 'upload-version:default/session-1/up-1-v1',
+            source: 'upload'
+          }
+        ]
+      }
+    })
+
+    const chip = editor().querySelector<HTMLElement>('[data-mention-source="upload"]')
+    await act(async () => {
+      chip?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
   })
 })

@@ -17,6 +17,10 @@ import type {
   HandoffLifecycleEventSource
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -84,6 +88,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const listGrantedRoots = vi.fn()
 const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string) => ({
   id: `tool:${sessionId}:plan`,
   sessionId,
@@ -191,12 +196,18 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    listGrantedRoots.mockReset().mockResolvedValue([])
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
     announceWindowFindReady.mockClear()
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
+      platform: 'darwin',
+      localFs: {
+        listGrantedRoots
+      },
       previewResources: {
         acquire: vi.fn(({ path }: { path: string }) =>
           Promise.resolve({
@@ -913,6 +924,92 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       encoding: 'utf8'
     })
     expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+  })
+
+  const linkedFolderSession = (): ChatSession =>
+    createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'prompt-1',
+          content: 'analyze @path:charts/sin.png',
+          parts: [
+            { type: 'text', text: 'analyze ' },
+            {
+              type: 'artifact',
+              id: 'linked-1',
+              name: 'sin.png',
+              source: 'linked-folder',
+              rootId: 'root-1',
+              relativePath: 'charts/sin.png'
+            }
+          ]
+        })
+      ]
+    })
+
+  const renderAndClickLinkedPill = async (session: ChatSession): Promise<void> => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    const pill = container.querySelector<HTMLButtonElement>('[aria-label="Preview sin.png"]')
+    expect(pill).not.toBeNull()
+    await act(async () => {
+      pill?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('opens a linked-folder mention at the granted root path in the preview store', async () => {
+    useGrantedFoldersStore.setState({
+      roots: [{ id: 'root-1', path: '/Users/roxi/data', name: 'data', access: 'ro' }],
+      loaded: true
+    })
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(listGrantedRoots).not.toHaveBeenCalled()
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith({
+      id: 'local:/Users/roxi/data/charts/sin.png',
+      sessionId: 'session-42',
+      title: 'sin.png',
+      type: 'file',
+      source: 'local',
+      path: '/Users/roxi/data/charts/sin.png',
+      name: 'sin.png',
+      format: 'image'
+    })
+  })
+
+  it('refreshes the granted-roots store when a linked-folder mention arrives before it loaded', async () => {
+    listGrantedRoots.mockResolvedValue([
+      { id: 'root-1', path: '/Users/roxi/data', name: 'data', access: 'ro' }
+    ])
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(listGrantedRoots).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/Users/roxi/data/charts/sin.png' })
+    )
+  })
+
+  it('keeps the not-available notice when the linked-folder root was revoked', async () => {
+    useGrantedFoldersStore.setState({ roots: [], loaded: true })
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(upsertAndActivateItem).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(
+      'Linked-folder files are not available until the folder is connected.'
+    )
   })
 
   it('does not read a generated text thumbnail until its card approaches the viewport', async () => {

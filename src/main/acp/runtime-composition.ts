@@ -11,6 +11,7 @@ import {
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
+import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { createLogger, errorLogFields } from '../logger'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
@@ -59,6 +60,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     paths: string[]
   ) => Promise<() => void>
   settingsService: AcpSettingsCapabilities
+  // The SQLite-backed granted-roots store ("Grant folder access"); the linked-folder file-reference
+  // resolver reads it fresh per resolution. Absent only in tests — linked-folder references then
+  // fail closed (no root resolves).
+  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'>
   permissionGrantRegistry?: PermissionGrantRegistry
   initializationBarrier?: Promise<unknown>
   taskNotifications?: TaskNotificationService
@@ -95,6 +100,7 @@ const createAcpRuntime = ({
   peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
   settingsService,
+  grantedRootsRepository,
   permissionGrantRegistry,
   initializationBarrier,
   taskNotifications,
@@ -166,6 +172,13 @@ const createAcpRuntime = ({
           revokeRpcCapability: (token) => notebookRpcServer.revokeArtifactRunCapability(token)
         },
         uploads: { repository: uploadRepository },
+        grantedRoots: grantedRootsRepository
+          ? {
+              // Read fresh per resolution so a just-removed root stops resolving immediately.
+              resolveRootPath: async (rootId) =>
+                (await grantedRootsRepository.list()).find((root) => root.id === rootId)?.path
+            }
+          : undefined,
         notebook: {
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,

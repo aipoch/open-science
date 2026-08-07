@@ -535,6 +535,24 @@ const COMPUTE_JOB_PROVIDER_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_p
 const COMPUTE_JOB_SESSION_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_sessionId_idx" ON "ComputeJob"("sessionId")`
 const COMPUTE_JOB_STATUS_INDEX_DDL = `CREATE INDEX IF NOT EXISTS "ComputeJob_status_idx" ON "ComputeJob"("status")`
 
+// Granted local folders ("Grant folder access"). Pure-additive table — it references nothing and
+// nothing references it, so this CREATE runs safely against any pre-existing DB. The DDL is
+// byte-identical to what `prisma migrate diff` generates for the GrantedLocalRoot model (covered
+// by the schema-parity test in prisma-client.test.ts). `path` is unique: re-granting a folder
+// updates its access in place.
+const GRANTED_LOCAL_ROOT_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "path" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "access" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);`
+
+// The unique index Prisma expects for @unique path. Created separately (matching the migrate
+// output) and guarded with IF NOT EXISTS so re-running ensure is idempotent.
+const GRANTED_LOCAL_ROOT_PATH_INDEX_DDL = `CREATE UNIQUE INDEX IF NOT EXISTS "GrantedLocalRoot_path_key" ON "GrantedLocalRoot"("path")`
+
 // Builds a client bound to the SQLite file under the given storage root. Not a singleton, so tests can
 // point separate clients at temp directories. Backslashes are normalized so the file: URL is valid on
 // Windows (Prisma's SQLite connector expects forward slashes).
@@ -683,6 +701,11 @@ const ensureProjectSchema = async (client: PrismaClient): Promise<void> => {
     'notificationConsumedAt',
     COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL
   )
+
+  // Granted local roots ("Grant folder access"): pure-additive table + its unique path index.
+  // IF NOT EXISTS makes both statements safe to re-run on any pre-existing DB.
+  await client.$executeRawUnsafe(GRANTED_LOCAL_ROOT_TABLE_DDL)
+  await client.$executeRawUnsafe(GRANTED_LOCAL_ROOT_PATH_INDEX_DDL)
 }
 
 let clientPromise: Promise<PrismaClient> | undefined

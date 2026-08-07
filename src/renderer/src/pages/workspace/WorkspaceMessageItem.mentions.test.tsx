@@ -189,6 +189,52 @@ describe('WorkspaceMessageItem mention pills', () => {
       source: 'artifact'
     })
   })
+
+  it('renders a linked-folder mention as a dark-gray @ pill over the relative path', () => {
+    const onPreviewMentionArtifact = vi.fn()
+    const linkedMessage = createMessage({
+      content: 'analyze @data/study.csv',
+      parts: [
+        { type: 'text', text: 'analyze ' },
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={linkedMessage}
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={noop}
+          onPreviewMentionArtifact={onPreviewMentionArtifact}
+        />
+      )
+    })
+
+    const pill = container.querySelector('[aria-label="Preview study.csv"]')
+    expect(pill?.className).toContain('bg-path-chip')
+    expect(pill?.className).toContain('text-path-chip-foreground')
+    expect(pill?.textContent).toBe('@data/study.csv')
+    expect(pill?.getAttribute('title')).toBe('@data/study.csv')
+
+    clickButton('Preview study.csv')
+    expect(onPreviewMentionArtifact).toHaveBeenCalledWith({
+      type: 'artifact',
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder',
+      rootId: 'root-1',
+      relativePath: 'data/study.csv'
+    })
+  })
 })
 
 describe('WorkspaceMessageItem file names', () => {

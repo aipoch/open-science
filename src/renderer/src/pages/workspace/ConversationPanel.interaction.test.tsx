@@ -5,8 +5,12 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
-import { emptyDoc } from './composer/composer-doc'
+import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -32,6 +36,16 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
   DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({
+    children,
+    ...rest
+  }: PropsWithChildren<{ 'data-testid'?: string }>): React.JSX.Element => (
+    <div {...rest}>{children}</div>
+  ),
+  DropdownMenuSubContent: ({ children }: PropsWithChildren): React.JSX.Element => (
     <div>{children}</div>
   ),
   DropdownMenuSeparator: (): React.JSX.Element => <hr />,
@@ -1016,6 +1030,97 @@ describe('ConversationPanel + menu', () => {
     })
 
     expect(onRequestReview).not.toHaveBeenCalled()
+  })
+})
+
+describe('ConversationPanel Your files menu', () => {
+  const grantedRoot = {
+    id: 'root-1',
+    path: '/Users/roxi/data',
+    name: 'data',
+    access: 'ro' as const
+  }
+
+  beforeEach(() => {
+    useGrantedFoldersStore.setState({
+      ...createInitialGrantedFoldersState(),
+      roots: [grantedRoot],
+      loaded: true
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'darwin',
+      localFs: {
+        listDir: vi.fn().mockResolvedValue({
+          entries: [{ name: 'study.csv', isDirectory: false, size: 1, mtimeMs: 0 }],
+          truncated: false,
+          resolvedPath: grantedRoot.path
+        })
+      }
+    }
+  })
+
+  afterEach(() => {
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('renders the Your files submenu trigger in the + menu', () => {
+    renderPanel()
+
+    expect(container.querySelector('[data-testid="composer-your-files-trigger"]')).not.toBeNull()
+  })
+
+  it('appends a linked-folder mention to the owned draft doc when a file is sent', async () => {
+    const onDraftDocChange = vi.fn()
+    renderPanel({ onDraftDocChange })
+
+    await act(async () => {
+      ;(
+        container.querySelector('[data-testid="your-files-root-toggle-root-1"]') as HTMLElement
+      ).click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const send = container.querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+    expect(send).not.toBeNull()
+    await act(async () => {
+      ;(send as HTMLElement).click()
+      await Promise.resolve()
+    })
+
+    expect(onDraftDocChange).toHaveBeenCalledWith({
+      nodes: [
+        expect.objectContaining({
+          type: 'artifact',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'study.csv'
+        })
+      ]
+    })
+  })
+
+  it('renders a linked-folder draft chip as a dark-gray @ pill', () => {
+    const draftDoc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'analyze ' },
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    }
+    renderPanel({ draftDoc })
+
+    const chip = container.querySelector('[data-mention-source="linked-folder"]')
+    expect(chip?.className).toContain('bg-path-chip')
+    expect(chip?.className).toContain('text-path-chip-foreground')
+    expect(chip?.textContent).toBe('@data/study.csv')
   })
 })
 

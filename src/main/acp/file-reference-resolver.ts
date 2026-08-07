@@ -1,8 +1,10 @@
-import { stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { isPathWithin } from '../../shared/local-fs'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import type { UploadRepository } from '../uploads/repository'
@@ -61,6 +63,11 @@ export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
   artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
+  // Resolves a granted local root id to its absolute path (settings-backed). Absent ⇒
+  // linked-folder references stay unavailable, matching the pre-grant behavior.
+  grantedRoots?: {
+    resolveRootPath: (rootId: string) => Promise<string | undefined>
+  }
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
 
@@ -121,6 +128,35 @@ export const createManagedFileReferenceResolver = (dependencies: {
           absolutePath: await dependencies.artifacts!.resolveManagedFilePath({
             path: reference.path
           }),
+          name: reference.name,
+          mimeType: reference.mimeType,
+          allowSkillImportReference: false
+        }
+      }
+    })
+  }
+
+  if (dependencies.grantedRoots) {
+    adapters.push({
+      source: 'linked-folder',
+      resolve: async (_context, reference) => {
+        if (reference.source !== 'linked-folder') {
+          throw new Error('Invalid linked-folder reference.')
+        }
+        const rootPath = await dependencies.grantedRoots!.resolveRootPath(reference.rootId)
+        if (!rootPath) throw new Error(`Unknown granted folder root: ${reference.rootId}`)
+        // The join is only lexical — the confinement proof is the realpath comparison below:
+        // canonicalizing both sides catches '..' segments AND symlinks that point outside the
+        // granted root, so neither can be used to escape it.
+        const [resolvedRoot, resolvedFile] = await Promise.all([
+          realpath(rootPath),
+          realpath(join(rootPath, reference.relativePath))
+        ])
+        if (!isPathWithin(resolvedFile, resolvedRoot)) {
+          throw new Error('Linked-folder reference escapes the granted folder.')
+        }
+        return {
+          absolutePath: resolvedFile,
           name: reference.name,
           mimeType: reference.mimeType,
           allowSkillImportReference: false

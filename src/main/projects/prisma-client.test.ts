@@ -119,6 +119,44 @@ describe('project prisma client (integration)', () => {
     ).resolves.toEqual([])
   })
 
+  it('creates the Granted Local Root table with a unique path index', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-granted-root-schema-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await ensureProjectSchema(client)
+
+    const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      'PRAGMA table_info("GrantedLocalRoot")'
+    )
+    expect(columns.map((column) => column.name)).toEqual([
+      'id',
+      'path',
+      'name',
+      'access',
+      'createdAt',
+      'updatedAt'
+    ])
+
+    const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'GrantedLocalRoot'`
+    )
+    expect(indexes.map((index) => index.name)).toContain('GrantedLocalRoot_path_key')
+
+    await client.$executeRawUnsafe(
+      `INSERT INTO "GrantedLocalRoot" ("id", "path", "name", "access", "updatedAt") VALUES ('root-1', '/data/one', 'one', 'ro', CURRENT_TIMESTAMP)`
+    )
+    await expect(
+      client.$executeRawUnsafe(
+        `INSERT INTO "GrantedLocalRoot" ("id", "path", "name", "access", "updatedAt") VALUES ('root-2', '/data/one', 'one', 'rw', CURRENT_TIMESTAMP)`
+      )
+    ).rejects.toThrow()
+
+    // Ensuring again is idempotent against the now-populated table.
+    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+  })
+
   it('creates an unread-task table that rejects duplicate session IDs', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-unread-task-schema-'))
 
