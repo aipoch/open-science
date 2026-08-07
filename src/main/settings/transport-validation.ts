@@ -2,6 +2,7 @@ import {
   isAppIconVariant,
   isReasoningEffort,
   type AppIconVariant,
+  type ProjectFilesFilterPreference,
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -51,6 +52,34 @@ const readAppIconVariant = (request: unknown): AppIconVariant => {
   return variant
 }
 
+const readProjectFilesFilter = (request: unknown): ProjectFilesFilterPreference | undefined => {
+  const filter = readField(request, 'filter')
+  if (filter === undefined) return undefined
+  if (typeof filter !== 'object' || filter === null) {
+    throw new Error(`Invalid project files filter: ${String(filter)}`)
+  }
+
+  const sourceMode = readField(filter, 'sourceMode')
+  if (sourceMode !== 'artifacts' && sourceMode !== 'local') {
+    throw new Error(`Invalid project files filter source: ${String(sourceMode)}`)
+  }
+
+  const optionId = readField(filter, 'optionId')
+  const localRootId = readField(filter, 'localRootId')
+  if (optionId !== undefined && typeof optionId !== 'string') {
+    throw new Error(`Invalid project files filter option: ${String(optionId)}`)
+  }
+  if (localRootId !== undefined && typeof localRootId !== 'string') {
+    throw new Error(`Invalid project files filter root: ${String(localRootId)}`)
+  }
+
+  return {
+    sourceMode,
+    ...(optionId === undefined ? {} : { optionId }),
+    ...(localRootId === undefined ? {} : { localRootId })
+  }
+}
+
 const readIsolatedClaudeToken = (token: unknown): string => {
   if (typeof token !== 'string') {
     throw new Error('Claude sign-in token must be a string.')
@@ -64,5 +93,6 @@ export {
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
+  readProjectFilesFilter,
   readReasoningEffort
 }

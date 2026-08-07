@@ -5,6 +5,7 @@ import type {
   ClaudeInfo,
   CodexSubscriptionAuthMode,
   CodexInfo,
+  ProjectFilesFilterPreference,
   ProviderType,
   ProviderValidationFailure,
   ReasoningEffort
@@ -155,6 +156,9 @@ export type StoredSettings = {
   conversationSkillImportEnabled?: boolean
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
+  // Last Files-tab source filter (artifact collection, this computer, or a granted folder).
+  // Absent means the default ("All artifacts").
+  projectFilesFilter?: ProjectFilesFilterPreference
   // Selected built-in app-icon look. Absent means the default ('light').
   appIconVariant?: AppIconVariant
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.

@@ -4,6 +4,7 @@ import {
   DEFAULT_NOTIFICATIONS_ENABLED,
   DEFAULT_REASONING_EFFORT,
   type AppIconVariant,
+  type ProjectFilesFilterPreference,
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -30,7 +31,10 @@ const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPrefer
   conversationSkillImportEnabled:
     settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   ...(settings.closePreference === undefined ? {} : { closePreference: settings.closePreference }),
-  appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT
+  appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
+  ...(settings.projectFilesFilter === undefined
+    ? {}
+    : { projectFilesFilter: settings.projectFilesFilter })
 })
 
 class SettingsPreferencesModule implements SettingsPreferences {
@@ -83,6 +87,12 @@ class SettingsPreferencesModule implements SettingsPreferences {
 
   async setAppIconVariant(variant: AppIconVariant): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(await this.repository.setAppIconVariant(variant))
+  }
+
+  async setProjectFilesFilter(
+    filter: ProjectFilesFilterPreference | undefined
+  ): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setProjectFilesFilter(filter))
   }
 }
 

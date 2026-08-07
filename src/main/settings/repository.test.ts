@@ -350,6 +350,28 @@ describe('settings repository', () => {
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
 
+  it('persists, sanitizes, and clears the project files filter preference', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
+    expect((await new SettingsRepository(root).getSettings()).projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(
+      sanitizeSettings({ projectFilesFilter: { sourceMode: 'remote' } }).projectFilesFilter
+    ).toBeUndefined()
+    expect(sanitizeSettings({ projectFilesFilter: 'local' }).projectFilesFilter).toBeUndefined()
+    expect(
+      sanitizeSettings({ projectFilesFilter: { sourceMode: 'artifacts', optionId: 4 } })
+        .projectFilesFilter
+    ).toEqual({ sourceMode: 'artifacts' })
+
+    await repository.setProjectFilesFilter(undefined)
+    expect((await repository.getSettings()).projectFilesFilter).toBeUndefined()
+  })
+
   it('persists the app icon variant across a sanitized read and a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)

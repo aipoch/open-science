@@ -37,6 +37,7 @@ type SettingsApi = {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setConversationSkillImportEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
+  setProjectFilesFilter: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
@@ -185,6 +186,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
         Promise.resolve({ ...snapshot([]), closePreference: request.preference })
+      ),
+    setProjectFilesFilter: vi
+      .fn()
+      .mockImplementation((request: { filter?: SettingsSnapshot['projectFilesFilter'] }) =>
+        Promise.resolve({ ...snapshot([]), projectFilesFilter: request.filter })
       ),
     setAppIconVariant: vi
       .fn()
@@ -1977,6 +1983,56 @@ describe('settings store: setClosePreference', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().closePreference).toBe('minimize')
+  })
+})
+
+describe('settings store: setProjectFilesFilter', () => {
+  it('forwards a saved filter and can reset to the default', async () => {
+    await useSettingsStore
+      .getState()
+      .setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
+    expect(api.setProjectFilesFilter).toHaveBeenCalledWith({
+      filter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+
+    await useSettingsStore.getState().setProjectFilesFilter(undefined)
+    expect(api.setProjectFilesFilter).toHaveBeenLastCalledWith({ filter: undefined })
+    expect(useSettingsStore.getState().projectFilesFilter).toBeUndefined()
+  })
+
+  it('reverts to the previous filter and exposes a visible failure when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ projectFilesFilter: { sourceMode: 'local' } })
+    api.setProjectFilesFilter.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setProjectFilesFilter(undefined)
+
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({ sourceMode: 'local' })
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save files filter preference. Try again.'
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set project files filter',
+      expect.any(Error)
+    )
+  })
+
+  it('load() picks up a saved filter from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      projectFilesFilter: { sourceMode: 'artifacts', optionId: 'uploads' }
+    })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({
+      sourceMode: 'artifacts',
+      optionId: 'uploads'
+    })
   })
 })
 

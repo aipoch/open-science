@@ -45,6 +45,7 @@ import type {
   PreviewAgentHomeSkillRequest,
   PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
+  ProjectFilesFilterPreference,
   ReasoningEffort,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
@@ -279,6 +280,7 @@ class SettingsService {
       conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
       closePreference: preferences.closePreference,
       appIconVariant: preferences.appIconVariant,
+      projectFilesFilter: preferences.projectFilesFilter,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -429,6 +431,14 @@ class SettingsService {
     preference: CloseActionPreference | undefined
   ): Promise<SettingsSnapshot> {
     await this.preferences.setClosePreference(preference)
+
+    return this.getSettingsView()
+  }
+
+  async setProjectFilesFilter(
+    filter: ProjectFilesFilterPreference | undefined
+  ): Promise<SettingsSnapshot> {
+    await this.preferences.setProjectFilesFilter(filter)
 
     return this.getSettingsView()
   }

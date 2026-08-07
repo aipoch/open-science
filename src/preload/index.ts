@@ -186,6 +186,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setConversationSkillImportEnabled', request),
     setClosePreference: (request) =>
       electronRendererContracts.invoke('settings.setClosePreference', request),
+    setProjectFilesFilter: (request) =>
+      electronRendererContracts.invoke('settings.setProjectFilesFilter', request),
     setAppIconVariant: (request) =>
       electronRendererContracts.invoke('settings.setAppIconVariant', request),
     listAppIcons: () => electronRendererContracts.invoke('settings.listAppIcons'),

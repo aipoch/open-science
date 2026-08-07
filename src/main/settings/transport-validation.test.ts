@@ -6,6 +6,7 @@ import {
   readAppIconVariant,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
+  readProjectFilesFilter,
   readReasoningEffort
 } from './transport-validation'
 
@@ -46,6 +47,33 @@ describe('Settings transport validation', () => {
     expect(() => readClosePreference({ preference: 'close' })).toThrow(
       'Invalid close preference: close'
     )
+  })
+
+  it('accepts a well-shaped project files filter and rejects the rest', () => {
+    expect(readProjectFilesFilter({})).toBeUndefined()
+    expect(readProjectFilesFilter({ filter: { sourceMode: 'local' } })).toEqual({
+      sourceMode: 'local'
+    })
+    expect(
+      readProjectFilesFilter({
+        filter: { sourceMode: 'local', localRootId: 'root-1' }
+      })
+    ).toEqual({ sourceMode: 'local', localRootId: 'root-1' })
+    expect(
+      readProjectFilesFilter({ filter: { sourceMode: 'artifacts', optionId: 'uploads' } })
+    ).toEqual({ sourceMode: 'artifacts', optionId: 'uploads' })
+    expect(() => readProjectFilesFilter({ filter: 'local' })).toThrow(
+      'Invalid project files filter: local'
+    )
+    expect(() => readProjectFilesFilter({ filter: { sourceMode: 'remote' } })).toThrow(
+      'Invalid project files filter source: remote'
+    )
+    expect(() =>
+      readProjectFilesFilter({ filter: { sourceMode: 'local', localRootId: 7 } })
+    ).toThrow('Invalid project files filter root: 7')
+    expect(() =>
+      readProjectFilesFilter({ filter: { sourceMode: 'artifacts', optionId: 7 } })
+    ).toThrow('Invalid project files filter option: 7')
   })
 
   it('accepts only known app icon variants with the Electron error contract', () => {

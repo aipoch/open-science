@@ -199,6 +199,7 @@ import type {
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
   SetClosePreferenceRequest,
+  SetProjectFilesFilterRequest,
   SetAppIconVariantRequest,
   SetReasoningEffortRequest,
   SetSkillEnabledRequest,
@@ -409,6 +410,7 @@ export interface OpenScienceAPI {
       request: SetConversationSkillImportEnabledRequest
     ): Promise<SettingsSnapshot>
     setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
+    setProjectFilesFilter(request: SetProjectFilesFilterRequest): Promise<SettingsSnapshot>
     setAppIconVariant(request: SetAppIconVariantRequest): Promise<SettingsSnapshot>
     listAppIcons(): Promise<AppIconPreview[]>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>

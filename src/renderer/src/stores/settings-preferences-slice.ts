@@ -1,5 +1,10 @@
 import type { PackageMirror } from '../../../shared/mirror'
-import type { AppIconVariant, ReasoningEffort, SettingsSnapshot } from '../../../shared/settings'
+import type {
+  AppIconVariant,
+  ProjectFilesFilterPreference,
+  ReasoningEffort,
+  SettingsSnapshot
+} from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
@@ -15,6 +20,7 @@ type SettingsPreferencesState = {
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
+  projectFilesFilter: ProjectFilesFilterPreference | undefined
 }
 
 type OptimisticPreferenceField =
@@ -23,6 +29,7 @@ type OptimisticPreferenceField =
   | 'conversationSkillImportEnabled'
   | 'closePreference'
   | 'appIconVariant'
+  | 'projectFilesFilter'
 
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
@@ -30,6 +37,7 @@ export type SettingsPreferencesActions = {
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
+  setProjectFilesFilter: (filter: ProjectFilesFilterPreference | undefined) => Promise<void>
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
@@ -41,6 +49,7 @@ type SettingsPreferencesCommands = Pick<
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
+  | 'setProjectFilesFilter'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 >
@@ -58,7 +67,8 @@ const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   notifications: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.'
+  appIcon: 'Could not save app icon preference. Try again.',
+  projectFilesFilter: 'Could not save files filter preference. Try again.'
 }
 
 // Owns renderer preference commands and their optimistic settlement. Core remains the sole owner of
@@ -140,6 +150,15 @@ export const createSettingsPreferencesSlice = ({
         variant,
         () => getCommands().setAppIconVariant({ variant }),
         'Failed to set app icon variant'
+      ),
+
+    setProjectFilesFilter: (filter) =>
+      runOptimisticWrite(
+        'projectFilesFilter',
+        'projectFilesFilter',
+        filter,
+        () => getCommands().setProjectFilesFilter({ filter }),
+        'Failed to set project files filter'
       ),
 
     completeOnboarding: async () => {

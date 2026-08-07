@@ -5007,6 +5007,24 @@ describe('SettingsService: close preference', () => {
   })
 })
 
+describe('SettingsService: project files filter preference', () => {
+  it('projects, persists, and resets the Files-tab source filter', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).projectFilesFilter).toBeUndefined()
+
+    const saved = await service.setProjectFilesFilter({ sourceMode: 'local', localRootId: 'r1' })
+    expect(saved.projectFilesFilter).toEqual({ sourceMode: 'local', localRootId: 'r1' })
+    expect((await service.getSettingsView()).projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'r1'
+    })
+
+    const reset = await service.setProjectFilesFilter(undefined)
+    expect(reset.projectFilesFilter).toBeUndefined()
+  })
+})
+
 describe('SettingsService: app icon variant', () => {
   it('projects the default light variant when none is stored', async () => {
     const service = createService()

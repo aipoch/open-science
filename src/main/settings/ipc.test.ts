@@ -47,6 +47,7 @@ type FakeSettingsService = Record<
   | 'setNotificationsEnabled'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
+  | 'setProjectFilesFilter'
   | 'setAppIconVariant'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -127,6 +128,11 @@ const createFakeService = (): FakeSettingsService => ({
   setClosePreference: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
+  setProjectFilesFilter: vi.fn().mockResolvedValue({
+    claude: {},
+    providers: [],
+    projectFilesFilter: { sourceMode: 'local' }
+  }),
   setAppIconVariant: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
@@ -1142,6 +1148,26 @@ describe('settings IPC handlers', () => {
     await expect(invoke('settings:set-close-preference', { preference: 'close' })).rejects.toThrow(
       'Invalid close preference'
     )
+  })
+
+  it('persists valid project files filters and rejects malformed ones', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:set-project-files-filter', {
+      filter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+    await invoke('settings:set-project-files-filter', {})
+
+    expect(service.setProjectFilesFilter).toHaveBeenNthCalledWith(1, {
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(service.setProjectFilesFilter).toHaveBeenNthCalledWith(2, undefined)
+    await expect(
+      invoke('settings:set-project-files-filter', { filter: { sourceMode: 'remote' } })
+    ).rejects.toThrow('Invalid project files filter source')
   })
 
   it('persists the app icon variant and applies it live on set-app-icon-variant', async () => {

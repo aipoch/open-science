@@ -6,9 +6,15 @@ export type SettingsWriteKey =
   | 'conversationSkillImport'
   | 'closePreference'
   | 'appIcon'
+  | 'projectFilesFilter'
 
 export type OptimisticSettingsWriteKey =
-  'reasoningEffort' | 'notifications' | 'conversationSkillImport' | 'closePreference' | 'appIcon'
+  | 'reasoningEffort'
+  | 'notifications'
+  | 'conversationSkillImport'
+  | 'closePreference'
+  | 'appIcon'
+  | 'projectFilesFilter'
 
 type SettingsWriteToken = {
   key: SettingsWriteKey

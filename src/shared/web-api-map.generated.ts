@@ -195,6 +195,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setNcbiCredentials': 'settings:set-ncbi-credentials',
   'settings.setNotificationsEnabled': 'settings:set-notifications-enabled',
   'settings.setPackageMirror': 'settings:set-package-mirror',
+  'settings.setProjectFilesFilter': 'settings:set-project-files-filter',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
   'settings.setToolPermission': 'settings:set-tool-permission',

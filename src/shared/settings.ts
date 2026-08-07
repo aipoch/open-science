@@ -398,6 +398,17 @@ export type SettingsSnapshot = {
   closePreference?: CloseActionPreference
   // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
   appIconVariant: AppIconVariant
+  // Last Files-tab source filter. Undefined means the default ("All artifacts").
+  projectFilesFilter?: ProjectFilesFilterPreference
+}
+
+// Persisted Files-tab source filter: an artifact collection, the machine's local browser, or a
+// granted folder inside it. `optionId` is the artifact filter id ('all', 'uploads', 'session:<id>');
+// `localRootId` is a GrantedLocalRoot id.
+export type ProjectFilesFilterPreference = {
+  sourceMode: 'artifacts' | 'local'
+  optionId?: string
+  localRootId?: string
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -421,6 +432,10 @@ export type SetConversationSkillImportEnabledRequest = {
 
 export type SetClosePreferenceRequest = {
   preference?: CloseActionPreference
+}
+
+export type SetProjectFilesFilterRequest = {
+  filter?: ProjectFilesFilterPreference
 }
 
 export type SetAppIconVariantRequest = {

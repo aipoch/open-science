@@ -52,6 +52,7 @@ import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { GrantedLocalRoot } from '../../../../shared/local-fs'
+import type { ProjectFilesFilterPreference } from '../../../../shared/settings'
 import type {
   ArtifactGroupItem,
   ProjectFileItem,
@@ -843,11 +844,14 @@ const FilterMenuItem = ({
 // One granted local folder in the "This computer" section: two-line row (name + truncated path)
 // with an ro/rw badge. Clicking the row browses the folder; the trailing "…" opens a submenu with
 // the access-level toggle and removal. The "…" stops propagation so it never selects the row.
+// A selected row shows the same trailing Check as the machine row.
 const GrantedRootMenuRow = ({
   root,
+  isSelected,
   onSelect
 }: {
   root: GrantedLocalRoot
+  isSelected: boolean
   onSelect: (root: GrantedLocalRoot) => void
 }): React.JSX.Element => {
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
@@ -856,6 +860,8 @@ const GrantedRootMenuRow = ({
   return (
     <DropdownMenuSub>
       <DropdownMenuItem
+        role="menuitemradio"
+        aria-checked={isSelected}
         className="gap-2"
         data-testid={`granted-root-${root.id}`}
         onSelect={() => onSelect(root)}
@@ -872,6 +878,14 @@ const GrantedRootMenuRow = ({
           </span>
         </span>
         <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
+        {isSelected ? (
+          <Check
+            className="size-4 shrink-0 text-primary"
+            strokeWidth={2}
+            aria-hidden="true"
+            data-testid={`granted-root-check-${root.id}`}
+          />
+        ) : null}
         <DropdownMenuSubTrigger asChild>
           <button
             type="button"
@@ -947,7 +961,8 @@ const ProjectFilesFilterMenu = ({
   onAddFolder,
   onSelectGrantedRoot,
   localMachineName,
-  isLocalSelected
+  isLocalSelected,
+  selectedLocalRootId
 }: {
   label: string
   options: ProjectFilesFilterOption[]
@@ -965,6 +980,8 @@ const ProjectFilesFilterMenu = ({
   onSelectGrantedRoot: (root: GrantedLocalRoot) => void
   localMachineName: string | undefined
   isLocalSelected: boolean
+  // Id of the granted folder the local browser is scoped to; undefined means the machine itself.
+  selectedLocalRootId: string | undefined
 }): React.JSX.Element => {
   const hosts = useComputeStore((state) => state.hosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
@@ -976,6 +993,12 @@ const ProjectFilesFilterMenu = ({
     : getCollapsedSessionOptions(sessionOptions, selectedOptionId)
   const showSessionOptionsToggle = sessionOptionCount > COLLAPSED_SESSION_OPTION_COUNT
   const selectedOptionKind = options.find((option) => option.id === selectedOptionId)?.kind ?? 'all'
+  // A revoked folder can leave a stale selection id behind; only a root that still exists counts.
+  const selectedLocalRoot = selectedLocalRootId
+    ? grantedRoots.find((root) => root.id === selectedLocalRootId)
+    : undefined
+  // The machine row is checked only when the local browser is not scoped to a granted folder.
+  const isMachineSelected = isLocalSelected && selectedLocalRoot === undefined
 
   useEffect(() => {
     // Expanded menus consume one existing cursor page per render until every session is available.
@@ -992,11 +1015,19 @@ const ProjectFilesFilterMenu = ({
           aria-label="Filter project files"
         >
           {isLocalSelected ? (
-            <Monitor
-              className="size-3.5 shrink-0 text-text-300"
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
+            selectedLocalRoot ? (
+              <Folder
+                className="size-3.5 shrink-0 text-text-300"
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+            ) : (
+              <Monitor
+                className="size-3.5 shrink-0 text-text-300"
+                strokeWidth={1.8}
+                aria-hidden="true"
+              />
+            )
           ) : (
             <ProjectFilesFilterIcon
               kind={selectedOptionKind}
@@ -1066,7 +1097,7 @@ const ProjectFilesFilterMenu = ({
         <DropdownMenuGroup>
           <DropdownMenuItem
             role="menuitemradio"
-            aria-checked={isLocalSelected}
+            aria-checked={isMachineSelected}
             className="gap-2"
             onSelect={() => onBrowseLocal()}
           >
@@ -1076,12 +1107,17 @@ const ProjectFilesFilterMenu = ({
               aria-hidden="true"
             />
             <span className="min-w-0 flex-1 truncate">{localMachineName || 'This computer'}</span>
-            {isLocalSelected ? (
+            {isMachineSelected ? (
               <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
             ) : null}
           </DropdownMenuItem>
           {grantedRoots.map((root) => (
-            <GrantedRootMenuRow key={root.id} root={root} onSelect={onSelectGrantedRoot} />
+            <GrantedRootMenuRow
+              key={root.id}
+              root={root}
+              isSelected={root.id === selectedLocalRootId}
+              onSelect={onSelectGrantedRoot}
+            />
           ))}
           <DropdownMenuItem
             className="gap-2 text-muted-foreground"
@@ -1240,6 +1276,12 @@ const ProjectArtifactGroupSection = ({
 
 // Composes the uploads-first/session-grouped product layout over the layered index hook. Filtering
 // changes presentation and loading mode without flattening or rebuilding the underlying cursors.
+
+// Reads the persisted Files-tab source filter for lazy mount-time restoration. Returns the raw
+// preference; each state initializer below validates the slice it consumes.
+const readPersistedProjectFilesFilter = (): ProjectFilesFilterPreference | undefined =>
+  useSettingsStore.getState().projectFilesFilter
+
 const ProjectFilesViewContent = ({
   activeProjectId,
   previewReader
@@ -1248,13 +1290,41 @@ const ProjectFilesViewContent = ({
   previewReader: ProjectFilePreviewReader
 }): React.JSX.Element => {
   const allSessions = useSessionStore((state) => state.sessions)
+  const grantedRoots = useGrantedFoldersStore((state) => state.roots)
   const isFilesExpanded = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId === PROJECT_FILES_PREVIEW_ID
   )
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
-  const [selectedFilterId, setSelectedFilterId] = useState('all')
-  const [selectedSessionFallback, setSelectedSessionFallback] = useState<ProjectFilesFilterOption>()
+  // Restore the persisted artifact filter as initial state; an option id that no longer exists
+  // falls back to the default ('all') via effectiveFilterId.
+  const [selectedFilterId, setSelectedFilterId] = useState(() => {
+    const persisted = readPersistedProjectFilesFilter()
+    return persisted?.sourceMode === 'artifacts' && persisted.optionId ? persisted.optionId : 'all'
+  })
+  // Keep a restored session filter reachable while its group header is still beyond the loaded page.
+  const [selectedSessionFallback, setSelectedSessionFallback] = useState<
+    ProjectFilesFilterOption | undefined
+  >(() => {
+    const persisted = readPersistedProjectFilesFilter()
+    if (persisted?.sourceMode !== 'artifacts' || !persisted.optionId?.startsWith('session:')) {
+      return undefined
+    }
+    const sessionId = persisted.optionId.slice('session:'.length)
+    const session = useSessionStore
+      .getState()
+      .sessions.find(
+        (candidate) => candidate.projectId === activeProjectId && candidate.id === sessionId
+      )
+    return session
+      ? {
+          id: persisted.optionId,
+          label: session.title,
+          count: session.artifacts?.length ?? 0,
+          kind: 'session'
+        }
+      : undefined
+  })
   const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
@@ -1285,7 +1355,11 @@ const ProjectFilesViewContent = ({
   // Device name for the "this computer" source entry; undefined until roots resolve.
   const [localMachineName, setLocalMachineName] = useState<string | undefined>(undefined)
   // Which container the tab body shows: the artifacts list or the local ("this computer") browser.
-  const [sourceMode, setSourceMode] = useState<'artifacts' | 'local'>('artifacts')
+  // A persisted local filter only applies where localFs exists (Electron).
+  const [sourceMode, setSourceMode] = useState<'artifacts' | 'local'>(() => {
+    const persisted = readPersistedProjectFilesFilter()
+    return persisted?.sourceMode === 'local' && window.api?.localFs ? 'local' : 'artifacts'
+  })
   // Entry count reported by the local browser, so the header count tracks the visible container.
   const [localEntryCount, setLocalEntryCount] = useState<number | undefined>(undefined)
   // One-shot navigation request for the local browser, set when a granted folder is picked in the
@@ -1293,30 +1367,55 @@ const ProjectFilesViewContent = ({
   const [localRequestedPath, setLocalRequestedPath] = useState<
     { path: string; nonce: number } | undefined
   >(undefined)
+  // Granted folder the local browser is scoped to; undefined means the machine itself.
+  const [selectedLocalRootId, setSelectedLocalRootId] = useState<string | undefined>(undefined)
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
 
   // Load the granted folders once so the filter menu can list them; localFs is absent outside
-  // Electron, where the section just shows the machine entry and "Add folder…" stays inert.
+  // Electron, where the section just shows the machine entry and "Add folder…" stays inert. A
+  // persisted granted-folder filter is re-applied only when its root survives this refresh; a
+  // revoked folder degrades to plain machine local mode.
   useEffect(() => {
     if (!window.api?.localFs) return
     void useGrantedFoldersStore
       .getState()
       .refresh()
+      .then((roots) => {
+        const persisted = useSettingsStore.getState().projectFilesFilter
+        if (persisted?.sourceMode !== 'local' || persisted.localRootId === undefined) return
+        const root = roots.find((candidate) => candidate.id === persisted.localRootId)
+        if (!root) return
+        setSelectedLocalRootId(root.id)
+        setLocalRequestedPath({ path: root.path, nonce: 1 })
+      })
       .catch(() => undefined)
   }, [])
 
-  // Picking a granted folder (or granting a new one) switches to the local browser at that path.
-  const handleSelectGrantedRoot = useCallback((root: GrantedLocalRoot): void => {
-    setSourceMode('local')
-    setLocalRequestedPath((previous) => ({ path: root.path, nonce: (previous?.nonce ?? 0) + 1 }))
+  // Persists the Files-tab source filter so the tab restores it on the next launch. Called only
+  // from user actions, never during mount restoration, so a restore can never trigger a write loop.
+  const persistFilter = useCallback((filter: ProjectFilesFilterPreference): void => {
+    void useSettingsStore.getState().setProjectFilesFilter(filter)
   }, [])
+
+  // Picking a granted folder (or granting a new one) switches to the local browser at that path.
+  const handleSelectGrantedRoot = useCallback(
+    (root: GrantedLocalRoot): void => {
+      setSourceMode('local')
+      setSelectedLocalRootId(root.id)
+      setLocalRequestedPath((previous) => ({ path: root.path, nonce: (previous?.nonce ?? 0) + 1 }))
+      persistFilter({ sourceMode: 'local', localRootId: root.id })
+    },
+    [persistFilter]
+  )
 
   // Picking the machine itself returns to the default Home landing; a stale requestedPath must not
   // re-trigger afterwards.
   const handleBrowseLocal = useCallback((): void => {
     setSourceMode('local')
+    setSelectedLocalRootId(undefined)
     setLocalRequestedPath(undefined)
-  }, [])
+    persistFilter({ sourceMode: 'local' })
+  }, [persistFilter])
 
   // Resolve the device name once so the dropdown entry reads as the machine it browses.
   // localFs is absent in non-Electron test/build contexts, so guard the surface before calling it.
@@ -1706,6 +1805,8 @@ const ProjectFilesViewContent = ({
     const option = filterOptions.find((item) => item.id === filterId)
     setSelectedSessionFallback(option?.kind === 'session' ? option : undefined)
     setSourceMode('artifacts')
+    setSelectedLocalRootId(undefined)
+    persistFilter({ sourceMode: 'artifacts', optionId: filterId })
   }
 
   const revealNextAllPage = (
@@ -1791,6 +1892,10 @@ const ProjectFilesViewContent = ({
     (isAllFilter || isUploadsFilter) &&
     (index.uploads.totalCount > 0 || Boolean(index.uploads.error))
   const isLocalMode = sourceMode === 'local'
+  // The granted folder the local browser is scoped to; a revoked root reads as the machine itself.
+  const selectedLocalRoot = selectedLocalRootId
+    ? grantedRoots.find((root) => root.id === selectedLocalRootId)
+    : undefined
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
@@ -1804,7 +1909,7 @@ const ProjectFilesViewContent = ({
         <ProjectFilesFilterMenu
           label={
             isLocalMode
-              ? localMachineName || 'This computer'
+              ? (selectedLocalRoot?.name ?? localMachineName ?? 'This computer')
               : isAllFilter
                 ? 'Artifacts'
                 : selectedFilterOption.label
@@ -1828,6 +1933,7 @@ const ProjectFilesViewContent = ({
           onSelectGrantedRoot={handleSelectGrantedRoot}
           localMachineName={localMachineName}
           isLocalSelected={isLocalMode}
+          selectedLocalRootId={selectedLocalRoot?.id}
         />
         <TooltipProvider delayDuration={200}>
           <div className="flex shrink-0 items-center gap-1.5">

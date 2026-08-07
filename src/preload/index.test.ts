@@ -69,6 +69,7 @@ type PreloadApi = {
     setNotificationsEnabled: (request: unknown) => unknown
     setConversationSkillImportEnabled: (request: unknown) => unknown
     setClosePreference: (request: unknown) => unknown
+    setProjectFilesFilter: (request: unknown) => unknown
     setAppIconVariant: (request: unknown) => unknown
     listAppIcons: () => unknown
     uninstallClaude: () => unknown
@@ -456,6 +457,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setNcbiCredentials',
       'settings.setNotificationsEnabled',
       'settings.setPackageMirror',
+      'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setSkillEnabled',
       'settings.setToolPermission',
@@ -551,10 +553,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 178 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 179 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(179)
+    expect(runtimeContracts).toHaveLength(180)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -1063,6 +1065,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setClosePreference({ preference: 'minimize' }),
     channel: 'settings:set-close-preference',
     args: [{ preference: 'minimize' }]
+  },
+  {
+    name: 'settings.setProjectFilesFilter → settings:set-project-files-filter',
+    invoke: (a) => a.settings.setProjectFilesFilter({ filter: { sourceMode: 'local' } }),
+    channel: 'settings:set-project-files-filter',
+    args: [{ filter: { sourceMode: 'local' } }]
   },
   {
     name: 'settings.setAppIconVariant → settings:set-app-icon-variant',

@@ -13,6 +13,7 @@ import type {
   SetClosePreferenceRequest,
   SetNotificationsEnabledRequest,
   SetPackageMirrorRequest,
+  SetProjectFilesFilterRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
 import {
@@ -26,7 +27,8 @@ import type { SettingsService } from './service'
 import {
   readAppIconVariant,
   readClosePreference,
-  readNotificationsEnabled
+  readNotificationsEnabled,
+  readProjectFilesFilter
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
 
@@ -60,6 +62,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setClosePreference'
   | 'setNotificationsEnabled'
   | 'setPackageMirror'
+  | 'setProjectFilesFilter'
   | 'validateProvider'
 >
 
@@ -218,6 +221,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetPackageMirrorRequest],
     StoreResult<'setPackageMirror'>
   >('settings:set-package-mirror'),
+  setProjectFilesFilter: defineApplicationCommand<
+    'settings:set-project-files-filter',
+    readonly [request: SetProjectFilesFilterRequest],
+    StoreResult<'setProjectFilesFilter'>
+  >('settings:set-project-files-filter'),
   validateProvider: defineApplicationCommand<
     'settings:validate-provider',
     readonly [request: ValidateProviderRequest],
@@ -256,6 +264,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setClosePreference,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setPackageMirror,
+  settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
 
@@ -343,6 +352,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-package-mirror': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-package-mirror')
         return dependencies.service.setPackageMirror(args[0])
+      },
+      'settings:set-project-files-filter': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-project-files-filter')
+        return dependencies.service.setProjectFilesFilter(readProjectFilesFilter(args[0]))
       },
       'settings:validate-provider': ({ args }) => dependencies.service.validateProvider(args[0])
     })

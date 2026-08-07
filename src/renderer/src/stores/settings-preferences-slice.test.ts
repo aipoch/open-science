@@ -2,7 +2,12 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { PackageMirror } from '../../../shared/mirror'
-import type { AppIconVariant, ReasoningEffort, SettingsSnapshot } from '../../../shared/settings'
+import type {
+  AppIconVariant,
+  ProjectFilesFilterPreference,
+  ReasoningEffort,
+  SettingsSnapshot
+} from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import {
   createSettingsPreferencesSlice,
@@ -17,6 +22,7 @@ type PreferencesCommands = Pick<
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
+  | 'setProjectFilesFilter'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 >
@@ -31,6 +37,7 @@ type TestStore = SettingsPreferencesActions & {
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
+  projectFilesFilter: ProjectFilesFilterPreference | undefined
   settingsWriteError: string | undefined
 }
 
@@ -78,6 +85,9 @@ const createCommands = (): CommandMocks => ({
     Promise.resolve(snapshot({ closePreference: preference }))
   ),
   setAppIconVariant: vi.fn(({ variant }) => Promise.resolve(snapshot({ appIconVariant: variant }))),
+  setProjectFilesFilter: vi.fn(({ filter }) =>
+    Promise.resolve(snapshot({ projectFilesFilter: filter }))
+  ),
   markOnboardingComplete: vi.fn().mockResolvedValue(snapshot({ onboardingCompletedAt: 42 })),
   setPackageMirror: vi.fn((mirror) => Promise.resolve(mirror))
 })
@@ -96,7 +106,8 @@ const createHarness = (): {
       notificationsEnabled: next.notificationsEnabled,
       conversationSkillImportEnabled: next.conversationSkillImportEnabled,
       closePreference: next.closePreference,
-      appIconVariant: next.appIconVariant
+      appIconVariant: next.appIconVariant,
+      projectFilesFilter: next.projectFilesFilter
     })
   })
   const store = createStore<TestStore>((set, get) => ({
@@ -105,6 +116,7 @@ const createHarness = (): {
     conversationSkillImportEnabled: true,
     closePreference: undefined,
     appIconVariant: 'light',
+    projectFilesFilter: undefined,
     settingsWriteError: undefined,
     ...createSettingsPreferencesSlice({
       getState: get,
@@ -136,13 +148,21 @@ describe('settings preferences slice', () => {
     await store.getState().setConversationSkillImportEnabled(false)
     await store.getState().setClosePreference('minimize')
     await store.getState().setAppIconVariant('dark')
+    await store.getState().setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
 
     expect(commands.setReasoningEffort).toHaveBeenCalledWith({ effort: 'high' })
     expect(commands.setNotificationsEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(commands.setConversationSkillImportEnabled).toHaveBeenCalledWith({ enabled: false })
     expect(commands.setClosePreference).toHaveBeenCalledWith({ preference: 'minimize' })
     expect(commands.setAppIconVariant).toHaveBeenCalledWith({ variant: 'dark' })
-    expect(reconcileSnapshot).toHaveBeenCalledTimes(5)
+    expect(commands.setProjectFilesFilter).toHaveBeenCalledWith({
+      filter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+    expect(store.getState().projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(reconcileSnapshot).toHaveBeenCalledTimes(6)
   })
 
   it('applies immediately, then rolls back and exposes the unchanged failure copy', async () => {

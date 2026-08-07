@@ -74,4 +74,19 @@ describe('SettingsPreferencesModule', () => {
     })
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
+
+  it('projects and clears the project files filter preference', async () => {
+    const { preferences } = await createModule(2_000)
+
+    expect((await preferences.getSnapshot()).projectFilesFilter).toBeUndefined()
+
+    await preferences.setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
+    expect((await preferences.getSnapshot()).projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+
+    await preferences.setProjectFilesFilter(undefined)
+    expect((await preferences.getSnapshot()).projectFilesFilter).toBeUndefined()
+  })
 })

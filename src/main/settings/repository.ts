@@ -8,6 +8,7 @@ import type {
   ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
+  ProjectFilesFilterPreference,
   ProviderType,
   ProviderValidationFailure,
   ReasoningEffort,
@@ -413,6 +414,23 @@ export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined
   return Object.keys(result).length > 0 ? result : undefined
 }
 
+// Rebuilds the persisted Files-tab source filter from untrusted JSON. Returns undefined unless a
+// known sourceMode survives; the optional ids are kept only as plain strings.
+const sanitizeProjectFilesFilter = (value: unknown): ProjectFilesFilterPreference | undefined => {
+  if (!isRecord(value)) return undefined
+
+  const sourceMode = asString(value.sourceMode)
+  if (sourceMode !== 'artifacts' && sourceMode !== 'local') return undefined
+
+  const optionId = asString(value.optionId)
+  const localRootId = asString(value.localRootId)
+  return {
+    sourceMode,
+    ...(optionId === undefined ? {} : { optionId }),
+    ...(localRootId === undefined ? {} : { localRootId })
+  }
+}
+
 // Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
 const sanitizeSettings = (value: unknown): StoredSettings => {
   if (!isRecord(value)) return createEmptySettings()
@@ -586,6 +604,14 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (closePreference === 'minimize' || closePreference === 'quit') {
     settings.closePreference = closePreference
+  }
+
+  // Files-tab source filter; only a well-shaped value survives so a hand-edited settings.json
+  // cannot crash the restore path.
+  const projectFilesFilter = sanitizeProjectFilesFilter(value.projectFilesFilter)
+
+  if (projectFilesFilter !== undefined) {
+    settings.projectFilesFilter = projectFilesFilter
   }
 
   // App-icon look; only a known variant survives so a bad value can't leak through.
@@ -987,6 +1013,13 @@ class SettingsRepository {
   // Persists the Windows titlebar-close behavior; undefined restores the confirmation dialog.
   async setClosePreference(preference: CloseActionPreference | undefined): Promise<StoredSettings> {
     return this.mutate((settings) => ({ ...settings, closePreference: preference }))
+  }
+
+  // Persists the Files-tab source filter; undefined restores the default ("All artifacts").
+  async setProjectFilesFilter(
+    filter: ProjectFilesFilterPreference | undefined
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, projectFilesFilter: filter }))
   }
 
   // Persists the selected app-icon look; applied live to the window and dock/taskbar by the caller.

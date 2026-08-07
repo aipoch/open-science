@@ -60,6 +60,7 @@ import type {
   AgentFrameworkView,
   ChatApiEndpoint,
   OpencodeInfo,
+  ProjectFilesFilterPreference,
   ProviderType,
   ProviderView,
   ReasoningEffort,
@@ -108,6 +109,8 @@ type SettingsStoreData = RuntimeSetupState &
     closePreference: CloseActionPreference | undefined
     // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
     appIconVariant: AppIconVariant
+    // Last Files-tab source filter; undefined means the default ("All artifacts").
+    projectFilesFilter: ProjectFilesFilterPreference | undefined
   }
 
 type SettingsStoreCore = SettingsStoreData &
@@ -154,7 +157,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
-  appIconVariant: DEFAULT_APP_ICON_VARIANT
+  appIconVariant: DEFAULT_APP_ICON_VARIANT,
+  projectFilesFilter: undefined
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -174,6 +178,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
     snapshot.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: snapshot.closePreference,
   appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
+  projectFilesFilter: snapshot.projectFilesFilter,
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
