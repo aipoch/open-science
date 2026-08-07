@@ -23,22 +23,24 @@ const useNotebookRunsById = (
 
   useEffect(() => {
     if (!sessionId || !projectName || workspaceCwd === undefined) {
-      setSnapshot({ runsById: EMPTY_RUNS_BY_ID })
       return undefined
     }
 
     let active = true
+    let requestSequence = 0
     const load = async (): Promise<void> => {
+      const sequence = ++requestSequence
+
       try {
         const state = await window.api.notebook.state({ sessionId, projectName, workspaceCwd })
 
-        if (!active) return
+        if (!active || sequence !== requestSequence) return
         setSnapshot({
           sessionId,
           runsById: new Map(state.runs.map((run) => [run.runId, run]))
         })
       } catch (error) {
-        if (!active) return
+        if (!active || sequence !== requestSequence) return
         console.warn('Notebook run preview hydration failed', error)
         setSnapshot({ sessionId, runsById: EMPTY_RUNS_BY_ID })
       }

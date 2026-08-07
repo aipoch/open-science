@@ -2,7 +2,8 @@ import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { formatNotebookRunFigureMeta, NotebookRunFigureOutputs } from './NotebookRunOutputs'
+import { formatNotebookRunFigureMeta } from './notebook-run-figures'
+import { NotebookRunFigureOutputs } from './NotebookRunOutputs'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,

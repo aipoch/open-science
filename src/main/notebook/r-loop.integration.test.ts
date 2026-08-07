@@ -921,4 +921,21 @@ gate('r_loop.R', () => {
       rmSync(figuresDir, { recursive: true, force: true })
     }
   }, 60_000)
+
+  it('captures a lattice figure via autoprint-triggered grid rendering', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-lattice-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send('lattice::xyplot(y ~ x, data = data.frame(x = 1:3, y = c(1, 4, 9)))')
+      if (r.error && /there is no package called .lattice./.test(r.error)) return
+
+      expect(r.error).toBeNull()
+      expect(r.figures.length).toBeGreaterThan(0)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })

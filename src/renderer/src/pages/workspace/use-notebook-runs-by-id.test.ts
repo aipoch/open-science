@@ -98,4 +98,32 @@ describe('useNotebookRunsById', () => {
     unmount()
     expect(stopChanged).toHaveBeenCalledOnce()
   })
+
+  it('ignores an older state request that resolves after a newer notebook change', async () => {
+    let resolveInitial: ((state: NotebookSessionState) => void) | undefined
+    let resolveChanged: ((state: NotebookSessionState) => void) | undefined
+    vi.mocked(window.api.notebook.state)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveInitial = resolve
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveChanged = resolve
+        })
+      )
+    const { result } = renderHook(() => useNotebookRunsById(reference))
+
+    await waitFor(() => expect(window.api.notebook.state).toHaveBeenCalledOnce())
+    act(() => changedListener?.(reference))
+    await waitFor(() => expect(window.api.notebook.state).toHaveBeenCalledTimes(2))
+
+    await act(async () => resolveChanged?.(makeState([makeRun('new-run', 'TkVX')])))
+    await waitFor(() => expect(result.current.has('new-run')).toBe(true))
+
+    await act(async () => resolveInitial?.(makeState([makeRun('stale-run', 'T0xE')])))
+    expect(result.current.has('new-run')).toBe(true)
+    expect(result.current.has('stale-run')).toBe(false)
+  })
 })

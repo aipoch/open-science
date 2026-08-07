@@ -268,7 +268,8 @@ export const PdfThumbnail = ({
   sessionId,
   mimeType,
   size,
-  mtimeMs
+  mtimeMs,
+  fit = 'cover'
 }: {
   path: string
   name: string
@@ -278,6 +279,7 @@ export const PdfThumbnail = ({
   mimeType?: string
   size?: number
   mtimeMs?: number
+  fit?: 'cover' | 'contain'
 }): React.JSX.Element => {
   const requestKey = createPreviewResourceKey({
     projectId,
@@ -331,7 +333,7 @@ export const PdfThumbnail = ({
         <img
           src={cached.url}
           alt={`Preview of ${name}`}
-          className="size-full object-cover object-top"
+          className={`size-full object-top ${fit === 'contain' ? 'object-contain' : 'object-cover'}`}
           loading="lazy"
           decoding="async"
           draggable={false}

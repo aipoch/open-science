@@ -216,6 +216,19 @@ describe('WorkspaceToolDetailsRow', () => {
   })
 
   it('renders local notebook figures outside the independently collapsible text output', async () => {
+    window.api = {
+      previewResources: {
+        acquire: vi.fn().mockResolvedValue({
+          id: 'saved-plot',
+          url: 'open-science-preview://saved-plot/plot.png',
+          size: 100,
+          mimeType: 'image/png',
+          version: 1
+        }),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      }
+    } as unknown as Window['api']
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__notebook_execute',
       rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
@@ -240,14 +253,16 @@ describe('WorkspaceToolDetailsRow', () => {
       )
     })
 
-    const figure = container.querySelector('[data-testid="notebook-figure-output"]')
+    const figures = container.querySelectorAll('[data-testid="notebook-figure-output"]')
+    const figure = figures[0]
     const textOutput = Array.from(container.querySelectorAll('details')).find((detailsElement) =>
       detailsElement.textContent?.includes('Output')
     )
 
     expect(figure).not.toBeNull()
+    expect(figures).toHaveLength(2)
     expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
     expect(textOutput?.contains(figure)).toBe(false)
-    expect(container.textContent).toContain('1 figure · Saved: plot.png')
+    expect(container.textContent).toContain('2 figures · Saved: plot.png')
   })
 })

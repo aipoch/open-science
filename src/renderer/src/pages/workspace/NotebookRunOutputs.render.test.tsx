@@ -4,7 +4,17 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
-import { NotebookRunOutputs, resolveNotebookRunFigures } from './NotebookRunOutputs'
+import { resolveNotebookRunFigures } from './notebook-run-figures'
+import { NotebookRunOutputs } from './NotebookRunOutputs'
+
+vi.mock('./previews/renderers/PdfThumbnail', () => ({
+  PdfThumbnail: ({ name }: { name: string }) => <div data-testid="notebook-output-pdf">{name}</div>
+}))
+vi.mock('./previews/renderers/TiffPreview', () => ({
+  TiffPreviewContent: ({ name }: { name: string }) => (
+    <div data-testid="notebook-output-tiff">{name}</div>
+  )
+}))
 
 let container: HTMLDivElement
 let root: Root
@@ -84,14 +94,14 @@ describe('NotebookRunOutputs', () => {
 
   it('shows every captured figure from the same run in its own frame', () => {
     render([
-      { type: 'display', data: { 'image/png': 'RklSU1Q=' } },
-      { type: 'display', data: { 'image/png': 'U0VDT05E' } }
+      { type: 'display', data: { 'image/png': 'U0FNRQ==' } },
+      { type: 'display', data: { 'image/png': 'U0FNRQ==' } }
     ])
 
     const figures = container.querySelectorAll('[data-testid="notebook-figure-output"]')
     expect(figures).toHaveLength(2)
-    expect(figures[0]?.querySelector('img')?.getAttribute('src')).toContain('RklSU1Q=')
-    expect(figures[1]?.querySelector('img')?.getAttribute('src')).toContain('U0VDT05E')
+    expect(figures[0]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
+    expect(figures[1]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
   })
 
   it('falls back to every saved image when the kernel has no captured figure', () => {
@@ -115,6 +125,18 @@ describe('NotebookRunOutputs', () => {
             relativePath: 'charts/second.webp',
             kind: 'other',
             createdByRunId: 'r1'
+          },
+          {
+            path: '/workspace/third.tiff',
+            relativePath: 'charts/third.tiff',
+            kind: 'other',
+            createdByRunId: 'r1'
+          },
+          {
+            path: '/workspace/fourth.pdf',
+            relativePath: 'charts/fourth.pdf',
+            kind: 'other',
+            createdByRunId: 'r1'
           }
         ]
       })
@@ -122,15 +144,36 @@ describe('NotebookRunOutputs', () => {
 
     expect(figures).toEqual([
       expect.objectContaining({ source: 'working-file', path: '/workspace/first.png' }),
-      expect.objectContaining({ source: 'working-file', path: '/workspace/second.webp' })
+      expect.objectContaining({ source: 'working-file', path: '/workspace/second.webp' }),
+      expect.objectContaining({
+        source: 'working-file',
+        path: '/workspace/third.tiff',
+        previewKind: 'tiff',
+        mimeType: 'image/tiff'
+      }),
+      expect.objectContaining({
+        source: 'working-file',
+        path: '/workspace/fourth.pdf',
+        previewKind: 'pdf',
+        mimeType: 'application/pdf'
+      })
     ])
   })
 
-  it('does not duplicate saved files when the kernel already captured figures', () => {
+  it('preserves every captured occurrence and saved images while deduplicating saved paths', () => {
     const figures = resolveNotebookRunFigures(
       makeRun({
-        outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+        outputs: [
+          { type: 'display', data: { 'image/png': 'QUJD' } },
+          { type: 'display', data: { 'image/png': 'QUJD' } }
+        ],
         workingFiles: [
+          {
+            path: '/workspace/plot.png',
+            relativePath: 'plot.png',
+            kind: 'other',
+            createdByRunId: 'r1'
+          },
           {
             path: '/workspace/plot.png',
             relativePath: 'plot.png',
@@ -142,7 +185,9 @@ describe('NotebookRunOutputs', () => {
     )
 
     expect(figures).toEqual([
-      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' })
+      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
+      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
+      expect.objectContaining({ source: 'working-file', path: '/workspace/plot.png' })
     ])
   })
 
@@ -163,6 +208,18 @@ describe('NotebookRunOutputs', () => {
                 relativePath: 'second.webp',
                 kind: 'other',
                 size: 202
+              },
+              {
+                path: '/workspace/third.tiff',
+                relativePath: 'third.tiff',
+                kind: 'other',
+                size: 303
+              },
+              {
+                path: '/workspace/fourth.pdf',
+                relativePath: 'fourth.pdf',
+                kind: 'other',
+                size: 404
               }
             ]
           })}
@@ -173,7 +230,13 @@ describe('NotebookRunOutputs', () => {
     await vi.waitFor(() => {
       expect(container.querySelectorAll('[data-testid="notebook-output-image"]')).toHaveLength(2)
     })
-    expect(container.querySelectorAll('[data-testid="notebook-figure-output"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[data-testid="notebook-figure-output"]')).toHaveLength(4)
+    expect(container.querySelector('[data-testid="notebook-output-tiff"]')?.textContent).toBe(
+      'third.tiff'
+    )
+    expect(container.querySelector('[data-testid="notebook-output-pdf"]')?.textContent).toBe(
+      'fourth.pdf'
+    )
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
     expect(
       Array.from(container.querySelectorAll('img'), (image) => image.getAttribute('src'))

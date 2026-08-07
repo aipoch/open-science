@@ -127,6 +127,25 @@ describe('PdfThumbnail', () => {
     expect(window.api.previewResources.release).toHaveBeenCalled()
   })
 
+  it('can contain the first page without cropping image-like PDF output', async () => {
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/workspace/plot-output.pdf"
+          name="plot-output.pdf"
+          source="local"
+          size={4096}
+          mtimeMs={1}
+          fit="contain"
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    expect(container.querySelector('img')?.className).toContain('object-contain')
+    expect(container.querySelector('img')?.className).not.toContain('object-cover')
+  })
+
   it('recovers silently after a pending path disappears and the finalized path succeeds', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.mocked(window.api.previewResources.acquire)

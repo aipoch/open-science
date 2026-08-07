@@ -1,5 +1,8 @@
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
-import { getFileExtension, getImageMimeTypeForExtension } from './preview-support'
+import { resolveNotebookRunFigures } from './notebook-run-figures'
+import type { WorkingFileNotebookFigure } from './notebook-run-figures'
+import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
+import { TiffPreviewContent } from './previews/renderers/TiffPreview'
 import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 // Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
@@ -135,92 +138,6 @@ const renderAnsi = (text: string): React.ReactNode => {
 }
 
 // --- output rendering ---
-
-type CapturedNotebookFigure = {
-  source: 'captured'
-  key: string
-  mimeType: string
-  payload: string
-  name: string
-}
-
-type WorkingFileNotebookFigure = {
-  source: 'working-file'
-  key: string
-  path: string
-  name: string
-  mimeType: string
-  size?: number
-  mtimeMs?: number
-}
-
-type NotebookRunFigure = CapturedNotebookFigure | WorkingFileNotebookFigure
-
-const getWorkingFileName = (relativePath: string, path: string): string => {
-  const candidate = relativePath || path
-  return candidate.split(/[\\/]/u).pop() || candidate
-}
-
-const resolveWorkingFileFigures = (run: NotebookRunRecord): WorkingFileNotebookFigure[] =>
-  run.workingFiles.flatMap((file, index): WorkingFileNotebookFigure[] => {
-    const name = getWorkingFileName(file.relativePath, file.path)
-    const mimeType = getImageMimeTypeForExtension(getFileExtension(name))
-
-    if (!mimeType) return []
-
-    return [
-      {
-        source: 'working-file',
-        key: `working-file-${index}-${file.path}`,
-        path: file.path,
-        name,
-        mimeType,
-        size: file.size,
-        mtimeMs: file.mtimeMs
-      }
-    ]
-  })
-
-// The UI prefers kernel-captured figures because a save call often points at the same open figure.
-// Saved image files are a fallback for explicit save-and-close workflows, where the kernel has no
-// live figure left to capture. Keeping this policy here gives every notebook surface identical
-// all-images behavior without changing the compact result returned to the agent.
-const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] => {
-  const captured: CapturedNotebookFigure[] = []
-
-  run.outputs.forEach((output, outputIndex) => {
-    if (output.type !== 'display') return
-
-    Object.entries(output.data).forEach(([mimeType, payload], mimeIndex) => {
-      if (!mimeType.startsWith('image/')) return
-
-      captured.push({
-        source: 'captured',
-        key: `captured-${outputIndex}-${mimeIndex}`,
-        mimeType,
-        payload,
-        name: `Figure ${captured.length + 1}`
-      })
-    })
-  })
-
-  if (captured.length > 0) return captured
-
-  return resolveWorkingFileFigures(run)
-}
-
-const formatNotebookRunFigureMeta = (run: NotebookRunRecord): string | undefined => {
-  const figureCount = resolveNotebookRunFigures(run).length
-
-  if (figureCount === 0) return undefined
-
-  const savedNames = resolveWorkingFileFigures(run).map((figure) => figure.name)
-  const parts = [`${figureCount} figure${figureCount === 1 ? '' : 's'}`]
-
-  if (savedNames.length > 0) parts.push(`Saved: ${savedNames.join(', ')}`)
-
-  return parts.join(' · ')
-}
 
 // Renders only the textual part of a display bundle. Figure mimes have a separate, always-visible
 // surface below the independently collapsible text output.
@@ -359,11 +276,7 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
   )
 }
 
-const WorkingFileFigureImage = ({
-  figure
-}: {
-  figure: WorkingFileNotebookFigure
-}): React.JSX.Element => {
+const WorkingFileImage = ({ figure }: { figure: WorkingFileNotebookFigure }): React.JSX.Element => {
   const state = useManagedPreviewResource({
     source: 'local',
     path: figure.path,
@@ -395,6 +308,39 @@ const WorkingFileFigureImage = ({
   )
 }
 
+const WorkingFileFigurePreview = ({
+  figure
+}: {
+  figure: WorkingFileNotebookFigure
+}): React.JSX.Element => {
+  const previewProps = {
+    path: figure.path,
+    name: figure.name,
+    source: 'local' as const,
+    mimeType: figure.mimeType,
+    size: figure.size,
+    mtimeMs: figure.mtimeMs
+  }
+
+  if (figure.previewKind === 'tiff') {
+    return (
+      <div className="h-80 w-full" data-testid="notebook-output-tiff">
+        <TiffPreviewContent {...previewProps} />
+      </div>
+    )
+  }
+
+  if (figure.previewKind === 'pdf') {
+    return (
+      <div className="h-80 w-full" data-testid="notebook-output-pdf">
+        <PdfThumbnail {...previewProps} fit="contain" />
+      </div>
+    )
+  }
+
+  return <WorkingFileImage figure={figure} />
+}
+
 const NotebookRunFigureOutputs = ({
   run
 }: {
@@ -422,7 +368,7 @@ const NotebookRunFigureOutputs = ({
                 draggable={false}
               />
             ) : (
-              <WorkingFileFigureImage figure={figure} />
+              <WorkingFileFigurePreview figure={figure} />
             )}
           </div>
         </div>
@@ -455,9 +401,4 @@ const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Elem
   )
 }
 
-export {
-  formatNotebookRunFigureMeta,
-  NotebookRunFigureOutputs,
-  NotebookRunOutputs,
-  resolveNotebookRunFigures
-}
+export { NotebookRunFigureOutputs, NotebookRunOutputs }
