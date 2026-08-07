@@ -813,7 +813,18 @@ const ConversationPanel = ({
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
-                              <TooltipTrigger asChild>
+                              {/* Radix opens tooltips on focus as well as hover, and a dropdown
+                                  close returns programmatic focus to the trigger — which would
+                                  re-open the tooltip with the pointer elsewhere. Only real keyboard
+                                  focus (":focus-visible") may open it (radix-ui/primitives#2248). */}
+                              <TooltipTrigger
+                                asChild
+                                onFocus={(event) => {
+                                  if (!event.currentTarget.matches(':focus-visible')) {
+                                    event.preventDefault()
+                                  }
+                                }}
+                              >
                                 <DropdownMenuTrigger asChild>
                                   <button
                                     type="button"
@@ -1041,7 +1052,16 @@ const ConversationPanel = ({
                               </Tooltip>
                               <DropdownMenu>
                                 <Tooltip>
-                                  <TooltipTrigger asChild>
+                                  {/* Same focus guard as the + trigger: a dropdown close returns
+                                      programmatic focus, which must not re-open the tooltip. */}
+                                  <TooltipTrigger
+                                    asChild
+                                    onFocus={(event) => {
+                                      if (!event.currentTarget.matches(':focus-visible')) {
+                                        event.preventDefault()
+                                      }
+                                    }}
+                                  >
                                     <DropdownMenuTrigger asChild>
                                       <Button
                                         type="button"
