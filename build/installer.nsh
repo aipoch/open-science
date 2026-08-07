@@ -13,15 +13,20 @@ Var dataProtectionFailed
 Var dataRestoreFailed
 
 !macro traceUpdaterInstaller PHASE
+  Push $R7
   Push $R8
   Push $R9
+  StrCpy $R7 "0"
+  ${if} ${isUpdated}
+    StrCpy $R7 "1"
+  ${endif}
   ReadEnvStr $R9 "OPEN_SCIENCE_INSTALLER_TRACE"
   ${if} $R9 != ""
     ClearErrors
     FileOpen $R8 "$R9" a
     ${ifNot} ${Errors}
       FileWrite $R8 "${PHASE}"
-      FileWrite $R8 "|updated=$isUpdated"
+      FileWrite $R8 "|updated=$R7"
       FileWrite $R8 "|mode=$installMode"
       FileWrite $R8 "|instdir=$INSTDIR"
       FileWrite $R8 "|hkcu=$perUserInstallDirCache"
@@ -33,6 +38,7 @@ Var dataRestoreFailed
   ClearErrors
   Pop $R9
   Pop $R8
+  Pop $R7
 !macroend
 
 # Registry values that identify the same Windows directory may differ only in letter case or a
