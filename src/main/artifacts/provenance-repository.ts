@@ -1,15 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import {
-  copyFile,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  stat,
-  writeFile
-} from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -25,7 +15,6 @@ import type {
   ArtifactVersionFile,
   ArtifactVersionInputEvidence,
   ArtifactVersionProvenance,
-  ArtifactProducerUnavailableReason,
   CreateArtifactVersionRequest,
   FinalizeArtifactVersionsRequest,
   GetArtifactLineageRequest,
@@ -46,6 +35,16 @@ import {
   type PendingArtifactRunPublication
 } from './repository'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
+import {
+  ArtifactProvenanceVersionWriter,
+  normalizeArtifactFilename as normalizeFilename,
+  type ArtifactVersionProducerCapture as ProducerCapture,
+  type CompatibilityRoutingPublicationOptions,
+  type PersistedVersionFileRecord,
+  type PreparedArtifactVersionPersistence,
+  type PublishCompatibilityRouting,
+  type StagingArtifactVersionRecord
+} from './provenance-version-writer'
 import { NotebookRunRepository } from '../notebook/repository'
 import type {
   NotebookEnvironmentManifest,
@@ -77,41 +76,11 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 // inserting its staging row. Only rowless directories older than a full hour are proven abandoned.
 const ORPHAN_STAGING_GRACE_MS = 60 * 60 * 1_000
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
-const VERSION_ALLOCATION_MAX_ATTEMPTS = 3
 const MAX_EXECUTION_SNAPSHOT_BYTES = 4 * 1024 * 1024
 const MAX_EXECUTION_SNAPSHOT_RUNS = 128
 const MAX_EXECUTION_SNAPSHOT_OUTPUTS = 256
 const MAX_EXECUTION_SNAPSHOT_INPUTS = 256
 const MAX_EXECUTION_OUTPUT_BYTES = 64 * 1024
-
-const isRetryableLineageVersionConflict = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'P2002') {
-    return false
-  }
-  const meta =
-    'meta' in error && typeof error.meta === 'object' && error.meta ? error.meta : undefined
-  const target = meta && 'target' in meta ? meta.target : undefined
-  const fields = Array.isArray(target) ? target.map(String) : [String(target ?? '')]
-  const joined = fields.join(' ')
-  return (
-    (joined.includes('artifactId') && joined.includes('versionNumber')) ||
-    (joined.includes('projectId') &&
-      joined.includes('sessionId') &&
-      joined.includes('normalizedFilename'))
-  )
-}
-
-const withVersionAllocationRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      return await operation()
-    } catch (error) {
-      if (attempt >= VERSION_ALLOCATION_MAX_ATTEMPTS || !isRetryableLineageVersionConflict(error)) {
-        throw error
-      }
-    }
-  }
-}
 
 type ArtifactProvenanceRepositoryOptions = {
   storageRoot: string
@@ -126,16 +95,6 @@ type ArtifactProvenanceRepositoryOptions = {
   now?: () => Date
   durability?: ArtifactDurability
 }
-
-type CompatibilityRoutingPublicationOptions = {
-  allowRoutingReplacement?: boolean
-  replaceUnroutedBytes?: boolean
-}
-
-type PublishCompatibilityRouting = (
-  version: PersistedVersionFileRecord,
-  options?: CompatibilityRoutingPublicationOptions
-) => Promise<void>
 
 export type WriteAppGeneratedArtifactVersionRequest = Omit<
   CreateArtifactVersionRequest,
@@ -153,53 +112,6 @@ export type WriteAppGeneratedArtifactVersionRequest = Omit<
   contentType?: string
   kind?: 'plan'
 }
-
-type PersistedVersionFileRecord = {
-  id: string
-  artifactId: string
-  versionNumber: number
-  filename: string
-  artifactRunId: string
-  contentStorageKey: string
-  contentType: string | null
-  sizeBytes: bigint
-  checksum: string
-  createdAt: Date
-  producerRunId: string | null
-  executionSnapshotJson: string | null
-}
-
-type StagingArtifactVersionRecord = PersistedVersionFileRecord & {
-  state: string
-  evidenceStorageKey: string
-  evidenceJson: string
-  evidenceChecksum: string
-  executionSnapshotChecksum: string | null
-  executionSnapshotStorageKey: string | null
-  artifact: { id: string; filename: string }
-}
-
-type ProducerCapture =
-  | {
-      state: 'unavailable'
-      reason: ArtifactProducerUnavailableReason
-    }
-  | {
-      state: 'available'
-      notebookSessionId: string
-      producerRunId: string
-      producerRunIndex: number
-      associationMethod: 'agent-declared-and-session-validated' | 'server-inferred-file-observation'
-      kernelKind: NotebookRunRecord['kernelKind']
-      environmentName?: string
-      reproductionCode: string
-      executionJson: string
-      executionChecksum: string
-      inputFiles: NotebookRunInputFile[]
-      environmentCapture: NotebookRunEnvironmentCapture
-      environmentManifest?: NotebookEnvironmentManifest
-      environmentManifestChecksum?: string
-    }
 
 type ArtifactStorageReconciliationResult = {
   recoveredVersionIds: string[]
@@ -407,23 +319,6 @@ const assertSafeSegment = (value: string, label: string): string => {
   }
   return value
 }
-
-const assertChecksum = (value: string, label: string): string => {
-  if (!SHA256_PATTERN.test(value)) {
-    throw new Error(`Invalid ${label}: expected lowercase SHA-256`)
-  }
-  return value
-}
-
-// JavaScript has no native toCaseFold. Locale-independent lowercase plus the multi-character and
-// positional folds that differ on supported filenames covers the portability cases that ordinary
-// lowercasing misses (notably German sharp-s and Greek final sigma).
-const normalizeFilename = (filename: string): string =>
-  filename
-    .normalize('NFC')
-    .toLocaleLowerCase('und')
-    .replace(/\u00df/gu, 'ss')
-    .replace(/\u03c2/gu, '\u03c3')
 
 const canonicalize = (value: CanonicalJson): CanonicalJson => {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -1314,9 +1209,7 @@ class ArtifactProvenanceRepository {
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
-  // Repository instances can coexist over separate Prisma clients for the same database. Serialize
-  // lineage identity allocation process-wide so those clients cannot race a case-folded filename.
-  private static readonly lineageWrites = new Map<string, Promise<void>>()
+  private readonly versionWriter: ArtifactProvenanceVersionWriter
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
@@ -1326,6 +1219,21 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    this.versionWriter = new ArtifactProvenanceVersionWriter({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient,
+      compatibilityRepository: this.compatibilityRepository,
+      createId: this.createId,
+      now: this.now,
+      durability: this.durability,
+      captureProducer: (request, createdAt, checksum) =>
+        this.captureProducer(request, createdAt, checksum),
+      prepareVersionPersistence: (input) => this.prepareVersionPersistence(input),
+      recoverStagingVersion: (version, projectId, appSessionId, filename, publish) =>
+        this.recoverStagingVersion(version, projectId, appSessionId, filename, publish),
+      projectVersionFile: (version, projectId, appSessionId) =>
+        this.toArtifactVersionFile(version, projectId, appSessionId)
+    })
   }
 
   private async syncAndVerifyFile(
@@ -1412,7 +1320,7 @@ class ArtifactProvenanceRepository {
           })
         )
 
-        const version = await this.createVersionWithOptions(
+        const version = await this.versionWriter.writeVersion(
           {
             ...versionRequest,
             writeOperationId,
@@ -1438,7 +1346,7 @@ class ArtifactProvenanceRepository {
   }
 
   async createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile> {
-    return this.createVersionWithOptions(
+    return this.versionWriter.writeVersion(
       request,
       this.compatibilityRoutingPublisher(
         request.projectId,
@@ -1446,30 +1354,6 @@ class ArtifactProvenanceRepository {
         request.filename
       )
     )
-  }
-
-  private async createVersionWithOptions(
-    request: CreateArtifactVersionRequest,
-    publishCompatibilityRouting: PublishCompatibilityRouting
-  ): Promise<ArtifactVersionFile> {
-    const lineageKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}\0${normalizeFilename(request.filename)}`
-    const previous = ArtifactProvenanceRepository.lineageWrites.get(lineageKey) ?? Promise.resolve()
-    let release = (): void => undefined
-    const current = new Promise<void>((resolveCurrent) => {
-      release = resolveCurrent
-    })
-    const tail = previous.then(() => current)
-    ArtifactProvenanceRepository.lineageWrites.set(lineageKey, tail)
-    await previous
-
-    try {
-      return await this.createVersionSerialized(request, publishCompatibilityRouting)
-    } finally {
-      release()
-      if (ArtifactProvenanceRepository.lineageWrites.get(lineageKey) === tail) {
-        ArtifactProvenanceRepository.lineageWrites.delete(lineageKey)
-      }
-    }
   }
 
   async replayVersion(
@@ -1530,362 +1414,131 @@ class ArtifactProvenanceRepository {
     return this.toArtifactVersionFile(existing, projectId, appSessionId)
   }
 
-  private async createVersionSerialized(
-    request: CreateArtifactVersionRequest,
-    publishCompatibilityRouting: PublishCompatibilityRouting
-  ): Promise<ArtifactVersionFile> {
-    const projectId = assertSafeSegment(request.projectId, 'project id')
-    const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
-    const artifactStorageSessionId = assertSafeSegment(
-      request.artifactStorageSessionId,
-      'artifact storage session id'
-    )
-    const artifactRunId = assertSafeSegment(request.artifactRunId, 'artifact run id')
-    const writeOperationId = assertSafeSegment(request.writeOperationId, 'write operation id')
-    const writeRequestChecksum = assertChecksum(
-      request.writeRequestChecksum,
-      'write request checksum'
-    )
-    const normalizedFilename = normalizeFilename(request.filename)
-    const client = await this.options.getClient()
-    const existing = await client.artifactVersion.findUnique({
-      where: { writeOperationId },
-      include: {
-        artifact: true,
-        messageSnapshot: true,
-        inputs: { orderBy: { ordinal: 'asc' } }
-      }
-    })
-
-    if (existing) {
-      if (
-        existing.writeRequestChecksum !== writeRequestChecksum ||
-        existing.artifact.projectId !== projectId ||
-        existing.artifact.sessionId !== appSessionId
-      ) {
-        throw new Error(
-          `Artifact write operation was reused for a different request: ${writeOperationId}`
-        )
-      }
-      if (existing.state === 'staging') {
-        return this.recoverStagingVersion(
-          existing,
-          projectId,
-          appSessionId,
-          request.filename,
-          publishCompatibilityRouting
-        )
-      }
-      if (existing.state !== 'pending' && existing.state !== 'finalized') {
-        throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
-      }
-
-      if (existing.state === 'pending') {
-        await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true })
-      }
-      return this.toArtifactVersionFile(existing, projectId, appSessionId)
-    }
-
-    const pendingFiles = await this.compatibilityRepository.listPendingRunFiles({
-      projectName: projectId,
-      sessionId: artifactStorageSessionId,
-      runId: artifactRunId
-    })
-    const matchingPendingFiles = pendingFiles.filter(
-      (file) => normalizeFilename(file.name) === normalizedFilename
-    )
-    const pendingFile =
-      matchingPendingFiles.find((file) => file.name === request.filename) ??
-      (matchingPendingFiles.length === 1 ? matchingPendingFiles[0] : undefined)
-
-    if (!pendingFile) {
-      if (matchingPendingFiles.length > 1) {
-        throw new Error(`Pending artifact filename is ambiguous: ${request.filename}`)
-      }
-      throw new Error(`Pending artifact file not found: ${request.filename}`)
-    }
-
-    const versionId = this.createId()
-    const stagingStorageKey = storageKey(
-      'artifacts',
-      projectId,
-      appSessionId,
-      '.provenance',
-      '.staging',
-      'versions',
-      versionId
-    )
-    const stagingDirectory = join(this.options.storageRoot, ...stagingStorageKey.split('/'))
-    const stagingContentPath = join(stagingDirectory, 'content')
-
-    await mkdir(stagingDirectory, { recursive: true })
-    await copyFile(pendingFile.path, stagingContentPath)
-
-    let stagingRowPersisted = false
-    try {
-      await this.durability.syncFile(stagingContentPath)
-      const content = await readFile(stagingContentPath)
-      const checksum = sha256(content)
-      const createdAt = this.now()
-      const producer = await this.captureProducer(request, createdAt, checksum)
-      const persisted = await withVersionAllocationRetry(() =>
-        client.$transaction(async (transaction) => {
-          const origin = await transaction.fileOriginSession.upsert({
-            where: { projectId_sessionId: { projectId, sessionId: appSessionId } },
-            create: {
-              projectId,
-              sessionId: appSessionId,
-              titleSnapshot: request.titleSnapshot
-            },
-            update: request.titleSnapshot ? { titleSnapshot: request.titleSnapshot } : {}
-          })
-          if (origin.state !== 'active') {
-            throw new Error('Artifact origin Session is being deleted and cannot accept a Version.')
+  private prepareVersionPersistence({
+    request,
+    producer,
+    artifactId,
+    versionId,
+    versionNumber,
+    checksum,
+    sizeBytes,
+    createdAt
+  }: {
+    request: CreateArtifactVersionRequest
+    producer: ProducerCapture
+    artifactId: string
+    versionId: string
+    versionNumber: number
+    checksum: string
+    sizeBytes: number
+    createdAt: Date
+  }): PreparedArtifactVersionPersistence {
+    const evidence: ArtifactVersionEvidence = {
+      app_session_id: request.appSessionId,
+      artifact_id: artifactId,
+      checksum,
+      ...(request.contentType ? { content_type: request.contentType } : {}),
+      conversation: {
+        agent_frame_id: request.agentFrameId,
+        message_branch_id: request.messageBranchId,
+        prompt_message_id: request.promptMessageId,
+        root_frame_id: request.rootFrameId,
+        runtime_segment_id: request.runtimeSegmentId
+      },
+      created_at: createdAt.toISOString(),
+      environment_status:
+        producer.state !== 'available'
+          ? { reason: producer.reason, state: 'unavailable' }
+          : producer.environmentCapture.state === 'unavailable'
+            ? { reason: producer.environmentCapture.reason, state: 'unavailable' }
+            : { state: producer.environmentCapture.state },
+      ...(producer.state === 'available' &&
+      producer.environmentManifest &&
+      producer.environmentManifestChecksum
+        ? {
+            environment: environmentEvidence(
+              producer.environmentManifest,
+              producer.environmentManifestChecksum
+            )
           }
-
-          let lineage = await transaction.artifactLineage.findUnique({
-            where: {
-              projectId_sessionId_normalizedFilename: {
-                projectId,
-                sessionId: appSessionId,
-                normalizedFilename
-              }
-            }
-          })
-          if (!lineage) {
-            lineage = await transaction.artifactLineage.create({
-              data: {
-                id: this.createId(),
-                projectId,
-                sessionId: appSessionId,
-                normalizedFilename,
-                filename: request.filename
-              }
-            })
+        : {}),
+      execution_status:
+        producer.state === 'available'
+          ? { state: 'available' }
+          : { reason: producer.reason, state: 'unavailable' },
+      ...(producer.state === 'available'
+        ? {
+            execution_snapshot_checksum: producer.executionChecksum,
+            reproduction_code: producer.reproductionCode
           }
-
-          const latest = await transaction.artifactVersion.aggregate({
-            where: { artifactId: lineage.id },
-            _max: { versionNumber: true }
-          })
-          const versionNumber = (latest._max.versionNumber ?? 0) + 1
-          const contentStorageKey = storageKey(
-            'artifacts',
-            projectId,
-            appSessionId,
-            '.provenance',
-            lineage.id,
-            'versions',
-            versionId,
-            'content'
-          )
-          const evidenceStorageKey = storageKey(
-            'artifacts',
-            projectId,
-            appSessionId,
-            '.provenance',
-            lineage.id,
-            'versions',
-            versionId,
-            'evidence.json'
-          )
-          const executionSnapshotStorageKey =
-            producer.state === 'available'
-              ? storageKey(
-                  'artifacts',
-                  projectId,
-                  appSessionId,
-                  '.provenance',
-                  lineage.id,
-                  'versions',
-                  versionId,
-                  'execution.json'
-                )
-              : undefined
-          const evidence: ArtifactVersionEvidence = {
-            app_session_id: appSessionId,
-            artifact_id: lineage.id,
-            checksum,
-            ...(request.contentType ? { content_type: request.contentType } : {}),
-            conversation: {
-              agent_frame_id: request.agentFrameId,
-              message_branch_id: request.messageBranchId,
-              prompt_message_id: request.promptMessageId,
-              root_frame_id: request.rootFrameId,
-              runtime_segment_id: request.runtimeSegmentId
-            },
-            created_at: createdAt.toISOString(),
-            environment_status:
-              producer.state !== 'available'
-                ? { reason: producer.reason, state: 'unavailable' }
-                : producer.environmentCapture.state === 'unavailable'
-                  ? { reason: producer.environmentCapture.reason, state: 'unavailable' }
-                  : { state: producer.environmentCapture.state },
-            ...(producer.state === 'available' &&
-            producer.environmentManifest &&
-            producer.environmentManifestChecksum
-              ? {
-                  environment: environmentEvidence(
-                    producer.environmentManifest,
-                    producer.environmentManifestChecksum
-                  )
-                }
-              : {}),
-            execution_status:
-              producer.state === 'available'
-                ? { state: 'available' }
-                : { reason: producer.reason, state: 'unavailable' },
-            ...(producer.state === 'available'
-              ? {
-                  execution_snapshot_checksum: producer.executionChecksum,
-                  reproduction_code: producer.reproductionCode
-                }
-              : {}),
-            filename: request.filename,
-            inputs:
-              producer.state === 'available'
-                ? producer.inputFiles.map((input, ordinal) => inputEvidence(input, ordinal))
-                : [],
-            is_user_upload: false,
-            ...(request.agentName ? { agent_name: request.agentName } : {}),
-            producer:
-              producer.state === 'available'
+        : {}),
+      filename: request.filename,
+      inputs:
+        producer.state === 'available'
+          ? producer.inputFiles.map((input, ordinal) => inputEvidence(input, ordinal))
+          : [],
+      is_user_upload: false,
+      ...(request.agentName ? { agent_name: request.agentName } : {}),
+      producer:
+        producer.state === 'available'
+          ? {
+              association_method: producer.associationMethod,
+              kernel_kind: producer.kernelKind,
+              notebook_session_id: producer.notebookSessionId,
+              producer_run_id: producer.producerRunId,
+              run_index: producer.producerRunIndex,
+              ...(producer.environmentCapture.state !== 'unavailable'
                 ? {
-                    association_method: producer.associationMethod,
-                    kernel_kind: producer.kernelKind,
-                    notebook_session_id: producer.notebookSessionId,
-                    producer_run_id: producer.producerRunId,
-                    run_index: producer.producerRunIndex,
-                    ...(producer.environmentCapture.state !== 'unavailable'
-                      ? {
-                          environment_manifest_checksum:
-                            producer.environmentCapture.manifestChecksum
-                        }
-                      : {}),
-                    state: 'available'
-                  }
-                : { reason: producer.reason, state: 'unavailable' },
-            project_id: projectId,
-            schema_version: 1,
-            size_bytes: content.byteLength,
-            version_id: versionId,
-            version_number: versionNumber
-          }
-          const evidenceJson = canonicalJson(evidence as unknown as CanonicalJson)
-
-          return transaction.artifactVersion.create({
-            data: {
-              id: versionId,
-              artifactId: lineage.id,
-              versionNumber,
-              filename: request.filename,
-              artifactRunId,
-              writeOperationId,
-              writeRequestChecksum,
-              rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
-              agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
-              messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
-              runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
-              promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
-              notebookSessionId:
-                producer.state === 'available' ? producer.notebookSessionId : undefined,
-              producerRunId: producer.state === 'available' ? producer.producerRunId : undefined,
-              producerRunIndex:
-                producer.state === 'available' ? producer.producerRunIndex : undefined,
-              state: 'staging',
-              contentStorageKey,
-              evidenceStorageKey,
-              contentType: request.contentType,
-              sizeBytes: BigInt(content.byteLength),
-              checksum,
-              evidenceJson,
-              evidenceChecksum: sha256(evidenceJson),
-              executionSnapshotJson:
-                producer.state === 'available' ? producer.executionJson : undefined,
-              executionSnapshotChecksum:
-                producer.state === 'available' ? producer.executionChecksum : undefined,
-              executionSnapshotStorageKey,
-              executionSnapshotSchemaVersion: producer.state === 'available' ? 2 : undefined,
-              ...(producer.state === 'available' && producer.inputFiles.length > 0
-                ? {
-                    inputs: {
-                      create: producer.inputFiles.map((input, ordinal) => ({
-                        id: this.createId(),
-                        ordinal,
-                        inputFileVersionId: input.inputFileVersionId,
-                        sourceKind: input.sourceKind,
-                        sourceFileId: input.sourceFileId,
-                        ...(input.sourceKind === 'artifact-version'
-                          ? { sourceArtifactVersionId: input.inputFileVersionId }
-                          : { sourceUploadVersionId: input.inputFileVersionId }),
-                        sourceVersionNumber: input.sourceVersionNumber,
-                        sourceCreatedAt: input.sourceCreatedAt
-                          ? new Date(input.sourceCreatedAt)
-                          : undefined,
-                        sourceProjectId: input.sourceProjectId,
-                        sourceSessionId: input.sourceSessionId,
-                        filename: input.filename,
-                        contentType: input.contentType,
-                        sizeBytes: BigInt(input.sizeBytes),
-                        checksum: input.checksum,
-                        storageKey: input.storageKey,
-                        strongestAssociation: input.association
-                      }))
-                    }
+                    environment_manifest_checksum: producer.environmentCapture.manifestChecksum
                   }
                 : {}),
-              createdAt
+              state: 'available'
             }
-          })
-        })
-      )
-      stagingRowPersisted = true
-
-      const evidencePath = join(stagingDirectory, 'evidence.json')
-      await writeFile(evidencePath, persisted.evidenceJson, 'utf8')
-      await this.syncAndVerifyFile(
-        evidencePath,
-        persisted.evidenceChecksum,
-        `Artifact Version evidence mirror is corrupt: ${persisted.id}`
-      )
-      if (persisted.executionSnapshotJson) {
-        const executionPath = join(stagingDirectory, 'execution.json')
-        await writeFile(executionPath, persisted.executionSnapshotJson, 'utf8')
-        await this.syncAndVerifyFile(
-          executionPath,
-          persisted.executionSnapshotChecksum!,
-          `Artifact Version execution mirror is corrupt: ${persisted.id}`
-        )
-      }
-      const finalContentPath = join(
-        this.options.storageRoot,
-        ...persisted.contentStorageKey.split('/')
-      )
-      await mkdir(dirname(dirname(finalContentPath)), { recursive: true })
-      await this.durability.syncDirectory(stagingDirectory)
-      const finalDirectory = dirname(finalContentPath)
-      await rename(stagingDirectory, finalDirectory)
-      await this.durability.syncDirectory(dirname(finalDirectory))
-
-      await publishCompatibilityRouting(persisted, { allowRoutingReplacement: true })
-      const finalized = await client.$transaction(async (transaction) => {
-        await transaction.artifactLineage.update({
-          where: { id: persisted.artifactId },
-          data: { filename: request.filename }
-        })
-        return transaction.artifactVersion.update({
-          where: { id: persisted.id },
-          data: { state: 'pending' }
-        })
-      })
-      return this.toArtifactVersionFile(finalized, projectId, appSessionId)
-    } catch (error) {
-      // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
-      // transport retry. Removing them here would force a retry to reread a mutable pending source.
-      if (!stagingRowPersisted) {
-        await rm(stagingDirectory, { recursive: true, force: true })
-      }
-      throw error
+          : { reason: producer.reason, state: 'unavailable' },
+      project_id: request.projectId,
+      schema_version: 1,
+      size_bytes: sizeBytes,
+      version_id: versionId,
+      version_number: versionNumber
+    }
+    const evidenceJson = canonicalJson(evidence as unknown as CanonicalJson)
+    return {
+      notebookSessionId: producer.state === 'available' ? producer.notebookSessionId : undefined,
+      producerRunId: producer.state === 'available' ? producer.producerRunId : undefined,
+      producerRunIndex: producer.state === 'available' ? producer.producerRunIndex : undefined,
+      evidenceJson,
+      evidenceChecksum: sha256(evidenceJson),
+      executionSnapshotJson: producer.state === 'available' ? producer.executionJson : undefined,
+      executionSnapshotChecksum:
+        producer.state === 'available' ? producer.executionChecksum : undefined,
+      ...(producer.state === 'available' && producer.inputFiles.length > 0
+        ? {
+            inputs: {
+              create: producer.inputFiles.map((input, ordinal) => ({
+                id: this.createId(),
+                ordinal,
+                inputFileVersionId: input.inputFileVersionId,
+                sourceKind: input.sourceKind,
+                sourceFileId: input.sourceFileId,
+                ...(input.sourceKind === 'artifact-version'
+                  ? { sourceArtifactVersionId: input.inputFileVersionId }
+                  : { sourceUploadVersionId: input.inputFileVersionId }),
+                sourceVersionNumber: input.sourceVersionNumber,
+                sourceCreatedAt: input.sourceCreatedAt
+                  ? new Date(input.sourceCreatedAt)
+                  : undefined,
+                sourceProjectId: input.sourceProjectId,
+                sourceSessionId: input.sourceSessionId,
+                filename: input.filename,
+                contentType: input.contentType,
+                sizeBytes: BigInt(input.sizeBytes),
+                checksum: input.checksum,
+                storageKey: input.storageKey,
+                strongestAssociation: input.association
+              }))
+            }
+          }
+        : {})
     }
   }
 

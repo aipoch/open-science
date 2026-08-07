@@ -146,7 +146,8 @@
     "artifact_provenance": {
       "ownerPaths": [
         "src/main/artifacts/provenance-message-snapshot.ts",
-        "src/main/artifacts/provenance-repository.ts"
+        "src/main/artifacts/provenance-repository.ts",
+        "src/main/artifacts/provenance-version-writer.ts"
       ],
       "interfacePaths": [
         "src/main/artifacts/provenance-message-snapshot.ts",
