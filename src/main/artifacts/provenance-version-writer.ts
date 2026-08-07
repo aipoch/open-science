@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -16,6 +15,7 @@ import type {
   NotebookRunRecord
 } from '../../shared/notebook'
 import type { ArtifactDurability } from './durability'
+import { sha256 } from './provenance-canonical'
 import type { ArtifactRepository } from './repository'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -46,7 +46,6 @@ const normalizeArtifactFilename = (filename: string): string =>
     .replace(/\u00df/gu, 'ss')
     .replace(/\u03c2/gu, '\u03c3')
 
-const sha256 = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex')
 const storageKey = (...segments: string[]): string => segments.join('/')
 const isRetryableLineageVersionConflict = (error: unknown): boolean => {
   if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'P2002') {
