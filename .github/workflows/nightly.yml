@@ -1,90 +1,58 @@
 name: Nightly
 
-# Rolling nightly build: every push to main rebuilds all platforms and refreshes a single
-# pre-release tagged `nightly`, so testers always have the latest main installers. This never
-# touches stable releases (see release.yml). Also runnable manually.
+# Batch main into one build per hour. A newer scheduled build may supersede an older build, while
+# publication is delegated to nightly-publish.yml and is never cancelled once it starts.
 on:
-  push:
-    branches:
-      - main
-    # Docs-only pushes don't change the app, so skip the 4-platform build+publish for them.
-    # workflow_dispatch below still forces a nightly regardless of what changed.
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
 
+# The manual path calls the real publish workflow in dry-run mode. Reusable workflows cannot elevate
+# permissions above their caller, so contents:write is declared even though that path never publishes.
 permissions:
+  actions: read
   contents: write
 
-# A newer push supersedes an in-flight nightly — no point finishing a stale one.
 concurrency:
-  group: nightly
+  group: nightly-build
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Check for unpublished main changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+    steps:
+      - name: Compare main with the rolling nightly tag
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>/dev/null || true)
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$published" != "$GITHUB_SHA" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly already points at $GITHUB_SHA; there is no new batch to build."
+          fi
+
   build:
+    needs: plan
+    if: needs.plan.outputs.should_build == 'true'
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
       nightly: true
 
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Aggregate release certification evidence
-        run: >-
-          node scripts/ci/release-certification-evidence.mjs aggregate
-          --directory artifacts
-          --output artifacts/RELEASE-CERTIFICATION.json
-          --expected-sha "$GITHUB_SHA"
-
-      - name: Generate checksums
-        working-directory: artifacts
-        run: |
-          shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb)
-          if [ ${#files[@]} -gt 0 ]; then
-            sha256sum "${files[@]}" > SHA256SUMS.txt
-            cat SHA256SUMS.txt
-          fi
-
-      # Delete the previous nightly release and its tag so the new one is a clean rolling snapshot
-      # pointing at the current commit (otherwise the tag would lag behind main).
-      - name: Reset nightly release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete nightly --cleanup-tag --yes || true
-
-      - name: Publish nightly pre-release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
-        with:
-          tag_name: nightly
-          target_commitish: ${{ github.sha }}
-          name: Nightly (latest main)
-          prerelease: true
-          body: |
-            Automated build of the latest `main` (${{ github.sha }}).
-
-            ⚠️ Unstable pre-release. macOS builds are ad-hoc signed (not notarized): on first launch
-            right-click → Open, or run `xattr -dr com.apple.quarantine "<app>"`.
-          files: |
-            artifacts/*.dmg
-            artifacts/*.zip
-            artifacts/*.exe
-            artifacts/*.AppImage
-            artifacts/*.deb
-            artifacts/SHA256SUMS.txt
-            artifacts/RELEASE-CERTIFICATION.json
+  # A manual Nightly is the focused, no-side-effect validation path: it uses the exact build and
+  # publish preparation jobs, but stops before changing the rolling tag or GitHub Release.
+  publish-dry-run:
+    needs: [plan, build]
+    if: github.event_name == 'workflow_dispatch' && needs.build.result == 'success'
+    uses: ./.github/workflows/nightly-publish.yml
+    secrets: inherit
+    with:
+      dry_run: true
+      source_run_id: ${{ github.run_id }}
+      source_sha: ${{ github.sha }}

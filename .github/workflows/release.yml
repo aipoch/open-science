@@ -60,129 +60,6 @@ jobs:
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
-  # The reusable build already hard-gates a fresh NSIS install/start/uninstall. On stable tags, also
-  # install the latest published stable version, prove electron-updater uses a differential Range
-  # download, upgrade over a live process, roll back, and restart current. Runs beside notarization.
-  windows-upgrade-smoke:
-    needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-latest
-    # Windows packages are intentionally unsigned until a certificate is provisioned. This historical
-    # upgrade drill is timing-sensitive on hosted runners, so keep its failure visible without blocking
-    # the independently certified packages and macOS notarization from being published.
-    continue-on-error: true
-    timeout-minutes: 40
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Download current Windows installer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows-x64
-          path: current
-
-      - name: Download previous stable Windows installer
-        id: previous
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CURRENT_TAG: ${{ github.ref_name }}
-        run: |
-          New-Item -ItemType Directory -Force previous | Out-Null
-          $releases = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $tag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $env:CURRENT_TAG } | Select-Object -First 1).tagName
-          if ([string]::IsNullOrWhiteSpace($tag)) {
-            "available=false" >> $env:GITHUB_OUTPUT
-            "reason=no-previous-stable-release" >> $env:GITHUB_OUTPUT
-            Write-Host "No previous stable release is available; fresh-install smoke already passed."
-            exit 0
-          }
-          gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "available=true" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-
-      - name: Certify Windows electron-updater differential update
-        id: updater
-        if: steps.previous.outputs.available == 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          node scripts/windows-updater-certification.mjs `
-            --current-dir current `
-            --previous-dir previous `
-            --output windows-updater-observation.json 2>&1 |
-            Tee-Object -FilePath windows-updater-certification.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Drill Windows silent upgrade, process lock, rollback, and restart
-        id: installer
-        if: always() && steps.previous.outputs.available == 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          node scripts/windows-installer-smoke.mjs `
-            --installer-dir current `
-            --previous-installer-dir previous 2>&1 |
-            Tee-Object -FilePath windows-installer-certification.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Record Windows update-drill evidence
-        if: always()
-        shell: pwsh
-        run: |
-          $available = '${{ steps.previous.outputs.available }}' -eq 'true'
-          $passed = '${{ steps.updater.outcome }}' -eq 'success' -and '${{ steps.installer.outcome }}' -eq 'success'
-          $status = if (-not $available) { 'not-applicable' } elseif ($passed) { 'passed' } else { 'failed' }
-          $arguments = @(
-            'scripts/ci/release-certification-evidence.mjs', 'write-windows-update',
-            '--output', 'certification-windows-update.json',
-            '--current-tag', '${{ github.ref_name }}',
-            '--status', $status
-          )
-          if ($available) {
-            $arguments += @('--previous-tag', '${{ steps.previous.outputs.tag }}')
-            if (Test-Path 'windows-updater-observation.json') {
-              $arguments += @('--updater-observation', 'windows-updater-observation.json')
-            }
-            if (-not $passed) {
-              $arguments += @('--reason', 'updater=${{ steps.updater.outcome }},installer=${{ steps.installer.outcome }}')
-            }
-          } else {
-            $arguments += @('--reason', '${{ steps.previous.outputs.reason }}')
-          }
-          & node @arguments
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Upload Windows update-drill evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: windows-update-certification
-          retention-days: 1
-          path: |
-            certification-windows-update.json
-            windows-*-certification.log
-          if-no-files-found: error
-
-      - name: Report Windows update-drill outcome
-        if: >-
-          always() && steps.previous.outputs.available == 'true' &&
-          (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
-        run: exit 1
-
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
@@ -273,3 +150,14 @@ jobs:
             artifacts/latest-linux.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
+
+      # The historical upgrade drill consumes the published installer and reports independently.
+      # Dispatch failure is advisory too: it must not invalidate assets already certified above.
+      - name: Dispatch advisory Windows upgrade smoke
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches"
+          --field event_type=windows-upgrade-smoke
+          --field "client_payload[tag]=$GITHUB_REF_NAME"

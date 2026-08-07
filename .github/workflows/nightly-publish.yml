@@ -1,0 +1,137 @@
+name: Nightly Publish
+
+# Scheduled Nightly completion enters the real, cross-run publish path. workflow_call is the same-run
+# dry-run path used by a manual Nightly so artifact preparation can be tested without side effects.
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        required: true
+      source_run_id:
+        type: string
+        required: true
+      source_sha:
+        type: string
+        required: true
+  workflow_run:
+    workflows:
+      - Nightly
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: write
+
+# Publication is a short serialized phase. Never cancel it between deleting and recreating the
+# rolling release; a newer successful build waits its turn instead.
+concurrency:
+  group: nightly-publish
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: >-
+      inputs.dry_run ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'schedule' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.decide.outputs.should_publish }}
+    env:
+      DRY_RUN: ${{ inputs.dry_run || false }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check for an unpublished build
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          published=$(gh api "repos/$GITHUB_REPOSITORY/commits/nightly" --jq .sha 2>/dev/null || true)
+          if [ "$DRY_RUN" = "true" ] || [ "$published" != "$SOURCE_SHA" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "Nightly already points at $SOURCE_SHA; skipping duplicate publication."
+          fi
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ inputs.dry_run || false }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          path: artifacts
+          merge-multiple: true
+
+      - name: Aggregate release certification evidence
+        run: >-
+          node scripts/ci/release-certification-evidence.mjs aggregate
+          --directory artifacts
+          --output artifacts/RELEASE-CERTIFICATION.json
+          --expected-sha "$SOURCE_SHA"
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          files=(*.dmg *.zip *.exe *.AppImage *.deb)
+          if [ ${#files[@]} -gt 0 ]; then
+            sha256sum "${files[@]}" > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          fi
+
+      - name: Upload prepared nightly dry-run
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nightly-publish-dry-run
+          retention-days: 1
+          path: |
+            artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json
+          if-no-files-found: error
+
+      - name: Reset nightly release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete nightly --cleanup-tag --yes || true
+
+      - name: Publish nightly pre-release
+        if: env.DRY_RUN != 'true'
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: nightly
+          target_commitish: ${{ env.SOURCE_SHA }}
+          name: Nightly (latest main)
+          prerelease: true
+          body: |
+            Automated build of the latest `main` (${{ env.SOURCE_SHA }}).
+
+            Warning: unstable pre-release. macOS builds are ad-hoc signed (not notarized): on first
+            launch, right-click -> Open, or run `xattr -dr com.apple.quarantine "<app>"`.
+          files: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/SHA256SUMS.txt
+            artifacts/RELEASE-CERTIFICATION.json

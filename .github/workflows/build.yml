@@ -31,9 +31,9 @@ on:
         type: boolean
         default: false
 jobs:
-  # Gate every packaged build on the quality suite so nightly (push to main) and release (tag) can
-  # never publish installers that were never tested. Runs once on Apple Silicon to match the
-  # release/verification environment (see pr-check.yml for why macOS). The build matrix `needs` this.
+  # Run the quality suite once on Apple Silicon beside the native package matrix. The reusable
+  # workflow still fails when this job fails, so every caller's publish boundary remains fail closed
+  # without putting the full verification duration on the matrix's critical path.
   verify:
     name: Verify (lint + typecheck + test + package)
     # Skipped by the notarization dry-run (skip_verify), which only needs a signed mac build.
@@ -100,10 +100,10 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
-    needs: [verify, setup]
-    # Run once the matrix is resolved. Tolerate a skipped verify (skip_verify dry-run) but still
-    # block on a real verify failure — matching the fail-closed behavior when verify runs.
-    if: ${{ always() && needs.setup.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    needs: setup
+    # Start as soon as the matrix is resolved. The sibling verify job remains part of this reusable
+    # workflow's result, so release/nightly callers cannot reach publish if verification fails.
+    if: ${{ needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
       # Don't let one platform's failure cancel the others.
