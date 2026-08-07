@@ -162,6 +162,27 @@ describe('release certification evidence', () => {
         environment
       })
     ).rejects.toThrow(/approved reason/)
+    await expect(
+      writeWindowsUpdateEvidence({
+        argv: [
+          '--output',
+          output,
+          '--current-tag',
+          'v0.11.0',
+          '--previous-tag',
+          'v0.10.0',
+          '--status',
+          'failed',
+          '--reason',
+          'updater=failure,installer=success'
+        ],
+        environment
+      })
+    ).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'updater=failure,installer=success',
+      checks: { authenticode: 'not-required', electronUpdater: 'failed' }
+    })
   })
 
   it('fails closed on missing platforms, mismatched SHA, or incomplete stable evidence', async () => {

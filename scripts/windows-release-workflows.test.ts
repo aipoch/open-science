@@ -95,6 +95,8 @@ describe('post-merge Windows validation', () => {
       CSC_LINK: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}",
       CSC_KEY_PASSWORD: "${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}"
     })
+    expect(packageStep.run).toContain('unsigned_args=(-c.dmg.sign=false)')
+    expect(packageStep.run).not.toContain('publisherName')
   })
 
   it('runs cross-platform P0 and visual against packaged apps before recording evidence', () => {
@@ -193,12 +195,13 @@ describe('post-merge Windows validation', () => {
     expect(commands.some((command) => command.startsWith('npm run typecheck'))).toBe(false)
   })
 
-  it('runs differential updater and installer compatibility drills before publishing', () => {
+  it('records unsigned Windows update diagnostics without blocking publishing', () => {
     const release = readWorkflow('release.yml')
     const upgrade = release.jobs['windows-upgrade-smoke']
 
     expect(upgrade['runs-on']).toBe('windows-latest')
     expect(upgrade.needs).toBe('build')
+    expect(upgrade['continue-on-error']).toBe(true)
     expect(upgrade['timeout-minutes']).toBe(40)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
@@ -219,21 +222,26 @@ describe('post-merge Windows validation', () => {
     expect(previous.run).toContain('$_.tagName -ne $env:CURRENT_TAG')
     expect(findStep(upgrade, 'Certify Windows electron-updater differential update')).toMatchObject(
       {
+        id: 'updater',
         if: "steps.previous.outputs.available == 'true'",
-        run: expect.stringContaining('scripts/windows-updater-certification.mjs')
+        'continue-on-error': true,
+        run: expect.stringContaining('windows-updater-certification.log')
       }
     )
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
     ).toContain('--previous-installer-dir previous')
+    expect(
+      findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart')
+    ).toMatchObject({ id: 'installer', 'continue-on-error': true })
     expect(release.jobs['windows-full-test']).toBeUndefined()
-    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac', 'windows-upgrade-smoke'])
+    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--require-signed-windows')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
-    ).toContain('--require-windows-update')
+    ).not.toContain('--require-windows-update')
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--windows-full-suite')
@@ -243,6 +251,16 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       '--updater-observation'
     )
+    expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
+      "elseif ($passed) { 'passed' } else { 'failed' }"
+    )
+    expect(findStep(upgrade, 'Upload Windows update-drill evidence')).toMatchObject({
+      if: 'always()',
+      with: expect.objectContaining({
+        path: expect.stringContaining('windows-*-certification.log')
+      })
+    })
+    expect(findStep(upgrade, 'Report Windows update-drill outcome').run).toBe('exit 1')
     expect(release.jobs.mirror).toBeUndefined()
   })
 

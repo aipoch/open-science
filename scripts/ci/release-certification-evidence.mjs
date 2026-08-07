@@ -80,10 +80,10 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   const status = argumentValue(argv, '--status')
   const reason = argumentValue(argv, '--reason')
   const updaterObservationPath = argumentValue(argv, '--updater-observation')
-  if (!outputArgument || !currentTag || !['passed', 'not-applicable'].includes(status)) {
+  if (!outputArgument || !currentTag || !['passed', 'failed', 'not-applicable'].includes(status)) {
     throw new Error(
       'Usage: --output <path> --current-tag <tag> [--previous-tag <tag>] ' +
-        '--status <passed|not-applicable> [--updater-observation <path>]'
+        '--status <passed|failed|not-applicable> [--updater-observation <path>]'
     )
   }
   if (status === 'passed' && !previousTag) {
@@ -95,11 +95,14 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   if (status === 'not-applicable' && reason !== 'no-previous-stable-release') {
     throw new Error('A non-applicable Windows update drill requires an approved reason.')
   }
+  if (status === 'failed' && (!previousTag || !reason)) {
+    throw new Error('A failed Windows update drill requires the previous tag and failure reason.')
+  }
   if (!environment.GITHUB_SHA || !environment.GITHUB_RUN_ID || !environment.GITHUB_RUN_ATTEMPT) {
     throw new Error('Windows update evidence requires GitHub run identity variables.')
   }
 
-  const check = status === 'passed' ? 'passed' : 'not-applicable'
+  const check = status === 'passed' ? 'passed' : status === 'failed' ? 'failed' : 'not-applicable'
   let updater
   if (updaterObservationPath) {
     updater = JSON.parse(await readFile(resolve(updaterObservationPath), 'utf8'))
@@ -149,7 +152,7 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
       restart: check
     },
     ...(updater ? { updater } : {}),
-    ...(status === 'not-applicable' ? { reason } : {})
+    ...(status !== 'passed' ? { reason } : {})
   }
   await writeFile(resolve(outputArgument), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8')
   return evidence

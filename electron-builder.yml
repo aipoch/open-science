@@ -127,6 +127,9 @@ dmg:
   # The DMG volume icon does not consume the app's Icon Composer asset catalog. Keep the existing
   # ICNS dedicated to the mounted disk image instead of electron-builder's generated app fallback.
   icon: build/icon.icns
+  # Stable macOS releases require a primary signature on the outer DMG in addition to the signed app
+  # and notarization ticket. Nightly and certificate-free builds override this to false in build.yml.
+  sign: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
 linux:
   # Keep the installed launcher filename aligned with Electron's Linux app_id/WM_CLASS so desktop

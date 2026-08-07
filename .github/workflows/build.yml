@@ -232,7 +232,13 @@ jobs:
             # signing entirely; the afterPack hook (build/adhoc-sign.cjs) ad-hoc signs instead.
             unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never
+            unsigned_args=()
+            if [ "${{ matrix.platform }}" = "mac" ]; then
+              # electron-builder.yml signs stable DMGs so the outer container passes Gatekeeper's
+              # primary-signature assessment. Certificate-free and nightly builds must stay ad-hoc.
+              unsigned_args=(-c.dmg.sign=false)
+            fi
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
           fi
 
       - name: Resolve packaged Electron executable
