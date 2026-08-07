@@ -53,7 +53,7 @@ describe('docToText', () => {
     expect(docToText(doc)).toBe('compare @fig1.png and @clinical trial03.pdf')
   })
 
-  it('renders linked-folder artifact nodes as @path:<relativePath>', () => {
+  it('renders linked-folder artifact nodes as @<relativePath>', () => {
     const doc: ComposerDoc = {
       nodes: [
         { type: 'text', text: 'analyze ' },
@@ -67,7 +67,7 @@ describe('docToText', () => {
         }
       ]
     }
-    expect(docToText(doc)).toBe('analyze @path:data/study.csv')
+    expect(docToText(doc)).toBe('analyze @data/study.csv')
   })
 
   it('returns an empty string for the empty doc', () => {
@@ -373,7 +373,7 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
-  it('renders a linked-folder chip as a dark-gray @path: pill and still round-trips the plain name', () => {
+  it('renders a linked-folder chip as a dark-gray @ pill and still round-trips the plain name', () => {
     const doc: ComposerDoc = {
       nodes: [
         {
@@ -394,9 +394,9 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(chip?.className).toContain('bg-path-chip')
     expect(chip?.className).toContain('text-path-chip-foreground')
     expect(chip?.className).not.toContain('bg-mention-chip')
-    expect(chip?.textContent).toBe('@path:data/study.csv')
-    expect(chip?.getAttribute('title')).toBe('@path:data/study.csv')
-    // The `@path:` label must not leak into the doc: domToDoc recovers the name from the stored
+    expect(chip?.textContent).toBe('@data/study.csv')
+    expect(chip?.getAttribute('title')).toBe('@data/study.csv')
+    // The `@` label must not leak into the doc: domToDoc recovers the name from the stored
     // filename attribute, not from the visible label.
     expect(chip?.getAttribute('data-mention-filename')).toBe('study.csv')
     expect(domToDoc(root)).toEqual(doc)

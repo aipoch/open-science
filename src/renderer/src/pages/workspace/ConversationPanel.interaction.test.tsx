@@ -1101,7 +1101,7 @@ describe('ConversationPanel Your files menu', () => {
     })
   })
 
-  it('renders a linked-folder draft chip as a dark-gray @path: pill', () => {
+  it('renders a linked-folder draft chip as a dark-gray @ pill', () => {
     const draftDoc: ComposerDoc = {
       nodes: [
         { type: 'text', text: 'analyze ' },
@@ -1120,7 +1120,7 @@ describe('ConversationPanel Your files menu', () => {
     const chip = container.querySelector('[data-mention-source="linked-folder"]')
     expect(chip?.className).toContain('bg-path-chip')
     expect(chip?.className).toContain('text-path-chip-foreground')
-    expect(chip?.textContent).toBe('@path:data/study.csv')
+    expect(chip?.textContent).toBe('@data/study.csv')
   })
 })
 

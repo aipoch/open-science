@@ -190,10 +190,10 @@ describe('WorkspaceMessageItem mention pills', () => {
     })
   })
 
-  it('renders a linked-folder mention as a dark-gray @path: pill over the relative path', () => {
+  it('renders a linked-folder mention as a dark-gray @ pill over the relative path', () => {
     const onPreviewMentionArtifact = vi.fn()
     const linkedMessage = createMessage({
-      content: 'analyze @path:data/study.csv',
+      content: 'analyze @data/study.csv',
       parts: [
         { type: 'text', text: 'analyze ' },
         {
@@ -222,8 +222,8 @@ describe('WorkspaceMessageItem mention pills', () => {
     const pill = container.querySelector('[aria-label="Preview study.csv"]')
     expect(pill?.className).toContain('bg-path-chip')
     expect(pill?.className).toContain('text-path-chip-foreground')
-    expect(pill?.textContent).toBe('@path:data/study.csv')
-    expect(pill?.getAttribute('title')).toBe('@path:data/study.csv')
+    expect(pill?.textContent).toBe('@data/study.csv')
+    expect(pill?.getAttribute('title')).toBe('@data/study.csv')
 
     clickButton('Preview study.csv')
     expect(onPreviewMentionArtifact).toHaveBeenCalledWith({

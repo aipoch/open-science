@@ -25,11 +25,11 @@ export const MAX_COMPOSER_ARTIFACT_MENTIONS = 10
 export const emptyDoc: ComposerDoc = { nodes: [] }
 
 // Render a single node as its plain-text form: skills as `/<name>`, artifacts as `@<name>`, and
-// linked-folder artifacts as `@path:<relativePath>` so the text form mirrors the chip label.
+// linked-folder artifacts as `@<relativePath>` so the text form mirrors the chip label.
 const nodeToText = (node: ComposerNode): string => {
   if (node.type === 'text') return node.text
   if (node.type === 'skill') return `/${node.name}`
-  if (node.source === 'linked-folder') return `@path:${node.relativePath}`
+  if (node.source === 'linked-folder') return `@${node.relativePath}`
   return `@${node.name}`
 }
 
@@ -227,7 +227,7 @@ export const createSkillChip = (node: { id: string; name: string }): HTMLSpanEle
 // Render an artifact chip span: an atomic, non-editable mention token carrying the path/source
 // needed to round-trip through the DOM and resolve the file on send. Uploads/artifacts use the
 // green mention pill with an `@<name>` label; linked-folder references use the dark-gray path
-// pill with an `@path:<relativePath>` label (the stored filename attribute keeps the plain name,
+// pill with an `@<relativePath>` label (the stored filename attribute keeps the plain name,
 // so domToDoc is unaffected by the label change).
 export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement => {
   const span = document.createElement('span')
@@ -255,10 +255,10 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
       ? 'bg-path-chip text-path-chip-foreground'
       : 'bg-mention-chip text-mention-chip-foreground'
   }`
-  const labelPrefix = linkedFolder ? '@path:' : '@'
+  const labelPrefix = '@'
   // The label truncates the relative path for linked-folder chips, the plain name otherwise.
   const labelSource = linkedFolder ? node.relativePath : node.name
-  // Linked-folder chips tooltip the full `@path:` label; others keep the original bare name.
+  // Linked-folder chips tooltip the full `@` label; others keep the original bare name.
   span.title = linkedFolder ? `${labelPrefix}${labelSource}` : node.name
   const { head, tail, extension } = getExtensionPreservingFileNameParts(labelSource)
   const headSpan = document.createElement('span')
