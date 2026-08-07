@@ -12,35 +12,6 @@ Var perUserDataBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
-!macro traceUpdaterInstaller PHASE
-  Push $R7
-  Push $R8
-  Push $R9
-  StrCpy $R7 "0"
-  ${if} ${isUpdated}
-    StrCpy $R7 "1"
-  ${endif}
-  ReadEnvStr $R9 "OPEN_SCIENCE_INSTALLER_TRACE"
-  ${if} $R9 != ""
-    ClearErrors
-    FileOpen $R8 "$R9" a
-    ${ifNot} ${Errors}
-      FileWrite $R8 "${PHASE}"
-      FileWrite $R8 "|updated=$R7"
-      FileWrite $R8 "|mode=$installMode"
-      FileWrite $R8 "|instdir=$INSTDIR"
-      FileWrite $R8 "|hkcu=$perUserInstallDirCache"
-      FileWrite $R8 "|hklm=$perMachineInstallDirCache"
-      FileWrite $R8 "|code=$R0$\r$\n"
-      FileClose $R8
-    ${endif}
-  ${endif}
-  ClearErrors
-  Pop $R9
-  Pop $R8
-  Pop $R7
-!macroend
-
 # Registry values that identify the same Windows directory may differ only in letter case or a
 # trailing separator. LogicLib's == comparison is already case-insensitive; trim separators here
 # so every later shared-path decision uses one canonical form. Keep drive roots such as C:\ intact.
@@ -203,7 +174,6 @@ FunctionEnd
   Push $perUserInstallDirCache
   Call normalizeRegisteredInstallPath
   Pop $perUserInstallDirCache
-  !insertmacro traceUpdaterInstaller init
 
   # Protect HKCU independently of the mode selected during .onInit: the user can still switch to
   # all-users on the assisted install-mode page, so that early mode is not the uninstall verdict.
@@ -264,13 +234,8 @@ FunctionEnd
   FunctionEnd
 
   Function .onInstFailed
-    !insertmacro traceUpdaterInstaller failed
     !insertmacro restoreAllNestedDataRoots
   FunctionEnd
-!macroend
-
-!macro customInstall
-  !insertmacro traceUpdaterInstaller installed
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
@@ -427,7 +392,6 @@ FunctionEnd
 !macroend
 
 !macro customUnInstallCheck
-  !insertmacro traceUpdaterInstaller post-uninstall
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
   # customInit. Keep registered data outside the install tree through any non-zero-exit recovery:
   # a live old process can recreate OpenScience, and restoring first would make the recovery path
