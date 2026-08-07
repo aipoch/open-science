@@ -40,6 +40,13 @@ on:
         required: false
         type: boolean
         default: true
+      certified_build:
+        description: >-
+          Preserve release-certification evidence from a verified build. False for the manual
+          notarization dry run, whose build intentionally skips verification.
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
@@ -236,12 +243,17 @@ jobs:
       # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
       # platform certification signal already established by the build job.
       - name: Refresh macOS certification evidence
-        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          inputs.from_run &&
+          inputs.certified_build
         run: >-
           node scripts/ci/release-certification-evidence.mjs write
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
+          --electron-p0 "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
+          --visual-regression "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
           --package-smoke passed
           --authenticode not-applicable
 

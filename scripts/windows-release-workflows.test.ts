@@ -116,7 +116,7 @@ describe('post-merge Windows validation', () => {
     expect(packageStep.run).not.toContain('publisherName')
   })
 
-  it('runs cross-platform P0 and visual against packaged apps before recording evidence', () => {
+  it('runs one canonical packaged P0 and visual gate plus native package smoke on every target', () => {
     const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
     const job = readWorkflow('build.yml').jobs.build
     const names = job.steps?.map(({ name }) => name) ?? []
@@ -127,6 +127,7 @@ describe('post-merge Windows validation', () => {
     const linux = findStep(job, 'Smoke test Linux packages')
     const evidence = findStep(job, 'Record platform certification evidence')
     const notarize = readWorkflow('notarize-mac.yml').jobs.notarize
+    const notarizeDryRun = readWorkflow('notarize-dryrun.yml').jobs.notarize
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
     const refreshedMacosEvidence = findStep(notarize, 'Refresh macOS certification evidence')
 
@@ -143,16 +144,25 @@ describe('post-merge Windows validation', () => {
     expect(visual.env?.OPEN_SCIENCE_E2E_EXECUTABLE).toBe(
       '${{ steps.packaged_app.outputs.executable }}'
     )
-    expect(p0.run).toContain('npm run test:e2e:p0')
-    expect(visual.run).toContain('npm run test:e2e:visual')
+    expect(p0.if).toContain("matrix.name == 'macos-arm64'")
+    expect(visual.if).toContain("matrix.name == 'macos-arm64'")
+    expect(p0.run).toBe('npm run test:e2e:p0')
+    expect(visual.run).toBe('npm run test:e2e:visual')
     expect(macos.if).toBe("${{ matrix.platform == 'mac' && !inputs.skip_verify }}")
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
     expect(evidence.run).toContain('package_smoke=passed')
+    expect(evidence.run).toContain('electron_p0=not-applicable')
+    expect(evidence.run).toContain('visual_regression=not-applicable')
+    expect(evidence.run).toContain('--electron-p0 "$electron_p0"')
+    expect(evidence.run).toContain('--visual-regression "$visual_regression"')
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
     )
     expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
+    expect(refreshedMacosEvidence.run).toContain("matrix.arch == 'arm64'")
+    expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
+    expect(notarizeDryRun.with?.certified_build).toBe(false)
     expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
       names.indexOf('Smoke test macOS packages')
     )
@@ -187,12 +197,17 @@ describe('post-merge Windows validation', () => {
     }
     expect(evidence.if).toContain("steps.p0.outcome == 'success'")
     expect(evidence.if).toContain("steps.visual.outcome == 'success'")
+    expect(evidence.if).toContain("matrix.name != 'macos-arm64'")
+    expect(evidence.if).toContain("steps.p0.outcome == 'skipped'")
+    expect(evidence.if).toContain("steps.visual.outcome == 'skipped'")
     expect(upload.if).toBe("${{ always() && steps.package.outcome == 'success' }}")
     expect(enforce.if).toBe('${{ !inputs.skip_verify && always() }}')
     expect(enforce.env).toMatchObject({
+      MATRIX_NAME: '${{ matrix.name }}',
       P0_OUTCOME: '${{ steps.p0.outcome }}',
       VISUAL_OUTCOME: '${{ steps.visual.outcome }}'
     })
+    expect(enforce.run).toContain('if [[ "$MATRIX_NAME" == "macos-arm64" ]]')
     expect(enforce.run).toContain('exit "$failed"')
     expect(names.indexOf('Upload build artifacts')).toBeLessThan(
       names.indexOf('Enforce platform certification')

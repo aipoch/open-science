@@ -313,37 +313,33 @@ jobs:
           executable="$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$candidate")"
           echo "executable=$executable" >> "$GITHUB_OUTPUT"
 
-      # Run the release-critical desktop journeys against the packaged Electron executable on every
-      # native target. The same focused specs use the source fixture in PR Gate when owners change.
+      # Run the portable release-critical desktop journeys once against the packaged ARM64 app.
+      # Native installer/package behavior remains hard-gated below for every published target.
       - name: Run P0 Electron certification
         id: p0
-        if: ${{ !inputs.skip_verify && steps.packaged_app.outcome == 'success' }}
+        if: >-
+          ${{ !inputs.skip_verify &&
+              matrix.name == 'macos-arm64' &&
+              steps.packaged_app.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: |
-          if [ "${{ matrix.platform }}" = "linux" ]; then
-            xvfb-run -a npm run test:e2e:p0
-          else
-            npm run test:e2e:p0
-          fi
+        run: npm run test:e2e:p0
 
-      # All platforms compare the same canonical Chromium layout baseline. The spec keeps the strict
-      # macOS budget and a bounded cross-platform antialiasing budget.
+      # Visual behavior uses the same renderer bundle on every package. Keep one canonical hard gate
+      # beside P0 instead of multiplying antialiasing and launch variance across four native runners.
       - name: Run desktop visual regression
         id: visual
-        if: ${{ !inputs.skip_verify && steps.packaged_app.outcome == 'success' }}
+        if: >-
+          ${{ !inputs.skip_verify &&
+              matrix.name == 'macos-arm64' &&
+              steps.packaged_app.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: |
-          if [ "${{ matrix.platform }}" = "linux" ]; then
-            xvfb-run -a npm run test:e2e:visual
-          else
-            npm run test:e2e:visual
-          fi
+        run: npm run test:e2e:visual
 
       # Exercise both macOS distributables rather than treating the unpacked app launch above as
       # package coverage: mount the DMG, extract the ZIP, verify each bundle, and launch each app.
@@ -383,13 +379,23 @@ jobs:
         if: >-
           ${{ !inputs.skip_verify &&
               steps.packaged_app.outcome == 'success' &&
-              steps.p0.outcome == 'success' &&
-              steps.visual.outcome == 'success' &&
+              ((matrix.name == 'macos-arm64' &&
+                steps.p0.outcome == 'success' &&
+                steps.visual.outcome == 'success') ||
+               (matrix.name != 'macos-arm64' &&
+                steps.p0.outcome == 'skipped' &&
+                steps.visual.outcome == 'skipped')) &&
               ((matrix.platform == 'mac' && steps.macos_smoke.outcome == 'success') ||
                (matrix.platform == 'win' && steps.windows_smoke.outcome == 'success') ||
                (matrix.platform == 'linux' && steps.linux_smoke.outcome == 'success')) }}
         shell: bash
         run: |
+          electron_p0=not-applicable
+          visual_regression=not-applicable
+          if [ "${{ matrix.name }}" = "macos-arm64" ]; then
+            electron_p0=passed
+            visual_regression=passed
+          fi
           package_smoke=passed
           authenticode=not-applicable
           if [ "${{ matrix.platform }}" = "win" ]; then
@@ -399,6 +405,8 @@ jobs:
             --platform "${{ matrix.name }}" \
             --artifact-dir dist \
             --output "dist/certification-${{ matrix.name }}.json" \
+            --electron-p0 "$electron_p0" \
+            --visual-regression "$visual_regression" \
             --package-smoke "$package_smoke" \
             --authenticode "$authenticode"
 
@@ -427,6 +435,7 @@ jobs:
         env:
           LINUX_SMOKE_OUTCOME: ${{ steps.linux_smoke.outcome }}
           MACOS_SMOKE_OUTCOME: ${{ steps.macos_smoke.outcome }}
+          MATRIX_NAME: ${{ matrix.name }}
           P0_OUTCOME: ${{ steps.p0.outcome }}
           PACKAGED_APP_OUTCOME: ${{ steps.packaged_app.outcome }}
           PLATFORM: ${{ matrix.platform }}
@@ -442,8 +451,10 @@ jobs:
             fi
           }
           check packaged_app "$PACKAGED_APP_OUTCOME"
-          check p0 "$P0_OUTCOME"
-          check visual "$VISUAL_OUTCOME"
+          if [[ "$MATRIX_NAME" == "macos-arm64" ]]; then
+            check p0 "$P0_OUTCOME"
+            check visual "$VISUAL_OUTCOME"
+          fi
           case "$PLATFORM" in
             mac) check macos_smoke "$MACOS_SMOKE_OUTCOME" ;;
             win) check windows_smoke "$WINDOWS_SMOKE_OUTCOME" ;;

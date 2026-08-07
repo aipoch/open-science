@@ -41,6 +41,10 @@ describe('release certification evidence', () => {
         root,
         '--output',
         output,
+        '--electron-p0',
+        'not-applicable',
+        '--visual-regression',
+        'not-applicable',
         '--package-smoke',
         'passed',
         '--authenticode',
@@ -58,7 +62,11 @@ describe('release certification evidence', () => {
     await expect(JSON.parse(await readFile(output, 'utf8'))).toMatchObject({
       platform: 'linux-x64',
       source: { sha: 'abc123', runId: '42', runAttempt: '2' },
-      checks: { electronP0: 'passed', packageSmoke: 'passed' }
+      checks: {
+        electronP0: 'not-applicable',
+        visualRegression: 'not-applicable',
+        packageSmoke: 'passed'
+      }
     })
   })
 
@@ -194,8 +202,8 @@ describe('release certification evidence', () => {
       platform,
       source: { sha },
       checks: {
-        electronP0: 'passed',
-        visualRegression: 'passed',
+        electronP0: platform === 'macos-arm64' ? 'passed' : 'not-applicable',
+        visualRegression: platform === 'macos-arm64' ? 'passed' : 'not-applicable',
         packageSmoke: 'passed',
         authenticode: platform === 'windows-x64' ? 'not-required' : 'not-applicable'
       },
@@ -220,6 +228,25 @@ describe('release certification evidence', () => {
       sourceSha: 'abc123',
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
     })
+
+    await writeFile(
+      join(root, 'certification-windows-x64.json'),
+      JSON.stringify({
+        ...recordFor('windows-x64'),
+        checks: {
+          ...recordFor('windows-x64').checks,
+          electronP0: 'passed',
+          visualRegression: 'passed'
+        }
+      })
+    )
+    await expect(aggregateEvidence({ argv: args })).rejects.toThrow(
+      /Invalid release certification evidence for windows-x64/
+    )
+    await writeFile(
+      join(root, 'certification-windows-x64.json'),
+      JSON.stringify(recordFor('windows-x64'))
+    )
 
     await writeFile(
       join(root, 'certification-macos-arm64.json'),

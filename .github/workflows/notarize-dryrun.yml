@@ -37,4 +37,6 @@ jobs:
   notarize:
     needs: build
     uses: ./.github/workflows/notarize-mac.yml
+    with:
+      certified_build: false
     secrets: inherit
