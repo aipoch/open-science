@@ -348,6 +348,39 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('does not persist a runtime context patch when its commit precondition fails', async () => {
+    const durable = createSession({
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn()
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 2,
+        patch: { plan: createRuntimePlan({ approval: 'approved' }) },
+        beforePersist: () => {
+          throw new Error('interaction superseded')
+        }
+      })
+    ).rejects.toThrow('interaction superseded')
+
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(durable.runtimeContext).toEqual({
+      version: 1,
+      revision: 2,
+      plan: createRuntimePlan()
+    })
+  })
+
   it('rejects stale and duplicate runtime context patches without overwriting durable authority', async () => {
     let durable = createSession({
       runtimeContext: { version: 1, revision: 4, plan: createRuntimePlan() }

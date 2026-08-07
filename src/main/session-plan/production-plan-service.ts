@@ -39,13 +39,21 @@ const createProductionPlanService = ({
     },
     readRuntimeContext: (projectId, sessionId) =>
       sessions.readSessionRuntimeContext(projectId, sessionId),
-    patchRuntimeContext: ({ projectId, sessionId, expectedRevision, plan, sessionStatus }) =>
+    patchRuntimeContext: ({
+      projectId,
+      sessionId,
+      expectedRevision,
+      plan,
+      sessionStatus,
+      beforePersist
+    }) =>
       sessions.patchSessionRuntimeContext({
         projectId,
         sessionId,
         expectedRevision,
         patch: { plan },
-        sessionStatus
+        sessionStatus,
+        ...(beforePersist ? { beforePersist } : {})
       }),
     persistUserMessage: (input) =>
       sessions.appendUserMessageToInteraction({

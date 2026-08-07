@@ -91,8 +91,9 @@ const setup = (): PlanServiceHarness => {
       checksum: createHash('sha256').update(bytes).digest('hex')
     })),
     readRuntimeContext: vi.fn(async () => context),
-    patchRuntimeContext: vi.fn(async ({ expectedRevision, plan, sessionStatus }) => {
+    patchRuntimeContext: vi.fn(async ({ expectedRevision, plan, sessionStatus, beforePersist }) => {
       if (expectedRevision !== context.revision) throw new Error('revision conflict')
+      beforePersist?.()
       context = {
         version: 1,
         revision: context.revision + 1,
@@ -279,7 +280,10 @@ describe('PlanService', () => {
       })
     ).rejects.toMatchObject({ code: 'interaction-mismatch' })
 
-    expect(dependencies.patchRuntimeContext).not.toHaveBeenCalled()
+    expect(dependencies.patchRuntimeContext).toHaveBeenCalledOnce()
+    expect(dependencies.patchRuntimeContext).toHaveBeenCalledWith(
+      expect.objectContaining({ beforePersist: expect.any(Function) })
+    )
     expect(context().plan?.approval).toBe('pending')
   })
 

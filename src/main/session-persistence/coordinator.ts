@@ -165,6 +165,7 @@ type PatchSessionRuntimeContextCommand = Readonly<{
   expectedRevision: number
   patch: SessionRuntimeContextPatch
   sessionStatus?: PersistedSessionStatus
+  beforePersist?: () => void
 }>
 
 type AppendUserMessageToInteractionCommand = Readonly<{
@@ -773,6 +774,7 @@ class SessionPersistenceCoordinator {
       if (current.revision !== expectedRevision) {
         throw new SessionRuntimeContextRevisionConflictError(expectedRevision, current.revision)
       }
+      command.beforePersist?.()
 
       const candidate: Record<string, unknown> = { ...current }
       for (const [owner, value] of Object.entries(patch)) {
