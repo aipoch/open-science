@@ -58,13 +58,13 @@ describe('pull request change classification', () => {
           .split('\n')
           .map((line) => line.split('=', 2))
       )
-      expect(JSON.parse(outputs.lanes)).toContain('e2e_workspace_windows')
+      expect(JSON.parse(outputs.lanes)).toContain('e2e_workspace_macos')
       expect(JSON.parse(outputs.plan).mode).toBe('selective')
       expect(readFileSync(summary, 'utf8')).toContain(
         'src/shared/acp.ts -&gt; shared_contract -&gt; preload_adapter'
       )
       expect(readFileSync(summary, 'utf8')).toContain(
-        'Execution bundles: policy, static, unit, coverage_macos, windows_core, macos_e2e, windows_e2e'
+        'Execution bundles: policy, static, unit, macos_e2e'
       )
     } finally {
       rmSync(root, { force: true, recursive: true })
@@ -96,12 +96,10 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_macos',
-        'e2e_workspace_windows'
+        'e2e_workspace_macos'
       ])
     )
     expect(plan.reasonChains).toContain(
@@ -119,14 +117,13 @@ describe('pull request change classification', () => {
         'lint',
         'typecheck_node',
         'typecheck_web',
-        'coverage_macos',
+        'unit_macos',
         'windows_runtime',
         'e2e_functional_macos',
         'e2e_functional_windows',
         'e2e_workspace_macos',
         'e2e_workspace_windows',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
         'e2e_visual_macos'
       ])
     )
@@ -134,7 +131,6 @@ describe('pull request change classification', () => {
       'policy',
       'static',
       'unit',
-      'coverage_macos',
       'windows_core',
       'macos_e2e',
       'windows_e2e'
@@ -276,18 +272,11 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_linux',
-        'coverage_macos',
-        'windows_runtime',
-        'windows_path',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
         'e2e_workspace_macos',
-        'e2e_workspace_windows',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
         'e2e_visual_macos'
       ])
     )
@@ -309,14 +298,10 @@ describe('pull request change classification', () => {
         'typecheck_node',
         'typecheck_web',
         'interface_contracts',
-        'unit_linux',
-        'coverage_macos',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_macos',
-        'e2e_workspace_windows'
+        'e2e_workspace_macos'
       ])
     )
     expect(plan.lanes).not.toContain('e2e_visual_macos')
@@ -365,14 +350,10 @@ describe('pull request change classification', () => {
         'format',
         'lint',
         'typecheck_web',
-        'unit_linux',
-        'coverage_macos',
-        'unit_renderer',
+        'unit_macos',
         'build',
         'e2e_functional_macos',
-        'e2e_functional_windows',
         'e2e_accessibility_macos',
-        'e2e_accessibility_windows',
         'e2e_visual_macos'
       ])
     )
@@ -385,9 +366,7 @@ describe('pull request change classification', () => {
       { path: 'src/renderer/src/stores/session.ts', status: 'modified' }
     ])
 
-    expect(plan.lanes).toEqual(
-      expect.arrayContaining(['e2e_workspace_macos', 'e2e_workspace_windows'])
-    )
+    expect(plan.lanes).toEqual(expect.arrayContaining(['e2e_workspace_macos']))
     expect(plan.reasonChains).toContain(
       'src/renderer/src/stores/session.ts -> renderer_state -> e2e_workspace'
     )
@@ -410,10 +389,10 @@ describe('pull request change classification', () => {
       'typecheck_node',
       'typecheck_web',
       'interface_contracts',
-      'coverage_macos',
+      'unit_macos',
       'build'
     ])
-    expect(plan.bundles).toEqual(['policy', 'static', 'coverage_macos', 'macos_e2e'])
+    expect(plan.bundles).toEqual(['policy', 'static', 'unit', 'macos_e2e'])
   })
 
   it('adds Windows core back when a Preload platform-risk overlay matches', () => {
@@ -423,7 +402,7 @@ describe('pull request change classification', () => {
     expect(plan.roots).toEqual(expect.arrayContaining(['preload_contract', 'windows_sensitive']))
     expect(plan.lanes).toEqual(expect.arrayContaining(['windows_runtime', 'windows_path']))
     expect(plan.bundles).toContain('windows_core')
-    expect(plan.bundles).not.toContain('windows_e2e')
+    expect(plan.bundles).toContain('windows_e2e')
   })
 
   it('keeps CLI and SDK changes out of Electron E2E', () => {
@@ -434,7 +413,7 @@ describe('pull request change classification', () => {
     expect(plan.lanes).not.toContain('e2e_functional_macos')
   })
 
-  it('uses the broader impact of both paths for a rename', () => {
+  it('fails closed when a source rename cannot be related from the current import graph', () => {
     const plan = classifyChanges([
       {
         path: 'docs/acp-contract.md',
@@ -443,12 +422,23 @@ describe('pull request change classification', () => {
       }
     ])
 
+    expect(plan.mode).toBe('full')
+    expect(plan.roots).toContain('destructive_change')
+    expect(plan.reasonChains).toContain('src/shared/acp.ts -> destructive change -> full')
+  })
+
+  it('keeps documentation-only renames on the minimal documentation boundary', () => {
+    const plan = classifyChanges([
+      {
+        path: 'docs/current.md',
+        previousPath: 'docs/legacy.md',
+        status: 'renamed'
+      }
+    ])
+
     expect(plan.mode).toBe('selective')
-    expect(plan.roots).toEqual(expect.arrayContaining(['documentation', 'shared_contract']))
-    expect(plan.lanes).toContain('e2e_workspace_windows')
-    expect(plan.reasonChains).toContain(
-      'src/shared/acp.ts -> shared_contract -> preload_adapter -> renderer_settings -> e2e_workspace'
-    )
+    expect(plan.lanes).toEqual(['policy', 'docs'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
   })
 
   it.each([
@@ -472,5 +462,48 @@ describe('pull request change classification', () => {
     expect(plan.mode).toBe('selective')
     expect(plan.roots).toContain('ci_integrity_surface')
     expect(plan.lanes).toEqual(['policy'])
+  })
+
+  it('keeps documentation-only changes outside every code and platform lane', () => {
+    const plan = classifyChanges([
+      { path: 'README.md', status: 'modified' },
+      { path: 'docs/architecture.md', status: 'added' }
+    ])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.lanes).toEqual(['policy', 'docs'])
+    expect(plan.bundles).toEqual(['policy', 'static'])
+    expect(plan.lanes).not.toContain('unit_macos')
+    expect(plan.lanes.some((lane) => lane.startsWith('e2e_'))).toBe(false)
+  })
+
+  it('selects one macOS Module-test lane without duplicate coverage or Renderer lanes', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/runtime-service.ts', status: 'modified' }
+    ])
+
+    expect(plan.mode).toBe('selective')
+    expect(plan.lanes).toContain('unit_macos')
+    expect(plan.lanes).not.toContain('unit_linux')
+    expect(plan.lanes).not.toContain('unit_renderer')
+    expect(plan.lanes).not.toContain('coverage_macos')
+    expect(plan.lanes).not.toContain('e2e_functional_windows')
+    expect(plan.lanes).not.toContain('e2e_workspace_windows')
+  })
+
+  it('adds Windows GUI consumers only for a Windows-sensitive source change', () => {
+    const plan = classifyChanges([
+      { path: 'src/main/notebook/windows-shell.ts', status: 'modified' }
+    ])
+
+    expect(plan.lanes).toEqual(
+      expect.arrayContaining([
+        'windows_runtime',
+        'windows_path',
+        'e2e_functional_windows',
+        'e2e_workspace_windows'
+      ])
+    )
+    expect(plan.lanes).not.toContain('e2e_accessibility_windows')
   })
 })

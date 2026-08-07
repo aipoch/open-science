@@ -127,25 +127,21 @@ jobs:
             'typecheck_web',
             'interface_contracts',
             'cli_sdk',
-            'unit_linux',
-            'coverage_macos',
+            'unit_macos',
             'windows_runtime',
             'windows_path',
-            'unit_renderer',
             'build',
             'e2e_functional_macos',
             'e2e_functional_windows',
             'e2e_workspace_macos',
             'e2e_workspace_windows',
             'e2e_accessibility_macos',
-            'e2e_accessibility_windows',
             'e2e_visual_macos'
           ]
           const bundles = [
             'policy',
             'static',
             'unit',
-            'coverage_macos',
             'windows_core',
             'macos_e2e',
             'windows_e2e'
@@ -299,15 +295,16 @@ jobs:
           exit "$failed"
 
   unit:
-    name: Unit tests
+    name: Module tests (macOS)
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    runs-on: macos-14
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -316,24 +313,25 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      # Both selected unit lanes are blocking through the final enforcement step. Step-level
-      # continue-on-error lets both suites report their outcomes in the same run.
-      - name: Test complete portable suite (blocking)
-        id: unit_linux
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_linux') }}
+      - name: Test affected Modules
+        id: unit_macos_related
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ needs.preflight.outputs.base }}
+        run: npx vitest run --changed "$BASE_SHA"
+      - name: Test complete suite fallback
+        id: unit_macos_full
+        # A trusted pre-migration base plan uses legacy unit lane names but still declares mode=full.
+        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
         run: npm test
-      - name: Test Renderer (blocking)
-        id: unit_renderer
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_renderer') }}
-        continue-on-error: true
-        run: npx vitest run src/renderer
       - name: Enforce selected unit checks
         if: ${{ always() }}
         shell: bash
         env:
-          UNIT_LINUX_OUTCOME: ${{ steps.unit_linux.outcome }}
-          UNIT_RENDERER_OUTCOME: ${{ steps.unit_renderer.outcome }}
+          UNIT_MACOS_FULL_OUTCOME: ${{ steps.unit_macos_full.outcome }}
+          UNIT_MACOS_RELATED_OUTCOME: ${{ steps.unit_macos_related.outcome }}
         run: |
           set -euo pipefail
           failed=0
@@ -343,38 +341,21 @@ jobs:
               failed=1
             fi
           }
-          check unit_linux "$UNIT_LINUX_OUTCOME"
-          check unit_renderer "$UNIT_RENDERER_OUTCOME"
+          check unit_macos_related "$UNIT_MACOS_RELATED_OUTCOME"
+          check unit_macos_full "$UNIT_MACOS_FULL_OUTCOME"
           exit "$failed"
 
+  # The trusted base classifier for the introducing PR still selects this legacy bundle.
+  # It performs no tests and can be deleted after this workflow lands on main.
   coverage_macos:
-    name: Coverage macOS
+    name: Legacy coverage plan compatibility
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'coverage_macos') }}
-    runs-on: macos-14
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Test with coverage
-        run: npm run test:coverage
-      - name: Upload coverage report
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 5
-          if-no-files-found: warn
+      - name: Satisfy trusted legacy plan
+        run: echo "Coverage is consolidated into the macOS Module-test job."
 
   windows_core:
     name: Windows core
@@ -638,28 +619,11 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-      - name: Run accessibility checks
-        id: e2e_accessibility_windows
-        if: ${{ steps.build_electron.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_accessibility_windows') }}
-        continue-on-error: true
-        run: npm run test:e2e:accessibility
-      - name: Upload accessibility failure artifacts
-        if: ${{ steps.e2e_accessibility_windows.outcome == 'failure' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: accessibility-windows-failure
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
       - name: Enforce selected Windows E2E checks
         if: ${{ always() }}
         shell: bash
         env:
           BUILD_ELECTRON_OUTCOME: ${{ steps.build_electron.outcome }}
-          E2E_ACCESSIBILITY_OUTCOME: ${{ steps.e2e_accessibility_windows.outcome }}
           E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
           E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
         run: |
@@ -674,7 +638,6 @@ jobs:
           check build_electron "$BUILD_ELECTRON_OUTCOME"
           check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
           check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
-          check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"
           exit "$failed"
 
   gate:

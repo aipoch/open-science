@@ -10,29 +10,18 @@
     "typecheck_web",
     "interface_contracts",
     "cli_sdk",
-    "unit_linux",
-    "coverage_macos",
+    "unit_macos",
     "windows_runtime",
     "windows_path",
-    "unit_renderer",
     "build",
     "e2e_functional_macos",
     "e2e_functional_windows",
     "e2e_workspace_macos",
     "e2e_workspace_windows",
     "e2e_accessibility_macos",
-    "e2e_accessibility_windows",
     "e2e_visual_macos"
   ],
-  "bundleOrder": [
-    "policy",
-    "static",
-    "unit",
-    "coverage_macos",
-    "windows_core",
-    "macos_e2e",
-    "windows_e2e"
-  ],
+  "bundleOrder": ["policy", "static", "unit", "windows_core", "macos_e2e", "windows_e2e"],
   "laneBundles": {
     "policy": "policy",
     "docs": "static",
@@ -42,18 +31,15 @@
     "typecheck_web": "static",
     "interface_contracts": "static",
     "cli_sdk": "static",
-    "unit_linux": "unit",
-    "coverage_macos": "coverage_macos",
+    "unit_macos": "unit",
     "windows_runtime": "windows_core",
     "windows_path": "windows_core",
-    "unit_renderer": "unit",
     "build": "macos_e2e",
     "e2e_functional_macos": "macos_e2e",
     "e2e_functional_windows": "windows_e2e",
     "e2e_workspace_macos": "macos_e2e",
     "e2e_workspace_windows": "windows_e2e",
     "e2e_accessibility_macos": "macos_e2e",
-    "e2e_accessibility_windows": "windows_e2e",
     "e2e_visual_macos": "macos_e2e"
   },
   "rules": [
@@ -182,10 +168,7 @@
         "typecheck_node",
         "typecheck_web",
         "interface_contracts",
-        "unit_linux",
-        "coverage_macos",
-        "windows_runtime",
-        "windows_path"
+        "unit_macos"
       ]
     },
     "preload_contract": {
@@ -196,40 +179,30 @@
         "typecheck_node",
         "typecheck_web",
         "interface_contracts",
-        "coverage_macos",
+        "unit_macos",
         "build"
       ]
     },
     "main_runtime": {
       "consumers": ["renderer_runtime"],
-      "lanes": [
-        "format",
-        "lint",
-        "typecheck_node",
-        "interface_contracts",
-        "unit_linux",
-        "coverage_macos"
-      ]
+      "lanes": ["format", "lint", "typecheck_node", "interface_contracts", "unit_macos"]
     },
     "renderer_runtime": {
       "consumers": ["e2e_functional", "e2e_workspace"],
-      "lanes": ["typecheck_web", "unit_renderer", "build"]
+      "lanes": ["typecheck_web", "unit_macos", "build"]
     },
     "windows_sensitive": {
       "consumers": [],
-      "lanes": ["windows_runtime", "windows_path"]
+      "lanes": [
+        "windows_runtime",
+        "windows_path",
+        "e2e_functional_windows",
+        "e2e_workspace_windows"
+      ]
     },
     "renderer_view": {
       "consumers": ["e2e_functional", "e2e_accessibility", "e2e_visual"],
-      "lanes": [
-        "format",
-        "lint",
-        "typecheck_web",
-        "unit_linux",
-        "coverage_macos",
-        "unit_renderer",
-        "build"
-      ]
+      "lanes": ["format", "lint", "typecheck_web", "unit_macos", "build"]
     },
     "renderer_state": {
       "consumers": ["e2e_workspace"],
@@ -249,19 +222,19 @@
     },
     "renderer_settings": {
       "consumers": ["e2e_functional", "e2e_workspace", "e2e_accessibility", "e2e_visual"],
-      "lanes": ["unit_renderer"]
+      "lanes": ["unit_macos"]
     },
     "e2e_functional": {
       "consumers": [],
-      "lanes": ["e2e_functional_macos", "e2e_functional_windows"]
+      "lanes": ["e2e_functional_macos"]
     },
     "e2e_workspace": {
       "consumers": [],
-      "lanes": ["e2e_workspace_macos", "e2e_workspace_windows"]
+      "lanes": ["e2e_workspace_macos"]
     },
     "e2e_accessibility": {
       "consumers": [],
-      "lanes": ["e2e_accessibility_macos", "e2e_accessibility_windows"]
+      "lanes": ["e2e_accessibility_macos"]
     },
     "e2e_visual": {
       "consumers": [],

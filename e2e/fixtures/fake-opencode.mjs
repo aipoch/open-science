@@ -109,15 +109,31 @@ const verifyNotebookLifecycle = async (sessionId) =>
   })
 
 const createProvenanceArtifact = async (sessionId) => {
-  const execution = await withMcpClient(sessionId, 'open-science-notebook', async (client) =>
-    toolResult(
-      'notebook_execute',
+  const producerRunId = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    const execution = toolResult(
+      'bash_execute',
       await client.callTool({
-        name: 'notebook_execute',
-        arguments: { code: "print('artifact-provenance-e2e')", language: 'python' }
+        name: 'bash_execute',
+        arguments: { command: 'node -e "console.log(\'artifact-provenance-e2e\')"' }
       })
     )
-  )
+    const state = toolResult(
+      'notebook_state',
+      await client.callTool({ name: 'notebook_state', arguments: {} })
+    )
+    const run = state.recentRuns
+      ?.toReversed()
+      .find(
+        (candidate) =>
+          candidate.kernelKind === 'bash' &&
+          candidate.status === 'completed' &&
+          candidate.outputPreview?.includes('artifact-provenance-e2e')
+      )
+    if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
+      throw new Error('The Notebook did not persist the Bash producer run.')
+    }
+    return run.runId
+  })
   const stored = await withMcpClient(sessionId, 'open-science-artifacts', async (client) =>
     toolResult(
       'write_artifact_file',
@@ -128,12 +144,12 @@ const createProvenanceArtifact = async (sessionId) => {
           mimeType: 'text/plain',
           content: 'artifact provenance e2e',
           encoding: 'utf8',
-          producerRunId: execution.runId
+          producerRunId
         }
       })
     )
   )
-  if (!stored.artifact?.version_id || stored.artifact.producer_run_id !== execution.runId) {
+  if (!stored.artifact?.version_id || stored.artifact.producer_run_id !== producerRunId) {
     throw new Error('The artifact Version did not retain its Notebook producer run.')
   }
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`

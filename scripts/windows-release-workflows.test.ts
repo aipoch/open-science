@@ -5,6 +5,7 @@ import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
 type WorkflowStep = {
+  'continue-on-error'?: boolean
   env?: Record<string, string>
   id?: string
   if?: string
@@ -74,7 +75,7 @@ describe('post-merge Windows validation', () => {
     const uploadIndex = job.steps?.findIndex(({ name }) => name === 'Upload build artifacts') ?? -1
     const smoke = findStep(job, 'Smoke test Windows installer')
 
-    expect(smoke.if).toBe("matrix.platform == 'win'")
+    expect(smoke.if).toBe("${{ matrix.platform == 'win' && !inputs.skip_verify }}")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(10)
     expect(buildIndex).toBeGreaterThan(-1)
@@ -144,6 +145,38 @@ describe('post-merge Windows validation', () => {
     )
     expect(notarize.steps?.indexOf(refreshedMacosEvidence)).toBeGreaterThan(
       notarize.steps?.indexOf(finalMacos) ?? -1
+    )
+  })
+
+  it('uploads built packages before enforcing collected certification outcomes', () => {
+    const job = readWorkflow('build.yml').jobs.build
+    const names = job.steps?.map(({ name }) => name) ?? []
+    const packaged = findStep(job, 'Build & package')
+    const p0 = findStep(job, 'Run P0 Electron certification')
+    const visual = findStep(job, 'Run desktop visual regression')
+    const macos = findStep(job, 'Smoke test macOS packages')
+    const windows = findStep(job, 'Smoke test Windows installer')
+    const linux = findStep(job, 'Smoke test Linux packages')
+    const evidence = findStep(job, 'Record platform certification evidence')
+    const upload = findStep(job, 'Upload build artifacts')
+    const enforce = findStep(job, 'Enforce platform certification')
+
+    expect(packaged.id).toBe('package')
+    for (const step of [p0, visual, macos, windows, linux]) {
+      expect(step.id).toBeDefined()
+      expect(step['continue-on-error']).toBe(true)
+    }
+    expect(evidence.if).toContain("steps.p0.outcome == 'success'")
+    expect(evidence.if).toContain("steps.visual.outcome == 'success'")
+    expect(upload.if).toBe("${{ always() && steps.package.outcome == 'success' }}")
+    expect(enforce.if).toBe('${{ !inputs.skip_verify && always() }}')
+    expect(enforce.env).toMatchObject({
+      P0_OUTCOME: '${{ steps.p0.outcome }}',
+      VISUAL_OUTCOME: '${{ steps.visual.outcome }}'
+    })
+    expect(enforce.run).toContain('exit "$failed"')
+    expect(names.indexOf('Upload build artifacts')).toBeLessThan(
+      names.indexOf('Enforce platform certification')
     )
   })
 

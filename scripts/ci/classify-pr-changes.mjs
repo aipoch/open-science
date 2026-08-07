@@ -75,6 +75,7 @@ export function classifyChanges(changes, manifest = defaultManifest) {
   const reasonChains = new Set()
   const roots = new Set()
   let mode = 'selective'
+  const documentationRule = manifest.rules.find((rule) => rule.id === 'documentation')
 
   const selectFullPlan = (root, reason) => {
     mode = 'full'
@@ -93,6 +94,18 @@ export function classifyChanges(changes, manifest = defaultManifest) {
 
   for (const change of changes) {
     const paths = new Set([change.path, change.previousPath].filter(Boolean))
+    const destructivePath = ['deleted', 'renamed', 'type-changed', 'unmerged', 'unknown'].includes(
+      change.status
+    )
+      ? [...paths].find(
+          (path) => !documentationRule?.paths.some((pattern) => matchesPath(path, pattern))
+        )
+      : undefined
+    if (destructivePath) {
+      selectFullPlan('destructive_change', `${destructivePath} -> destructive change -> full`)
+      continue
+    }
+
     for (const path of paths) {
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))

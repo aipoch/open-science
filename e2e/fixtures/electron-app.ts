@@ -37,6 +37,54 @@ type LaunchRoots = {
 
 type ShortcutModifier = 'alt' | 'control' | 'meta' | 'shift'
 
+type ElectronCleanupTarget = {
+  close: () => Promise<void>
+  forceClose: () => void
+}
+
+type ElectronCleanupOptions = {
+  forcedTimeoutMs: number
+  gracefulTimeoutMs: number
+}
+
+const settlesWithin = async (promise: Promise<void>, timeoutMs: number): Promise<boolean> =>
+  new Promise<boolean>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs)
+    promise.then(
+      () => {
+        clearTimeout(timer)
+        resolve(true)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+
+const closeElectronApplicationForCleanup = async (
+  target: ElectronCleanupTarget,
+  { gracefulTimeoutMs, forcedTimeoutMs }: ElectronCleanupOptions
+): Promise<void> => {
+  let closeError: unknown
+  const closing = target.close().catch((error: unknown) => {
+    closeError = error
+  })
+  if (await settlesWithin(closing, gracefulTimeoutMs)) {
+    if (closeError === undefined) return
+    target.forceClose()
+    throw closeError
+  }
+
+  target.forceClose()
+  if (await settlesWithin(closing, forcedTimeoutMs)) {
+    if (closeError !== undefined) throw closeError
+    return
+  }
+
+  throw new Error(`Electron E2E forced close did not finish within ${forcedTimeoutMs}ms.`)
+}
+
 type ElectronApp = {
   readonly page: Page
   completeOnboarding: () => Promise<Page>
@@ -355,7 +403,7 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async dispose(): Promise<void> {
-    await this.close().catch(() => undefined)
+    await this.closeForCleanup().catch(() => undefined)
     await makeTreeWritable(this.testRoot)
     await rm(this.testRoot, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 })
     this.rendererFailures.assertNoFailures()
@@ -384,6 +432,23 @@ class ElectronAppHarness implements ElectronApp {
     this.currentPage = undefined
     await application.close()
   }
+
+  private async closeForCleanup(): Promise<void> {
+    if (!this.application) return
+
+    const application = this.application
+    this.application = undefined
+    this.currentPage = undefined
+    await closeElectronApplicationForCleanup(
+      {
+        close: () => application.close(),
+        forceClose: () => {
+          application.process().kill()
+        }
+      },
+      { gracefulTimeoutMs: 10_000, forcedTimeoutMs: 5_000 }
+    )
+  }
 }
 
 const test = base.extend<{ app: ElectronApp }>({
@@ -400,5 +465,5 @@ const test = base.extend<{ app: ElectronApp }>({
   }
 })
 
-export { electronLaunchTarget, launchEnvironment, test }
+export { closeElectronApplicationForCleanup, electronLaunchTarget, launchEnvironment, test }
 export type { ElectronApp }

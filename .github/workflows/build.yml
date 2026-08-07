@@ -186,6 +186,7 @@ jobs:
       # Gatekeeper shows the bypassable "unidentified developer" prompt instead of "damaged". Linux
       # has no signing concept. All secrets are optional — the build works with none set.
       - name: Build & package
+        id: package
         shell: bash
         env:
           # Windows remains unsigned until a code-signing certificate is provisioned.
@@ -229,6 +230,7 @@ jobs:
       - name: Resolve packaged Electron executable
         id: packaged_app
         if: ${{ !inputs.skip_verify }}
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -248,7 +250,9 @@ jobs:
       # Run the release-critical desktop journeys against the packaged Electron executable on every
       # native target. The same focused specs use the source fixture in PR Gate when owners change.
       - name: Run P0 Electron certification
-        if: ${{ !inputs.skip_verify }}
+        id: p0
+        if: ${{ !inputs.skip_verify && steps.packaged_app.outcome == 'success' }}
+        continue-on-error: true
         shell: bash
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
@@ -262,7 +266,9 @@ jobs:
       # All platforms compare the same canonical Chromium layout baseline. The spec keeps the strict
       # macOS budget and a bounded cross-platform antialiasing budget.
       - name: Run desktop visual regression
-        if: ${{ !inputs.skip_verify }}
+        id: visual
+        if: ${{ !inputs.skip_verify && steps.packaged_app.outcome == 'success' }}
+        continue-on-error: true
         shell: bash
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
@@ -277,6 +283,8 @@ jobs:
       # package coverage: mount the DMG, extract the ZIP, verify each bundle, and launch each app.
       - name: Smoke test macOS packages
         if: ${{ matrix.platform == 'mac' && !inputs.skip_verify }}
+        id: macos_smoke
+        continue-on-error: true
         timeout-minutes: 10
         run: node scripts/macos-package-smoke.mjs --artifact-dir dist
 
@@ -284,14 +292,18 @@ jobs:
       # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
       # Windows runtime resources, request a clean shutdown, then silently uninstall it.
       - name: Smoke test Windows installer
-        if: matrix.platform == 'win'
+        if: ${{ matrix.platform == 'win' && !inputs.skip_verify }}
+        id: windows_smoke
+        continue-on-error: true
         timeout-minutes: 10
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
       # Install the deb with apt, launch the installed application, then extract and launch the
       # AppImage. Both paths verify authenticated bootstrap and packaged native/runtime resources.
       - name: Smoke test Linux packages
-        if: matrix.platform == 'linux'
+        if: ${{ matrix.platform == 'linux' && !inputs.skip_verify }}
+        id: linux_smoke
+        continue-on-error: true
         timeout-minutes: 10
         shell: bash
         run: |
@@ -302,7 +314,14 @@ jobs:
             --installed-executable /usr/bin/open-science
 
       - name: Record platform certification evidence
-        if: ${{ !inputs.skip_verify }}
+        if: >-
+          ${{ !inputs.skip_verify &&
+              steps.packaged_app.outcome == 'success' &&
+              steps.p0.outcome == 'success' &&
+              steps.visual.outcome == 'success' &&
+              ((matrix.platform == 'mac' && steps.macos_smoke.outcome == 'success') ||
+               (matrix.platform == 'win' && steps.windows_smoke.outcome == 'success') ||
+               (matrix.platform == 'linux' && steps.linux_smoke.outcome == 'success')) }}
         shell: bash
         run: |
           package_smoke=passed
@@ -319,6 +338,7 @@ jobs:
 
       # Upload only the distributables + electron-updater metadata for the caller's publish job.
       - name: Upload build artifacts
+        if: ${{ always() && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.name }}
@@ -334,3 +354,34 @@ jobs:
             dist/*-mac.yml
             dist/certification-*.json
           if-no-files-found: error
+
+      - name: Enforce platform certification
+        if: ${{ !inputs.skip_verify && always() }}
+        shell: bash
+        env:
+          LINUX_SMOKE_OUTCOME: ${{ steps.linux_smoke.outcome }}
+          MACOS_SMOKE_OUTCOME: ${{ steps.macos_smoke.outcome }}
+          P0_OUTCOME: ${{ steps.p0.outcome }}
+          PACKAGED_APP_OUTCOME: ${{ steps.packaged_app.outcome }}
+          PLATFORM: ${{ matrix.platform }}
+          VISUAL_OUTCOME: ${{ steps.visual.outcome }}
+          WINDOWS_SMOKE_OUTCOME: ${{ steps.windows_smoke.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" != "success" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          check packaged_app "$PACKAGED_APP_OUTCOME"
+          check p0 "$P0_OUTCOME"
+          check visual "$VISUAL_OUTCOME"
+          case "$PLATFORM" in
+            mac) check macos_smoke "$MACOS_SMOKE_OUTCOME" ;;
+            win) check windows_smoke "$WINDOWS_SMOKE_OUTCOME" ;;
+            linux) check linux_smoke "$LINUX_SMOKE_OUTCOME" ;;
+            *) echo "Unsupported platform: $PLATFORM" >&2; failed=1 ;;
+          esac
+          exit "$failed"
