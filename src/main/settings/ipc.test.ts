@@ -271,8 +271,9 @@ const registerTestSettingsIpcHandlers = ({
   })
 }
 
+const ipcSender = { id: 42 }
 const invoke = (channel: string, payload?: unknown): unknown =>
-  handlers.get(channel)!(undefined, payload)
+  handlers.get(channel)!({ sender: ipcSender }, payload)
 
 describe('settings IPC handlers', () => {
   it('registers every settings channel', () => {
@@ -358,7 +359,8 @@ describe('settings IPC handlers', () => {
     ).resolves.toEqual({ saved: true })
     expect(connectorTemplateFiles.save).toHaveBeenCalledWith(
       'open-science-connector-example.json',
-      '{"schemaVersion":1}\n'
+      '{"schemaVersion":1}\n',
+      ipcSender
     )
 
     await expect(
@@ -771,10 +773,13 @@ describe('settings IPC handlers', () => {
       saved: true
     })
     expect(service.buildSkillExport).toHaveBeenCalledWith('personal-my-skill')
-    expect(skillExportFiles.save).toHaveBeenCalledWith({
-      fileName: 'my-skill.zip',
-      archiveBytes: new Uint8Array([1, 2, 3])
-    })
+    expect(skillExportFiles.save).toHaveBeenCalledWith(
+      {
+        fileName: 'my-skill.zip',
+        archiveBytes: new Uint8Array([1, 2, 3])
+      },
+      ipcSender
+    )
   })
 
   it('routes create/update/delete skill channels and fires onSkillsChanged', async () => {

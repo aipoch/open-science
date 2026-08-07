@@ -156,6 +156,7 @@ import { createDefaultSettingsService } from './settings/service'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createSettingsWorkflows } from './settings/workflows'
+import { showSettingsSaveDialog } from './settings/save-dialog'
 import { ProfileService } from './specialist/service'
 import { SpecialistRepository } from './specialist/repository'
 import { BuiltinSpecialistRegistry } from './specialist/builtin-registry'
@@ -1388,8 +1389,8 @@ const createApplicationModules = async (
             contents: await readFile(filePath, 'utf8')
           }
         },
-        save: async (suggestedFileName, contents) => {
-          const selected = await dialog.showSaveDialog({
+        save: async (suggestedFileName, contents, sender) => {
+          const selected = await showSettingsSaveDialog(sender, {
             title: 'Export Connector configuration',
             defaultPath: suggestedFileName,
             filters: [{ name: 'Connector configuration', extensions: ['json'] }]
@@ -1400,10 +1401,10 @@ const createApplicationModules = async (
         }
       },
       skillExportFiles: {
-        save: (archive) =>
+        save: (archive, sender) =>
           saveSkillExport(
             {
-              showSaveDialog: (options) => dialog.showSaveDialog(options),
+              showSaveDialog: (options) => showSettingsSaveDialog(sender, options),
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
             archive

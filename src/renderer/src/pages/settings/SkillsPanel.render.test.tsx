@@ -308,6 +308,22 @@ describe('SkillsPanel (list view)', () => {
     expect(status?.closest('[data-slot="settings-list-row"]')?.textContent).toContain('Mine')
   })
 
+  it('re-enables Skill export after the user cancels Save As', async () => {
+    const exportSkill = vi.fn().mockResolvedValue({ saved: false })
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const exportButton = (): HTMLButtonElement | null =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')
+    await act(async () => exportButton()?.click())
+
+    expect(exportButton()?.disabled).toBe(false)
+    await act(async () => exportButton()?.click())
+    expect(exportSkill).toHaveBeenCalledTimes(2)
+  })
+
   it('hides Skill export when the desktop bridge is unavailable', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
@@ -749,7 +765,25 @@ describe('SkillsPanel (sub-views)', () => {
     expect(importedHeading?.className).toContain('border-t')
   })
 
-  it('collapses repository results after scanning while keeping them available', async () => {
+  it('shows row-level scan progress, then collapses repository results after scanning', async () => {
+    let finishScan: (result: {
+      skills: Array<{
+        name: string
+        path: string
+        url: string
+        alreadyImported: boolean
+      }>
+    }) => void = () => undefined
+    const pendingScan = new Promise<{
+      skills: Array<{
+        name: string
+        path: string
+        url: string
+        alreadyImported: boolean
+      }>
+    }>((resolve) => {
+      finishScan = resolve
+    })
     useSettingsStore.setState({
       scanRepoSkills: vi
         .fn()
@@ -764,16 +798,7 @@ describe('SkillsPanel (sub-views)', () => {
             }
           ]
         })
-        .mockResolvedValueOnce({
-          skills: [
-            {
-              name: 'ppt-master',
-              path: 'skills/ppt-master',
-              url: 'https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master',
-              alreadyImported: false
-            }
-          ]
-        })
+        .mockReturnValueOnce(pendingScan)
     })
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
@@ -800,13 +825,29 @@ describe('SkillsPanel (sub-views)', () => {
       '[aria-label="Scan hugohe3/ppt-master for skills"]'
     )
     act(() => scanRepository?.click())
+    const scanningButton = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Scan hugohe3/ppt-master for skills"]'
+    )
+    expect(scanningButton?.textContent).toContain('Scanning…')
+    expect(scanningButton?.querySelector('.animate-spin')).not.toBeNull()
     expect(
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Show repositories"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Hide repositories"]')
         ?.getAttribute('aria-expanded')
-    ).toBe('false')
+    ).toBe('true')
 
     await act(async () => {
+      finishScan({
+        skills: [
+          {
+            name: 'ppt-master',
+            path: 'skills/ppt-master',
+            url: 'https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master',
+            alreadyImported: false
+          }
+        ]
+      })
+      await pendingScan
       await Promise.resolve()
     })
 
@@ -979,9 +1020,10 @@ describe('SkillsPanel (sub-views)', () => {
       (button) => button.textContent?.trim() === 'Find skills'
     )
     act(() => runSearch?.click())
-    expect(document.body.querySelector('[aria-busy="true"]')?.textContent).toContain(
-      'Working with GitHub…'
-    )
+    const findingButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Finding…')
+    expect(findingButton?.querySelector('.animate-spin')).not.toBeNull()
     setValue('GitHub keyword or repository', 'presentations')
 
     await act(async () => {
@@ -1049,6 +1091,45 @@ describe('SkillsPanel (sub-views)', () => {
     expect(useSettingsStore.getState().importSkill).toHaveBeenCalledWith(
       'https://github.com/acme/skills/tree/main/pack/foo'
     )
+  })
+
+  it('shows import progress in the batch action instead of a page-level loader', async () => {
+    let finishImport: (result: { status: 'imported'; id: string; skills: [] }) => void = () =>
+      undefined
+    const pendingImport = new Promise<{ status: 'imported'; id: string; skills: [] }>((resolve) => {
+      finishImport = resolve
+    })
+    useSettingsStore.setState({ importSkill: vi.fn().mockReturnValue(pendingImport) })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'acme/skills')
+    const find = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Find skills'
+    )
+    await act(async () => {
+      find?.click()
+      await Promise.resolve()
+    })
+
+    const importSelected = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Import selected (1)')
+    act(() => importSelected?.click())
+
+    const importing = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Importing…'
+    )
+    expect(importing?.querySelector('.animate-spin')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Working with GitHub…')
+
+    await act(async () => {
+      finishImport({ status: 'imported', id: 'imported-foo', skills: [] })
+      await pendingImport
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Imported 1 skill.')
   })
 
   it('opens and closes a GitHub candidate preview without changing its selection', async () => {
