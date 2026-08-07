@@ -319,13 +319,24 @@ jobs:
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
-        run: npx vitest run --changed "$BASE_SHA"
+        # Vitest coverage.changed inherits --changed, so this enforces thresholds only for the
+        # affected source boundary while using the same test execution.
+        run: npx vitest run --coverage --changed "$BASE_SHA"
       - name: Test complete suite fallback
         id: unit_macos_full
         # A trusted pre-migration base plan uses legacy unit lane names but still declares mode=full.
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
         continue-on-error: true
-        run: npm test
+        run: npm run test:coverage
+      - name: Upload Module coverage report
+        if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 5
+          if-no-files-found: warn
       - name: Enforce selected unit checks
         if: ${{ always() }}
         shell: bash
@@ -355,7 +366,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Satisfy trusted legacy plan
-        run: echo "Coverage is consolidated into the macOS Module-test job."
+        run: echo "Coverage thresholds are enforced by the macOS Module-test job."
 
   windows_core:
     name: Windows core

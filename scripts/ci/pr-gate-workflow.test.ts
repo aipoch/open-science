@@ -198,6 +198,7 @@ describe('PR Gate workflow', () => {
     const checkout = unit.steps?.find(({ name }) => name === 'Checkout')
     const related = unit.steps?.find(({ name }) => name === 'Test affected Modules')
     const fallback = unit.steps?.find(({ name }) => name === 'Test complete suite fallback')
+    const coverageUpload = unit.steps?.find(({ name }) => name === 'Upload Module coverage report')
 
     const legacyCoverage = workflow.jobs.coverage_macos
 
@@ -216,18 +217,28 @@ describe('PR Gate workflow', () => {
       id: 'unit_macos_related',
       'continue-on-error': true,
       env: { BASE_SHA: '${{ needs.preflight.outputs.base }}' },
-      run: 'npx vitest run --changed "$BASE_SHA"'
+      run: 'npx vitest run --coverage --changed "$BASE_SHA"'
     })
     expect(related?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'selective'")
     expect(fallback).toMatchObject({
       id: 'unit_macos_full',
       'continue-on-error': true,
-      run: 'npm test'
+      run: 'npm run test:coverage'
     })
     expect(fallback?.if).toContain("fromJSON(needs.preflight.outputs.plan).mode == 'full'")
     expect(fallback?.if).not.toContain("'unit_macos'")
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
-    expect(unit.steps?.some(({ run }) => run === 'npm run test:coverage')).toBe(false)
+    expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(1)
+    expect(coverageUpload).toMatchObject({
+      if: "${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}",
+      'continue-on-error': true,
+      with: {
+        name: 'coverage-report',
+        path: 'coverage/',
+        'retention-days': 5,
+        'if-no-files-found': 'warn'
+      }
+    })
   })
 
   it('shares dependency installation and Electron builds inside platform bundles', () => {
@@ -298,7 +309,7 @@ describe('PR Gate workflow', () => {
     )
     expect(portable).toMatchObject({
       'continue-on-error': true,
-      run: 'npm test'
+      run: 'npm run test:coverage'
     })
 
     expect(workflow.jobs.windows_core).toMatchObject({
