@@ -253,6 +253,23 @@ describe('ACP Session Plan approval causality', () => {
 })
 
 describe('ACP Runtime Session Plan composition', () => {
+  it('clears exact decision authorization when prompt supersession releases first', () => {
+    const harness = createHarness()
+    if (harness.interaction.kind !== 'prompt') throw new Error('Expected a prompt interaction.')
+    const authorization = {
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      interactionSequence: harness.interaction.sequence
+    }
+    harness.interactions.authorizeAgentDecision(authorization)
+    const cancel = harness.workflow.capturePromptCancellation('session-1')
+
+    harness.sessionInteractions.release(harness.interaction)
+    cancel()
+
+    expect(harness.interactions.isAgentDecisionAuthorized(authorization)).toBe(false)
+  })
+
   it('authorizes one Agent decision from restored pending Plan feedback without execution authority', async () => {
     const harness = createHarness()
     const request: AcpPromptRequest = {

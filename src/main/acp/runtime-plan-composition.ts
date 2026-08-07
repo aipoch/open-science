@@ -586,10 +586,14 @@ const composeAcpRuntimePlanWorkflow = (
   })
   const capturePromptCancellation = (sessionId: string): (() => void) => {
     const interaction = sessionInteractions.current(sessionId)
+    const interactionSequence = interaction?.kind === 'prompt' ? interaction.sequence : undefined
     const interactionId =
       (interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined) ??
       interactions.approvalInteractionIdFor(sessionId)
     return () => {
+      if (interactionSequence !== undefined) {
+        interactions.releaseAgentDecisionAuthorization(sessionId, interactionSequence)
+      }
       if (interactionId) {
         rejectApprovalForInteraction(
           sessionId,
