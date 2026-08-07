@@ -5036,6 +5036,25 @@ describe('SettingsService: app icon variant', () => {
   })
 })
 
+describe('SettingsService: default permission profile', () => {
+  it('projects ask when no profile is stored', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).defaultPermissionProfile).toBe('ask')
+  })
+
+  it('projects a valid profile from settings.json', async () => {
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ defaultPermissionProfile: 'auto' }),
+      'utf8'
+    )
+    const service = createService()
+
+    expect((await service.getSettingsView()).defaultPermissionProfile).toBe('auto')
+  })
+})
+
 describe('SettingsService: listAgentHomeSkills framework routing', () => {
   // The shared ~/.agents/skills directory is always scanned. The active framework contributes one
   // additional source: ~/.claude/skills for Claude Code or ~/.codex/skills for Codex.

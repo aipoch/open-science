@@ -767,6 +767,14 @@ describe('settings store: onboarding completion', () => {
 
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(999)
   })
+
+  it('caches the normalized default permission profile', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), defaultPermissionProfile: 'auto' })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('auto')
+  })
 })
 
 describe('settings store: startup loading', () => {

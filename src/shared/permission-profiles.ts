@@ -35,7 +35,4 @@ export const normalizePermissionProfile = (value: unknown): PermissionProfileId 
  */
 export const getDefaultPermissionProfile = (
   settings: { defaultPermissionProfile?: string } | undefined
-): PermissionProfileId => {
-  const profile = settings?.defaultPermissionProfile
-  return isPermissionProfileId(profile) ? profile : DEFAULT_PERMISSION_PROFILE
-}
+): PermissionProfileId => normalizePermissionProfile(settings?.defaultPermissionProfile)

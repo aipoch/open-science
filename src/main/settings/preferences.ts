@@ -7,6 +7,7 @@ import {
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import { getDefaultPermissionProfile } from '../../shared/permission-profiles'
 import type { SettingsPreferences, SettingsPreferencesSnapshot } from './capabilities'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
@@ -30,7 +31,8 @@ const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPrefer
   conversationSkillImportEnabled:
     settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   ...(settings.closePreference === undefined ? {} : { closePreference: settings.closePreference }),
-  appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT
+  appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
+  defaultPermissionProfile: getDefaultPermissionProfile(settings)
 })
 
 class SettingsPreferencesModule implements SettingsPreferences {

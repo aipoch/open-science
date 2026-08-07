@@ -12,6 +12,11 @@ import {
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  getDefaultPermissionProfile,
+  type PermissionProfileId
+} from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import {
   createSettingsWriteCoordinator,
@@ -108,6 +113,8 @@ type SettingsStoreData = RuntimeSetupState &
     closePreference: CloseActionPreference | undefined
     // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
     appIconVariant: AppIconVariant
+    // Approval profile applied only when creating a new conversation.
+    defaultPermissionProfile: PermissionProfileId
   }
 
 type SettingsStoreCore = SettingsStoreData &
@@ -154,7 +161,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
-  appIconVariant: DEFAULT_APP_ICON_VARIANT
+  appIconVariant: DEFAULT_APP_ICON_VARIANT,
+  defaultPermissionProfile: DEFAULT_PERMISSION_PROFILE
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -174,6 +182,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
     snapshot.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: snapshot.closePreference,
   appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
+  defaultPermissionProfile: getDefaultPermissionProfile(snapshot),
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,

@@ -373,6 +373,25 @@ describe('settings repository', () => {
     expect(sanitizeSettings({}).appIconVariant).toBeUndefined()
   })
 
+  it.each(['ask', 'auto', 'full'] as const)(
+    'keeps the %s default permission profile on load',
+    (profile) => {
+      expect(sanitizeSettings({ defaultPermissionProfile: profile }).defaultPermissionProfile).toBe(
+        profile
+      )
+    }
+  )
+
+  it('drops an invalid default permission profile on load', () => {
+    expect(
+      sanitizeSettings({ defaultPermissionProfile: 'unsafe' }).defaultPermissionProfile
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({ defaultPermissionProfile: 1 }).defaultPermissionProfile
+    ).toBeUndefined()
+    expect(sanitizeSettings({}).defaultPermissionProfile).toBeUndefined()
+  })
+
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

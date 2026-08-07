@@ -423,6 +423,7 @@ const WorkspacePage = ({
   const goHome = useNavigationStore((state) => state.goHome)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
+  const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const supportsImageInput = useSettingsStore(
@@ -534,7 +535,7 @@ const WorkspacePage = ({
     [previousDraftKeyRef, setHistoryBrowsingKey, setHistoryStatus]
   )
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
-    useState<PermissionProfileId>(DEFAULT_PERMISSION_PROFILE)
+    useState<PermissionProfileId>(defaultPermissionProfile)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
   // onto the created session (see sendCurrentMessage).
@@ -1413,7 +1414,7 @@ const WorkspacePage = ({
 
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
     setAttachmentError(null)
-    setNewConversationPermissionProfile(DEFAULT_PERMISSION_PROFILE)
+    setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
     setNewConversationEnabledComputeHosts([])
     useNavigationStore.getState().recordUserNavigation()

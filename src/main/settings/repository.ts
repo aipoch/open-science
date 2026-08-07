@@ -28,6 +28,7 @@ import {
   isReasoningEffort
 } from '../../shared/settings'
 import { isOfficialVendorId } from '../../shared/provider-registry'
+import { isPermissionProfileId } from '../../shared/permission-profiles'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
@@ -580,6 +581,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   if (isAppIconVariant(appIconVariant)) {
     settings.appIconVariant = appIconVariant
+  }
+
+  // New-conversation approval default; only known profiles survive hand-edited settings.json.
+  const defaultPermissionProfile = value.defaultPermissionProfile
+
+  if (isPermissionProfileId(defaultPermissionProfile)) {
+    settings.defaultPermissionProfile = defaultPermissionProfile
   }
 
   const opencodePath = asString(value.opencodePath)

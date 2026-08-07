@@ -278,6 +278,7 @@ class SettingsService {
       conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
       closePreference: preferences.closePreference,
       appIconVariant: preferences.appIconVariant,
+      defaultPermissionProfile: preferences.defaultPermissionProfile,
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,

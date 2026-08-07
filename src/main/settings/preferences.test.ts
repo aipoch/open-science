@@ -30,7 +30,8 @@ describe('SettingsPreferencesModule', () => {
       reasoningEffort: 'default',
       notificationsEnabled: true,
       conversationSkillImportEnabled: true,
-      appIconVariant: 'light'
+      appIconVariant: 'light',
+      defaultPermissionProfile: 'ask'
     })
   })
 
@@ -57,7 +58,8 @@ describe('SettingsPreferencesModule', () => {
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
       closePreference: 'quit',
-      appIconVariant: 'dark'
+      appIconVariant: 'dark',
+      defaultPermissionProfile: 'ask'
     })
 
     await preferences.setClosePreference(undefined)
