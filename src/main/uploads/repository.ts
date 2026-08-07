@@ -11,8 +11,8 @@ import {
   rmdir,
   stat
 } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { basename, dirname, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -20,7 +20,6 @@ import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../sh
 import {
   DEFAULT_UPLOAD_PROJECT_NAME,
   PENDING_UPLOAD_SESSION_ID,
-  parseUploadVersionReference,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type AppendUploadTransferRequest,
@@ -34,18 +33,20 @@ import {
   type PersistedUploadedAttachment
 } from '../../shared/uploads'
 import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
-import { readBoundedManagedFilePreview } from '../managed-file-preview'
 import { ActiveTransferOwner } from './active-transfer-owner'
+import { ManagedUploadResolver, type ResolvedManagedUpload } from './managed-upload-resolver'
+import {
+  OrphanLegacyUploadAuthorityMissingError,
+  StagedPublicationOwner,
+  type UploadVersionRecord
+} from './staged-publication-owner'
 import {
   UPLOADS_DIR,
   assertPathInsideRoot,
   assertSafePathSegment,
-  createUploadedAttachment,
   getSessionUploadDir,
-  getUploadRoot,
   isFileExistsError,
-  isMissingFileError,
-  moveToUniqueUploadFile
+  isMissingFileError
 } from './storage-helpers'
 
 const LIVE_COPY_TEMP_SUFFIX = '.live-copy.tmp'
@@ -61,20 +62,6 @@ type UploadRepositoryOptions = {
     sourcePath: string,
     options: { highWaterMark: number; signal: AbortSignal }
   ) => ReturnType<typeof createReadStream>
-}
-
-type ResolvedManagedUpload = {
-  path: string
-  name: string
-}
-
-type CreateAttachmentInput = {
-  id: string
-  sessionId: string
-  filename: string
-  originalName: string
-  filePath: string
-  mimeType?: string
 }
 
 type LegacyUploadUpgradeOptions = {
@@ -111,8 +98,6 @@ class UnsafeLegacyUploadResidualError extends Error {}
 // Orphan adoption may suppress only this positively proven cross-version state: the Upload row is
 // absent while candidate bytes exist or cannot safely be ruled out from the surviving locator.
 // Database/filesystem failures and malformed surviving authority keep their original retry behavior.
-class OrphanLegacyUploadAuthorityMissingError extends Error {}
-
 // Promise.all rejects before sibling publication settles. Orphan recovery must not let a late
 // sibling reactivate ManagedFile rows after its caller has already soft-deleted the Project index.
 // Prefer an ordinary failure over the suppressible missing-authority state so DB/FS errors retain
@@ -136,6 +121,8 @@ type LegacyCleanupResult =
 // Owns app-managed uploads so renderer paths are always validated in the main process.
 class UploadRepository {
   private readonly transferOwner: ActiveTransferOwner
+  private readonly managedUploadResolver: ManagedUploadResolver
+  private readonly stagedPublicationOwner: StagedPublicationOwner
 
   // The storage root is the app persistence root; this class appends uploads/project/session.
   constructor(
@@ -143,6 +130,13 @@ class UploadRepository {
     private readonly options: UploadRepositoryOptions = {}
   ) {
     this.transferOwner = new ActiveTransferOwner(storageRoot, options)
+    this.managedUploadResolver = new ManagedUploadResolver(storageRoot, options)
+    this.stagedPublicationOwner = new StagedPublicationOwner(storageRoot, options, {
+      resolver: this.managedUploadResolver,
+      completeStagingUpload: (...args) => this.completeStagingUpload(...args),
+      hasOrphanLegacyCandidate: (...args) => this.hasOrphanLegacyCandidate(...args),
+      removeVerifiedLegacyCopy: (input) => this.removeVerifiedLegacyCopy(input)
+    })
   }
 
   // Allocates an empty temporary file for sources that can only provide bytes (Web, clipboard,
@@ -187,7 +181,11 @@ class UploadRepository {
     attachments: UploadedAttachment[],
     projectId = DEFAULT_UPLOAD_PROJECT_NAME
   ): Promise<UploadedAttachment[]> {
-    return this.finalizeSessionUploads(sessionId, attachments, projectId)
+    return this.stagedPublicationOwner.finalizePendingSessionUploads(
+      sessionId,
+      attachments,
+      projectId
+    )
   }
 
   private async finalizeSessionUploads(
@@ -196,23 +194,11 @@ class UploadRepository {
     projectId: string,
     options: { preserveLegacySource?: boolean; requireExistingAuthority?: boolean } = {}
   ): Promise<UploadedAttachment[]> {
-    const safeSessionId = assertSafePathSegment(sessionId)
-    const safeProjectId = assertSafePathSegment(projectId.trim() || DEFAULT_UPLOAD_PROJECT_NAME)
-    if (options.requireExistingAuthority && !this.options.getClient) {
-      throw new Error('Legacy Upload authority is unavailable for orphan recovery.')
-    }
-
-    const finalized = await Promise.all(
-      attachments.map(async (attachment) => {
-        if (this.options.getClient) {
-          return this.publishAttachment(safeProjectId, safeSessionId, attachment, options)
-        }
-        const finalized = await this.finalizeAttachment(safeSessionId, attachment)
-        return finalized
-      })
-    )
-    return finalized.filter(
-      (attachment): attachment is UploadedAttachment => attachment !== undefined
+    return this.stagedPublicationOwner.finalizeSessionUploads(
+      sessionId,
+      attachments,
+      projectId,
+      options
     )
   }
 
@@ -404,18 +390,7 @@ class UploadRepository {
 
   // Deletes an app-managed upload after resolving the caller path through the trust boundary.
   async deleteUpload(request: DeleteUploadRequest): Promise<void> {
-    try {
-      const filePath = await this.resolveManagedUploadPath(request)
-      const pendingRoot = await realpath(this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID))
-
-      // The renderer API is intentionally staged-only. Finalized uploads are session-owned bytes and
-      // must survive logical session/project deletion, so their paths are rejected at this boundary.
-      assertPathInsideRoot(pendingRoot, filePath, 'Upload file is outside pending upload storage.')
-      await rm(filePath, { force: true })
-    } catch (error) {
-      if (isMissingFileError(error)) return
-      throw error
-    }
+    return this.managedUploadResolver.deleteUpload(request)
   }
 
   // Resolves a renderer-provided upload path only after root and symlink checks pass.
@@ -423,185 +398,7 @@ class UploadRepository {
     request: DeleteUploadRequest,
     scope: { projectId?: string; sessionId?: string } = {}
   ): Promise<string> {
-    if (
-      typeof request !== 'object' ||
-      request === null ||
-      typeof request.path !== 'string' ||
-      request.path.trim().length === 0
-    ) {
-      throw new Error('Invalid upload file path.')
-    }
-
-    const uploadVersion = parseUploadVersionReference(request.path)
-    if (uploadVersion) {
-      if (
-        scope.sessionId &&
-        uploadVersion.sessionId &&
-        uploadVersion.sessionId !== scope.sessionId
-      ) {
-        throw new Error('Upload Version reference belongs to a different session.')
-      }
-      if (
-        scope.projectId &&
-        uploadVersion.projectId &&
-        uploadVersion.projectId !== scope.projectId
-      ) {
-        throw new Error('Upload Version reference belongs to a different project.')
-      }
-      return this.resolveUploadVersionPath(
-        uploadVersion.versionId,
-        scope.projectId ?? uploadVersion.projectId,
-        scope.sessionId ?? uploadVersion.sessionId
-      )
-    }
-
-    const uploadRoot = this.getUploadRoot()
-    const requestedPath = resolve(request.path)
-
-    assertPathInsideRoot(uploadRoot, requestedPath)
-
-    // Canonical paths catch symlinks that start inside storage but point outside it.
-    const resolvedUploadRoot = await realpath(uploadRoot)
-    const resolvedFilePath = await realpath(requestedPath)
-
-    assertPathInsideRoot(resolvedUploadRoot, resolvedFilePath)
-
-    if (!(await stat(resolvedFilePath)).isFile()) {
-      throw new Error('Upload path is not a file.')
-    }
-
-    const safeProjectId = scope.projectId ? assertSafePathSegment(scope.projectId) : undefined
-    const safeSessionId = scope.sessionId ? assertSafePathSegment(scope.sessionId) : undefined
-    if (safeProjectId || safeSessionId) {
-      const relativeUploadPath = relative(resolvedUploadRoot, resolvedFilePath).split(sep).join('/')
-      const contentStorageKey = [UPLOADS_DIR, relativeUploadPath].join('/')
-      if ((safeProjectId || safeSessionId) && this.options.getClient) {
-        const client = await this.options.getClient()
-        const version = await client.uploadVersion.findFirst({
-          where: {
-            state: 'ready',
-            contentStorageKey,
-            uploadFile: {
-              is: {
-                ...(safeProjectId ? { projectId: safeProjectId } : {}),
-                ...(safeSessionId ? { sessionId: safeSessionId } : {})
-              }
-            }
-          },
-          select: { id: true }
-        })
-        if (version) return resolvedFilePath
-
-        // Files is a project-scoped, main-maintained read model. A legacy path selected from that
-        // surface may be referenced by any Session in the same Project, so its indexed membership is
-        // sufficient for preview access even when the renderer's active Session is not the owner.
-        const indexedFile = safeProjectId
-          ? await client.managedFile.findFirst({
-              where: {
-                projectId: safeProjectId,
-                source: 'upload',
-                storageKey: contentStorageKey,
-                deletedAt: null
-              },
-              select: { seq: true }
-            })
-          : undefined
-        if (indexedFile) return resolvedFilePath
-      }
-
-      // Canonical raw paths retain the project/session layout. This compatibility branch never
-      // infers ownership from a filename: it requires the requested file to remain under the exact
-      // trusted scope. Cross-session references deliberately pass project-only scope.
-      const scopedRoot = safeProjectId
-        ? safeSessionId
-          ? join(resolvedUploadRoot, safeProjectId, safeSessionId)
-          : join(resolvedUploadRoot, safeProjectId)
-        : safeSessionId
-          ? this.getSessionUploadDir(safeSessionId)
-          : undefined
-      if (scopedRoot) {
-        const resolvedScopedRoot = await realpath(scopedRoot).catch(() => undefined)
-        if (resolvedScopedRoot) {
-          try {
-            assertPathInsideRoot(
-              resolvedScopedRoot,
-              resolvedFilePath,
-              'Upload file belongs to a different project or session.'
-            )
-            return resolvedFilePath
-          } catch {
-            // Fall through to the single ownership error below.
-          }
-        }
-      }
-
-      // Pre-Version uploads were stored under default-project even when the owning Session was
-      // later associated with another Project. Resolve that compatibility layout only when SQLite
-      // proves the source Session belongs to the requested Project. A project-only `@` selection
-      // derives the source Session from the canonical legacy path; it never trusts the filename.
-      const legacyPathSegments = relativeUploadPath.split('/')
-      const legacySourceSessionId =
-        legacyPathSegments[0] === DEFAULT_UPLOAD_PROJECT_NAME && legacyPathSegments.length > 2
-          ? legacyPathSegments[1]
-          : undefined
-      const requestedLegacySessionId = safeSessionId ?? legacySourceSessionId
-      if (
-        safeProjectId &&
-        requestedLegacySessionId &&
-        safeProjectId !== DEFAULT_UPLOAD_PROJECT_NAME &&
-        this.options.getClient
-      ) {
-        const safeLegacySessionId = assertSafePathSegment(requestedLegacySessionId)
-        const client = await this.options.getClient()
-        const originBindings = await client.fileOriginSession.findMany({
-          where: { sessionId: safeLegacySessionId },
-          select: { projectId: true },
-          take: 2
-        })
-        const hasUnambiguousBinding =
-          originBindings.length === 1 && originBindings[0].projectId === safeProjectId
-        const legacySessionRoot = hasUnambiguousBinding
-          ? await realpath(this.getSessionUploadDir(safeLegacySessionId)).catch(() => undefined)
-          : undefined
-        if (legacySessionRoot) {
-          try {
-            assertPathInsideRoot(
-              legacySessionRoot,
-              resolvedFilePath,
-              'Upload file belongs to a different project or session.'
-            )
-            return resolvedFilePath
-          } catch {
-            // Fall through to the pending capability check and the ownership error below.
-          }
-        }
-      }
-
-      // A newly staged upload is a short-lived main-issued capability and has not acquired durable
-      // project/session identity yet. It is accepted only while it remains in the canonical pending
-      // root; finalization publishes a scoped Version before Session persistence.
-      if (safeProjectId && safeSessionId) {
-        const pendingRoot = await realpath(
-          join(resolvedUploadRoot, DEFAULT_UPLOAD_PROJECT_NAME, PENDING_UPLOAD_SESSION_ID)
-        ).catch(() => undefined)
-        if (pendingRoot) {
-          try {
-            assertPathInsideRoot(
-              pendingRoot,
-              resolvedFilePath,
-              'Upload file belongs to a different project or session.'
-            )
-            return resolvedFilePath
-          } catch {
-            // Fall through to the single ownership error below.
-          }
-        }
-      }
-
-      throw new Error('Upload file belongs to a different project or session.')
-    }
-
-    return resolvedFilePath
+    return this.managedUploadResolver.resolveManagedUploadPath(request, scope)
   }
 
   // Resolves an upload only when it belongs to the named durable session. Agent-facing tools use
@@ -611,7 +408,7 @@ class UploadRepository {
     request: DeleteUploadRequest,
     projectId?: string
   ): Promise<string> {
-    return (await this.resolveSessionUpload(sessionId, request, projectId)).path
+    return this.managedUploadResolver.resolveSessionUploadPath(sessionId, request, projectId)
   }
 
   // Resolves both immutable bytes and their frozen user-facing name. Native Upload Versions store
@@ -622,265 +419,21 @@ class UploadRepository {
     request: DeleteUploadRequest,
     projectId?: string
   ): Promise<ResolvedManagedUpload> {
-    const safeSessionId = assertSafePathSegment(sessionId)
-    const safeProjectId = projectId ? assertSafePathSegment(projectId) : undefined
-    return this.resolveManagedUpload(request, {
-      sessionId: safeSessionId,
-      projectId: safeProjectId
-    })
+    return this.managedUploadResolver.resolveSessionUpload(sessionId, request, projectId)
   }
 
   async resolveManagedUpload(
     request: DeleteUploadRequest,
     scope: { projectId?: string; sessionId?: string } = {}
   ): Promise<ResolvedManagedUpload> {
-    const path = await this.resolveManagedUploadPath(request, scope)
-    if (!this.options.getClient) return { path, name: basename(path) }
-
-    const resolvedUploadRoot = await realpath(this.getUploadRoot())
-    const relativeUploadPath = relative(resolvedUploadRoot, path).split(sep).join('/')
-    const contentStorageKey = [UPLOADS_DIR, relativeUploadPath].join('/')
-    const client = await this.options.getClient()
-    const version = await client.uploadVersion.findFirst({
-      where: {
-        state: 'ready',
-        contentStorageKey,
-        uploadFile: {
-          is: {
-            ...(scope.projectId ? { projectId: scope.projectId } : {}),
-            ...(scope.sessionId ? { sessionId: scope.sessionId } : {})
-          }
-        }
-      },
-      select: { filename: true, originalFilename: true }
-    })
-
-    return { path, name: version?.originalFilename || version?.filename || basename(path) }
-  }
-
-  private async resolveUploadVersionPath(
-    versionId: string,
-    projectId: string | undefined,
-    sessionId?: string
-  ): Promise<string> {
-    if (!this.options.getClient) throw new Error('Upload Version storage is not configured.')
-    if (!projectId) throw new Error('Upload Version resolution requires a Project scope.')
-    const safeVersionId = assertSafePathSegment(versionId)
-    const safeProjectId = assertSafePathSegment(projectId)
-    const safeSessionId = sessionId ? assertSafePathSegment(sessionId) : undefined
-    const client = await this.options.getClient()
-    const version = await client.uploadVersion.findFirst({
-      where: {
-        id: safeVersionId,
-        state: 'ready',
-        uploadFile: {
-          is: {
-            projectId: safeProjectId,
-            ...(safeSessionId ? { sessionId: safeSessionId } : {})
-          }
-        }
-      }
-    })
-    if (!version) throw new Error(`Upload Version is unavailable: ${safeVersionId}`)
-    const filePath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
-    assertPathInsideRoot(resolve(this.storageRoot), filePath, 'Upload storage key escapes storage.')
-    const fileInfo = await stat(filePath)
-    if (
-      !fileInfo.isFile() ||
-      fileInfo.size !== Number(version.sizeBytes) ||
-      (await sha256File(filePath)) !== version.checksum
-    ) {
-      throw new Error(`Ready Upload Version content is unavailable or corrupt: ${safeVersionId}`)
-    }
-    return filePath
+    return this.managedUploadResolver.resolveManagedUpload(request, scope)
   }
 
   // Reads upload previews through the shared bounded reader after upload-specific path validation.
   async readManagedUploadPreview(
     request: ReadArtifactPreviewRequest
   ): Promise<ArtifactPreviewResult> {
-    const filePath = await this.resolveManagedUploadPath(request, {
-      projectId: request.projectId,
-      sessionId: request.sessionId
-    })
-    return readBoundedManagedFilePreview(filePath, request, 'Invalid upload preview encoding.')
-  }
-
-  // Converts one pending attachment record into a durable session-owned upload record.
-  private async finalizeAttachment(
-    sessionId: string,
-    attachment: UploadedAttachment
-  ): Promise<UploadedAttachment> {
-    if (attachment.sessionId === sessionId) {
-      // Finalization is idempotent when the attachment already belongs to the target session.
-      const targetDir = this.getSessionUploadDir(sessionId)
-      const resolvedFilePath = await this.resolveManagedUploadPath({ path: attachment.path })
-
-      assertPathInsideRoot(await realpath(targetDir), resolvedFilePath)
-
-      return { ...attachment, size: (await stat(resolvedFilePath)).size }
-    }
-
-    if (attachment.sessionId !== PENDING_UPLOAD_SESSION_ID) {
-      throw new Error('Upload attachment belongs to a different session.')
-    }
-
-    const pendingDir = this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID)
-    const targetDir = this.getSessionUploadDir(sessionId)
-    const sourcePath = await this.resolveManagedUploadPath({ path: attachment.path })
-
-    assertPathInsideRoot(await realpath(pendingDir), sourcePath)
-    await mkdir(targetDir, { recursive: true })
-
-    // Commit without overwriting; same-volume storage reuses the inode and other filesystems fall back.
-    const { filename, filePath } = await this.moveToUniqueFile(
-      sourcePath,
-      targetDir,
-      attachment.name
-    )
-
-    return this.createAttachment({
-      ...attachment,
-      sessionId,
-      filename,
-      filePath
-    })
-  }
-
-  // Publishes one independent upload through SQLite staging authority before moving its immutable
-  // bytes. A retry recovers the same v1 row by uploadFileId even when the original pending path was
-  // already consumed by the first rename.
-  private async publishAttachment(
-    projectId: string,
-    sessionId: string,
-    attachment: UploadedAttachment,
-    options: { preserveLegacySource?: boolean; requireExistingAuthority?: boolean } = {}
-  ): Promise<UploadedAttachment | undefined> {
-    const uploadFileId = assertSafePathSegment(attachment.id)
-    const client = await this.options.getClient!()
-    const existingFile = await client.uploadFile.findUnique({
-      where: { id: uploadFileId },
-      include: { versions: { where: { versionNumber: 1 }, take: 1 } }
-    })
-    if (existingFile) {
-      if (existingFile.projectId !== projectId || existingFile.sessionId !== sessionId) {
-        throw new Error('Upload file identity belongs to a different project or session.')
-      }
-      const existingVersion = existingFile.versions[0]
-      if (!existingVersion) throw new Error('Upload file has no immutable v1 metadata.')
-      if (attachment.versionId && attachment.versionId !== existingVersion.id) {
-        throw new Error('Upload Version identity conflicts with the existing immutable Version.')
-      }
-      const published = await this.completeStagingUpload(
-        projectId,
-        sessionId,
-        attachment,
-        existingVersion,
-        { preserveSource: options.preserveLegacySource === true }
-      )
-      if (
-        !options.preserveLegacySource &&
-        attachment.sessionId === sessionId &&
-        !attachment.versionId
-      ) {
-        await this.removeVerifiedLegacyCopy({
-          projectId,
-          sessionId,
-          uploadFileId,
-          versionId: existingVersion.id,
-          filename: attachment.name,
-          legacyPath: attachment.path
-        })
-      }
-      return published
-    }
-
-    if (options.requireExistingAuthority) {
-      if (!(await this.hasOrphanLegacyCandidate(projectId, sessionId, uploadFileId, attachment))) {
-        return undefined
-      }
-      throw new OrphanLegacyUploadAuthorityMissingError(
-        `Legacy Upload authority is unavailable: ${uploadFileId}`
-      )
-    }
-
-    const sourcePath = await this.resolveManagedUploadPath({ path: attachment.path })
-    if (attachment.sessionId === PENDING_UPLOAD_SESSION_ID) {
-      const pendingRoot = await realpath(this.getSessionUploadDir(PENDING_UPLOAD_SESSION_ID))
-      assertPathInsideRoot(
-        pendingRoot,
-        sourcePath,
-        'Upload file is outside pending upload storage.'
-      )
-    } else if (attachment.sessionId === sessionId) {
-      const legacySessionRoot = await realpath(this.getSessionUploadDir(sessionId))
-      assertPathInsideRoot(
-        legacySessionRoot,
-        sourcePath,
-        'Legacy upload file belongs to a different session.'
-      )
-    } else {
-      throw new Error('Unregistered upload attachment belongs to a different session.')
-    }
-    const fileInfo = await stat(sourcePath)
-    const checksum = await sha256File(sourcePath)
-    const versionId = assertSafePathSegment(attachment.versionId ?? randomUUID())
-    const contentStorageKey = [
-      UPLOADS_DIR,
-      projectId,
-      sessionId,
-      uploadFileId,
-      'versions',
-      versionId,
-      'content'
-    ].join('/')
-    const requestedCreatedAt = attachment.createdAt ? new Date(attachment.createdAt) : undefined
-    if (requestedCreatedAt && Number.isNaN(requestedCreatedAt.getTime())) {
-      throw new Error(`Invalid upload creation time: ${attachment.createdAt}`)
-    }
-    // A native pending upload is a new save event, so finalization owns its timestamp. A path-only
-    // legacy record has no trustworthy save time; keep the immutable field null instead of recording
-    // the migration time as historical fact.
-    const createdAt =
-      attachment.sessionId === PENDING_UPLOAD_SESSION_ID
-        ? (requestedCreatedAt ?? new Date())
-        : undefined
-
-    const registered = await client.$transaction(async (tx) => {
-      await tx.fileOriginSession.upsert({
-        where: { projectId_sessionId: { projectId, sessionId } },
-        create: { projectId, sessionId },
-        update: {}
-      })
-      await tx.uploadFile.create({
-        data: {
-          id: uploadFileId,
-          projectId,
-          sessionId,
-          filename: attachment.name,
-          originalFilename: attachment.originalName
-        }
-      })
-      return tx.uploadVersion.create({
-        data: {
-          id: versionId,
-          uploadFileId,
-          versionNumber: 1,
-          state: 'staging',
-          contentStorageKey,
-          filename: attachment.name,
-          originalFilename: attachment.originalName,
-          contentType: attachment.mimeType,
-          sizeBytes: BigInt(fileInfo.size),
-          checksum,
-          createdAt
-        }
-      })
-    })
-
-    return this.completeStagingUpload(projectId, sessionId, attachment, registered, {
-      preserveSource: options.preserveLegacySource === true
-    })
+    return this.managedUploadResolver.readManagedUploadPreview(request)
   }
 
   // Missing legacy and private candidates are positive evidence that the old deletion tail already
@@ -946,19 +499,7 @@ class UploadRepository {
     projectId: string,
     sessionId: string,
     attachment: UploadedAttachment,
-    version: {
-      id: string
-      uploadFileId: string
-      versionNumber: number
-      state: string
-      contentStorageKey: string
-      filename: string
-      originalFilename: string
-      contentType: string | null
-      sizeBytes: bigint
-      checksum: string
-      createdAt: Date | null
-    },
+    version: UploadVersionRecord,
     options: { preserveSource?: boolean } = {}
   ): Promise<UploadedAttachment> {
     const finalPath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
@@ -1416,28 +957,9 @@ class UploadRepository {
     throw new Error(`Legacy upload cleanup is incomplete: ${filename}`)
   }
 
-  // Returns the top-level upload directory under the app persistence root.
-  private getUploadRoot(): string {
-    return getUploadRoot(this.storageRoot)
-  }
-
   // Returns the staging or durable directory for one upload session.
   private getSessionUploadDir(sessionId: string): string {
     return getSessionUploadDir(this.storageRoot, sessionId)
-  }
-
-  // Moves an already-staged file into a target directory while preserving unique filenames.
-  private async moveToUniqueFile(
-    sourcePath: string,
-    targetDir: string,
-    filename: string
-  ): Promise<{ filename: string; filePath: string }> {
-    return moveToUniqueUploadFile(sourcePath, targetDir, filename)
-  }
-
-  // Builds the renderer-safe attachment metadata from the trusted file on disk.
-  private async createAttachment(input: CreateAttachmentInput): Promise<UploadedAttachment> {
-    return createUploadedAttachment(input)
   }
 }
 

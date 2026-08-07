@@ -93,6 +93,8 @@
       "ownerPaths": [
         "src/main/uploads/repository.ts",
         "src/main/uploads/active-transfer-owner.ts",
+        "src/main/uploads/managed-upload-resolver.ts",
+        "src/main/uploads/staged-publication-owner.ts",
         "src/main/uploads/storage-helpers.ts"
       ],
       "interfacePaths": ["src/main/uploads/repository.ts"],
@@ -106,7 +108,8 @@
         "consumer": [
           "src/main/session-persistence/deletion-integration.test.ts",
           "src/main/acp/file-reference-resolver.test.ts",
-          "src/main/acp/prompt-content-owner.test.ts"
+          "src/main/acp/prompt-content-owner.test.ts",
+          "src/main/skills/conversation-import.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],
