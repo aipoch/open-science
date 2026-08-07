@@ -3416,6 +3416,16 @@ describe('SettingsService: image-input capability', () => {
     const claude = claudeSnapshot.providers.find((p) => p.vendorId === 'anthropic')
     expect(claude?.supportsImageInput).toBe(true)
 
+    // MiniMax defaults to the natively multimodal M3 model.
+    const minimaxSnapshot = await service.upsertProvider({
+      type: 'official',
+      name: 'MiniMax',
+      vendorId: 'minimax',
+      key: 'k'
+    })
+    const minimax = minimaxSnapshot.providers.find((p) => p.vendorId === 'minimax')
+    expect(minimax?.supportsImageInput).toBe(true)
+
     // DeepSeek's default model is text-only.
     const deepseekSnapshot = await service.upsertProvider({
       type: 'official',
