@@ -1,23 +1,34 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
-
 import {
   createSourceFile,
   forEachChild,
   isArrowFunction,
+  isBinaryExpression,
   isBlock,
+  isCaseBlock,
+  isCatchClause,
   isCallExpression,
   isExportDeclaration,
+  isFunctionDeclaration,
+  isFunctionExpression,
+  isFunctionLike,
+  isForInStatement,
+  isForOfStatement,
+  isForStatement,
   isIdentifier,
   isImportDeclaration,
   isNamedImports,
   isObjectLiteralExpression,
   isPropertyAccessExpression,
   isReturnStatement,
+  isSourceFile,
   isStringLiteralLike,
   isTypeAliasDeclaration,
   isTypeLiteralNode,
   isVariableDeclaration,
+  isVariableDeclarationList,
+  NodeFlags,
   ScriptKind,
   ScriptTarget,
   SyntaxKind,
@@ -27,7 +38,6 @@ import {
   type TypeLiteralNode
 } from 'typescript'
 import { describe, expect, it } from 'vitest'
-
 const rendererRoot = resolve(__dirname, '../..')
 const facadePath = resolve(__dirname, 'useWorkspaceAgentRuntime.ts')
 const manifestPath = resolve(__dirname, '../../../../../scripts/ci/module-impact.json')
@@ -45,7 +55,6 @@ const sourceFileFor = (path: string, source = readSource(path)): SourceFile =>
     true,
     extname(path) === '.tsx' ? ScriptKind.TSX : ScriptKind.TS
   )
-
 const productionSources = (): readonly string[] => {
   const paths: string[] = []
   const visit = (directory: string): void => {
@@ -60,7 +69,6 @@ const productionSources = (): readonly string[] => {
   visit(rendererRoot)
   return paths.sort()
 }
-
 const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
@@ -70,7 +78,7 @@ const ownerNames = [
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const privateOwnerTargets = new Set(ownerTargets.values())
 const facadeTarget = modulePath(facadePath)
-
+const workspaceEventsTarget = modulePath(resolve(__dirname, 'workspace-events'))
 const resolveImportTarget = (sourcePath: string, specifier: string): string | undefined => {
   if (specifier.startsWith('@/')) return modulePath(resolve(rendererRoot, specifier.slice(2)))
   if (specifier.startsWith('@renderer/')) {
@@ -81,16 +89,209 @@ const resolveImportTarget = (sourcePath: string, specifier: string): string | un
   }
   return undefined
 }
-
 type ImportReference = Readonly<{
   target: string | undefined
   kind: 'import' | 'export' | 'dynamic' | 'require'
   names: readonly string[] | undefined
+  literal: boolean
 }>
-
+type LoaderBindings = Readonly<{
+  requireAliases: ReadonlySet<string>
+  specifiers: ReadonlyMap<string, string>
+  wrappers: ReadonlyMap<string, 'dynamic' | 'require'>
+}>
+const isLoaderScope = (node: Node): boolean =>
+  isSourceFile(node) ||
+  isFunctionLike(node) ||
+  isBlock(node) ||
+  isCaseBlock(node) ||
+  isCatchClause(node) ||
+  isForStatement(node) ||
+  isForInStatement(node) ||
+  isForOfStatement(node)
+const isVarDeclaration = (node: Node): boolean =>
+  isVariableDeclaration(node) &&
+  isVariableDeclarationList(node.parent) &&
+  (node.parent.flags & (NodeFlags.Let | NodeFlags.Const)) === 0
+const lexicalNamesIn = (scope: Node): ReadonlySet<string> => {
+  const names = new Set<string>()
+  const caught = isCatchClause(scope) ? scope.variableDeclaration : undefined
+  if (caught && isIdentifier(caught.name)) names.add(caught.name.text)
+  const visit = (node: Node): void => {
+    if (node !== scope && isFunctionDeclaration(node)) {
+      if (node.name) names.add(node.name.text)
+      return
+    }
+    if (node !== scope && isLoaderScope(node)) return
+    if (isVariableDeclaration(node) && isIdentifier(node.name) && !isVarDeclaration(node)) {
+      names.add(node.name.text)
+    }
+    forEachChild(node, visit)
+  }
+  visit(scope)
+  return names
+}
+const loaderWrapperKind = (
+  node: Node,
+  requireAliases: ReadonlySet<string>
+): 'dynamic' | 'require' | undefined => {
+  if (
+    (!isArrowFunction(node) && !isFunctionExpression(node) && !isFunctionDeclaration(node)) ||
+    !node.body ||
+    node.parameters.length !== 1 ||
+    !isIdentifier(node.parameters[0].name)
+  ) {
+    return undefined
+  }
+  const parameter = node.parameters[0].name.text
+  const expression = isBlock(node.body)
+    ? node.body.statements.length === 1 && isReturnStatement(node.body.statements[0])
+      ? node.body.statements[0].expression
+      : undefined
+    : node.body
+  if (
+    !expression ||
+    !isCallExpression(expression) ||
+    !expression.arguments[0] ||
+    !isIdentifier(expression.arguments[0]) ||
+    expression.arguments[0].text !== parameter
+  ) {
+    return undefined
+  }
+  if (expression.expression.kind === SyntaxKind.ImportKeyword) return 'dynamic'
+  return isIdentifier(expression.expression) && requireAliases.has(expression.expression.text)
+    ? 'require'
+    : undefined
+}
+const loaderBindingsIn = (scope: Node, inherited: LoaderBindings): LoaderBindings => {
+  const aliases = new Set(inherited.requireAliases)
+  const specifiers = new Map(inherited.specifiers)
+  const wrappers = new Map(inherited.wrappers)
+  if (isFunctionLike(scope)) {
+    for (const parameter of scope.parameters) {
+      if (isIdentifier(parameter.name)) {
+        const name = parameter.name.text
+        aliases.delete(name)
+        specifiers.delete(name)
+        wrappers.delete(name)
+      }
+    }
+    for (const parameter of scope.parameters) {
+      if (!isIdentifier(parameter.name) || !parameter.initializer) continue
+      const name = parameter.name.text
+      if (isIdentifier(parameter.initializer)) {
+        const initializer = parameter.initializer.text
+        if (aliases.has(initializer)) aliases.add(name)
+        const specifier = specifiers.get(initializer)
+        if (specifier !== undefined) specifiers.set(name, specifier)
+        const wrapper = wrappers.get(initializer)
+        if (wrapper) wrappers.set(name, wrapper)
+      } else if (isStringLiteralLike(parameter.initializer)) {
+        specifiers.set(name, parameter.initializer.text)
+      }
+    }
+  }
+  if (
+    isCatchClause(scope) &&
+    scope.variableDeclaration &&
+    isIdentifier(scope.variableDeclaration.name)
+  ) {
+    aliases.delete(scope.variableDeclaration.name.text)
+    specifiers.delete(scope.variableDeclaration.name.text)
+    wrappers.delete(scope.variableDeclaration.name.text)
+  }
+  const hoistedVarNames = new Set<string>()
+  if (isSourceFile(scope) || isFunctionLike(scope)) {
+    const collect = (node: Node): void => {
+      if (node !== scope && isFunctionLike(node)) return
+      if (isVariableDeclaration(node) && isVarDeclaration(node) && isIdentifier(node.name)) {
+        hoistedVarNames.add(node.name.text)
+        aliases.delete(node.name.text)
+        specifiers.delete(node.name.text)
+        wrappers.delete(node.name.text)
+      }
+      forEachChild(node, collect)
+    }
+    collect(scope)
+  }
+  const forgetDirectDeclarations = (node: Node): void => {
+    if (node !== scope && isFunctionDeclaration(node)) {
+      if (node.name) {
+        aliases.delete(node.name.text)
+        specifiers.delete(node.name.text)
+        wrappers.delete(node.name.text)
+      }
+      return
+    }
+    if (node !== scope && isLoaderScope(node)) return
+    if (isVariableDeclaration(node) && isIdentifier(node.name)) {
+      aliases.delete(node.name.text)
+      specifiers.delete(node.name.text)
+      wrappers.delete(node.name.text)
+    }
+    forEachChild(node, forgetDirectDeclarations)
+  }
+  forgetDirectDeclarations(scope)
+  let previousState = ''
+  while (`${aliases.size}:${specifiers.size}:${wrappers.size}` !== previousState) {
+    previousState = `${aliases.size}:${specifiers.size}:${wrappers.size}`
+    const visit = (
+      node: Node,
+      nestedScope = false,
+      shadowed: ReadonlySet<string> = new Set()
+    ): void => {
+      if (node !== scope && isFunctionDeclaration(node)) {
+        const wrapper = !nestedScope && node.name ? loaderWrapperKind(node, aliases) : undefined
+        if (wrapper && node.name) wrappers.set(node.name.text, wrapper)
+        return
+      }
+      if (node !== scope && isFunctionLike(node)) return
+      const nested = nestedScope || (node !== scope && isLoaderScope(node))
+      const blocked =
+        node !== scope && isLoaderScope(node)
+          ? new Set([...shadowed, ...lexicalNamesIn(node)])
+          : shadowed
+      let name: string | undefined
+      let value: Node | undefined
+      if (isVariableDeclaration(node) && isIdentifier(node.name) && node.initializer) {
+        name = node.name.text
+        value = node.initializer
+      } else if (
+        isBinaryExpression(node) &&
+        node.operatorToken.kind === SyntaxKind.EqualsToken &&
+        isIdentifier(node.left)
+      ) {
+        name = node.left.text
+        value = node.right
+      }
+      if (
+        name &&
+        value &&
+        (!nested || (hoistedVarNames.has(name) && (isVarDeclaration(node) || !blocked.has(name))))
+      ) {
+        if (isIdentifier(value) && aliases.has(value.text)) aliases.add(name)
+        const wrapper = isIdentifier(value)
+          ? wrappers.get(value.text)
+          : loaderWrapperKind(value, aliases)
+        if (wrapper) wrappers.set(name, wrapper)
+        const specifier = isStringLiteralLike(value)
+          ? value.text
+          : isIdentifier(value)
+            ? specifiers.get(value.text)
+            : undefined
+        if (specifier !== undefined) specifiers.set(name, specifier)
+      }
+      forEachChild(node, (child) => visit(child, nested, blocked))
+    }
+    visit(scope)
+  }
+  return { requireAliases: aliases, specifiers, wrappers }
+}
 const importsFrom = (path: string, source = readSource(path)): readonly ImportReference[] => {
   const references: ImportReference[] = []
-  const visit = (node: Node): void => {
+  const sourceFile = sourceFileFor(path, source)
+  const visit = (node: Node, inherited: LoaderBindings): void => {
+    const bindings = isLoaderScope(node) ? loaderBindingsIn(node, inherited) : inherited
     if (
       (isImportDeclaration(node) || isExportDeclaration(node)) &&
       node.moduleSpecifier &&
@@ -103,38 +304,49 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
         names:
           bindings && isNamedImports(bindings)
             ? bindings.elements.map((element) => (element.propertyName ?? element.name).text)
-            : undefined
+            : undefined,
+        literal: true
       })
     } else if (isCallExpression(node)) {
-      const kind =
-        isIdentifier(node.expression) && node.expression.text === 'require'
-          ? 'require'
-          : node.expression.kind === SyntaxKind.ImportKeyword
-            ? 'dynamic'
+      const argument = node.arguments[0]
+      const specifier = argument
+        ? isStringLiteralLike(argument)
+          ? argument.text
+          : isIdentifier(argument)
+            ? bindings.specifiers.get(argument.text)
             : undefined
+        : undefined
+      const target = specifier === undefined ? undefined : resolveImportTarget(path, specifier)
+      const kind =
+        isIdentifier(node.expression) && bindings.requireAliases.has(node.expression.text)
+          ? 'require'
+          : isIdentifier(node.expression) && bindings.wrappers.has(node.expression.text)
+            ? bindings.wrappers.get(node.expression.text)
+            : node.expression.kind === SyntaxKind.ImportKeyword
+              ? 'dynamic'
+              : undefined
       if (kind) {
-        const argument = node.arguments[0]
         references.push({
-          target:
-            argument && isStringLiteralLike(argument)
-              ? resolveImportTarget(path, argument.text)
-              : undefined,
+          target,
           kind,
-          names: undefined
+          names: undefined,
+          literal: specifier !== undefined
         })
       }
     }
-    forEachChild(node, visit)
+    forEachChild(node, (child) => visit(child, bindings))
   }
-  visit(sourceFileFor(path, source))
+  visit(sourceFile, {
+    requireAliases: new Set(['require']),
+    specifiers: new Map(),
+    wrappers: new Map()
+  })
   return references
 }
-
 const physicalLines = (path: string): number => {
   const source = readSource(path)
   return source.split(/\r?\n/).length - Number(source.endsWith('\n'))
 }
-
 const callCounts = (sourceFile: SourceFile): ReadonlyMap<string, number> => {
   const counts = new Map<string, number>()
   const visit = (node: Node): void => {
@@ -146,7 +358,6 @@ const callCounts = (sourceFile: SourceFile): ReadonlyMap<string, number> => {
   visit(sourceFile)
   return counts
 }
-
 const propertyCallCounts = (
   sourceFile: SourceFile,
   receiver: string
@@ -167,7 +378,6 @@ const propertyCallCounts = (
   visit(sourceFile)
   return counts
 }
-
 const variableArrow = (sourceFile: SourceFile, name: string): ArrowFunction => {
   let found: ArrowFunction | undefined
   const visit = (node: Node): void => {
@@ -187,21 +397,13 @@ const variableArrow = (sourceFile: SourceFile, name: string): ArrowFunction => {
   if (!found) throw new Error(`${name} arrow function not found`)
   return found
 }
-
 const typeLiteralAlias = (sourceFile: SourceFile, name: string): TypeLiteralNode => {
-  const declaration = sourceFile.statements.find(
-    (statement) => isTypeAliasDeclaration(statement) && statement.name.text === name
-  )
-  if (
-    !declaration ||
-    !isTypeAliasDeclaration(declaration) ||
-    !isTypeLiteralNode(declaration.type)
-  ) {
-    throw new Error(`${name} type literal not found`)
-  }
+  const declaration = sourceFile.statements
+    .filter(isTypeAliasDeclaration)
+    .find((statement) => statement.name.text === name)
+  if (!declaration || !isTypeLiteralNode(declaration.type)) throw new Error(`${name} not found`)
   return declaration.type
 }
-
 const propertyNames = (object: Node): string[] => {
   if (!isObjectLiteralExpression(object)) throw new Error('expected object literal')
   return object.properties.map((property) => {
@@ -209,12 +411,10 @@ const propertyNames = (object: Node): string[] => {
     return property.name.getText().replace(/^['"]|['"]$/g, '')
   })
 }
-
 const expectSameNames = (actual: readonly string[], expected: readonly string[]): void => {
   expect(actual).toHaveLength(expected.length)
   expect([...actual].sort()).toEqual([...expected].sort())
 }
-
 const effectBodies = (sourceFile: SourceFile): readonly string[] => {
   const bodies: string[] = []
   const visit = (node: Node): void => {
@@ -231,14 +431,12 @@ const effectBodies = (sourceFile: SourceFile): readonly string[] => {
   visit(sourceFile)
   return bodies
 }
-
 const directReturnObject = (arrow: ReturnType<typeof variableArrow>): Node => {
   if (!isBlock(arrow.body)) throw new Error('expected block-bodied arrow function')
   const statement = arrow.body.statements.find(isReturnStatement)
   if (!statement?.expression) throw new Error('expected direct return value')
   return statement.expression
 }
-
 const hookKeys = [
   'actionError',
   'isConnecting',
@@ -259,22 +457,45 @@ const hookKeys = [
   'setPermissionProfile',
   'revokePermissionGrant'
 ] as const
-
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))
   return ownerNames.filter((name) => targets.has(ownerTargets.get(name)!))
 }
-
+const allowedOwnerConsumers = new Set([facadeTarget, ...privateOwnerTargets])
+const workspaceRuntimeBoundaryTargets = new Set([
+  facadeTarget,
+  workspaceEventsTarget,
+  ...privateOwnerTargets
+])
+const privateOwnerBoundaryViolations = (path: string, source = readSource(path)): string[] => {
+  const consumer = normalizePathSeparators(relative(rendererRoot, path))
+  const isWorkspaceRuntimeModule = workspaceRuntimeBoundaryTargets.has(modulePath(path))
+  return importsFrom(path, source).flatMap((reference) => {
+    if (
+      isWorkspaceRuntimeModule &&
+      (reference.kind === 'dynamic' || reference.kind === 'require') &&
+      !reference.literal
+    ) {
+      return [`${consumer} uses a non-literal ${reference.kind} loader`]
+    }
+    if (
+      reference.target &&
+      privateOwnerTargets.has(reference.target) &&
+      !allowedOwnerConsumers.has(modulePath(path))
+    ) {
+      return [`${consumer} ${reference.kind} imports a private owner`]
+    }
+    return []
+  })
+}
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
-
   it('keeps the facade and four deep owners within their completion gates', () => {
     expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(600)
     for (const name of ownerNames) {
       expect(physicalLines(`${ownerTargets.get(name)}.ts`), name).toBeLessThanOrEqual(660)
     }
   })
-
   it('keeps the established 18-key hook interface', () => {
     const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
     const owner = variableArrow(facadeFile, 'useOwnedWorkspaceAgentRuntime')
@@ -288,7 +509,6 @@ describe('workspace runtime architecture', () => {
     expect(consumer.type?.getText()).toBe('WorkspaceAgentRuntime')
     expectSameNames(propertyNames(directReturnObject(owner)), hookKeys)
   })
-
   it('keeps React composition in the facade and lifecycle state in its owner', () => {
     const calls = callCounts(facadeFile)
     expect(calls.get('useAcpRuntime')).toBe(1)
@@ -325,7 +545,6 @@ describe('workspace runtime architecture', () => {
     }
     expect(readSource(facadePath)).not.toContain('window.api')
   })
-
   it('keeps the owner dependency DAG explicit and acyclic', () => {
     expect(ownerDependencyNames(facadePath)).toEqual(ownerNames)
     expect(
@@ -342,26 +561,10 @@ describe('workspace runtime architecture', () => {
       ]
     })
   })
-
   it('keeps private owners behind the public facade', () => {
-    const allowedConsumers = new Set([facadeTarget, ...privateOwnerTargets])
-    const violations: string[] = []
-    for (const path of productionSources()) {
-      for (const reference of importsFrom(path)) {
-        if (
-          reference.target &&
-          privateOwnerTargets.has(reference.target) &&
-          !allowedConsumers.has(modulePath(path))
-        ) {
-          violations.push(
-            `${normalizePathSeparators(relative(rendererRoot, path))} ${reference.kind} imports a private owner`
-          )
-        }
-      }
-    }
+    const violations = productionSources().flatMap((path) => privateOwnerBoundaryViolations(path))
     expect(violations).toEqual([])
   })
-
   it('keeps the hook consumer on the named facade interface', () => {
     const hookConsumers: string[] = []
     const unsupportedFacadeImports: string[] = []
@@ -378,25 +581,116 @@ describe('workspace runtime architecture', () => {
     expect(unsupportedFacadeImports).toEqual([])
     expect(hookConsumers).toEqual(['pages/workspace/WorkspacePage.tsx'])
   })
-
-  it('recognizes aliased, dynamic and require bypass attempts', () => {
+  it('rejects aliased and non-literal loader bypass attempts', () => {
     const syntheticPath = resolve(__dirname, 'synthetic-consumer.ts')
-    const references = importsFrom(
+    const violations = privateOwnerBoundaryViolations(
       syntheticPath,
       [
-        "import { sendWorkspaceMessage as send } from './workspace-runtime-command-owner'",
-        "void import('./workspace-runtime-session-lifecycle-owner')",
-        "require('./workspace-runtime-event-owner')"
+        'let load',
+        "const loadOwner = () => load('./workspace-runtime-command-owner')",
+        'load = baseLoad',
+        'const baseLoad = require',
+        "const ownerPath = './workspace-runtime-session-lifecycle-owner'",
+        'void import(ownerPath)',
+        'require(ownerPath)',
+        'if (enabled) { var nestedLoad = require }',
+        "nestedLoad('./workspace-runtime-command-owner')",
+        "{ const blockLoad = require; blockLoad('./workspace-runtime-command-owner') }",
+        "{ let blockLet; blockLet = require; blockLet('./workspace-runtime-command-owner') }",
+        "const checkLocal = () => { const localLoad = require; localLoad('./workspace-runtime-command-owner') }",
+        "const lazy = (path: string) => import(path); lazy('./workspace-runtime-event-owner')",
+        "const wrapped = (path: string) => require(path); const wrappedAlias = wrapped; wrappedAlias('./workspace-runtime-command-owner')",
+        "function declaredLazy(path: string) { return import(path) }; declaredLazy('./workspace-runtime-event-owner')",
+        "function declaredWrapped(path: string) { return require(path) }; declaredWrapped('./workspace-runtime-command-owner')",
+        "const defaultLoad = (loader = require) => loader('./workspace-runtime-command-owner'); defaultLoad()",
+        "const defaultPath = (path = './workspace-runtime-event-owner') => import(path); defaultPath()",
+        "const defaultAlias = (base = require, loader = base) => loader('./workspace-runtime-command-owner'); defaultAlias()",
+        'const defaultConstantPath = (path = ownerPath) => import(path); defaultConstantPath()'
       ].join('\n')
     )
-    expect(references.map((reference) => reference.target)).toEqual([
-      ownerTargets.get('workspace-runtime-command-owner'),
-      ownerTargets.get('workspace-runtime-session-lifecycle-owner'),
-      ownerTargets.get('workspace-runtime-event-owner')
+    expect(violations).toEqual([
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner',
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner'
     ])
-    expect(references[0].names).toEqual(['sendWorkspaceMessage'])
+    expect(privateOwnerBoundaryViolations(syntheticPath, 'void import(runtimePath)')).toEqual([])
+    expect(
+      privateOwnerBoundaryViolations(
+        syntheticPath,
+        [
+          "const ownerPath = './workspace-runtime-command-owner'",
+          'const lazy = (ownerPath: string) => import(ownerPath)',
+          'const load = require',
+          "const invoke = (load: (path: string) => void) => load('./workspace-runtime-command-owner')",
+          "const localPath = './workspace-runtime-command-owner'",
+          '{ let localPath; void import(localPath) }',
+          'const localLoad = require',
+          "{ const localLoad = customLoader; localLoad('./workspace-runtime-command-owner') }",
+          'const checkShadows = () => {',
+          '  var shadowedLoad = customLoader',
+          '  { const shadowedLoad = require }',
+          '  { let shadowedLoad; shadowedLoad = require }',
+          "  shadowedLoad('./workspace-runtime-command-owner')",
+          '  var shadowedPath = getRuntimePath()',
+          "  { const shadowedPath = './workspace-runtime-command-owner' }",
+          '  void import(shadowedPath)',
+          '}',
+          "const shadowedLazy = (path: string) => { { const path = './external-module'; void import(path) } }",
+          "shadowedLazy('./workspace-runtime-command-owner')",
+          'const shadowedRequire = (path: string) => { const require = customLoader; return require(path) }',
+          "shadowedRequire('./workspace-runtime-command-owner')",
+          "const defaultTdz = (loader = require, require = customLoader) => loader('./workspace-runtime-command-owner'); defaultTdz()"
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      privateOwnerBoundaryViolations(
+        syntheticPath,
+        [
+          "const ownerPath = './workspace-runtime-command-owner'",
+          'const load = require',
+          'const check = () => {',
+          '  for (const ownerPath of []) {}',
+          '  for (const load of []) {}',
+          '  try { throw 0 } catch (ownerPath) {}',
+          '  try { throw 0 } catch (load) {}',
+          '  void import(ownerPath)',
+          "  load('./workspace-runtime-command-owner')",
+          '}'
+        ].join('\n')
+      )
+    ).toEqual([
+      'lib/acp/synthetic-consumer.ts dynamic imports a private owner',
+      'lib/acp/synthetic-consumer.ts require imports a private owner'
+    ])
+    expect(privateOwnerBoundaryViolations(facadePath, 'void import(runtimePath)')).toEqual([
+      'lib/acp/useWorkspaceAgentRuntime.ts uses a non-literal dynamic loader'
+    ])
+    expect(
+      privateOwnerBoundaryViolations(
+        facadePath,
+        'const check = () => { const load = require; load(runtimePath) }'
+      )
+    ).toEqual(['lib/acp/useWorkspaceAgentRuntime.ts uses a non-literal require loader'])
+    expect(
+      privateOwnerBoundaryViolations(
+        resolve(__dirname, 'workspace-events.ts'),
+        'void import(runtimePath)'
+      )
+    ).toEqual(['lib/acp/workspace-events.ts uses a non-literal dynamic loader'])
   })
-
   it('prevents owners from reverse-importing the facade', () => {
     const violations = ownerNames.flatMap((name) => {
       const path = `${ownerTargets.get(name)}.ts`
@@ -409,7 +703,6 @@ describe('workspace runtime architecture', () => {
     })
     expect(violations).toEqual([])
   })
-
   it('keeps the lifecycle owner interface at six operations', () => {
     const lifecyclePath = `${ownerTargets.get('workspace-runtime-session-lifecycle-owner')}.ts`
     const lifecycle = variableArrow(
@@ -425,7 +718,6 @@ describe('workspace runtime architecture', () => {
       'delete'
     ])
   })
-
   it('keeps the module-impact owner and test closure complete', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as {
       modules: {
