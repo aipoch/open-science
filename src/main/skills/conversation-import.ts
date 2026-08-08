@@ -155,9 +155,13 @@ class SkillImportApprovalBroker {
     pending.resolve(response)
     try {
       this.options.onSettled?.(response.id)
-      this.options.onLifecycleSettled?.(response.id, state)
     } catch {
       // Renderer teardown must not change the broker result or leave the agent call parked.
+    }
+    try {
+      this.options.onLifecycleSettled?.(response.id, state)
+    } catch {
+      // Inbox projection is independent from renderer teardown and remains best-effort.
     }
   }
 }

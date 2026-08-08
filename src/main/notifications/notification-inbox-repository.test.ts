@@ -100,6 +100,41 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items[0]).not.toHaveProperty('readAt')
   })
 
+  it('expires only pending authorizations during startup restore', async () => {
+    const repository = await createRepository()
+    for (const [originId, actionState] of [
+      ['stale', 'pending'],
+      ['settled', 'resolved']
+    ] as const) {
+      await repository.record({
+        id: `approval-${originId}`,
+        dedupeKey: `authorization:connector:${originId}`,
+        kind: 'authorization.required',
+        source: 'connector',
+        originId,
+        title: 'Approval needed',
+        summary: 'A connector needs approval.',
+        actionState
+      })
+    }
+    await record(repository, 'task')
+
+    await repository.expirePendingAuthorizations(2250)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(3)
+    expect(snapshot.items.find((item) => item.originId === 'stale')).toMatchObject({
+      actionState: 'expired',
+      settledAt: 2250
+    })
+    expect(snapshot.items.find((item) => item.originId === 'settled')).toMatchObject({
+      actionState: 'resolved'
+    })
+    expect(snapshot.items.find((item) => item.originId === 'task')).not.toHaveProperty(
+      'actionState'
+    )
+  })
+
   it('acknowledges visible task outcomes without marking authorization messages read', async () => {
     const repository = await createRepository()
     await record(repository, 'visible')

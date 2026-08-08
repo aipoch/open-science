@@ -12,6 +12,11 @@ const repository = (
       unreadCount: 0,
       latestSequence: 0
     })),
+    expirePendingAuthorizations: vi.fn(async () => ({
+      changed: false,
+      unreadCount: 0,
+      latestSequence: 0
+    })),
     snapshot: vi.fn(async () => ({ unreadCount: 0, latestSequence: 0, items: [] })),
     record: vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 })),
     settle: vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 })),
@@ -65,6 +70,23 @@ describe('createNotificationInboxController', () => {
       latestSequence: 1
     })
     expect(setCount).not.toHaveBeenCalled()
+  })
+
+  it('expires authorization requests that cannot survive startup restore', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({
+      headless: true,
+      repository: db,
+      onChanged: vi.fn(),
+      createId: () => 'message-1',
+      now: () => 1500
+    })
+
+    await inbox.restore()
+
+    expect(db.migrateLegacyUnread).toHaveBeenCalledWith(expect.any(Function), 1500)
+    expect(db.expirePendingAuthorizations).toHaveBeenCalledWith(1500)
+    expect(db.snapshot).toHaveBeenCalledWith(1)
   })
 
   it('records a focused visible task as read and leaves background tasks unread', async () => {

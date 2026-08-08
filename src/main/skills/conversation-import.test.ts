@@ -789,6 +789,24 @@ describe('SkillImportApprovalBroker lifecycle', () => {
     expect(onLifecycleSettled).toHaveBeenCalledWith('approval-timeout', 'expired')
   })
 
+  it('settles the inbox lifecycle when renderer teardown throws', async () => {
+    const onLifecycleSettled = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-renderer-failure',
+      broadcast: vi.fn(),
+      onSettled: () => {
+        throw new Error('renderer unavailable')
+      },
+      onLifecycleSettled
+    })
+    const response = broker.request(approvalInfo('session-1'))
+
+    broker.respond({ id: 'approval-renderer-failure', items: [] })
+
+    await expect(response).resolves.toEqual({ id: 'approval-renderer-failure', items: [] })
+    expect(onLifecycleSettled).toHaveBeenCalledWith('approval-renderer-failure', 'resolved')
+  })
+
   it('cancels only approvals owned by the stopped conversation', async () => {
     const onSettled = vi.fn()
     let sequence = 0
