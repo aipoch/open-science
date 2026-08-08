@@ -18,7 +18,7 @@ vi.mock('./useAcpRuntime', () => ({
   useAcpRuntime: () => runtimeMock.current
 }))
 
-import { useWorkspaceAgentRuntime } from './useWorkspaceAgentRuntime'
+import { useWorkspaceAgentRuntime, WorkspaceAgentRuntimeProvider } from './useWorkspaceAgentRuntime'
 
 const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnapshot => ({
   status: 'connected',
@@ -62,6 +62,12 @@ const Probe = (): JSX.Element | null => {
   return phase === 'hidden' ? null : <div>{phase}</div>
 }
 
+const Harness = (): JSX.Element => (
+  <WorkspaceAgentRuntimeProvider>
+    <Probe />
+  </WorkspaceAgentRuntimeProvider>
+)
+
 describe('workspace Agent first-output runtime sync', () => {
   let container: HTMLDivElement
   let root: Root
@@ -87,7 +93,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('starts waiting when the runtime takes a foreground prompt without a new active run', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
 
     runtimeMock.current = createRuntime(
@@ -97,7 +103,7 @@ describe('workspace Agent first-output runtime sync', () => {
         agentPromptInFlightSessionIds: ['session-1']
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       activeRun: undefined,
@@ -108,7 +114,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('does not rearm waiting when prompt ownership and the first visible output share a snapshot', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -129,7 +135,7 @@ describe('workspace Agent first-output runtime sync', () => {
         ]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
       role: 'agent',
@@ -141,7 +147,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('restarts runtime-owned waiting only after an active tool completes', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
     const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
     const firstOutputEvent = {
       id: 'event-output-before-tool',
@@ -163,7 +169,7 @@ describe('workspace Agent first-output runtime sync', () => {
         events: [firstOutputEvent]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
     expect(container.textContent).toBe('')
 
     const runningToolEvent = {
@@ -185,7 +191,7 @@ describe('workspace Agent first-output runtime sync', () => {
         events: [firstOutputEvent, runningToolEvent]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
     expect(container.textContent).toBe('interacting-with-tools')
 
     runtimeMock.current = createRuntime(
@@ -205,7 +211,7 @@ describe('workspace Agent first-output runtime sync', () => {
         ]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       activeRun: undefined,
@@ -215,7 +221,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('unmounts runtime-owned waiting after the first visible image without an active run', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -236,7 +242,7 @@ describe('workspace Agent first-output runtime sync', () => {
         ]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0].messages.at(-1)?.images).toHaveLength(1)
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
@@ -244,7 +250,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('shows runtime-owned tool interaction while permission input is pending', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -262,7 +268,7 @@ describe('workspace Agent first-output runtime sync', () => {
         ]
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'waiting-permission',
@@ -272,7 +278,7 @@ describe('workspace Agent first-output runtime sync', () => {
   })
 
   it('does not start waiting for a compaction-only runtime interaction', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -281,14 +287,14 @@ describe('workspace Agent first-output runtime sync', () => {
         agentPromptInFlightSessionIds: []
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
     expect(container.textContent).toBe('')
   })
 
   it('does not infer foreground prompt ownership when the prompt-only field is absent', async () => {
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -297,7 +303,7 @@ describe('workspace Agent first-output runtime sync', () => {
         agentPromptInFlightSessionIds: undefined
       })
     )
-    await act(async () => root.render(<Probe />))
+    await act(async () => root.render(<Harness />))
 
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
     expect(container.textContent).toBe('')

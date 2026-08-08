@@ -87,6 +87,11 @@ do not become alternate state stores.
 | Notebook runtime                | Own runtime discovery, Session binding decisions, execution, environment operations, and durable run history. It consumes enablement snapshots through the named Settings capability rather than owning or reading raw Settings state.                           |
 | Persistence and artifact owners | Own project/session files, uploads, artifact versions, provenance, and deletion/finalization coordination. Application commands receive narrow handler capabilities instead of repositories.                                                                     |
 
+After Session persistence hydrates, the renderer mounts one route-independent Workspace runtime
+owner at the application boundary. Home consumes its Session status projection without acquiring
+Workspace commands or preview behavior. Generated artifacts continue to finalize in the background,
+while molecule preview activation is limited to the foreground Workspace for the owning Project.
+
 ```mermaid
 flowchart LR
   Electron["Electron IPC adapters"] --> Commands["Application command interfaces"]

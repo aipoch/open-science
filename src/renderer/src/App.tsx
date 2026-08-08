@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
+import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
@@ -537,19 +538,21 @@ const App = (): React.JSX.Element | null => {
           onDismiss={sessionPersistence.dismissLoadWarning}
         />
       ) : null}
-      {view === 'home' ? (
-        <HomePage
-          canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
-          hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
-          onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
-        />
-      ) : (
-        <WorkspacePage
-          isSessionPersistenceHydrated={isSessionPersistenceHydrated}
-          isSessionPersistenceReady={isSessionPersistenceReady}
-          canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
-        />
-      )}
+      <WorkspaceAgentRuntimeProvider>
+        {view === 'home' ? (
+          <HomePage
+            canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+            hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+            onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+          />
+        ) : (
+          <WorkspacePage
+            isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+            isSessionPersistenceReady={isSessionPersistenceReady}
+            canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+          />
+        )}
+      </WorkspaceAgentRuntimeProvider>
       <SettingsPage
         ref={settingsPageRef}
         open={isSettingsOpen}

@@ -3,7 +3,6 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AcpStateSnapshot } from '../../../../shared/acp'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
@@ -23,22 +22,6 @@ vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 
 let container: HTMLDivElement
 let root: Root
-let runtimeStateListener: ((snapshot: AcpStateSnapshot) => void) | undefined
-
-const runtimeSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnapshot => ({
-  status: 'connected',
-  cwd: '/workspace/project-1',
-  sessionIds: [],
-  events: [],
-  pendingPermissions: [],
-  permissionProfiles: {},
-  permissionGrants: {},
-  contextUsageBySession: {},
-  promptInFlight: false,
-  promptInFlightSessionIds: [],
-  agentPromptInFlightSessionIds: [],
-  ...overrides
-})
 
 const project: Project = {
   id: 'project-1',
@@ -89,18 +72,6 @@ beforeEach(() => {
     status: 'idle',
     error: undefined
   })
-  runtimeStateListener = undefined
-  window.api = {
-    ...(window.api ?? {}),
-    acp: {
-      ...(window.api?.acp ?? {}),
-      getState: vi.fn().mockResolvedValue(runtimeSnapshot()),
-      onState: vi.fn((listener) => {
-        runtimeStateListener = listener
-        return vi.fn()
-      })
-    }
-  } as never
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -436,26 +407,12 @@ describe('HomePage activity overview', () => {
       )
     )
 
-    expect(runtimeStateListener).toBeTypeOf('function')
     expect(
       container.querySelector('[aria-label="Open session Live analysis, running"]')
     ).not.toBeNull()
 
     await act(async () => {
-      runtimeStateListener?.(
-        runtimeSnapshot({
-          sessionIds: ['live'],
-          pendingPermissions: [
-            {
-              requestId: 'permission-1',
-              sessionId: 'live',
-              toolCallId: 'tool-1',
-              title: 'Allow command?',
-              options: []
-            }
-          ]
-        })
-      )
+      useSessionStore.getState().setPermissionPending('live')
     })
 
     expect(

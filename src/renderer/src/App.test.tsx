@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -193,6 +193,9 @@ vi.mock('@/components/LifecycleToast', () => ({
 }))
 vi.mock('@/components/UpdateDialog', () => ({
   UpdateDialog: (): React.JSX.Element => <div data-testid="update-dialog" />
+}))
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children
 }))
 vi.mock('@/pages/home/HomePage', () => ({
   HomePage: ({

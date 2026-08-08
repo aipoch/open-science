@@ -14,12 +14,13 @@ import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-eve
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const runtimeMock = vi.hoisted(() => ({ current: {} as unknown }))
+const useAcpRuntimeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('./useAcpRuntime', () => ({
-  useAcpRuntime: () => runtimeMock.current
+  useAcpRuntime: useAcpRuntimeMock
 }))
 
-import { useWorkspaceAgentRuntime } from './useWorkspaceAgentRuntime'
+import { useWorkspaceAgentRuntime, WorkspaceAgentRuntimeProvider } from './useWorkspaceAgentRuntime'
 
 const workspacePath = join('workspace', 'project')
 
@@ -92,7 +93,13 @@ describe('workspace Agent Runtime hook contract', () => {
   }
 
   const render = async (): Promise<void> => {
-    await act(async () => root.render(<Probe />))
+    await act(async () =>
+      root.render(
+        <WorkspaceAgentRuntimeProvider>
+          <Probe />
+        </WorkspaceAgentRuntimeProvider>
+      )
+    )
   }
 
   beforeEach(() => {
@@ -101,6 +108,8 @@ describe('workspace Agent Runtime hook contract', () => {
     useSessionStore.setState(createInitialSessionState())
     useSettingsStore.setState(createInitialSettingsState())
     runtimeMock.current = createRuntime(createSnapshot())
+    useAcpRuntimeMock.mockReset()
+    useAcpRuntimeMock.mockImplementation(() => runtimeMock.current)
     window.api = {
       acp: { getState: vi.fn().mockResolvedValue(createSnapshot()) }
     } as never
@@ -149,6 +158,8 @@ describe('workspace Agent Runtime hook contract', () => {
     }
 
     await render()
+
+    expect(useAcpRuntimeMock).toHaveBeenCalledOnce()
 
     expect(Object.keys(latest).sort()).toEqual(
       [

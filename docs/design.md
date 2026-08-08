@@ -555,6 +555,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   shadows remain visible at either scroll edge. Every card opens its Session and contains only the
   Session title, Project name, state, and state-relative time. Opening a completed Session marks its
   task outcome read, so that card no longer appears when the user returns Home.
+- Home reads live Session projections from the application-level runtime owner; it does not mount
+  Workspace commands or preview side effects. Background artifacts remain durable, but only the
+  foreground Workspace for their owning Project may auto-open a molecule preview.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
   `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue

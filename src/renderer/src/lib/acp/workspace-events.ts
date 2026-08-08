@@ -11,6 +11,7 @@ import {
 } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
+import { useNavigationStore } from '../../stores/navigation-store'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import {
@@ -291,16 +292,24 @@ const openMoleculePreviews = (sessionId: string, artifacts: ArtifactFile[]): voi
   const projectId = useSessionStore
     .getState()
     .sessions.find((session) => session.id === sessionId)?.projectId
+  const navigation = useNavigationStore.getState()
+
+  // Background runs keep finalizing artifacts on every route, but only the owning foreground
+  // Workspace may change the visible preview slice or steal preview focus.
+  if (
+    !projectId ||
+    navigation.view !== 'workspace' ||
+    navigation.activeProjectId !== projectId ||
+    workbench.activeProjectId !== projectId
+  ) {
+    return
+  }
 
   for (const artifact of artifacts) {
     const format = getPreviewFormatForFile({ name: artifact.name, mimeType: artifact.mimeType })
     if (format !== 'molecule') continue
 
-    const item = createPreviewFileItemFromArtifact(
-      artifact,
-      sessionId,
-      projectId || artifact.projectName
-    )
+    const item = createPreviewFileItemFromArtifact(artifact, sessionId, projectId)
     if (item) workbench.upsertAndActivateItem(item)
   }
 }

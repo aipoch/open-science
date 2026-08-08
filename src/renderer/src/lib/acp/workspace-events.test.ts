@@ -9,6 +9,7 @@ import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { useNavigationStore } from '../../stores/navigation-store'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -74,9 +75,11 @@ describe('workspace runtime events', () => {
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
-      content: 'Summarize this'
+      content: 'Summarize this',
+      projectId: 'default-project'
     })
   })
 
@@ -1988,6 +1991,8 @@ describe('workspace runtime events', () => {
   })
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default-project' })
+    usePreviewWorkbenchStore.getState().activateProject('default-project')
     const finalizedArtifact = createArtifactFile({
       id: 'artifact-version-2',
       artifactId: 'artifact-lineage-1',
@@ -2034,6 +2039,41 @@ describe('workspace runtime events', () => {
         name: 'aspirin.mol'
       })
     ])
+  })
+
+  it('does not auto-open a generated molecule artifact while Home is visible', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'artifact-version-home',
+      artifactId: 'artifact-lineage-home',
+      versionId: 'artifact-version-home',
+      versionNumber: 1,
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      name: 'background.mol'
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-home-molecule', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-home',
+        kind: 'artifact',
+        runId: 'run-home',
+        artifactSessionId: 'artifact-session-home',
+        artifactClaimId: 'claim-home',
+        artifacts: [createArtifactFile({ name: 'background.mol' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
   })
 
   it('does not auto-open non-molecule artifacts', async () => {
