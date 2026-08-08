@@ -110,6 +110,7 @@ const PreviewTab = ({
       id={getPreviewTabId(tab.id)}
       aria-controls={getPreviewPanelId(tab.id)}
       aria-selected={isActive}
+      aria-keyshortcuts="Delete Backspace"
       tabIndex={isActive ? 0 : -1}
       className="flex min-w-0 flex-1 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
       onClick={() => onActivate(tab.id)}
@@ -132,6 +133,7 @@ const PreviewTab = ({
     <button
       type="button"
       tabIndex={-1}
+      aria-hidden="true"
       className={cn(
         'shrink-0 rounded-sm p-0.5 outline-none hover:bg-bg-000/60 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50',
         isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'

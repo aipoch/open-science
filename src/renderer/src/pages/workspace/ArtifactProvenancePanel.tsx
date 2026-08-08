@@ -985,7 +985,7 @@ const ArtifactProvenancePanel = ({
             type="button"
             role="tab"
             aria-selected={activeTab === tab.id}
-            className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-300 hover:text-text-100'}`}
+            className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
@@ -1077,7 +1077,7 @@ const ArtifactProvenancePanel = ({
                 />
               )}
               {generatedCode ? (
-                <div className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <div className="min-w-0 flex-1 truncate text-sm text-text-200">
                   <span>LLM-generated reconstruction · see </span>
                   <Button
                     type="button"
@@ -1095,20 +1095,20 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Using the provider and model selected when generation started.
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Generate a standalone script from the immutable Execution Log with your current
                   provider and model.
                 </p>
               ) : (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Checking for a previously generated script…
                 </p>
               )}

@@ -429,7 +429,7 @@ const HomePage = ({
                         ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
                         : 'Session count unavailable'}
                     </span>
-                    <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
+                    <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
                       {formatRelativeTime(lastActivityAt)}
                     </span>
                     <DropdownMenu.Root>
@@ -520,7 +520,7 @@ const HomePage = ({
                           <span className="truncate text-xs text-text-100">{preview}</span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 text-xs text-text-300">
+                      <span className="shrink-0 text-xs text-text-000">
                         {formatRelativeTime(session.updatedAt)}
                       </span>
                     </button>

@@ -565,7 +565,7 @@ const ArtifactCard = ({
           compact
         />
         {sizeLabel ? (
-          <span className="ml-1 shrink-0 text-[11px] text-text-300">{sizeLabel}</span>
+          <span className="ml-1 shrink-0 text-[11px] text-text-000">{sizeLabel}</span>
         ) : null}
       </div>
     </button>
