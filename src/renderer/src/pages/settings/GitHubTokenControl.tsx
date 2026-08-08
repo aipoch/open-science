@@ -9,11 +9,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 type Feedback = { kind: 'error' | 'success'; text: string }
+type Availability = 'checking' | 'available' | 'unavailable'
 
-const GitHubTokenControl = (): React.JSX.Element => {
+const isLocalOnlyActionError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes('only available in the local desktop app')
+
+const GitHubTokenControl = (): React.JSX.Element | null => {
   const [expanded, setExpanded] = useState(false)
   const [token, setToken] = useState('')
   const [status, setStatus] = useState<GitHubTokenStatus | null>(null)
+  const [availability, setAvailability] = useState<Availability>('checking')
   const [busy, setBusy] = useState<'loading' | 'saving' | 'removing' | null>('loading')
   const [feedback, setFeedback] = useState<Feedback | null>(null)
 
@@ -22,10 +27,18 @@ const GitHubTokenControl = (): React.JSX.Element => {
     void window.api.settings
       .getGitHubTokenStatus()
       .then((next) => {
-        if (active) setStatus(next)
+        if (active) {
+          setStatus(next)
+          setAvailability('available')
+        }
       })
       .catch((error: unknown) => {
         if (!active) return
+        if (isLocalOnlyActionError(error)) {
+          setAvailability('unavailable')
+          return
+        }
+        setAvailability('available')
         setFeedback({
           kind: 'error',
           text: error instanceof Error ? error.message : 'Could not read GitHub token status.'
@@ -77,6 +90,8 @@ const GitHubTokenControl = (): React.JSX.Element => {
       setBusy(null)
     }
   }
+
+  if (availability !== 'available') return null
 
   return (
     <>

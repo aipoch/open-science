@@ -53,6 +53,19 @@ afterEach(() => {
 })
 
 describe('GitHubTokenControl', () => {
+  it('stays hidden when token management is restricted to the local app', async () => {
+    settingsApi.getGitHubTokenStatus.mockRejectedValue(
+      new Error(
+        'This action is only available in the local desktop app (settings:get-github-token-status).'
+      )
+    )
+
+    await act(async () => root.render(<GitHubTokenControl />))
+    await flush()
+
+    expect(container.innerHTML).toBe('')
+  })
+
   it('reveals an initially disabled save action and reports a successful verified save', async () => {
     settingsApi.saveGitHubToken.mockResolvedValue({ configured: true, mask: 'gith…fied' })
     await act(async () => root.render(<GitHubTokenControl />))

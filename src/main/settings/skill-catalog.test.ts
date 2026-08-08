@@ -81,6 +81,34 @@ describe('SkillCatalogModule', () => {
     })
   })
 
+  it.each([
+    {
+      remaining: null,
+      expected:
+        'GitHub forbids this token from accessing the API. Check its permissions and organization access, then try again.'
+    },
+    {
+      remaining: '0',
+      expected: 'GitHub token verification was rate-limited. Wait a moment and try again.'
+    }
+  ])('classifies token verification 403 responses from rate-limit metadata', async (testCase) => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-github-token-'))
+    roots.push(storageRoot)
+    const repository = new SettingsRepository(storageRoot)
+    const githubFetch: FetchLike = async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0),
+      headers: {
+        get: (name) => (name === 'x-ratelimit-remaining' ? testCase.remaining : null)
+      }
+    })
+    const catalog = new SkillCatalogModule({ repository, storageRoot, githubFetch })
+
+    await expect(catalog.saveGitHubToken('new-token')).rejects.toThrow(testCase.expected)
+  })
+
   it('encrypts a verified token and uses it for import, preview, scan, and search', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-github-token-'))
     roots.push(storageRoot)

@@ -33,6 +33,7 @@ import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-fram
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   createAuthenticatedGitHubFetch,
+  isGitHubRateLimitResponse,
   parseGitHubRepo,
   parseGitHubSkillUrl,
   searchGitHubSkillRepositories,
@@ -123,8 +124,13 @@ class SkillCatalogModule {
       if (response.status === 401) {
         throw new Error('GitHub rejected this token. Check that it is valid and try again.')
       }
-      if (response.status === 403 || response.status === 429) {
+      if (isGitHubRateLimitResponse(response)) {
         throw new Error('GitHub token verification was rate-limited. Wait a moment and try again.')
+      }
+      if (response.status === 403) {
+        throw new Error(
+          'GitHub forbids this token from accessing the API. Check its permissions and organization access, then try again.'
+        )
       }
       throw new Error(`GitHub token verification failed (${response.status}). Try again.`)
     }

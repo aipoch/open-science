@@ -762,14 +762,26 @@ describe('searchGitHubSkillRepositories', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
-  it.each([403, 429])(
-    'turns GitHub status %s into an actionable rate-limit error',
-    async (status) => {
+  it.each([
+    { status: 429, remaining: null, retryAfter: null },
+    { status: 403, remaining: '0', retryAfter: null },
+    { status: 403, remaining: '12', retryAfter: '30' }
+  ])(
+    'turns GitHub rate-limit metadata for status $status into an actionable error',
+    async ({ status, remaining, retryAfter }) => {
       const fetcher: FetchLike = async () => ({
         ok: false,
         status,
         json: async () => ({}),
-        arrayBuffer: async () => new ArrayBuffer(0)
+        arrayBuffer: async () => new ArrayBuffer(0),
+        headers: {
+          get: (name) =>
+            name === 'x-ratelimit-remaining'
+              ? remaining
+              : name === 'retry-after'
+                ? retryAfter
+                : null
+        }
       })
 
       await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
@@ -777,6 +789,19 @@ describe('searchGitHubSkillRepositories', () => {
       )
     }
   )
+
+  it('keeps a bare 403 distinct from rate limiting', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
+      'GitHub API request was forbidden (403). Check repository access and token permissions, then try again.'
+    )
+  })
 
   it('ignores malformed repository items instead of exposing unchecked data', async () => {
     const fetcher: FetchLike = async () => ({
