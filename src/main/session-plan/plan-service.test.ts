@@ -520,7 +520,7 @@ describe('PlanService', () => {
   })
 
   it('rejects irreversibly, releases the Session block, and treats duplicate delivery as idempotent', async () => {
-    const { service, context, status } = setup()
+    const { service, context, dependencies, status } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -538,6 +538,12 @@ describe('PlanService', () => {
     expect(rejected).toMatchObject({ changed: true, projection: { lifecycle: 'rejected' } })
     expect(status()).toBe('idle')
     expect(context().plan?.approval).toBe('rejected')
+    expect(dependencies.onApprovalSettled).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      state: 'rejected'
+    })
 
     const duplicate = await service.respond({ ...identity, decision: 'rejected' })
     expect(duplicate.changed).toBe(false)

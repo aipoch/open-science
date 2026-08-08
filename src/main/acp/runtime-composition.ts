@@ -232,7 +232,7 @@ const createAcpRuntime = ({
                           sessionId: request.sessionId,
                           originId: request.artifactVersionId,
                           title: 'Plan approval needed',
-                          summary: `Review the proposed plan: ${request.summary}`.slice(0, 200),
+                          summary: 'A plan needs your approval.',
                           actionState: 'pending'
                         }),
                       (error) =>

@@ -74,7 +74,7 @@ type PlanServiceDependencies = Readonly<{
     projectId: string
     sessionId: string
     artifactVersionId: string
-    state: 'resolved' | 'expired' | 'cancelled'
+    state: 'resolved' | 'rejected' | 'expired' | 'cancelled'
   }) => void
 }>
 
@@ -281,7 +281,7 @@ class PlanService {
         projectId: input.projectId,
         sessionId: input.sessionId,
         artifactVersionId: plan.artifactVersionId,
-        state: 'resolved'
+        state: input.decision === 'rejected' ? 'rejected' : 'resolved'
       })
       return {
         projection: this.project(document, plan, context.revision, input.interactionIsLive),
@@ -313,7 +313,7 @@ class PlanService {
       projectId: input.projectId,
       sessionId: input.sessionId,
       artifactVersionId: plan.artifactVersionId,
-      state: 'resolved'
+      state: input.decision === 'rejected' ? 'rejected' : 'resolved'
     })
     return {
       projection: this.project(document, updated, next.revision, input.interactionIsLive),
