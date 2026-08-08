@@ -85,7 +85,7 @@ const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | und
 const sectionHeadingClassName =
   'mb-3 flex items-center gap-2 text-[17px] font-medium leading-6 text-text-000'
 
-const listCardClassName = 'rounded-2xl border border-border-200/70 bg-bg-000 p-1.5 shadow-card'
+const listCardClassName = 'rounded-2xl bg-bg-000 p-1.5 shadow-card'
 
 const rowClassName =
   'group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 sm:px-3'
@@ -514,7 +514,7 @@ const HomePage = ({
                   <button
                     key={session.id}
                     type="button"
-                    className="group flex min-h-36 w-full min-w-0 shrink-0 snap-start flex-col rounded-2xl border border-border-200/70 bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none md:w-[calc(50%_-_0.375rem)]"
+                    className="group flex min-h-36 w-full min-w-0 shrink-0 snap-start flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none md:w-[calc(50%_-_0.375rem)]"
                     onClick={() => openSession(session.projectId, session.id, 'user')}
                     aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
                   >

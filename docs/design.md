@@ -552,6 +552,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. Only live status dots
   pulse, and they remain static under reduced motion; Completed uses a static check.
+- Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
+  additional border, so its built-in hairline ring matches the New project button instead of
+  stacking into a heavier outline.
 - Recent sessions: the secondary line is always the owning Project name, never a prompt preview or a
   repeat of the Session title.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
