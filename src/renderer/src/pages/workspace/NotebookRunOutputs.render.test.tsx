@@ -1,49 +1,11 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
-
-vi.mock('./previews/renderers/PdfThumbnail', () => ({
-  PdfThumbnail: ({
-    name,
-    fit,
-    align,
-    renderWidth
-  }: {
-    name: string
-    fit?: string
-    align?: string
-    renderWidth?: number
-  }) => (
-    <div
-      data-testid="mock-pdf-thumbnail"
-      data-fit={fit}
-      data-align={align}
-      data-render-width={renderWidth}
-    >
-      {name}
-    </div>
-  )
-}))
-vi.mock('./previews/renderers/TiffPreview', () => ({
-  TiffPreviewContent: ({
-    name,
-    variant,
-    align
-  }: {
-    name: string
-    variant?: string
-    align?: string
-  }) => (
-    <div data-testid="mock-tiff-preview" data-variant={variant} data-align={align}>
-      {name}
-    </div>
-  )
-}))
 
 let container: HTMLDivElement
 let root: Root
@@ -52,19 +14,6 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  window.api = {
-    previewResources: {
-      acquire: vi.fn(async (request) => ({
-        id: `resource-${request.path}`,
-        url: `open-science-preview://${request.path.split('/').pop()}`,
-        size: request.size ?? 100,
-        mimeType: request.mimeType ?? 'image/png',
-        version: 1
-      })),
-      readRange: vi.fn(),
-      release: vi.fn().mockResolvedValue(undefined)
-    }
-  } as unknown as Window['api']
 })
 
 afterEach(async () => {
@@ -146,7 +95,7 @@ describe('NotebookRunOutputs', () => {
     expect(figures[1]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
   })
 
-  it('does not add a mutable saved-file preview when the run already captured a figure', () => {
+  it('ignores saved working files when the run captured a figure', () => {
     const run = makeRun({
       outputs: [{ type: 'display', data: { 'image/png': 'SElTVE9SSUNBTA==' } }],
       workingFiles: [
@@ -175,60 +124,47 @@ describe('NotebookRunOutputs', () => {
     expect(container.querySelector('[data-testid="notebook-output-tiff"]')).toBeNull()
   })
 
-  it('falls back to every saved image when the kernel has no captured figure', () => {
-    const figures = resolveNotebookRunFigures(
-      makeRun({
-        workingFiles: [
-          {
-            path: '/workspace/first.png',
-            relativePath: 'first.png',
-            kind: 'other',
-            createdByRunId: 'r1'
-          },
-          {
-            path: '/workspace/notes.txt',
-            relativePath: 'notes.txt',
-            kind: 'other',
-            createdByRunId: 'r1'
-          },
-          {
-            path: '/workspace/second.webp',
-            relativePath: 'charts/second.webp',
-            kind: 'other',
-            createdByRunId: 'r1'
-          },
-          {
-            path: '/workspace/third.tiff',
-            relativePath: 'charts/third.tiff',
-            kind: 'other',
-            createdByRunId: 'r1'
-          },
-          {
-            path: '/workspace/fourth.pdf',
-            relativePath: 'charts/fourth.pdf',
-            kind: 'other',
-            createdByRunId: 'r1'
-          }
-        ]
-      })
-    )
+  it('does not treat saved working files as notebook output when the kernel captured no figure', () => {
+    const run = makeRun({
+      workingFiles: [
+        {
+          path: '/workspace/first.png',
+          relativePath: 'first.png',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/notes.txt',
+          relativePath: 'notes.txt',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/second.webp',
+          relativePath: 'charts/second.webp',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/third.tiff',
+          relativePath: 'charts/third.tiff',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/fourth.pdf',
+          relativePath: 'charts/fourth.pdf',
+          kind: 'other',
+          createdByRunId: 'r1'
+        }
+      ]
+    })
+    const figures = resolveNotebookRunFigures(run)
 
-    expect(figures).toEqual([
-      expect.objectContaining({ source: 'working-file', path: '/workspace/first.png' }),
-      expect.objectContaining({ source: 'working-file', path: '/workspace/second.webp' }),
-      expect.objectContaining({
-        source: 'working-file',
-        path: '/workspace/third.tiff',
-        previewKind: 'tiff',
-        mimeType: 'image/tiff'
-      }),
-      expect.objectContaining({
-        source: 'working-file',
-        path: '/workspace/fourth.pdf',
-        previewKind: 'pdf',
-        mimeType: 'application/pdf'
-      })
-    ])
+    expect(figures).toEqual([])
+
+    act(() => root.render(<NotebookRunOutputs run={run} />))
+    expect(container.querySelector('[data-testid="notebook-figure-outputs"]')).toBeNull()
   })
 
   it('preserves every captured occurrence without adding mutable saved-file previews', () => {
@@ -259,73 +195,6 @@ describe('NotebookRunOutputs', () => {
       expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
       expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' })
     ])
-  })
-
-  it('renders every saved-only image through local preview resources', async () => {
-    await act(async () => {
-      root.render(
-        <NotebookRunOutputs
-          run={makeRun({
-            workingFiles: [
-              {
-                path: '/workspace/first.png',
-                relativePath: 'first.png',
-                kind: 'other',
-                size: 101
-              },
-              {
-                path: '/workspace/second.webp',
-                relativePath: 'second.webp',
-                kind: 'other',
-                size: 202
-              },
-              {
-                path: '/workspace/third.tiff',
-                relativePath: 'third.tiff',
-                kind: 'other',
-                size: 303
-              },
-              {
-                path: '/workspace/fourth.pdf',
-                relativePath: 'fourth.pdf',
-                kind: 'other',
-                size: 404
-              }
-            ]
-          })}
-        />
-      )
-    })
-
-    await vi.waitFor(() => {
-      expect(container.querySelectorAll('[data-testid="notebook-output-image"]')).toHaveLength(2)
-    })
-    expect(container.querySelectorAll('[data-testid="notebook-figure-output"]')).toHaveLength(4)
-    expect(container.querySelector('[data-testid="notebook-output-tiff"]')?.textContent).toBe(
-      'third.tiff'
-    )
-    expect(container.querySelector('[data-testid="notebook-output-pdf"]')?.textContent).toBe(
-      'fourth.pdf'
-    )
-    const tiffPreview = container.querySelector('[data-testid="notebook-output-tiff"]')
-    const pdfPreview = container.querySelector('[data-testid="notebook-output-pdf"]')
-    expect(tiffPreview?.className).toContain('h-64')
-    expect(tiffPreview?.className).not.toContain('border-border-200')
-    expect(tiffPreview?.className).not.toContain('bg-bg-100')
-    expect(pdfPreview?.className).toContain('min-h-24')
-    expect(pdfPreview?.classList.contains('h-64')).toBe(false)
-    expect(pdfPreview?.className).not.toContain('border-border-200')
-    expect(pdfPreview?.className).not.toContain('bg-bg-100')
-    expect(
-      container.querySelector<HTMLElement>('[data-testid="mock-tiff-preview"]')?.dataset
-    ).toMatchObject({ variant: 'thumbnail', align: 'center' })
-    expect(
-      container.querySelector<HTMLElement>('[data-testid="mock-pdf-thumbnail"]')?.dataset
-    ).toMatchObject({ fit: 'intrinsic', align: 'center', renderWidth: '768' })
-    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
-    expect(
-      Array.from(container.querySelectorAll('img'), (image) => image.getAttribute('src'))
-    ).toEqual(['open-science-preview://first.png', 'open-science-preview://second.webp'])
   })
 
   it('renders stream stdout text', () => {

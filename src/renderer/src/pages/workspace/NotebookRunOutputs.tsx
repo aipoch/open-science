@@ -1,9 +1,5 @@
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
-import type { WorkingFileNotebookFigure } from './notebook-run-figures'
-import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
-import { TiffPreviewContent } from './previews/renderers/TiffPreview'
-import { useManagedPreviewResource } from './previews/useManagedPreviewResource'
 
 // Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
 // are intentionally separate: text owns its collapse control, while every figure stays visible in an
@@ -14,8 +10,6 @@ const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
 const figureImageClassName =
   'block h-auto max-h-[16rem] w-auto max-w-full rounded-lg border border-border-200 object-contain'
-const tiffPreviewFrameClassName = 'h-64 w-full'
-const pdfPreviewFrameClassName = 'min-h-24 w-full'
 
 // Drops a single trailing newline so streamed text doesn't render an extra blank line.
 const trimTrailingNewline = (text: string): string => text.replace(/\n$/u, '')
@@ -280,73 +274,6 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
   )
 }
 
-const WorkingFileImage = ({ figure }: { figure: WorkingFileNotebookFigure }): React.JSX.Element => {
-  const state = useManagedPreviewResource({
-    source: 'local',
-    path: figure.path,
-    mimeType: figure.mimeType,
-    size: figure.size,
-    mtimeMs: figure.mtimeMs
-  })
-
-  if (state.status === 'loading' || state.status === 'idle') {
-    return <div className="py-10 text-center text-xs text-text-300">Loading image…</div>
-  }
-
-  if (state.status === 'error') {
-    return (
-      <div className="py-10 text-center text-xs text-danger-000">
-        {figure.name} couldn&apos;t be loaded for preview
-      </div>
-    )
-  }
-
-  return (
-    <img
-      data-testid="notebook-output-image"
-      src={state.resource.url}
-      alt={figure.name}
-      className={figureImageClassName}
-      draggable={false}
-    />
-  )
-}
-
-const WorkingFileFigurePreview = ({
-  figure,
-  align
-}: {
-  figure: WorkingFileNotebookFigure
-  align: 'start' | 'center'
-}): React.JSX.Element => {
-  const previewProps = {
-    path: figure.path,
-    name: figure.name,
-    source: 'local' as const,
-    mimeType: figure.mimeType,
-    size: figure.size,
-    mtimeMs: figure.mtimeMs
-  }
-
-  if (figure.previewKind === 'tiff') {
-    return (
-      <div className={tiffPreviewFrameClassName} data-testid="notebook-output-tiff">
-        <TiffPreviewContent {...previewProps} variant="thumbnail" align={align} />
-      </div>
-    )
-  }
-
-  if (figure.previewKind === 'pdf') {
-    return (
-      <div className={pdfPreviewFrameClassName} data-testid="notebook-output-pdf">
-        <PdfThumbnail {...previewProps} fit="intrinsic" align={align} renderWidth={768} />
-      </div>
-    )
-  }
-
-  return <WorkingFileImage figure={figure} />
-}
-
 const NotebookRunFigureOutputs = ({
   run,
   align = 'center'
@@ -365,17 +292,13 @@ const NotebookRunFigureOutputs = ({
           <div
             className={`flex min-h-24 w-full items-center ${align === 'start' ? 'justify-start' : 'justify-center'}`}
           >
-            {figure.source === 'captured' ? (
-              <img
-                data-testid="notebook-output-image"
-                src={`data:${figure.mimeType};base64,${figure.payload}`}
-                alt={figure.name}
-                className={figureImageClassName}
-                draggable={false}
-              />
-            ) : (
-              <WorkingFileFigurePreview figure={figure} align={align} />
-            )}
+            <img
+              data-testid="notebook-output-image"
+              src={`data:${figure.mimeType};base64,${figure.payload}`}
+              alt={figure.name}
+              className={figureImageClassName}
+              draggable={false}
+            />
           </div>
         </div>
       ))}

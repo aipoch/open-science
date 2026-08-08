@@ -600,12 +600,6 @@ const createApplicationModules = async (
       notebookRuntimeSettings,
       locale: app.getLocale(),
       appVersion: app.getVersion(),
-      resolveArtifactPath: (request: { projectName: string; sessionId: string; path: string }) =>
-        artifactRepository.resolveSessionArtifactFilePath(
-          request.projectName,
-          request.sessionId,
-          request.path
-        ),
       events: applicationEvents,
       disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       isBackendTeardownOwned: () => backendTeardownOwnedByCoordinator

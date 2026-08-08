@@ -766,6 +766,29 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it('does not treat a TIFF file-device plot as notebook output', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-tiff-device-'))
+    const blankPngVector = tinyPngRVector()
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const installTrace = await send(
+        installBlankPngMaterializationTrace(blankPngVector, { materializeCapture: true })
+      )
+      expect(installTrace.error).toBeNull()
+
+      const r = await send(
+        'grDevices::tiff(tempfile(fileext = ".tiff")); plot(1:3); grDevices::dev.off()'
+      )
+      expect(r.error).toBeNull()
+      expect(r.figures).toEqual([])
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('keeps text-only blank filtering isolated from user graphics traces', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-traced-blank-'))
     const blankPngVector = tinyPngRVector()

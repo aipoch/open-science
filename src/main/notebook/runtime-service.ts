@@ -191,13 +191,6 @@ type NotebookRuntimeServiceOptions = {
   saveIpynbAll?: (
     files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
   ) => Promise<ExportNotebookAllResult>
-  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
-  // bound to the artifact's declaring project/session subtree.
-  resolveArtifactPath?: (request: {
-    path: string
-    projectName: string
-    sessionId: string
-  }) => Promise<string>
   environmentStateTracker?: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -338,8 +331,7 @@ class NotebookRuntimeService {
     this.exportReader = new NotebookExportReader({
       repository: this.repository,
       defaultProjectName: options.projectName,
-      appVersion: options.appVersion,
-      resolveArtifactPath: options.resolveArtifactPath
+      appVersion: options.appVersion
     })
     this.sessions = new NotebookSessionRegistry({
       beforeTeardown: async () => {
