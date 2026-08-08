@@ -23,12 +23,14 @@ import {
   processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
   recoverContextOverflowWorkspaceSession,
-  resendEditedWorkspaceMessage,
   resumeInterruptedWorkspaceSession,
-  sendWorkspaceMessage,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
+import {
+  resendEditedWorkspaceMessage,
+  sendWorkspaceMessage
+} from './workspace-runtime-command-owner'
 
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
   id: 'event-1',
@@ -619,6 +621,7 @@ describe('workspace agent message sending', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   it('forwards and durably stores Plan first for an existing Session', async () => {
@@ -670,6 +673,69 @@ describe('workspace agent message sending', () => {
       artifactVersionId: 'plan-version-1',
       expectedRevision: 9
     })
+  })
+
+  it('keeps the original Specialist replay clearing when the provider rejects the prompt', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original specialist turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().markSpecialistSwitchResetRequired('transport-session-1')
+    const snapshot = createSnapshot(['transport-session-1'])
+    vi.stubGlobal('window', {
+      api: { acp: { getState: vi.fn().mockResolvedValue(snapshot) } }
+    })
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('provider unavailable'))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue with the new specialist',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+  })
+
+  it('clears Specialist replay before provider prompt completion settles', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original specialist turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().markSpecialistSwitchResetRequired('transport-session-1')
+    const accepted = createDeferred<AcpStateSnapshot>()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn(() => accepted.promise)
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue with the new specialist',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+
+    accepted.resolve(createSnapshot(['transport-session-1']))
+    await flushRuntimeTasks()
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
   })
 
   it('rebuilds Agent and Notebook context before continuing a switched Branch', async () => {
@@ -987,8 +1053,7 @@ describe('workspace agent message sending', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:builtin-codex-subscription'
       },
-      undefined,
-      drainRuntimeEvents
+      { drainRuntimeEvents }
     )
 
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
@@ -2536,7 +2601,7 @@ describe('workspace agent message sending', () => {
         text: 'Continue restored conversation',
         cwd: '/workspace/project'
       },
-      preparationChanged
+      { onSendPreparationStateChange: preparationChanged }
     )
     const second = sendWorkspaceMessage(runtime, {
       sessionId: 'session-1',
@@ -4772,6 +4837,64 @@ describe('resendEditedWorkspaceMessage', () => {
       useSessionStore.getState().sessions[0]?.messages.map((message) => message.content)
     ).toEqual(['first prompt', 'first answer', 'second prompt, edited'])
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('does not truncate or recreate an edited session deleted during adoption', async () => {
+    seedConversation()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:anthropic'
+      }))
+    }))
+
+    const resumeGate = createDeferred<{
+      sessionId: string
+      cwd: string
+      contextReset: boolean
+      frameworkId: 'codex'
+      backendId: string
+    }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => resumeGate.promise),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const truncate = vi.spyOn(useSessionStore.getState(), 'truncateSessionFromMessage')
+    const append = vi.spyOn(useSessionStore.getState(), 'appendUserMessage')
+
+    const resent = resendEditedWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      },
+      {
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:builtin-codex-subscription'
+      }
+    )
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+
+    useSessionStore.getState().deleteSession('session-1')
+    resumeGate.resolve({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+
+    await expect(resent).resolves.toBe(false)
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(truncate).not.toHaveBeenCalled()
+    expect(append).not.toHaveBeenCalled()
+    expect(runtime.createSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('opens the resent run after reset, then replays the kept history', async () => {
