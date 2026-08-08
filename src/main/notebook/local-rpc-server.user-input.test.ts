@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+
+const fetchRpc = (
+  connection: { endpoint: string; socketPath?: string },
+  init: RequestInit
+): Promise<Response> => fetchLocalRpc(connection, init, 'Notebook user input RPC')
 
 describe('NotebookLocalRpcServer user input bridge', () => {
   let server: NotebookLocalRpcServer | undefined
@@ -18,7 +24,7 @@ describe('NotebookLocalRpcServer user input bridge', () => {
     const connection = await server.issueSessionConnection('pre-session-alias', 'project-1')
     server.registerSessionAlias('pre-session-alias', 'session-1')
 
-    const response = await fetch(connection.endpoint, {
+    const response = await fetchRpc(connection, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
@@ -78,7 +84,7 @@ describe('NotebookLocalRpcServer user input bridge', () => {
     })
     const connection = await server.issueSessionConnection('session-1', 'project-1')
 
-    const response = await fetch(connection.endpoint, {
+    const response = await fetchRpc(connection, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
@@ -109,7 +115,7 @@ describe('NotebookLocalRpcServer user input bridge', () => {
     })
     const connection = await server.ensureStarted()
 
-    const response = await fetch(connection.endpoint, {
+    const response = await fetchRpc(connection, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${connection.token}`,
