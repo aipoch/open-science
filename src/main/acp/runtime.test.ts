@@ -90,6 +90,12 @@ vi.mock('../logger', async (importOriginal) => {
   }
 })
 
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  getDocument: () => {
+    throw new Error('invalid test PDF')
+  }
+}))
+
 // The real process-tree killer is exercised in process-tree.test.ts. Its Windows path early-returns
 // without calling child.kill() when child.pid is undefined (as it is for FakeAgentProcess), which the
 // POSIX path does not — so the shutdown orchestration tests here would flip on POSIX but not Windows.
@@ -5161,9 +5167,7 @@ describe('ACP runtime session management', () => {
     const serialized = JSON.stringify(receivedPrompts[0])
     expect(serialized).not.toContain(rawBase64)
     expect(receivedPrompts[0].some((block) => block.type === 'image')).toBe(false)
-    // Headroom for the one-time dynamic import of the large pdfjs-dist bundle, whose ESM resolution
-    // is markedly slower on a cold Windows CI runner and can exceed the 5s default there.
-  }, 30000)
+  })
 
   it('attributes app-side artifact writes to the calling session while another turn is in flight', async () => {
     const root = await createTemporaryRoot()

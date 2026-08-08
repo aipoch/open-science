@@ -202,9 +202,18 @@ describe('NotificationInboxDbRepository', () => {
 
   it('retains only the newest one thousand messages', async () => {
     const repository = await createRepository()
-    for (let index = 0; index <= MAX_NOTIFICATION_INBOX_ITEMS; index += 1) {
-      await record(repository, String(index))
-    }
+    await client!.notificationInboxItem.createMany({
+      data: Array.from({ length: MAX_NOTIFICATION_INBOX_ITEMS }, (_, index) => ({
+        id: `item-${index}`,
+        dedupeKey: `task:${index}`,
+        kind: 'task.completed',
+        sessionId: `session-${index}`,
+        originId: String(index),
+        title: 'Task completed',
+        summary: `Task ${index} finished.`
+      }))
+    })
+    await record(repository, String(MAX_NOTIFICATION_INBOX_ITEMS))
 
     const snapshot = await repository.snapshot(MAX_NOTIFICATION_INBOX_ITEMS)
     await expect(client!.notificationInboxItem.count()).resolves.toBe(MAX_NOTIFICATION_INBOX_ITEMS)
