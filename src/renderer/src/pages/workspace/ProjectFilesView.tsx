@@ -39,16 +39,10 @@ import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { useSessionStore } from '@/stores/session-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
-import type {
-  ArtifactGroupItem,
-  ProjectFileItem,
-  ProjectFileOriginSession,
-  ProjectFilesChangedEvent
-} from '../../../../shared/project-files'
+import type { ArtifactGroupItem, ProjectFileItem } from '../../../../shared/project-files'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { ArtifactPreview } from './artifact-preview'
@@ -63,23 +57,15 @@ import {
   useProjectFilePreviews,
   type ProjectFilePreviewReader
 } from './project-files-preview-owner'
+import {
+  useProjectFileInfiniteLoad,
+  useProjectFilesQueryModel,
+  type ProjectFilesFilterOption
+} from './project-files-query-model'
 import { FILE_MISSING_TAG } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
-import {
-  FILE_PAGE_SIZE,
-  useProjectFilesIndex,
-  type PageState,
-  type ProjectFilesIndexScope
-} from './use-project-files-index'
-
-type ProjectFilesFilterOption = {
-  id: string
-  label: string
-  count: number
-  kind: 'all' | 'uploads' | 'session'
-  originSession?: ProjectFileOriginSession
-}
+import { FILE_PAGE_SIZE, type PageState } from './use-project-files-index'
 
 // Keeps collection semantics visible in both the menu rows and the currently selected trigger.
 const ProjectFilesFilterIcon = ({
@@ -128,41 +114,6 @@ const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 const MONTH_MS = 30 * DAY_MS
 const YEAR_MS = 365 * DAY_MS
-
-// Converts one stable sentinel into guarded infinite loading. The root margin starts the next page
-// shortly before it becomes visible; environments without IntersectionObserver fall back to manual UI.
-const useInfiniteLoad = (
-  enabled: boolean,
-  loadMore: () => void | Promise<void>
-): React.RefObject<HTMLDivElement | null> => {
-  const sentinelRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current
-    if (!enabled || !sentinel) return
-
-    if (typeof IntersectionObserver === 'undefined') {
-      void loadMore()
-      return
-    }
-
-    let active = true
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (active && entries.some((entry) => entry.isIntersecting)) void loadMore()
-      },
-      { rootMargin: '160px 0px' }
-    )
-    observer.observe(sentinel)
-
-    return () => {
-      active = false
-      observer.disconnect()
-    }
-  }, [enabled, loadMore])
-
-  return sentinelRef
-}
 
 const formatRelativeFileTime = (timestamp: number | undefined): string | undefined => {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) return undefined
@@ -835,7 +786,7 @@ const ProjectArtifactGroupSection = ({
     !page?.isLoading &&
     !page?.error &&
     (!page?.isLoaded || (effectiveLoadMode === 'scroll' && !!page.nextCursor))
-  const sentinelRef = useInfiniteLoad(canAutoLoad, loadPage)
+  const sentinelRef = useProjectFileInfiniteLoad(canAutoLoad, loadPage)
   const visibleItems =
     loadMode === 'manual'
       ? (page?.items.slice(0, manualVisibleItemLimit) ?? [])
@@ -896,19 +847,11 @@ const ProjectFilesViewContent = ({
   activeProjectId: string | undefined
   previewReader: ProjectFilePreviewReader
 }): React.JSX.Element => {
-  const allSessions = useSessionStore((state) => state.sessions)
   const isFilesExpanded = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId === PROJECT_FILES_PREVIEW_ID
   )
   const setToolItemExpanded = usePreviewWorkbenchStore((state) => state.setToolItemExpanded)
-  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
-  const [selectedFilterId, setSelectedFilterId] = useState('all')
-  const [selectedSessionFallback, setSelectedSessionFallback] = useState<ProjectFilesFilterOption>()
-  const [allVisibleItemLimits, setAllVisibleItemLimits] = useState<Record<string, number>>({})
-  const [searchQuery, setSearchQuery] = useState('')
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ProjectFilesViewMode>('grid')
-  const [showAllSessionOptions, setShowAllSessionOptions] = useState(false)
   const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
   const fileDialogCleanupState = useRef({ version: 0 })
 
@@ -955,323 +898,40 @@ const ProjectFilesViewContent = ({
     }
   }, [])
 
-  const handleIndexChanged = useCallback(
-    (event: ProjectFilesChangedEvent): void => {
-      const currentSessions = useSessionStore.getState().sessions
-      const changedSession = event.sessionId
-        ? currentSessions.find(
-            (session) => session.projectId === activeProjectId && session.id === event.sessionId
-          )
-        : undefined
-      const changedSessionHasArtifacts = (changedSession?.artifacts ?? []).some(
-        (artifact) => artifact.kind === 'managed-file' && Boolean(artifact.path)
-      )
+  const queryModel = useProjectFilesQueryModel(activeProjectId)
+  const { catalogIndex, index, sessionOptionsIndex } = queryModel.indexes
+  const {
+    effectiveFilterId,
+    filterOptions,
+    isAllFilter,
+    selectFilter: selectQueryFilter,
+    selectedFilterOption,
+    setShowAllSessionOptions,
+    showAllSessionOptions
+  } = queryModel.filter
+  const {
+    allUploadVisibleItemLimit,
+    allVisibleItemLimits,
+    collapsedSectionIds,
+    groupsSentinelRef,
+    revealNextAllPage,
+    supportsIntersectionObserver,
+    toggleSection,
+    uploadSentinelRef,
+    uploadsCollapsed
+  } = queryModel.pagination
+  const { debouncedSearchQuery, isSearchActive, searchQuery, setSearchQuery } = queryModel.search
+  const { getArtifactGroupTitle, sessionById } = queryModel.sessions
+  const {
+    hasLoadedInitialPages,
+    hasPageError,
+    showsUploadsSection,
+    visibleArtifactFiles,
+    visibleArtifactGroups,
+    visibleFileCount,
+    visibleUploadFiles
+  } = queryModel.visible
 
-      if (
-        event.kind === 'delete' &&
-        event.sessionId &&
-        selectedFilterId === `session:${event.sessionId}`
-      ) {
-        setSelectedFilterId('all')
-        setSelectedSessionFallback(undefined)
-      } else if (
-        event.kind === 'upsert' &&
-        event.sources.includes('artifact') &&
-        event.sessionId &&
-        changedSession &&
-        selectedFilterId === `session:${event.sessionId}` &&
-        !changedSessionHasArtifacts
-      ) {
-        // Removing the final artifact is a session upsert, so clear a selected session only after the
-        // authoritative renderer session confirms that no managed artifact references remain.
-        setSelectedFilterId('all')
-        setSelectedSessionFallback(undefined)
-      }
-    },
-    [activeProjectId, selectedFilterId]
-  )
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250)
-    return () => window.clearTimeout(timer)
-  }, [searchQuery])
-
-  const archivedSessionIds = useMemo(
-    () =>
-      allSessions
-        .filter(
-          (session) => session.projectId === activeProjectId && session.archivedAt !== undefined
-        )
-        .map((session) => session.id)
-        .sort(),
-    [activeProjectId, allSessions]
-  )
-  const archivedSessionIdSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds])
-  const catalogIndex = useProjectFilesIndex(
-    activeProjectId,
-    handleIndexChanged,
-    undefined,
-    undefined,
-    archivedSessionIds
-  )
-  // The expanded filter menu owns a separate group cursor so loading every session option does not
-  // append hidden groups or trigger artifact-page reads in the visible catalog.
-  const sessionOptionsIndex = useProjectFilesIndex(
-    showAllSessionOptions ? activeProjectId : undefined,
-    undefined,
-    undefined,
-    { kind: 'artifactGroups' },
-    archivedSessionIds
-  )
-  const isSearchActive = debouncedSearchQuery.length > 0
-  const sessionById = useMemo(
-    () =>
-      new Map(
-        allSessions
-          .filter(
-            (session) => session.projectId === activeProjectId && session.archivedAt === undefined
-          )
-          .map((session) => [session.id, session] as const)
-      ),
-    [activeProjectId, allSessions]
-  )
-  const isVisibleArtifactGroup = useCallback(
-    (group: ArtifactGroupItem): boolean => !archivedSessionIdSet.has(group.sessionId),
-    [archivedSessionIdSet]
-  )
-  const getSessionTitle = useCallback(
-    (sessionId: string): string =>
-      sessionById.get(sessionId)?.title ?? `Session ${sessionId.slice(0, 8)}`,
-    [sessionById]
-  )
-  const filterGroupItems =
-    showAllSessionOptions && sessionOptionsIndex.groups.items.length > 0
-      ? sessionOptionsIndex.groups.items
-      : catalogIndex.groups.items
-  const getArtifactGroupTitle = useCallback(
-    (group: ArtifactGroupItem): string => {
-      const title = group.originSession?.title ?? getSessionTitle(group.sessionId)
-      return group.originSession?.state === 'deleted' ? `${title} · Source session deleted` : title
-    },
-    [getSessionTitle]
-  )
-  const filterOptions = useMemo<ProjectFilesFilterOption[]>(() => {
-    const options: ProjectFilesFilterOption[] = [
-      {
-        id: 'all',
-        label: 'All artifacts',
-        count: catalogIndex.overview.totalCount,
-        kind: 'all'
-      },
-      {
-        id: 'uploads',
-        label: 'Your uploads',
-        count: catalogIndex.overview.uploadCount,
-        kind: 'uploads'
-      },
-      ...filterGroupItems.filter(isVisibleArtifactGroup).map((group) => ({
-        id: `session:${group.sessionId}`,
-        label: getArtifactGroupTitle(group),
-        count: group.artifactCount,
-        kind: 'session' as const,
-        originSession: group.originSession
-      }))
-    ]
-
-    // Keep a directly selected session reachable while a group first-page refresh is in flight or
-    // while that session lies beyond the currently loaded group-header page.
-    if (
-      selectedSessionFallback &&
-      !archivedSessionIdSet.has(selectedSessionFallback.id.slice('session:'.length)) &&
-      !options.some((option) => option.id === selectedSessionFallback.id)
-    ) {
-      const sessionId = selectedSessionFallback.id.slice('session:'.length)
-      options.push({
-        ...selectedSessionFallback,
-        count:
-          catalogIndex.artifactsBySession[sessionId]?.totalCount ?? selectedSessionFallback.count
-      })
-    }
-
-    return options
-  }, [
-    getArtifactGroupTitle,
-    catalogIndex.artifactsBySession,
-    catalogIndex.overview,
-    filterGroupItems,
-    archivedSessionIdSet,
-    isVisibleArtifactGroup,
-    selectedSessionFallback
-  ])
-  const selectedSessionId = selectedFilterId.startsWith('session:')
-    ? selectedFilterId.slice('session:'.length)
-    : undefined
-  const selectedSessionStillExists = selectedSessionId
-    ? allSessions.some(
-        (session) =>
-          session.projectId === activeProjectId &&
-          session.id === selectedSessionId &&
-          session.archivedAt === undefined
-      )
-    : false
-  const selectedSessionIsLoaded = selectedSessionId
-    ? catalogIndex.groups.items.some(
-        (group) => group.sessionId === selectedSessionId && isVisibleArtifactGroup(group)
-      )
-    : false
-  const selectedCatalogSessionPage = selectedSessionId
-    ? catalogIndex.artifactsBySession[selectedSessionId]
-    : undefined
-  const loadMoreCatalogArtifacts = catalogIndex.loadMoreArtifacts
-
-  // A selected session outside the catalog's current header page still needs an authoritative first
-  // file page. Loading it while collapsed keeps the toolbar count current after index resets.
-  useEffect(() => {
-    if (!selectedSessionId || selectedSessionIsLoaded) return
-
-    if (selectedCatalogSessionPage?.isLoading || selectedCatalogSessionPage?.isLoaded) return
-
-    void loadMoreCatalogArtifacts(selectedSessionId)
-  }, [
-    loadMoreCatalogArtifacts,
-    selectedCatalogSessionPage,
-    selectedSessionId,
-    selectedSessionIsLoaded
-  ])
-
-  useEffect(() => {
-    if (!selectedSessionId || selectedSessionStillExists || selectedSessionIsLoaded) return
-
-    const groupsSettled =
-      catalogIndex.groups.isLoaded && !catalogIndex.groups.isLoading && !catalogIndex.groups.error
-    const sessionPageSettled =
-      selectedCatalogSessionPage?.isLoaded &&
-      !selectedCatalogSessionPage.isLoading &&
-      !selectedCatalogSessionPage.error
-    if (!groupsSettled || !sessionPageSettled || selectedCatalogSessionPage.totalCount > 0) return
-
-    let canceled = false
-    // A DB-only session can remain in the selected fallback after reset. Clear it only after both the
-    // refreshed group headers and its independent file page confirm that no artifact rows remain.
-    void Promise.resolve().then(() => {
-      if (canceled) return
-      setSelectedFilterId('all')
-      setSelectedSessionFallback(undefined)
-    })
-
-    return () => {
-      canceled = true
-    }
-  }, [
-    catalogIndex.groups,
-    selectedCatalogSessionPage,
-    selectedSessionId,
-    selectedSessionIsLoaded,
-    selectedSessionStillExists
-  ])
-
-  const effectiveFilterId =
-    filterOptions.some((option) => option.id === selectedFilterId) &&
-    (!selectedSessionId ||
-      selectedSessionStillExists ||
-      selectedSessionIsLoaded ||
-      selectedSessionFallback?.id === selectedFilterId)
-      ? selectedFilterId
-      : 'all'
-  const selectedFilterOption =
-    filterOptions.find((option) => option.id === effectiveFilterId) ?? filterOptions[0]
-  const isAllFilter = selectedFilterOption.kind === 'all'
-  const isUploadsFilter = selectedFilterOption.kind === 'uploads'
-  const effectiveSessionId =
-    selectedFilterOption.kind === 'session'
-      ? selectedFilterOption.id.slice('session:'.length)
-      : undefined
-  const searchScope = useMemo<ProjectFilesIndexScope>(
-    () =>
-      isUploadsFilter
-        ? { kind: 'uploads' }
-        : effectiveSessionId
-          ? {
-              kind: 'sessionArtifacts',
-              sessionId: effectiveSessionId
-            }
-          : { kind: 'all' },
-    [effectiveSessionId, isUploadsFilter]
-  )
-  // Search follows the selected collection but leaves catalog cursors mounted, so clearing the query
-  // restores the previous grouped view without rebuilding its loaded pages.
-  const searchIndex = useProjectFilesIndex(
-    isSearchActive ? activeProjectId : undefined,
-    undefined,
-    isSearchActive ? { filenameContains: debouncedSearchQuery } : undefined,
-    searchScope,
-    archivedSessionIds
-  )
-  const index = isSearchActive ? searchIndex : catalogIndex
-  const uploadsCollapsed = collapsedSectionIds.has('uploads')
-  const allUploadVisibleItemLimit = allVisibleItemLimits.uploads ?? FILE_PAGE_SIZE
-  const visibleUploadFiles = useMemo(() => {
-    if (isUploadsFilter) return index.uploads.items
-    if (isAllFilter) {
-      return index.uploads.items.slice(0, allUploadVisibleItemLimit)
-    }
-    return []
-  }, [allUploadVisibleItemLimit, index.uploads.items, isAllFilter, isUploadsFilter])
-  const visibleArtifactGroups = useMemo(
-    () =>
-      isAllFilter
-        ? index.groups.items.filter(isVisibleArtifactGroup)
-        : effectiveSessionId
-          ? [
-              index.groups.items.find((group) => group.sessionId === effectiveSessionId) ?? {
-                sessionId: effectiveSessionId,
-                artifactCount:
-                  index.artifactsBySession[effectiveSessionId]?.totalCount ??
-                  (isSearchActive ? 0 : selectedFilterOption.count),
-                originSession: selectedFilterOption.originSession
-              }
-            ]
-          : [],
-    [
-      effectiveSessionId,
-      index.artifactsBySession,
-      index.groups.items,
-      isVisibleArtifactGroup,
-      isAllFilter,
-      isSearchActive,
-      selectedFilterOption.count,
-      selectedFilterOption.originSession
-    ]
-  )
-  // Catalog counts remain authoritative even when a collapsed section has not loaded its file page.
-  // Search counts come from the scoped search index because they describe matches, not the catalog.
-  const visibleFileCount = isSearchActive
-    ? isAllFilter
-      ? index.overview.totalCount
-      : isUploadsFilter
-        ? index.uploads.totalCount
-        : ((effectiveSessionId
-            ? index.artifactsBySession[effectiveSessionId]?.totalCount
-            : undefined) ?? 0)
-    : selectedFilterOption.count
-  const visibleArtifactFiles = useMemo(
-    () =>
-      visibleArtifactGroups.flatMap((group) => {
-        if (collapsedSectionIds.has(`session:${group.sessionId}`)) return []
-        const items = index.artifactsBySession[group.sessionId]?.items ?? []
-        if (!isAllFilter) return items
-
-        const visibleItemLimit =
-          allVisibleItemLimits[`session:${group.sessionId}`] ?? FILE_PAGE_SIZE
-        return items.slice(0, visibleItemLimit)
-      }),
-    [
-      allVisibleItemLimits,
-      collapsedSectionIds,
-      index.artifactsBySession,
-      isAllFilter,
-      visibleArtifactGroups
-    ]
-  )
   const previewFiles = useMemo<ProjectFileItem[]>(
     // Collapsed sections are intentionally absent: they neither protect cache entries nor enqueue new
     // thumbnail reads. List rows use only the lightweight availability probe and need no thumbnails.
@@ -1283,45 +943,10 @@ const ProjectFilesViewContent = ({
   )
   const currentFilePreviewById = useProjectFilePreviews(previewFiles, previewReader)
 
-  const toggleSection = (sectionId: string): void => {
-    setCollapsedSectionIds((currentIds) => {
-      const nextIds = new Set(currentIds)
-
-      if (nextIds.has(sectionId)) {
-        nextIds.delete(sectionId)
-      } else {
-        nextIds.add(sectionId)
-      }
-
-      return nextIds
-    })
-  }
-
   // Picking any artifact scope also returns the body to the artifacts container.
   const selectFilter = (filterId: string): void => {
-    setSelectedFilterId(filterId)
-    const option = filterOptions.find((item) => item.id === filterId)
-    setSelectedSessionFallback(option?.kind === 'session' ? option : undefined)
+    selectQueryFilter(filterId)
     setSourceMode('artifacts')
-  }
-
-  const revealNextAllPage = (
-    sectionId: string,
-    visibleItemLimit: number,
-    page: PageState<ProjectFileItem> | undefined,
-    loadMore: () => Promise<void>
-  ): void => {
-    // Reveal already-fetched rows first. Only cross the DB cursor when the next local batch is not yet
-    // present, preserving the requirement that every All-view section advances in explicit steps of 20.
-    const nextVisibleItemLimit = visibleItemLimit + FILE_PAGE_SIZE
-    setAllVisibleItemLimits((current) => ({
-      ...current,
-      [sectionId]: Math.max(current[sectionId] ?? FILE_PAGE_SIZE, nextVisibleItemLimit)
-    }))
-
-    if ((page?.items.length ?? 0) < nextVisibleItemLimit && page?.nextCursor) {
-      void loadMore()
-    }
   }
 
   // Keep the indexed file identity and source so both destinations use the same bounded preview path.
@@ -1349,44 +974,6 @@ const ProjectFilesViewContent = ({
     workbench.openPanel()
   }
 
-  const supportsIntersectionObserver = typeof IntersectionObserver !== 'undefined'
-  const uploadSentinelRef = useInfiniteLoad(
-    // The upload sentinel is active only in the dedicated category. All mode remains button-driven so
-    // scrolling the page cannot silently expand every uploads/session section.
-    !uploadsCollapsed &&
-      supportsIntersectionObserver &&
-      isUploadsFilter &&
-      visibleUploadFiles.length > 0 &&
-      !index.uploads.isLoading &&
-      !index.uploads.error &&
-      Boolean(index.uploads.nextCursor),
-    index.loadMoreUploads
-  )
-  const groupsSentinelRef = useInfiniteLoad(
-    // Group headers have their own cursor because loading another session must not advance any file page.
-    isAllFilter &&
-      supportsIntersectionObserver &&
-      !index.groups.isLoading &&
-      !index.groups.error &&
-      Boolean(index.groups.nextCursor),
-    index.loadMoreGroups
-  )
-  const selectedSessionPage = effectiveSessionId
-    ? index.artifactsBySession[effectiveSessionId]
-    : undefined
-  const hasLoadedInitialPages = isAllFilter
-    ? index.isOverviewLoaded && index.uploads.isLoaded && index.groups.isLoaded
-    : isUploadsFilter
-      ? index.uploads.isLoaded
-      : Boolean(selectedSessionPage?.isLoaded)
-  const hasPageError = isAllFilter
-    ? Boolean(index.overviewError || index.uploads.error || index.groups.error)
-    : isUploadsFilter
-      ? Boolean(index.uploads.error)
-      : Boolean(selectedSessionPage?.error)
-  const showsUploadsSection =
-    (isAllFilter || isUploadsFilter) &&
-    (index.uploads.totalCount > 0 || Boolean(index.uploads.error))
   const isLocalMode = sourceMode === 'local'
 
   return (

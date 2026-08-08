@@ -50,12 +50,17 @@
     "project_files_view": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
-        "src/renderer/src/pages/workspace/project-files-preview-owner.ts"
+        "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
+        "src/renderer/src/pages/workspace/project-files-query-model.ts",
+        "src/renderer/src/pages/workspace/use-project-files-index.ts"
       ],
       "interfacePaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
       "consumerModules": ["workspace_page"],
       "testFiles": {
-        "owner": ["src/renderer/src/pages/workspace/ProjectFilesView.test.tsx"],
+        "owner": [
+          "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
+          "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+        ],
         "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
         "consumer": []
       },
