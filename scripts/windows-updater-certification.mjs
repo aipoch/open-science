@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
@@ -10,18 +11,21 @@ import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
-import { _electron as electron } from 'playwright'
 
 import {
   cleanupSmokeRoot,
   createUpgradeProfileGuard,
+  fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
   installAndProbe,
   launchAndProbe,
+  parsePackagedAppEndpoint,
   runProcess,
+  terminateProcessTree,
   uninstallAndVerify,
   waitFor,
+  waitForShutdownExit,
   windowsProfileEnvironment
 } from './windows-installer-smoke.mjs'
 
@@ -200,53 +204,220 @@ const withTimeout = (promise, description, timeoutMs = UPDATE_TIMEOUT_MS) =>
     )
   })
 
-const runElectronUpdater = async ({ executable, env, expectedVersion }) => {
-  const application = await electron.launch({ executablePath: executable, env, timeout: 60_000 })
+const observeChildExit = (child) =>
+  new Promise((resolveExit, rejectExit) => {
+    child.once('error', rejectExit)
+    child.once('exit', resolveExit)
+  })
+
+const redactPackagedAppOutput = (output) => output.replace(/([?&]token=)[^\s&#]+/gi, '$1<redacted>')
+
+const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
+  const response = await fetchWithTimeout(
+    `${endpoint}/rpc/${encodeURIComponent(channel)}?${auth}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ protocolVersion, args: [] })
+    },
+    UPDATE_TIMEOUT_MS,
+    fetchImpl
+  )
+  const payload = await response.json()
+  if (!response.ok || payload?.ok !== true) {
+    throw new Error(
+      `Headless updater RPC ${channel} failed with HTTP ${response.status}: ${JSON.stringify(payload)}`
+    )
+  }
+  return payload.result
+}
+
+const waitForInstallerExit = async ({ installer, env, signal, runProcessImpl = runProcess }) => {
+  const script = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class OpenScienceProcessObserver
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetExitCodeProcess(IntPtr handle, out uint exitCode);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
+$target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)
+$deadline = [DateTime]::UtcNow.AddMinutes(1)
+$candidate = $null
+do {
+  $candidate = Get-CimInstance -ClassName Win32_Process -Filter "Name = '$([IO.Path]::GetFileName($target).Replace("'", "''"))'" |
+    Where-Object {
+      $_.ExecutablePath -and
+      [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase)
+    } |
+    Select-Object -First 1
+  if (-not $candidate) { Start-Sleep -Milliseconds 50 }
+} while (-not $candidate -and [DateTime]::UtcNow -lt $deadline)
+if (-not $candidate) {
+  [Console]::Error.Write("The updater installer process did not appear at $target.")
+  exit 124
+}
+$access = 0x00100000 -bor 0x00001000
+$handle = [OpenScienceProcessObserver]::OpenProcess($access, $false, [uint32]$candidate.ProcessId)
+if ($handle -eq [IntPtr]::Zero) {
+  [Console]::Error.Write("Could not observe updater installer process $($candidate.ProcessId).")
+  exit 126
+}
+$wait = [OpenScienceProcessObserver]::WaitForSingleObject($handle, 300000)
+if ($wait -eq 0x00000102) {
+  [OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+  [Console]::Error.Write("The updater installer process $($candidate.ProcessId) did not exit.")
+  exit 125
+}
+[uint32]$exitCode = 0
+if ($wait -ne 0 -or -not [OpenScienceProcessObserver]::GetExitCodeProcess($handle, [ref]$exitCode)) {
+  [OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+  [Console]::Error.Write("Could not read updater installer exit code for process $($candidate.ProcessId).")
+  exit 126
+}
+[OpenScienceProcessObserver]::CloseHandle($handle) | Out-Null
+[Console]::Out.Write("installer pid=$($candidate.ProcessId) exit=$exitCode")
+exit $exitCode
+`.trim()
+  return runProcessImpl('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    allowNonZero: true,
+    env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
+    signal,
+    timeoutMs: 370_000
+  })
+}
+
+const runElectronUpdater = async ({
+  executable,
+  env,
+  expectedVersion,
+  expectedInstaller,
+  onDownloaded
+}) => {
+  // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
+  // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
+  // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
+  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+    env,
+    windowsHide: true
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk) => {
+    stdout += chunk
+  })
+  child.stderr?.on('data', (chunk) => {
+    stderr += chunk
+  })
+  const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const diagnosticOutput = () => redactPackagedAppOutput(output())
+  const exit = observeChildExit(child)
+  const installerObserver = new AbortController()
+  let installerExit
   try {
-    const page = await application.firstWindow({ timeout: 60_000 })
-    await page.waitForFunction(() => Boolean(globalThis.window?.api?.update), undefined, {
-      timeout: 60_000
-    })
+    const { endpoint, auth } = await Promise.race([
+      waitFor('the updater app web service', async () => parsePackagedAppEndpoint(output())),
+      exit.then((code) => {
+        throw new Error(
+          `Updater app exited before becoming healthy (${code}).\n${diagnosticOutput()}`
+        )
+      })
+    ])
+    const bootstrapResponse = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
+    if (!bootstrapResponse.ok) {
+      throw new Error(`Updater app bootstrap returned HTTP ${bootstrapResponse.status}.`)
+    }
+    const bootstrap = await bootstrapResponse.json()
+    if (bootstrap.platform !== 'win32' || !Number.isInteger(bootstrap.rpcProtocolVersion)) {
+      throw new Error(`Unexpected updater app bootstrap: ${JSON.stringify(bootstrap)}`)
+    }
+
     const checked = await withTimeout(
-      page.evaluate(() => globalThis.window.api.update.check()),
+      invokeWebRpc({
+        endpoint,
+        auth,
+        protocolVersion: bootstrap.rpcProtocolVersion,
+        channel: 'update:check'
+      }),
       'electron-updater check'
     )
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     const downloaded = await withTimeout(
-      page.evaluate(() => globalThis.window.api.update.download()),
+      invokeWebRpc({
+        endpoint,
+        auth,
+        protocolVersion: bootstrap.rpcProtocolVersion,
+        channel: 'update:download'
+      }),
       'electron-updater differential download'
     )
     if (downloaded.state !== 'ready' || downloaded.applyKind !== 'restart') {
       throw new Error(`Unexpected updater download result: ${JSON.stringify(downloaded)}`)
     }
+    await onDownloaded()
 
-    const closed = withTimeout(application.waitForEvent('close'), 'electron-updater restart')
-    await page.evaluate(() => {
-      void globalThis.window.api.update.apply()
+    // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
+    // installation handoff finished. Attach a read-only watcher before applying the update to avoid
+    // racing the new executable and to retain the real installer exit code when the handoff fails.
+    installerExit = waitForInstallerExit({
+      installer: expectedInstaller,
+      env,
+      signal: installerObserver.signal
     })
-    await closed
+    // The observer starts before update:apply to avoid racing detached NSIS. Mark its rejection as
+    // handled immediately; the original promise is still awaited below or during failure cleanup.
+    void installerExit.catch(() => undefined)
+    const closed = waitForShutdownExit(exit, child, diagnosticOutput)
+    const applied = await invokeWebRpc({
+      endpoint,
+      auth,
+      protocolVersion: bootstrap.rpcProtocolVersion,
+      channel: 'update:apply'
+    })
+    if (applied.state !== 'applying') {
+      throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
+    }
+    const exitCode = await closed
+    if (exitCode !== 0)
+      throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
+    const installerResult = await installerExit
+    console.log(`Updater installer observation: ${installerResult.stdout}`)
+    if (installerResult.code !== 0) {
+      throw new Error(
+        `Updater installer exited with ${installerResult.code}.${installerResult.stderr ? `\n${installerResult.stderr}` : ''}`
+      )
+    }
   } catch (error) {
-    await application.close().catch(() => {})
+    installerObserver.abort(
+      new Error('Updater installer observation cancelled after updater failure.')
+    )
+    await Promise.all([terminateProcessTree(child), installerExit?.catch(() => undefined)])
+    const processOutput = diagnosticOutput().trim()
+    if (error instanceof Error) {
+      error.message = redactPackagedAppOutput(error.message)
+      if (processOutput && !error.message.includes(processOutput))
+        error.message += `\n${processOutput}`
+    }
     throw error
   }
-}
-
-const executableVersion = async (executable, env) => {
-  const result = await runProcess(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '[Console]::Out.Write((Get-Item -LiteralPath $args[0]).VersionInfo.ProductVersion)',
-      executable
-    ],
-    { allowNonZero: true, env, timeoutMs: 10_000 }
-  )
-  if (result.code !== 0) return undefined
-  return result.stdout.trim()
 }
 
 const assertDifferentialObservation = (observation) => {
@@ -372,29 +543,47 @@ const main = async () => {
       )
     }
 
+    const installerBytes = (await stat(currentInstaller)).size
+    const persistObservation = async () => {
+      observation = assertDifferentialObservation({
+        schemaVersion: 1,
+        mode: 'electron-updater-differential',
+        previousVersion,
+        currentVersion,
+        installerBytes,
+        ...assetServer.metrics,
+        versionedFeed: true,
+        previousInstallerCacheVerified: true
+      })
+      await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
+    }
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
-      expectedVersion: currentVersion
-    })
-    const installerBytes = (await stat(currentInstaller)).size
-    observation = assertDifferentialObservation({
-      schemaVersion: 1,
-      mode: 'electron-updater-differential',
-      previousVersion,
-      currentVersion,
-      installerBytes,
-      ...assetServer.metrics,
-      versionedFeed: true,
-      previousInstallerCacheVerified: true
+      expectedVersion: currentVersion,
+      expectedInstaller: join(
+        env.LOCALAPPDATA,
+        updateConfig.updaterCacheDirName,
+        'pending',
+        basename(currentInstaller)
+      ),
+      onDownloaded: persistObservation
     })
 
+    const installedExecutable = join(installDirectory, 'open-science.exe')
     await waitFor(
-      `installed version ${currentVersion}`,
-      async () =>
-        (await executableVersion(join(installDirectory, 'open-science.exe'), env))?.startsWith(
-          currentVersion
-        ),
+      'the updated executable to be committed to disk',
+      async () => {
+        try {
+          const installedFile = await stat(installedExecutable)
+          if (installedFile.isFile() && installedFile.size > 0) return installedFile.size
+        } catch (error) {
+          throw new Error(`Last observed no executable at ${installedExecutable}.`, {
+            cause: error
+          })
+        }
+        throw new Error(`Last observed an empty executable at ${installedExecutable}.`)
+      },
       UPDATE_TIMEOUT_MS
     )
     await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {
@@ -408,7 +597,6 @@ const main = async () => {
       env
     })
     await profileGuard.verifyCycle('current', currentConfigRoot)
-    await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
     console.log('Windows electron-updater differential certification completed successfully.')
   } catch (error) {
     primaryError = error
@@ -449,6 +637,9 @@ if (invokedAsScript) {
 export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  invokeWebRpc,
+  redactPackagedAppOutput,
+  waitForInstallerExit,
   parseArguments,
   parseSingleRange,
   rewriteFeedPaths

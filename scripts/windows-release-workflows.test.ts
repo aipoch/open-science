@@ -61,9 +61,9 @@ describe('post-merge Windows validation', () => {
       'runs-on': 'windows-latest'
     })
     expect(job['continue-on-error']).toBeUndefined()
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2])
+    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
+      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
     )
   })
 
@@ -250,11 +250,11 @@ describe('post-merge Windows validation', () => {
 
   it('records unsigned Windows update diagnostics without blocking publishing', () => {
     const release = readWorkflow('release.yml')
-    const upgrade = release.jobs['windows-upgrade-smoke']
+    const upgrade = readWorkflow('windows-upgrade-smoke.yml').jobs['windows-upgrade-smoke']
 
     expect(upgrade['runs-on']).toBe('windows-latest')
-    expect(upgrade.needs).toBe('build')
-    expect(upgrade['continue-on-error']).toBe(true)
+    expect(upgrade.needs).toBeUndefined()
+    expect(upgrade['continue-on-error']).toBeUndefined()
     expect(upgrade['timeout-minutes']).toBe(40)
     expect(findStep(upgrade, 'Setup Node')).toMatchObject({
       uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
@@ -263,11 +263,10 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
       'npm ci --ignore-scripts --no-audit --no-fund'
     )
-    expect(findStep(upgrade, 'Download current Windows installer').uses).toBe(
-      'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
-    )
+    const current = findStep(upgrade, 'Download current Windows installer')
+    expect(current.run).toContain('gh release download $env:CURRENT_TAG')
+    expect(current.run).toContain("--pattern 'latest.yml'")
     const previous = findStep(upgrade, 'Download previous stable Windows installer')
-    expect(previous.env?.CURRENT_TAG).toBe('${{ github.ref_name }}')
     expect(previous.run).toContain('gh release download')
     expect(previous.run).toContain('*-win-x64-setup.exe.blockmap')
     expect(previous.run).not.toContain('Get-AuthenticodeSignature')
@@ -288,6 +287,7 @@ describe('post-merge Windows validation', () => {
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart')
     ).toMatchObject({ id: 'installer', 'continue-on-error': true })
     expect(release.jobs['windows-full-test']).toBeUndefined()
+    expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
     expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
@@ -314,6 +314,12 @@ describe('post-merge Windows validation', () => {
       })
     })
     expect(findStep(upgrade, 'Report Windows update-drill outcome').run).toBe('exit 1')
+    expect(findStep(release.jobs.publish, 'Dispatch advisory Windows upgrade smoke')).toMatchObject(
+      {
+        'continue-on-error': true,
+        run: expect.stringContaining('event_type=windows-upgrade-smoke')
+      }
+    )
     expect(release.jobs.mirror).toBeUndefined()
   })
 
@@ -343,7 +349,7 @@ describe('post-merge Windows validation', () => {
     expect(release.jobs.build.needs).toBe('release-preflight')
     expect(release.jobs.build.with?.require_windows_signing).toBeUndefined()
     expect(release.jobs['notarize-mac'].if).toBe(stableTagCondition)
-    expect(release.jobs['windows-upgrade-smoke'].if).toBe(stableTagCondition)
+    expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
     expect(release.jobs.publish.if).toBe(stableTagCondition)
   })
 
@@ -396,7 +402,11 @@ describe('post-merge Windows validation', () => {
   })
 
   it('pins external actions in every changed release workflow', () => {
-    for (const workflowName of ['release.yml', 'mirror-to-website.yml']) {
+    for (const workflowName of [
+      'release.yml',
+      'mirror-to-website.yml',
+      'windows-upgrade-smoke.yml'
+    ]) {
       const workflow = readWorkflow(workflowName)
       const references = Object.values(workflow.jobs).flatMap((job) =>
         (job.steps ?? []).flatMap(({ uses }) => (uses?.startsWith('./') || !uses ? [] : [uses]))

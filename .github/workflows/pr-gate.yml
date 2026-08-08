@@ -289,17 +289,48 @@ jobs:
         id: lint
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'lint') }}
         continue-on-error: true
-        run: npm run lint
-      - name: Typecheck node
-        id: typecheck_node
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') }}
+        run: npm run lint -- --concurrency auto
+      - name: Typecheck node and web
+        id: typechecks
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web') }}
         continue-on-error: true
-        run: npm run typecheck:node
-      - name: Typecheck web
-        id: typecheck_web
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web') }}
-        continue-on-error: true
-        run: npm run typecheck:web
+        shell: bash
+        env:
+          RUN_TYPECHECK_NODE: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_node') }}
+          RUN_TYPECHECK_WEB: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'typecheck_web') }}
+        run: |
+          set -uo pipefail
+          failed=0
+          node_outcome=skipped
+          web_outcome=skipped
+          node_log="$RUNNER_TEMP/typecheck-node.log"
+          web_log="$RUNNER_TEMP/typecheck-web.log"
+
+          if [[ "$RUN_TYPECHECK_NODE" == "true" ]]; then
+            npm run typecheck:node >"$node_log" 2>&1 &
+            node_pid=$!
+          fi
+          if [[ "$RUN_TYPECHECK_WEB" == "true" ]]; then
+            npm run typecheck:web >"$web_log" 2>&1 &
+            web_pid=$!
+          fi
+
+          if [[ "$RUN_TYPECHECK_NODE" == "true" ]]; then
+            if wait "$node_pid"; then node_outcome=success; else node_outcome=failure; failed=1; fi
+            echo "::group::Typecheck node"
+            cat "$node_log"
+            echo "::endgroup::"
+          fi
+          if [[ "$RUN_TYPECHECK_WEB" == "true" ]]; then
+            if wait "$web_pid"; then web_outcome=success; else web_outcome=failure; failed=1; fi
+            echo "::group::Typecheck web"
+            cat "$web_log"
+            echo "::endgroup::"
+          fi
+
+          echo "node=$node_outcome" >> "$GITHUB_OUTPUT"
+          echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
+          exit "$failed"
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
@@ -330,8 +361,9 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
-          TYPECHECK_NODE_OUTCOME: ${{ steps.typecheck_node.outcome }}
-          TYPECHECK_WEB_OUTCOME: ${{ steps.typecheck_web.outcome }}
+          TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
+          TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
+          TYPECHECK_WEB_OUTCOME: ${{ steps.typechecks.outputs.web }}
         run: |
           set -euo pipefail
           failed=0
@@ -346,14 +378,65 @@ jobs:
           check lint "$LINT_OUTCOME"
           check typecheck_node "$TYPECHECK_NODE_OUTCOME"
           check typecheck_web "$TYPECHECK_WEB_OUTCOME"
+          check typechecks "$TYPECHECKS_OUTCOME"
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
           check cli_sdk "$CLI_SDK_OUTCOME"
           exit "$failed"
 
+  unit_shard:
+    name: Full Module tests (macOS, shard ${{ matrix.shard }}/2)
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
+    runs-on: macos-14
+    env:
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test complete suite shard
+        id: unit_macos_shard
+        continue-on-error: true
+        run: npx vitest run --coverage --coverage.reporter=text-summary --shard=${{ matrix.shard }}/2 --reporter=blob --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+      - name: Upload full-suite blob report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unit-macos-blob-${{ matrix.shard }}
+          path: vitest-reports/
+          retention-days: 1
+          if-no-files-found: error
+      - name: Enforce full-suite shard
+        if: ${{ always() }}
+        shell: bash
+        env:
+          UNIT_MACOS_SHARD_OUTCOME: ${{ steps.unit_macos_shard.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "$UNIT_MACOS_SHARD_OUTCOME" != "success" ]]; then
+            echo "unit_macos_shard ended with $UNIT_MACOS_SHARD_OUTCOME" >&2
+            failed=1
+          fi
+          exit "$failed"
+
   unit:
     name: Module tests (macOS)
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+    needs: [preflight, unit_shard]
+    if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -378,13 +461,20 @@ jobs:
         # Vitest coverage.changed inherits --changed, so this enforces thresholds only for the
         # affected source boundary while using the same test execution.
         run: npx vitest run --coverage --changed "$BASE_SHA"
-      - name: Test complete suite fallback
+      - name: Download full-suite blob reports
+        if: ${{ needs.unit_shard.result != 'skipped' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: unit-macos-blob-*
+          path: vitest-reports
+          merge-multiple: true
+      - name: Merge full-suite reports and coverage
         id: unit_macos_full
-        # A trusted pre-migration selective plan can select the unit bundle through legacy
-        # unit_linux/unit_renderer lanes. Route that migration case through one full coverage run.
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || (contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
+        # The shard job covers both full plans and trusted pre-migration selective plans that select
+        # the unit bundle without unit_macos. Merge once so thresholds see the complete suite.
+        if: ${{ needs.unit_shard.result != 'skipped' }}
         continue-on-error: true
-        run: npm run test:coverage
+        run: npx vitest run --merge-reports=vitest-reports --coverage
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}
         continue-on-error: true
@@ -400,6 +490,7 @@ jobs:
         env:
           UNIT_MACOS_FULL_OUTCOME: ${{ steps.unit_macos_full.outcome }}
           UNIT_MACOS_RELATED_OUTCOME: ${{ steps.unit_macos_related.outcome }}
+          UNIT_MACOS_SHARDS_RESULT: ${{ needs.unit_shard.result }}
         run: |
           set -euo pipefail
           failed=0
@@ -411,6 +502,7 @@ jobs:
           }
           check unit_macos_related "$UNIT_MACOS_RELATED_OUTCOME"
           check unit_macos_full "$UNIT_MACOS_FULL_OUTCOME"
+          check unit_macos_shards "$UNIT_MACOS_SHARDS_RESULT"
           if [[ "$UNIT_MACOS_RELATED_OUTCOME" == "skipped" && "$UNIT_MACOS_FULL_OUTCOME" == "skipped" ]]; then
             echo "Selected unit bundle did not execute a Module-test path" >&2
             failed=1

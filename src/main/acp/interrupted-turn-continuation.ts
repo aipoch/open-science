@@ -7,6 +7,7 @@ import { getActiveConversationContext } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../shared/uploads'
+import type { TaskNotificationService } from '../notifications/task-notifications'
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
@@ -28,6 +29,7 @@ type InterruptedTurnContinuationRuntime = {
 type InterruptedTurnContinuationDependencies = {
   runtime: InterruptedTurnContinuationRuntime
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
+  notifications?: Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
 }
 
 const expectedFrameworkForReplayTarget = (
@@ -202,9 +204,18 @@ export const continueInterruptedTurn = async (
     return snapshot
   }
 
-  await dependencies.runtime.startContinuation(
-    buildContinuationRequest(session, prompt, request, livePrompt)
-  )
+  const tracked = dependencies.notifications?.trackPrompt({
+    sessionId: request.sessionId,
+    text: prompt.content
+  })
+  try {
+    await dependencies.runtime.startContinuation(
+      buildContinuationRequest(session, prompt, request, livePrompt)
+    )
+  } catch (error) {
+    if (tracked) dependencies.notifications?.untrackPrompt(request.sessionId, tracked)
+    throw error
+  }
   return dependencies.runtime.getSnapshot()
 }
 

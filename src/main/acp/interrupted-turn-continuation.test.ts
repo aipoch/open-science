@@ -77,6 +77,8 @@ describe('continueInterruptedTurn', () => {
       })
     ])
     const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+    const trackPrompt = vi.fn(() => ({ token: 1 }))
+    const untrackPrompt = vi.fn()
     const runtime = {
       getSnapshot: vi.fn(() => snapshot()),
       getLatestUserPrompt: vi.fn(() => undefined),
@@ -84,7 +86,11 @@ describe('continueInterruptedTurn', () => {
     }
 
     await continueInterruptedTurn(
-      { runtime, loadSession: vi.fn(async () => durable) },
+      {
+        runtime,
+        loadSession: vi.fn(async () => durable),
+        notifications: { trackPrompt, untrackPrompt }
+      },
       { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
     )
 
@@ -101,6 +107,37 @@ describe('continueInterruptedTurn', () => {
       })
     )
     expect(startContinuation.mock.calls[0][0]).not.toHaveProperty('historyPreamble')
+    expect(trackPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Analyze the attached evidence'
+    })
+    expect(untrackPrompt).not.toHaveBeenCalled()
+  })
+
+  it('removes notification tracking when continuation startup is rejected', async () => {
+    const durable = session([message('prompt-1', 'user', 'Analyze the durable request')])
+    const failure = new Error('Provider rejected continuation')
+    const trackPrompt = vi.fn(() => ({ token: 7 }))
+    const untrackPrompt = vi.fn()
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation: vi.fn(async () => {
+              throw failure
+            })
+          },
+          loadSession: vi.fn(async () => durable),
+          notifications: { trackPrompt, untrackPrompt }
+        },
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
+    ).rejects.toBe(failure)
+
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 7 })
   })
 
   it('carries the original task and media when native resume did not retain the provider prompt', async () => {

@@ -284,6 +284,233 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('publishes ordered Run progress from acceptance through completion', async () => {
+    const runner = createRunner()
+    const progress: Array<{ phase: string; heartbeat: boolean }> = []
+    const unsubscribe = runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat })
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+    await runner.waitForRun(started.id)
+
+    expect(progress).toEqual([
+      { phase: 'accepted', heartbeat: false },
+      { phase: 'session-ready', heartbeat: false },
+      { phase: 'prompt-dispatched', heartbeat: false },
+      { phase: 'completed', heartbeat: false }
+    ])
+
+    unsubscribe()
+    runner.dispose()
+  })
+
+  it('marks provider acceptance before the first visible provider event', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const phases: string[] = []
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request, observer) => {
+          observer?.onProviderPromptAccepted?.()
+          emitEvent?.({
+            id: 'assistant-1',
+            timestamp: 2,
+            sessionId: request.sessionId,
+            promptMessageId: request.promptMessageId,
+            kind: 'message',
+            role: 'assistant',
+            level: 'info',
+            text: 'Working on it.'
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => {
+            emitEvent = undefined
+          }
+        }
+      }
+    })
+    runner.subscribeProgress((event) => phases.push(event.phase))
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+    await runner.waitForRun(started.id)
+
+    expect(phases).toEqual([
+      'accepted',
+      'session-ready',
+      'prompt-dispatched',
+      'provider-accepted',
+      'first-visible-output',
+      'completed'
+    ])
+    runner.dispose()
+  })
+
+  it('emits liveness heartbeats until the first visible provider event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let finishPrompt: (() => void) | undefined
+    const prompt = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const progress: Array<{ phase: string; heartbeat: boolean; elapsedMs: number }> = []
+    const runner = createRunner({
+      now: Date.now,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => prompt
+      }
+    })
+    runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat, elapsedMs: event.elapsedMs })
+    })
+
+    try {
+      const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      expect(progress.at(-1)).toEqual({
+        phase: 'prompt-dispatched',
+        heartbeat: true,
+        elapsedMs: 10_000
+      })
+
+      finishPrompt?.()
+      await runner.waitForRun(started.id)
+      const countAfterCompletion = progress.length
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(progress).toHaveLength(countAfterCompletion)
+    } finally {
+      runner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps Run execution independent from progress subscriber failures', async () => {
+    const runner = createRunner()
+    runner.subscribeProgress(() => {
+      throw new Error('subscriber failed')
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
+    runner.dispose()
+  })
+
+  it('stops liveness heartbeats after the first visible provider event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let acceptProvider: (() => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const prompt = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const progress: Array<{ phase: string; heartbeat: boolean }> = []
+    const runner = createRunner({
+      now: Date.now,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          acceptProvider = observer?.onProviderPromptAccepted
+          return prompt
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => {
+            emitEvent = undefined
+          }
+        }
+      }
+    })
+    runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat })
+    })
+
+    try {
+      const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+      acceptProvider?.()
+      emitEvent?.({
+        id: 'other-prompt-assistant',
+        timestamp: 2,
+        sessionId: 'session-1',
+        promptMessageId: 'other-prompt',
+        kind: 'message',
+        role: 'assistant',
+        level: 'info',
+        text: 'Unrelated side-chat output.'
+      })
+      expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
+      emitEvent?.({
+        id: 'provider-warning',
+        timestamp: 3,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'system',
+        level: 'warning',
+        text: 'Provider is retrying.'
+      })
+      emitEvent?.({
+        id: 'terminal-stop',
+        timestamp: 4,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'stop',
+        level: 'info',
+        title: 'Prompt stopped',
+        text: 'end_turn'
+      })
+      expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
+      emitEvent?.({
+        id: 'assistant-1',
+        timestamp: 5,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'message',
+        role: 'assistant',
+        level: 'info',
+        text: 'Working on it.'
+      })
+      const countAfterFirstOutput = progress.length
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(progress).toHaveLength(countAfterFirstOutput)
+      expect(progress.slice(-2)).toEqual([
+        { phase: 'provider-accepted', heartbeat: false },
+        { phase: 'first-visible-output', heartbeat: false }
+      ])
+
+      finishPrompt?.()
+      const completed = await runner.waitForRun(started.id)
+      expect(completed.output).toBe('Working on it.')
+    } finally {
+      runner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects overlapping runs for the same durable session', async () => {
     let finishPrompt: (() => void) | undefined
     const promptGate = new Promise<void>((resolve) => {
@@ -828,6 +1055,7 @@ describe('TaskRunner', () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let saveCount = 0
     const ids = ['save-user', 'save-run', 'save-agent']
+    const progressPhases: string[] = []
     const runner = createRunner({
       sessions: {
         list: async () => [],
@@ -864,6 +1092,7 @@ describe('TaskRunner', () => {
       createId: () => ids.shift() ?? 'generated-id',
       now: () => 100
     })
+    runner.subscribeProgress((event) => progressPhases.push(event.phase))
 
     const started = await runner.startRun({ project: project.id, prompt: 'Produce an answer.' })
 
@@ -874,6 +1103,7 @@ describe('TaskRunner', () => {
       completedAt: 100
     })
     expect(saveCount).toBe(3)
+    expect(progressPhases.at(-1)).toBe('failed')
   })
 
   it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
@@ -1099,6 +1329,7 @@ describe('TaskRunner', () => {
       rejectPrompt?.(new Error('provider prompt cancelled'))
     })
     let time = 100
+    const progressPhases: string[] = []
     const runner = createRunner({
       sessions: {
         list: async () => [],
@@ -1127,6 +1358,7 @@ describe('TaskRunner', () => {
       })(),
       now: () => ++time
     })
+    runner.subscribeProgress((event) => progressPhases.push(event.phase))
 
     const started = await runner.startRun({ project: project.id, prompt: 'Long research.' })
     const cancelled = await runner.cancelRun(started.id)
@@ -1141,6 +1373,7 @@ describe('TaskRunner', () => {
       completedAt: expect.any(Number)
     })
     expect(cancelled.cancelledAt).toBe(cancelled.completedAt)
+    expect(progressPhases.at(-1)).toBe('cancelled')
     expect(savedSessions.at(-1)).toMatchObject({
       id: 'session-cancel',
       status: 'idle',

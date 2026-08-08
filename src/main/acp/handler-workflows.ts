@@ -182,7 +182,8 @@ const createAcpHandlerWorkflows = (
         {
           runtime,
           loadSession: (projectId, sessionId) =>
-            interruptedTurnSessions.loadSession(projectId, sessionId)
+            interruptedTurnSessions.loadSession(projectId, sessionId),
+          notifications: taskNotifications
         },
         request
       )

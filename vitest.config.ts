@@ -14,6 +14,11 @@ const VITEST_EXCLUDE_PATTERNS = [
   '**/.worktrees/**',
   '**/.worktree/**'
 ]
+// Full-suite shards collect partial coverage maps. Only the merged report may enforce thresholds.
+
+function coverageThresholdsEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.VITEST_DEFER_COVERAGE_THRESHOLDS !== '1'
+}
 
 // Mirrors the renderer alias from electron.vite.config.ts so tests that mount real component
 // trees (instead of mocking every aliased import) can resolve '@/...' without a build step.
@@ -72,28 +77,30 @@ export default defineConfig({
       // Baseline thresholds: fail CI when global coverage drops below these. Set ~5pts under the
       // current measured baseline (lines 71 / statements 70 / functions 68 / branches 62) so the gate
       // catches regressions while absorbing minor cross-environment variance. Raise over time.
-      thresholds: {
-        lines: 66,
-        functions: 62,
-        branches: 57,
-        statements: 64,
-        // Keep the now-covered update wiring from being masked by the global aggregate.
-        'src/main/update/**': {
-          lines: 85,
-          functions: 75,
-          branches: 70,
-          statements: 80
-        },
-        // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
-        'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
-          lines: 95,
-          functions: 95,
-          branches: 80,
-          statements: 95
-        }
-      }
+      thresholds: coverageThresholdsEnabled(process.env)
+        ? {
+            lines: 66,
+            functions: 62,
+            branches: 57,
+            statements: 64,
+            // Keep the now-covered update wiring from being masked by the global aggregate.
+            'src/main/update/**': {
+              lines: 85,
+              functions: 75,
+              branches: 70,
+              statements: 80
+            },
+            // CSV is a user-facing renderer with bounded-data and fallback behavior worth protecting.
+            'src/renderer/src/pages/workspace/previews/renderers/CsvPreview.tsx': {
+              lines: 95,
+              functions: 95,
+              branches: 80,
+              statements: 95
+            }
+          }
+        : undefined
     }
   }
 })
 
-export { VITEST_EXCLUDE_PATTERNS }
+export { coverageThresholdsEnabled, VITEST_EXCLUDE_PATTERNS }

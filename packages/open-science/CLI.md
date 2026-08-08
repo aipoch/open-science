@@ -133,6 +133,12 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
 the final run object, one JSON value per line:
 
+The event stream includes `run.progress` phase changes and ten-second liveness heartbeats before the
+first visible provider output. Each progress payload includes `runId`, `sessionId`, `projectId`,
+`phase`, `timestamp`, `elapsedMs`, and `heartbeat`. Its timer starts after Task has prepared the
+Session and registered its Run; Session creation or resume time before registration is outside this
+stream.
+
 ```bash
 open-science run \
   --project "Systematic review" \

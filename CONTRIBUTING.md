@@ -43,6 +43,7 @@ Run installation, development, and validation commands from the repository root:
 | Install        | `npm install`                                              |
 | Run            | `npm run dev`                                              |
 | Target test    | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
+| Module tests   | `npm run test:module -- <module-id>`                       |
 | Node typecheck | `npm run typecheck:node`                                   |
 | Web typecheck  | `npm run typecheck:web`                                    |
 | Lint           | `npm run lint`                                             |
@@ -160,12 +161,17 @@ Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:
 
 - the Owner Module, changed Interface, or consumers cannot be established;
 - global validation inputs change, including package metadata, TypeScript/Vitest/build configuration,
-  the PR Gate workflow, or its classifier and manifest;
+  the PR Gate workflow or classifier, or ownership, consumer, capability, or fallback routing in the
+  module-impact manifest;
 - the change crosses several runtime areas without a demonstrated impact map;
 - a release-candidate workflow or maintainer explicitly requests the complete local suite.
 
 Full fallback is a safety mechanism, not an unconditional prerequisite for every pull request.
 Contributors are not expected to reproduce every operating-system CI lane locally.
+
+Changing only `testFiles` within an already-owned Module does not trigger the full fallback. Run the
+manifest validation tests, `npm run test:module -- <module-id>`, the affected process typechecks and
+lint instead; exact-head CI remains authoritative for the complete portable and platform suites.
 
 ### CI authority and evidence
 

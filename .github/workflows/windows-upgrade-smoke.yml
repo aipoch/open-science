@@ -1,0 +1,148 @@
+name: Windows Upgrade Smoke
+
+# Advisory post-release validation. It consumes published assets, so it cannot extend or block the
+# stable Release workflow. A failure is intentionally red here and can be rerun for the same tag.
+on:
+  repository_dispatch:
+    types:
+      - windows-upgrade-smoke
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable tag to validate
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-upgrade-smoke-${{ github.event.client_payload.tag || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  windows-upgrade-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+    steps:
+      - name: Checkout released revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: ${{ env.CURRENT_TAG }}
+
+      - name: Resolve released revision
+        id: current
+        shell: pwsh
+        run: "'sha=' + (git rev-parse HEAD) >> $env:GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download current Windows installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force current | Out-Null
+          gh release download $env:CURRENT_TAG --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --pattern 'latest.yml' --dir current
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Download previous stable Windows installer
+        id: previous
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force previous | Out-Null
+          $releases = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tag = ($releases | ConvertFrom-Json | Where-Object { $_.tagName -like 'v*' -and $_.tagName -ne $env:CURRENT_TAG } | Select-Object -First 1).tagName
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            "available=false" >> $env:GITHUB_OUTPUT
+            "reason=no-previous-stable-release" >> $env:GITHUB_OUTPUT
+            Write-Host "No previous stable release is available; fresh-install smoke already passed."
+            exit 0
+          }
+          gh release download $tag --pattern '*-win-x64-setup.exe' --pattern '*-win-x64-setup.exe.blockmap' --dir previous
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "available=true" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Certify Windows electron-updater differential update
+        id: updater
+        if: steps.previous.outputs.available == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          node scripts/windows-updater-certification.mjs `
+            --current-dir current `
+            --previous-dir previous `
+            --output windows-updater-observation.json 2>&1 |
+            Tee-Object -FilePath windows-updater-certification.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Drill Windows silent upgrade, process lock, rollback, and restart
+        id: installer
+        if: always() && steps.previous.outputs.available == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          node scripts/windows-installer-smoke.mjs `
+            --installer-dir current `
+            --previous-installer-dir previous 2>&1 |
+            Tee-Object -FilePath windows-installer-certification.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record Windows update-drill evidence
+        if: always()
+        shell: pwsh
+        env:
+          GITHUB_SHA: ${{ steps.current.outputs.sha }}
+        run: |
+          $available = '${{ steps.previous.outputs.available }}' -eq 'true'
+          $passed = '${{ steps.updater.outcome }}' -eq 'success' -and '${{ steps.installer.outcome }}' -eq 'success'
+          $status = if (-not $available) { 'not-applicable' } elseif ($passed) { 'passed' } else { 'failed' }
+          $arguments = @(
+            'scripts/ci/release-certification-evidence.mjs', 'write-windows-update',
+            '--output', 'certification-windows-update.json',
+            '--current-tag', $env:CURRENT_TAG,
+            '--status', $status
+          )
+          if ($available) {
+            $arguments += @('--previous-tag', '${{ steps.previous.outputs.tag }}')
+            if (Test-Path 'windows-updater-observation.json') {
+              $arguments += @('--updater-observation', 'windows-updater-observation.json')
+            }
+            if (-not $passed) {
+              $arguments += @('--reason', 'updater=${{ steps.updater.outcome }},installer=${{ steps.installer.outcome }}')
+            }
+          } else {
+            $arguments += @('--reason', '${{ steps.previous.outputs.reason }}')
+          }
+          & node @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows update-drill evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-update-certification-${{ env.CURRENT_TAG }}
+          retention-days: 7
+          path: |
+            certification-windows-update.json
+            windows-*-certification.log
+          if-no-files-found: error
+
+      - name: Report Windows update-drill outcome
+        if: >-
+          always() && steps.previous.outputs.available == 'true' &&
+          (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
+        run: exit 1

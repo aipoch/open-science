@@ -23,13 +23,13 @@ concurrency:
 
 jobs:
   windows_full_test:
-    name: Windows full test (${{ matrix.shard }}/2)
+    name: Windows full test (${{ matrix.shard }}/3)
     runs-on: windows-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -48,4 +48,4 @@ jobs:
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; the 25-minute
         # job timeout remains the backstop for a real hang.
-        run: npm test -- --shard=${{ matrix.shard }}/2 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
+        run: npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000

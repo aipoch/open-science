@@ -614,6 +614,22 @@ const readPrompt = async (options, deps) => {
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
+  } else if (event.type === 'run.progress') {
+    if (event.data?.heartbeat) {
+      const seconds = Math.max(1, Math.round((event.data.elapsedMs ?? 0) / 1_000))
+      const subject =
+        event.data.phase === 'provider-accepted' ? 'the first provider output' : 'the provider'
+      deps.log(`Still waiting for ${subject} (${seconds}s elapsed).`)
+      return
+    }
+    const message = {
+      accepted: 'Run accepted.',
+      'session-ready': 'Session ready.',
+      'prompt-dispatched': 'Prompt dispatched to the agent.',
+      'provider-accepted': 'Provider accepted the prompt.',
+      'first-visible-output': 'First provider output received.'
+    }[event.data?.phase]
+    if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
     deps.warn(
       'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'

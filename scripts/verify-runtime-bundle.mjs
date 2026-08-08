@@ -2,10 +2,15 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { pathToFileURL } from 'node:url'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 import { VERSIONS, packArchiveFile, packId, readDefaultEnvVersion } from './stage-default-envs.mjs'
 
 export const DEFAULT_CDN_BASE = 'https://statics.aipoch.com/open-science'
+export const DEFAULT_MAX_ATTEMPTS = 3
+export const DEFAULT_RETRY_DELAY_MS = 1000
+
+const TRANSIENT_HTTP_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504])
 
 export const runtimeManifestUrl = (cdnBase, envVersion, subdir) =>
   `${cdnBase.replace(/\/+$/, '')}/runtime-bundle/${envVersion}/${subdir}/manifest.json`
@@ -41,11 +46,44 @@ export const validatePublishedManifest = (manifest, envVersion, subdir) => {
   }
 }
 
-export const verifyRuntimeBundle = async (cdnBase, envVersion, subdirs, fetchImpl = fetch) => {
+export const verifyRuntimeBundle = async (
+  cdnBase,
+  envVersion,
+  subdirs,
+  {
+    fetchImpl = fetch,
+    sleepImpl = sleep,
+    maxAttempts = DEFAULT_MAX_ATTEMPTS,
+    retryDelayMs = DEFAULT_RETRY_DELAY_MS
+  } = {}
+) => {
   for (const subdir of subdirs) {
     const url = runtimeManifestUrl(cdnBase, envVersion, subdir)
-    const response = await fetchImpl(url, { cache: 'no-store' })
-    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
+    let response
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        response = await fetchImpl(url, { cache: 'no-store' })
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          throw new Error(
+            `${url} request failed after ${attempt} attempts: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+        console.warn(`[runtime-bundle] ${url} request failed; retrying (${attempt}/${maxAttempts})`)
+        await sleepImpl(retryDelayMs * attempt)
+        continue
+      }
+
+      if (response.ok) break
+      if (!TRANSIENT_HTTP_STATUSES.has(response.status) || attempt === maxAttempts) {
+        throw new Error(`${url} returned HTTP ${response.status} after ${attempt} attempt(s)`)
+      }
+      console.warn(
+        `[runtime-bundle] ${url} returned HTTP ${response.status}; retrying (${attempt}/${maxAttempts})`
+      )
+      await sleepImpl(retryDelayMs * attempt)
+    }
+
     const manifest = await response.json()
     validatePublishedManifest(manifest, envVersion, subdir)
     console.log(`[runtime-bundle] verified ${url}`)

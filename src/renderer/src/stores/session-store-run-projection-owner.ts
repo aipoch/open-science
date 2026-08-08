@@ -2,8 +2,13 @@ import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { AcpTurnTokenUsage } from '../../../shared/acp'
-import type { PersistedSessionResumeRecovery } from '../../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  PersistedPendingHistoryReplay,
+  PersistedSessionResumeRecovery
+} from '../../../shared/session-persistence'
 import type { AppendMessageResult } from './session-store-message-graph-helpers'
+import { synchronizeSessionGraph } from './session-store-message-graph-owner'
 import {
   canStartActivityGroup,
   projectActivePlan,
@@ -55,6 +60,30 @@ export type SessionRunProjectionActions = {
     error: string,
     promptMessageId?: string
   ) => void
+  markResumed: (
+    sessionId: string,
+    update?: Pick<
+      PersistedChatSession,
+      | 'agentFrameworkId'
+      | 'agentBackendId'
+      | 'providerSessionId'
+      | 'providerContinuityToken'
+      | 'pendingHistoryReplay'
+    >
+  ) => void
+  prepareInterruptedTurnContinuation: (
+    sessionId: string,
+    promptMessageId: string,
+    update:
+      | Pick<
+          PersistedChatSession,
+          'agentFrameworkId' | 'agentBackendId' | 'providerSessionId' | 'providerContinuityToken'
+        >
+      | undefined,
+    contextReset: boolean
+  ) => { runtimeSegmentId?: string } | undefined
+  completeInterruptedTurnResume: (sessionId: string) => void
+  clearPendingHistoryReplay: (sessionId: string, replay: PersistedPendingHistoryReplay) => void
   failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
   setAgentStatus: (sessionId: string, text: string) => void
   beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
@@ -222,6 +251,123 @@ export const createSessionRunProjectionOwner = <
         sessions: projectSession(state.sessions, sessionId, (session) =>
           projectInterruptedRun(session, cause, error, promptMessageId)
         )
+      }))
+    },
+
+    // Clears the interrupted/error state after a successful resume so the composer is usable again.
+    markResumed: (sessionId, update) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) => ({
+          ...session,
+          status: 'idle',
+          error: undefined,
+          errorReportable: undefined,
+          interrupted: undefined,
+          resumeRecovery: undefined,
+          agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
+          agentBackendId: update?.agentBackendId ?? session.agentBackendId,
+          providerSessionId: update?.providerSessionId ?? session.providerSessionId,
+          providerContinuityToken:
+            update === undefined ? session.providerContinuityToken : update.providerContinuityToken,
+          pendingHistoryReplay: update?.pendingHistoryReplay ?? session.pendingHistoryReplay,
+          compacting: undefined,
+          updatedAt: Date.now()
+        }))
+      }))
+    },
+
+    prepareInterruptedTurnContinuation: (sessionId, promptMessageId, update, contextReset) => {
+      let prepared: { runtimeSegmentId?: string } | undefined
+      setSessionState((state) => ({
+        sessions: state.sessions.map((session) => {
+          const prompt = session.messages.find((message) => message.id === promptMessageId)
+          if (
+            session.id !== sessionId ||
+            prompt?.role !== 'user' ||
+            session.resumeRecovery?.promptMessageId !== promptMessageId ||
+            (session.activeRun && session.activeRun.promptMessageId !== promptMessageId)
+          ) {
+            return session
+          }
+
+          const now = Date.now()
+          const withProvider = {
+            ...session,
+            agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
+            agentBackendId: update?.agentBackendId ?? session.agentBackendId,
+            providerSessionId: update?.providerSessionId ?? session.providerSessionId,
+            providerContinuityToken:
+              update === undefined
+                ? session.providerContinuityToken
+                : update.providerContinuityToken
+          }
+          const isRetryingPreparedContext =
+            contextReset && session.pendingHistoryReplay !== undefined
+          const conversationGraph = contextReset
+            ? synchronizeSessionGraph(
+                withProvider,
+                withProvider.messages,
+                now,
+                withProvider.agentFrameworkId ?? 'claude-code',
+                withProvider.agentBackendId,
+                withProvider.agentModel,
+                !isRetryingPreparedContext
+              )
+            : withProvider.conversationGraph
+          const runtimeSegmentId = conversationGraph?.runtimeSegments
+            .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
+            .at(-1)?.id
+          prepared = runtimeSegmentId ? { runtimeSegmentId } : {}
+          return {
+            ...withProvider,
+            status: 'running',
+            activeRun: { promptMessageId, startedAt: now },
+            activeRunRuntimeSegmentId: runtimeSegmentId,
+            awaitingFirstAgentOutput: true,
+            agentStatus: undefined,
+            error: undefined,
+            errorReportable: undefined,
+            pendingHistoryReplay: contextReset
+              ? (session.pendingHistoryReplay ?? {
+                  kind: 'before-message',
+                  messageId: promptMessageId
+                })
+              : session.pendingHistoryReplay,
+            compacting: undefined,
+            conversationGraph,
+            updatedAt: now
+          }
+        })
+      }))
+      return prepared
+    },
+
+    completeInterruptedTurnResume: (sessionId) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) => ({
+          ...session,
+          interrupted: undefined,
+          resumeRecovery: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          pendingHistoryReplay: undefined,
+          updatedAt: Date.now()
+        }))
+      }))
+    },
+
+    clearPendingHistoryReplay: (sessionId, replay) => {
+      setSessionState((state) => ({
+        sessions: state.sessions.map((session) => {
+          const pending = session.pendingHistoryReplay
+          const matches =
+            pending?.kind === replay.kind &&
+            (replay.kind === 'all' ||
+              (pending.kind === 'before-message' && pending.messageId === replay.messageId))
+          return session.id === sessionId && matches
+            ? { ...session, pendingHistoryReplay: undefined }
+            : session
+        })
       }))
     },
 

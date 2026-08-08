@@ -1,15 +1,81 @@
 import { load } from 'js-yaml'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
+  invokeWebRpc,
   parseArguments,
   parseSingleRange,
-  rewriteFeedPaths
+  redactPackagedAppOutput,
+  rewriteFeedPaths,
+  waitForInstallerExit
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('redacts packaged app tokens before output reaches CI diagnostics', () => {
+    expect(
+      redactPackagedAppOutput(
+        'Open Science Web: http://127.0.0.1:4321/?token=secret-token\nnext?mode=test&token=other'
+      )
+    ).toBe(
+      'Open Science Web: http://127.0.0.1:4321/?token=<redacted>\nnext?mode=test&token=<redacted>'
+    )
+  })
+
+  it('drives updater commands through the authenticated headless RPC', async () => {
+    const fetchImpl = vi.fn(async () =>
+      Response.json({ protocolVersion: 1, ok: true, result: { state: 'ready' } })
+    )
+
+    await expect(
+      invokeWebRpc({
+        endpoint: 'http://127.0.0.1:4321',
+        auth: 'token=test-token',
+        protocolVersion: 1,
+        channel: 'update:download',
+        fetchImpl
+      })
+    ).resolves.toEqual({ state: 'ready' })
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:4321/rpc/update%3Adownload?token=test-token',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ protocolVersion: 1, args: [] })
+      })
+    )
+  })
+
+  it('observes the detached NSIS installer and preserves its exit code', async () => {
+    const controller = new AbortController()
+    const runProcessImpl = vi.fn(async () => ({ code: 2, stdout: '', stderr: 'installer failed' }))
+
+    await expect(
+      waitForInstallerExit({
+        installer: 'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe',
+        env: { LOCALAPPDATA: 'C:\\profile' },
+        signal: controller.signal,
+        runProcessImpl
+      })
+    ).resolves.toEqual({ code: 2, stdout: '', stderr: 'installer failed' })
+    expect(runProcessImpl).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.arrayContaining([
+        '-Command',
+        expect.stringContaining('Get-CimInstance -ClassName Win32_Process')
+      ]),
+      expect.objectContaining({
+        allowNonZero: true,
+        env: expect.objectContaining({
+          OPEN_SCIENCE_INSTALLER_WATCH_TARGET:
+            'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe'
+        }),
+        signal: controller.signal,
+        timeoutMs: 370_000
+      })
+    )
+  })
+
   it('points the installed updater at a local feed without weakening its signing policy', () => {
     const result = buildLocalUpdaterConfig(
       'provider: generic\nurl: https://example.test\nupdaterCacheDirName: app-updater\npublisherName: Old Signer\n',
