@@ -22,6 +22,7 @@ import {
   isIntersectionTypeNode,
   isNamedExports,
   isNamedImports,
+  isNamespaceImport,
   isObjectLiteralExpression,
   isObjectBindingPattern,
   isParenthesizedExpression,
@@ -197,6 +198,16 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
         return
       }
       if (node !== scope && (isBlock(node) || isSourceFile(node))) return
+      if (isImportDeclaration(node) && node.importClause) {
+        const { name: defaultBinding, namedBindings } = node.importClause
+        declared =
+          defaultBinding?.text === name ||
+          (namedBindings !== undefined &&
+            (isNamespaceImport(namedBindings)
+              ? namedBindings.name.text === name
+              : namedBindings.elements.some((element) => element.name.text === name)))
+        if (declared) return
+      }
       if (isVariableDeclaration(node) && bindingContains(node.name, name)) {
         declared = true
         return
@@ -278,42 +289,6 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
       ? { declaration: parent, name: parent.name.text }
       : undefined
   }
-  const dynamicLoaderBindings = new Map<Node, DynamicLoaderBinding>()
-  const ambiguousDynamicLoaders = new Set<Node>()
-  const dynamicLoaderNames = new Set<string>()
-  const indexDynamicLoaders = (node: Node): void => {
-    if (isCallExpression(node)) {
-      const [argument] = node.arguments
-      const kind =
-        node.expression.kind === SyntaxKind.ImportKeyword
-          ? 'dynamic'
-          : isIdentifier(node.expression) &&
-              node.expression.text === 'require' &&
-              !isLocallyBound(node.expression)
-            ? 'require'
-            : undefined
-      const owner =
-        kind && argument && isIdentifier(argument) ? resolveParameterOwner(argument) : undefined
-      const named = owner ? namedCallableDeclaration(owner.callable) : undefined
-      if (kind && owner && named) {
-        const binding: DynamicLoaderBinding = { kind, parameterIndex: owner.parameterIndex }
-        const previous = dynamicLoaderBindings.get(named.declaration)
-        if (
-          previous &&
-          (previous.kind !== binding.kind || previous.parameterIndex !== binding.parameterIndex)
-        ) {
-          ambiguousDynamicLoaders.add(named.declaration)
-          dynamicLoaderBindings.delete(named.declaration)
-        } else if (!ambiguousDynamicLoaders.has(named.declaration)) {
-          dynamicLoaderBindings.set(named.declaration, binding)
-          dynamicLoaderNames.add(named.name)
-        }
-      }
-    }
-    forEachChild(node, indexDynamicLoaders)
-  }
-  if (/\b(?:import|require)\s*\(/.test(source)) indexDynamicLoaders(sourceFile)
-
   const resolveCallableDeclaration = (identifier: Node & { text: string }): Node | undefined => {
     let current: Node | undefined = identifier.parent
     while (current) {
@@ -357,6 +332,101 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
       current = current.parent
     }
     return undefined
+  }
+  const dynamicLoaderBindings = new Map<Node, DynamicLoaderBinding>()
+  const ambiguousDynamicLoaders = new Set<Node>()
+  const dynamicLoaderNames = new Set<string>()
+  const aliasCandidates: Array<
+    Readonly<{ declaration: Node; name: string; target: Node & { text: string } }>
+  > = []
+  const loaderCallCandidates: Node[] = []
+  const registerDynamicLoader = (
+    declaration: Node,
+    name: string,
+    binding: DynamicLoaderBinding
+  ): boolean => {
+    const previous = dynamicLoaderBindings.get(declaration)
+    if (
+      previous &&
+      (previous.kind !== binding.kind || previous.parameterIndex !== binding.parameterIndex)
+    ) {
+      ambiguousDynamicLoaders.add(declaration)
+      dynamicLoaderBindings.delete(declaration)
+      return true
+    }
+    if (previous || ambiguousDynamicLoaders.has(declaration)) return false
+    dynamicLoaderBindings.set(declaration, binding)
+    dynamicLoaderNames.add(name)
+    return true
+  }
+  const indexLoaderCall = (node: Node): boolean => {
+    if (!isCallExpression(node)) return false
+    const directKind =
+      node.expression.kind === SyntaxKind.ImportKeyword
+        ? 'dynamic'
+        : isIdentifier(node.expression) &&
+            node.expression.text === 'require' &&
+            !isLocallyBound(node.expression)
+          ? 'require'
+          : undefined
+    const aliasedDeclaration =
+      !directKind && isIdentifier(node.expression) && dynamicLoaderNames.has(node.expression.text)
+        ? resolveCallableDeclaration(node.expression)
+        : undefined
+    const aliasedBinding = aliasedDeclaration
+      ? dynamicLoaderBindings.get(aliasedDeclaration)
+      : undefined
+    const kind = directKind ?? aliasedBinding?.kind
+    const argument = node.arguments[aliasedBinding?.parameterIndex ?? 0]
+    const owner =
+      kind && argument && isIdentifier(argument) ? resolveParameterOwner(argument) : undefined
+    const named = owner ? namedCallableDeclaration(owner.callable) : undefined
+    return kind && owner && named
+      ? registerDynamicLoader(named.declaration, named.name, {
+          kind,
+          parameterIndex: owner.parameterIndex
+        })
+      : false
+  }
+  const indexDynamicLoaders = (node: Node): void => {
+    if (
+      isVariableDeclaration(node) &&
+      isIdentifier(node.name) &&
+      (node.parent.flags & NodeFlags.Const) !== 0 &&
+      node.initializer &&
+      isIdentifier(node.initializer)
+    ) {
+      const directRequire = node.initializer.text === 'require' && !isLocallyBound(node.initializer)
+      if (directRequire) {
+        registerDynamicLoader(node, node.name.text, { kind: 'require', parameterIndex: 0 })
+      } else {
+        aliasCandidates.push({ declaration: node, name: node.name.text, target: node.initializer })
+      }
+    } else if (isCallExpression(node)) {
+      loaderCallCandidates.push(node)
+      indexLoaderCall(node)
+    }
+    forEachChild(node, indexDynamicLoaders)
+  }
+  if (/\bimport\s*\(|\brequire\b/.test(source)) {
+    indexDynamicLoaders(sourceFile)
+    let changed: boolean
+    do {
+      changed = false
+      for (const candidate of aliasCandidates) {
+        if (dynamicLoaderBindings.has(candidate.declaration)) continue
+        const targetDeclaration = dynamicLoaderNames.has(candidate.target.text)
+          ? resolveCallableDeclaration(candidate.target)
+          : undefined
+        const binding = targetDeclaration ? dynamicLoaderBindings.get(targetDeclaration) : undefined
+        if (binding) {
+          changed = registerDynamicLoader(candidate.declaration, candidate.name, binding) || changed
+        }
+      }
+      for (const candidate of loaderCallCandidates) {
+        changed = indexLoaderCall(candidate) || changed
+      }
+    } while (changed)
   }
 
   const visit = (node: Node): void => {
@@ -995,6 +1065,42 @@ describe('Session Store architecture guard regressions', () => {
       importBoundaryViolations(
         consumerFixture,
         [
+          'const load = request',
+          'function request(specifier: string) { return require(specifier) }',
+          "load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const request = require',
+          'const load = (specifier: string) => request(specifier)',
+          "load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const request = require',
+          'const load = request',
+          "load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        ['const load = require', "load('../../stores/session-store-run-output-helpers')"].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
           'const load = ({ cache }: { cache: boolean }, specifier: string) => import(specifier)',
           "void load({ cache: true }, '../../stores/session-store-run-output-helpers')"
         ].join('\n')
@@ -1097,6 +1203,27 @@ describe('Session Store architecture guard regressions', () => {
           'function feature(require: (specifier: string) => unknown) {',
           "  require('../../stores/session-store-run-output-helpers')",
           '}'
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'function feature(require: (specifier: string) => unknown) {',
+          '  const load = require',
+          "  load('../../stores/session-store-run-output-helpers')",
+          '}'
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          "import require from './feature-loader'",
+          'const load = require',
+          "load('../../stores/session-store-run-output-helpers')"
         ].join('\n')
       )
     ).toEqual([])
