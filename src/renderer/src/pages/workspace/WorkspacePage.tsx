@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId
-} from '../../../../shared/permission-profiles'
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   pendingWorkspaceElicitations,
@@ -33,12 +30,8 @@ import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import {
   appendArtifactMention,
   docArtifactCount,
-  docIsEmpty,
-  docToArtifactRefs,
   docToSkillIds,
-  docToText,
-  MAX_COMPOSER_ARTIFACT_MENTIONS,
-  type ComposerDoc
+  MAX_COMPOSER_ARTIFACT_MENTIONS
 } from './composer/composer-doc'
 import {
   buildSessionComposerHistory,
@@ -54,9 +47,9 @@ import { JobDetailModal } from '@/components/JobDetailModal'
 import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
-import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 
 type WorkspacePageProps = {
@@ -64,10 +57,6 @@ type WorkspacePageProps = {
   isSessionPersistenceReady: boolean
   canDeleteConversations: boolean
 }
-
-// Converts unknown async failures into composer-visible text.
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 // New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
@@ -139,6 +128,7 @@ const WorkspacePage = ({
   )
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
+  const runtime = useWorkspaceAgentRuntime()
   const {
     actionError,
     pendingPermissions,
@@ -149,19 +139,14 @@ const WorkspacePage = ({
     sendPreparationInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
     compactContext,
-    sendMessage,
-    resendEditedMessage,
-    cancelRun,
-    resumeInterruptedSession,
-    deleteRuntimeSession,
     respondToPermission,
     setPermissionProfile,
     revokePermissionGrant
-  } = useWorkspaceAgentRuntime()
+  } = runtime
   const { respondToElicitation } = useWorkspaceElicitation()
 
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
-  useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage })
+  useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage: runtime.sendMessage })
   const [newConversationPermissionProfile, setNewConversationPermissionProfile] =
     useState<PermissionProfileId>(defaultPermissionProfile)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
@@ -173,9 +158,6 @@ const WorkspacePage = ({
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
     string[]
   >([])
-  // Closes the synchronous gap before the hook's reactive preparation state re-renders this page.
-  // A second submit for the same draft key returns without clearing its possibly newer local draft.
-  const sendRequestsInFlightRef = useRef(new Set<string>())
   const [notebookReferences, setNotebookReferences] = useState<
     Record<string, NotebookSessionReference>
   >({})
@@ -209,7 +191,7 @@ const WorkspacePage = ({
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
-    deleteRuntimeSession
+    deleteRuntimeSession: runtime.deleteRuntimeSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
   const newConversationSpecialistId = sessionController.view.specialist.newConversationId
@@ -362,6 +344,33 @@ const WorkspacePage = ({
     )
     return reviews.some((review) => review.lifecycle === 'running')
   })
+  const conversation = useWorkspaceConversationController({
+    activeSession,
+    projectId: scopedProjectId,
+    currentDraftKey,
+    isPersistenceReady: isSessionPersistenceReady,
+    supportsImageInput,
+    permissionProfile: activePermissionProfile,
+    isReviewing,
+    promptInFlightSessionIds,
+    sendPreparationInFlightSessionIds,
+    newConversationAutoReviewEnabled,
+    newConversationEnabledComputeHosts,
+    composer,
+    session: sessionController,
+    runtime,
+    setAutoReviewEnabled,
+    setEnabledComputeHosts,
+    resetNewConversationSettings: () => {
+      setNewConversationAutoReviewEnabled(false)
+      setNewConversationEnabledComputeHosts([])
+    },
+    syncComputeHosts: (sessionId, providerIds) =>
+      window.api.compute.enabledHostsSet(sessionId, providerIds),
+    abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
+    getSession: (sessionId) =>
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+  })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
   //   - the last turn already has a NON-STALE review (no duplicate reviews), OR
@@ -389,26 +398,7 @@ const WorkspacePage = ({
     return false
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
-  // Sending is disabled while the current session is running, awaiting a decision, or locked by the
-  // fix loop (fixLoopActive). The fix loop lock persists across both the reviewer-review sub-phase and
-  // the main agent-fix sub-phase; typing does not override the lock.
-  const canSendMessage =
-    isSessionPersistenceReady &&
-    attachmentTransfers.length === 0 &&
-    (!docIsEmpty(draftDoc) || attachments.length > 0) &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission' &&
-    !activeSessionHasRuntimeInteraction &&
-    !activeSession?.fixLoopActive &&
-    // A graph-integrity failure keeps only the in-memory terminal projection. Require restart before
-    // another prompt can mutate or persist this Session over its last valid durable Branch graph.
-    !activeSession?.conversationGraphSyncBlocked &&
-    // Auto-recovery drops the session to idle while it resets context and replays the transcript; block
-    // sends in that window so a manual prompt can't race the recovery resend into the same session.
-    !activeSession?.compacting &&
-    // Block while the reconfigure barrier is running (async, between Enter and sendMessage). This
-    // prevents a second Enter press from racing the first one through the same pending-switch barrier.
-    !sessionController.view.specialist.barrierInFlight
+  const canSendMessage = conversation.availability.submit
 
   // Make the composer-owned mention capability available to Global Search without exposing its draft.
   // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
@@ -450,23 +440,7 @@ const WorkspacePage = ({
     draftDoc,
     pendingArtifactMention
   ])
-  // Re-editing a sent prompt is allowed under the same settled-run conditions as sending, so the
-  // resent prompt can never overlap an in-flight turn, permission wait, fix loop, or compaction.
-  const canEditMessage =
-    isSessionPersistenceReady &&
-    attachmentTransfers.length === 0 &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-permission' &&
-    !activeSessionHasRuntimeInteraction &&
-    !isReviewing &&
-    !activeSession?.fixLoopActive &&
-    !activeSession?.conversationGraphSyncBlocked &&
-    !activeSession?.compacting &&
-    !sessionController.view.deletingIds.has(activeSession?.id ?? '')
-  const canEditMessageRef = useRef(canEditMessage)
-  useLayoutEffect(() => {
-    canEditMessageRef.current = canEditMessage
-  }, [canEditMessage])
+  const canEditMessage = conversation.availability.revise
   useEffect(() => {
     const sessionId = activeSession?.id
     if (!sessionId) return
@@ -658,231 +632,9 @@ const WorkspacePage = ({
     useNavigationStore.getState().openSession(scopedProjectId, sessionId, 'user')
   }
 
-  // Resends an inline-edited prompt: the conversation is truncated at the edited message, the agent
-  // context resets, and the kept turns replay as a preamble on the resent prompt. The gate mirrors
-  // canEditMessage so a resend never overlaps an in-flight turn.
-  const sendEditedMessage = useCallback(
-    (messageId: string, doc: ComposerDoc): void => {
-      if (!canEditMessageRef.current || docIsEmpty(doc) || !activeSessionId) return
-
-      void resendEditedMessage(activeSessionId, messageId, {
-        text: docToText(doc),
-        parts: doc.nodes,
-        forcedSkillIds: docToSkillIds(doc),
-        referencedArtifacts: docToArtifactRefs(doc)
-      })
-    },
-    [activeSessionId, resendEditedMessage]
-  )
-
-  // Restart recovery intentionally does not revive the expired generate_plan interaction. Each card
-  // action starts a fresh user turn bound to the exact pending Plan. Main commits explicit decisions
-  // only after activating that turn; feedback receives protected Plan context without authority.
-  const respondToRestoredPlan = useCallback(
-    async (
-      response: { decision: 'approved' | 'rejected' } | { feedback: string }
-    ): Promise<void> => {
-      const session = activeSessionId
-        ? useSessionStore.getState().sessions.find((candidate) => candidate.id === activeSessionId)
-        : undefined
-      const plan = selectActiveBranchPlan(session)
-      if (!session || session.activeRun || plan?.approval !== 'pending') {
-        throw new Error('The pending Plan is no longer available for a response.')
-      }
-      const pendingAction =
-        'feedback' in response
-          ? ('review' as const)
-          : response.decision === 'approved'
-            ? ('approve' as const)
-            : ('reject' as const)
-      const text =
-        'feedback' in response
-          ? response.feedback
-          : response.decision === 'approved'
-            ? 'Approve the current Plan and continue.'
-            : 'Dismiss the current Plan.'
-
-      const result = await sendMessage({
-        sessionId: session.id,
-        text,
-        planContinuation: {
-          artifactVersionId: plan.artifactVersionId,
-          revision: plan.revision,
-          pendingAction
-        },
-        attachments: [],
-        cwd: session.cwd,
-        projectId: session.projectId,
-        projectName: session.projectId,
-        permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
-      })
-      if (!result) throw new Error('Unable to respond to the Plan.')
-    },
-    [activeSessionId, sendMessage]
-  )
-
-  // Sends the current draft only after hydration so restored selection cannot overwrite intent.
-  // ConversationPanel owns preventDefault and passes the skills picked as inline chips.
-  // For existing sessions with a pending specialist switch, the reconfigure barrier runs first:
-  // dispose + resume the Claude ACP session with the new specialist identity. On failure, the
-  // draft is preserved, no user turn is created, and a recovery banner is shown (fail-closed —
-  // never silently fall back to Main Agent).
-  const sendCurrentMessage = (
-    forcedSkillIds: string[],
-    options: { branchInNewSession?: boolean; turnIntent?: 'plan-first' } = {}
-  ): void => {
-    const branchInNewSession = options.branchInNewSession === true
-    if (!canSendMessage) return
-    // A blank New conversation has no source transcript to snapshot; ordinary Send already creates the
-    // fresh Session for that case.
-    if (branchInNewSession && !activeSession) return
-    // Secondary synchronous guard: blocks a second Enter press that arrives before the state update
-    // from the first barrier start triggers a re-render and disables canSendMessage.
-    if (activeSession && sessionController.lifecycle.isBarrierInFlight(activeSession.id)) return
-    if (
-      supportsImageInput !== true &&
-      attachments.some((attachment) => attachment.mimeType?.startsWith('image/'))
-    ) {
-      setAttachmentError('The selected model is not configured for image input.')
-      return
-    }
-    if (!sessionController.lifecycle.canStartSend()) return
-
-    const sendSnapshot = composer.lifecycle.captureSend()
-    const sendRequestKey = sendSnapshot.draftKey
-    if (sendRequestsInFlightRef.current.has(sendRequestKey)) return
-    sendRequestsInFlightRef.current.add(sendRequestKey)
-    const { doc, attachments: attachmentsForSend } = sendSnapshot
-    // Capture new-conversation intent before send: auto-review defaults off, so only an explicit
-    // "on" needs to be stamped onto the created session (absent = off downstream).
-    const wasNewConversation = !activeSession
-    const draftAutoReviewEnabled = newConversationAutoReviewEnabled
-    const draftEnabledComputeHosts = newConversationEnabledComputeHosts
-    // Capture pending specialist for existing sessions (last change wins). `undefined` is a valid
-    // pending choice meaning Main Agent, so ownership—not truthiness—distinguishes it from no choice.
-    const { draftSpecialistId, hasPendingSwitch, pendingSpecialistId } =
-      sessionController.lifecycle.captureSendIntent(branchInNewSession)
-
-    // Dispatches the final send after draft/attachment state has been cleared.
-    // Shared by the normal send path and the Retry recovery action so the logic stays in sync.
-    const dispatchSend = (sessionId: string | undefined): void => {
-      const send = async (): ReturnType<typeof sendMessage> => {
-        return sendMessage({
-          sessionId,
-          ...(branchInNewSession && activeSession
-            ? { branchSourceSessionId: activeSession.id }
-            : {}),
-          text: docToText(doc),
-          attachments: attachmentsForSend,
-          // Existing files the user referenced via `@`; the runtime attaches each as a content block.
-          referencedArtifacts: docToArtifactRefs(doc),
-          // Persist the draft's structural segments so the sent bubble renders styled mention pills.
-          parts: doc.nodes,
-          cwd: activeSession?.cwd,
-          projectId: activeSession?.projectId ?? scopedProjectId,
-          projectName: activeSession?.projectId ?? scopedProjectId,
-          permissionProfile: activePermissionProfile,
-          forcedSkillIds,
-          ...(options.turnIntent ? { turnIntent: options.turnIntent } : {}),
-          // New-conversation only: the UUID is forwarded to createSession; main process reads latest Profile.
-          specialistId: draftSpecialistId
-        })
-      }
-      void send()
-        .catch((error: unknown) => {
-          setAttachmentError(getErrorMessage(error))
-          return undefined
-        })
-        .then((result) => {
-          if (!result) {
-            composer.lifecycle.restoreFailedSend(sendSnapshot)
-            return
-          }
-
-          // Carry the composer's auto-review choice onto the freshly created session. bindPendingSession
-          // preserves the field, so stamping the (pending) session id here survives the durable-id swap.
-          if (wasNewConversation && draftAutoReviewEnabled) {
-            setAutoReviewEnabled(result.sessionId, true)
-          }
-          // Carry the draft compute host selection onto the newly created session.
-          if (wasNewConversation && draftEnabledComputeHosts.length > 0) {
-            setEnabledComputeHosts(result.sessionId, draftEnabledComputeHosts)
-            void window.api.compute
-              .enabledHostsSet(result.sessionId, draftEnabledComputeHosts)
-              .catch((err: unknown) => {
-                console.warn('Failed to sync draft compute hosts to registry for new session', err)
-              })
-          }
-          setNewConversationAutoReviewEnabled(false)
-          setNewConversationEnabledComputeHosts([])
-          sessionController.actions.resetNewConversationSpecialist()
-        })
-        .finally(() => sendRequestsInFlightRef.current.delete(sendRequestKey))
-    }
-
-    // If there is a pending specialist switch for an existing session, run the reconfigure barrier
-    // BEFORE appending the user turn. The barrier is strictly ordered: reconfigure must succeed
-    // before any message is sent. On failure, the draft is restored, no user turn is created, and
-    // the recovery banner is shown.
-    if (hasPendingSwitch && activeSession) {
-      const sessionId = activeSession.id
-      void sessionController.lifecycle
-        .prepareSpecialistSend(sessionId, pendingSpecialistId)
-        .then((ready) => {
-          if (!ready) {
-            sendRequestsInFlightRef.current.delete(sendRequestKey)
-            return
-          }
-          composer.lifecycle.clearDraft(sessionId)
-          dispatchSend(sessionId)
-        })
-      return
-    }
-
-    // No pending switch: proceed with the normal send path.
-    composer.lifecycle.clearDraft(currentDraftKey)
-
-    dispatchSend(branchInNewSession ? undefined : activeSession?.id)
-  }
-
-  const branchCurrentMessage = (forcedSkillIds: string[]): void => {
-    sendCurrentMessage(forcedSkillIds, { branchInNewSession: true })
-  }
-
-  const planCurrentMessage = (forcedSkillIds: string[]): void => {
-    sendCurrentMessage(forcedSkillIds, { turnIntent: 'plan-first' })
-  }
-
   const openSessionWithoutExportError = (sessionId: string): void => {
     sessionController.actions.clearExportError()
     openSession(sessionId)
-  }
-
-  // Cancels the run for the currently visible session when one is selected. During an active fix
-  // loop, also sends an abort signal to the main process to stop the loop and unlock the composer.
-  const cancelActiveRun = (): void => {
-    if (!activeSession) return
-
-    const sessionId = activeSession.id
-
-    // If a fix loop is running, abort it. The abort handler in the main process will stop the loop;
-    // the renderer reacts to the FIX_LOOP_END event broadcast and clears fixLoopActive.
-    if (activeSession.fixLoopActive) {
-      void window.api.reviewer
-        .abortFixLoop({ projectId: activeSession.projectId, appSessionId: sessionId })
-        .catch((error) => {
-          console.warn('Failed to abort fix loop:', error)
-        })
-    }
-
-    void cancelRun(sessionId)
-  }
-
-  // Re-attaches the visible interrupted session only after durable Session writes are available;
-  // awaited by the banner so it can keep duplicate clicks disabled while reconnecting.
-  const resumeActiveSession = async (): Promise<void> => {
-    if (!isSessionPersistenceReady || !activeSession) return
-    await resumeInterruptedSession(activeSession.id)
   }
 
   // Forwards visible permission decisions to the runtime bridge.
@@ -1099,7 +851,7 @@ const WorkspacePage = ({
             draftDoc={draftDoc}
             canSendMessage={canSendMessage}
             canEditDraft={canEditDraft}
-            canResumeSession={isSessionPersistenceReady}
+            canResumeSession={conversation.availability.resume}
             actionError={visibleActionError}
             isPreviewPanelCollapsed={isPreviewPanelCollapsed}
             attachments={attachments}
@@ -1122,15 +874,24 @@ const WorkspacePage = ({
             isHistoryBrowsing={isHistoryBrowsing}
             historyStatus={historyStatus}
             onNavigateHistory={navigateComposerHistory}
-            onSendMessage={sendCurrentMessage}
-            onPlanFirst={planCurrentMessage}
-            onRespondToRestoredPlan={respondToRestoredPlan}
-            onBranchInNewSession={activeSession ? branchCurrentMessage : undefined}
+            onSendMessage={(forcedSkillIds) =>
+              conversation.actions.submit.draft({ forcedSkillIds })
+            }
+            onPlanFirst={(forcedSkillIds) =>
+              conversation.actions.submit.draft({ forcedSkillIds, mode: 'plan-first' })
+            }
+            onRespondToRestoredPlan={conversation.actions.submit.restoredPlan}
+            onBranchInNewSession={
+              activeSession
+                ? (forcedSkillIds) =>
+                    conversation.actions.submit.draft({ forcedSkillIds, mode: 'branch' })
+                : undefined
+            }
             onStageAttachmentFiles={stageAttachmentFiles}
             onRemoveAttachment={removeComposerAttachment}
             onCancelAttachmentTransfer={cancelAttachmentTransfer}
-            onCancelRun={cancelActiveRun}
-            onResumeSession={resumeActiveSession}
+            onCancelRun={conversation.actions.cancel}
+            onResumeSession={conversation.actions.resume}
             onOpenNotebook={openNotebookPreview}
             onTogglePreviewPanel={togglePreviewPanelFromLayout}
             onOpenSidebar={openMobileSidebar}
@@ -1145,7 +906,7 @@ const WorkspacePage = ({
             onRequestReview={requestManualReview}
             isRequestReviewDisabled={isRequestReviewDisabled}
             canEditMessage={canEditMessage}
-            onSendEditedMessage={sendEditedMessage}
+            onSendEditedMessage={conversation.actions.revise}
             onOpenJobList={sessionController.actions.openJobList}
             specialistId={
               // For existing sessions: badge shows the currently-effective specialist (session
@@ -1155,11 +916,12 @@ const WorkspacePage = ({
             specialistUnavailable={sessionController.view.specialist.unavailable}
             specialistHasPendingSwitch={sessionController.view.specialist.hasPendingSwitch}
             reconfigureError={sessionController.view.specialist.reconfigureError}
-            onReconfigureRetry={() => {
-              if (sessionController.actions.beginReconfigureRetry()) {
-                sendCurrentMessage(docToSkillIds(draftDoc))
-              }
-            }}
+            onReconfigureRetry={() =>
+              conversation.actions.submit.draft({
+                forcedSkillIds: docToSkillIds(draftDoc),
+                mode: 'retry-reconfigure'
+              })
+            }
             onReconfigureChooseOther={sessionController.actions.chooseOtherSpecialist}
             onReconfigureUseNone={sessionController.actions.useMainAgent}
             onSpecialistChange={sessionController.actions.selectSpecialist}
@@ -1179,7 +941,7 @@ const WorkspacePage = ({
         session={sessionController.view.dialogs.delete ?? undefined}
         canDelete={canDeleteConversations}
         onCancel={sessionController.actions.closeDelete}
-        onConfirmDelete={sessionController.actions.confirmDelete}
+        onConfirmDelete={conversation.actions.delete}
       />
 
       <DownloadSessionArtifactsDialog

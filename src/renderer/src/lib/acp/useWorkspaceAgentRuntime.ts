@@ -351,3 +351,4 @@ export {
   syncWorkspaceContextUsage,
   useWorkspaceAgentRuntime
 }
+export type { WorkspaceAgentRuntime }

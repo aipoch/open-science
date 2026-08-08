@@ -658,3 +658,4 @@ const useWorkspaceComposerController = ({
 }
 
 export { useWorkspaceComposerController }
+export type { WorkspaceComposerController }

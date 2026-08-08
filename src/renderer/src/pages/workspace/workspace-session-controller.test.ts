@@ -30,13 +30,10 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
 const specialist = (id: string, name: string): SpecialistListItem =>
   ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
 
-const deferred = <Value>(): {
-  promise: Promise<Value>
-  resolve: (value: Value) => void
-} => {
-  let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((accept) => {
-    resolve = accept
+const deferred = <T>(): { promise: Promise<T>; resolve: (value: T) => void } => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
   })
   return { promise, resolve }
 }
