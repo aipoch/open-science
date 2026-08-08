@@ -29,7 +29,8 @@
       "ownerPaths": [
         "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts",
         "src/renderer/src/lib/acp/workspace-events.ts",
-        "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts"
+        "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts"
       ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
       "consumerModules": ["workspace_page"],

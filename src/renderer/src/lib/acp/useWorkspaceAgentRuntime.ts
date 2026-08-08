@@ -15,7 +15,6 @@ import {
   type SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import {
-  imageAttachmentMimeType,
   toPersistedUploadedAttachment,
   toRuntimeUploadedAttachment,
   type UploadedAttachment
@@ -26,13 +25,7 @@ import { getActiveConversationContext } from '../../../../shared/conversation-gr
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
-import {
-  RESUME_MODEL_INCOMPATIBLE_MESSAGE,
-  RESUME_RECONNECT_FAILED_MESSAGE,
-  RESUME_TIMED_OUT_MESSAGE,
-  RESUME_UNSUPPORTED_MESSAGE,
-  RESUME_WORKSPACE_MISSING_MESSAGE
-} from '../../../../shared/run-error-classification'
+import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
@@ -53,6 +46,10 @@ import {
   syncWorkspaceContextUsage,
   syncWorkspacePermissionState
 } from './workspace-runtime-event-owner'
+import {
+  getResumeFailureMessage,
+  prepareExistingWorkspacePrompt
+} from './workspace-runtime-prompt-preparation-owner'
 
 type SendWorkspaceMessageInput = {
   sessionId?: string
@@ -114,23 +111,6 @@ type HistoryReplayContext = {
   historyImages?: AcpMessageImage[]
 }
 
-const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
-  imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
-
-const hasHistoryImages = (messages: ChatMessage[]): boolean =>
-  messages.some(
-    (message) => (message.images?.length ?? 0) > 0 || message.uploads?.some(isReplayImage) === true
-  )
-
-const replayAttachmentsForModel = (
-  replay: HistoryReplayContext | undefined,
-  supportsImageInput: boolean | undefined
-): UploadedAttachment[] | undefined => {
-  if (supportsImageInput !== false) return replay?.historyAttachments
-  const attachments = replay?.historyAttachments?.filter((attachment) => !isReplayImage(attachment))
-  return attachments?.length ? attachments : undefined
-}
-
 const buildWorkspaceReplay = (
   messages: ChatMessage[],
   descriptor: HistoryReplayDescriptor | undefined,
@@ -190,11 +170,6 @@ type WorkspacePermissionProfileRuntime = Pick<
 >
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 
-// Runtime adoption and Branch reset intentionally complete before appendUserMessage creates the next
-// run. Keep duplicate preparations closed during that idle-looking interval without exposing a
-// premature activeRun that a draining runtime's terminal event could settle.
-const sessionSendPreparationsInFlight = new Set<string>()
-
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,
   sessionId: string,
@@ -222,7 +197,6 @@ const unwrapIpcErrorDetail = (message: string): string =>
     .replace(/^Error(?::\s*|$)/i, '')
     .trim()
 
-const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error'
 const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
 
 // Turns a createSession (conversation-start) failure into the message persisted on the session. The
@@ -234,52 +208,6 @@ const getCreateSessionFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
   return unwrapIpcErrorDetail(message) || 'Agent session could not be created.'
-}
-
-// Turns a resume failure into an actionable message. Each branch matches one distinct cause thrown
-// along the runtime resume path (runtime.ts): a deleted/moved workspace folder ("cwd does not exist"),
-// the bounded handshake timeout, an agent build without the resume capability, or a failure to spawn/
-// reconnect the agent process. Anything else is genuinely unexpected, so the underlying cause is kept
-// visible instead of collapsing to an opaque "resume failed". (The common session-replaced/not-found
-// case never reaches here — the runtime silently adopts a fresh agent session for it.)
-const getResumeFailureMessage = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : String(error)
-
-  if (/cwd does not exist/i.test(message)) {
-    return RESUME_WORKSPACE_MISSING_MESSAGE
-  }
-
-  if (/timed out/i.test(message)) {
-    return RESUME_TIMED_OUT_MESSAGE
-  }
-
-  if (/does not support session resume/i.test(message)) {
-    return RESUME_UNSUPPORTED_MESSAGE
-  }
-
-  if (/connection (failed|was superseded)|ACP connection/i.test(message)) {
-    return RESUME_RECONNECT_FAILED_MESSAGE
-  }
-
-  // Model↔framework mismatch is now flagged proactively in Settings → Model, so keep this soft and
-  // actionable rather than an alarming "resume failed" — the fix lives in settings, not here. Anchor
-  // to the specific marker from the thrown error (settings/service.ts: "The active model isn't
-  // compatible with <framework>…") so unrelated "not compatible with" errors — notably an ACP
-  // protocol-version mismatch — fall through to the default message instead of being mislabeled.
-  if (/active model isn'?t compatible with/i.test(message)) {
-    return RESUME_MODEL_INCOMPATIBLE_MESSAGE
-  }
-
-  const detail = unwrapIpcErrorDetail(message)
-
-  // Electron can preserve only the custom RequestError name/message while dropping structured
-  // `data.details` across IPC. A bare Internal error supplies no evidence for a network, session, or
-  // provider diagnosis, so classify it as unknown. Specific downstream causes stay visible below.
-  if (detail === 'RequestError: Internal error' || detail === 'Internal error') {
-    return RESUME_UNKNOWN_ERROR_MESSAGE
-  }
-
-  return detail ? `Agent session resume failed: ${detail}` : RESUME_UNKNOWN_ERROR_MESSAGE
 }
 
 // Keeps attachment-finalization failures displayable without assuming Error instances.
@@ -436,15 +364,6 @@ const getPromptProvenanceContext = (
     .getState()
     .sessions.find((session) => session.id === sessionId)?.conversationGraph
   return graph ? getActiveConversationContext(graph, promptMessageId) : { promptMessageId }
-}
-
-const shutdownNotebookForBranchChange = async (
-  sessionId: string,
-  workspaceCwd: string,
-  projectName?: string
-): Promise<void> => {
-  if (typeof window === 'undefined' || !window.api?.notebook?.shutdown) return
-  await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectName })
 }
 
 const sessionOwnsActivePrompt = (sessionId: string, messageId: string): boolean => {
@@ -791,195 +710,27 @@ const sendWorkspaceMessage = async (
       return appended
     }
 
-    // A framework/backend selection change takes effect at this turn boundary. A retired generation
-    // may still expose the old session briefly, so persisted ownership participates in this decision.
-    const frameworkChanged = Boolean(
-      agentFrameworkId &&
-      currentSession?.agentFrameworkId &&
-      agentFrameworkId !== currentSession.agentFrameworkId
-    )
-    const backendChanged = Boolean(
-      agentBackendId &&
-      currentSession?.agentBackendId &&
-      agentBackendId !== currentSession.agentBackendId
-    )
-    const selectedRuntimeChanged = frameworkChanged || backendChanged
-    const runtimeDetached = !runtime.state.sessionIds.includes(targetSessionId)
-    const runtimeMustAdoptSession = selectedRuntimeChanged || runtimeDetached
-    const branchResetRequired = Boolean(
-      truncateFromMessageId || currentSession?.branchContextResetRequired
-    )
-    const resumeNeedsImageFiltering =
-      runtimeMustAdoptSession &&
-      supportsImageInput === false &&
-      hasHistoryImages(currentSession?.messages ?? [])
-    const sendPreparationRequired = branchResetRequired || runtimeMustAdoptSession
-
-    if (sendPreparationRequired) {
-      if (sessionSendPreparationsInFlight.has(targetSessionId)) return undefined
-      sessionSendPreparationsInFlight.add(targetSessionId)
-      onSendPreparationStateChange?.(targetSessionId, true)
-    }
-
-    // Branch activation changes only the durable projection. Before the first continuation, drop
-    // Notebook context and guarantee a fresh Agent context. A selected-runtime change must adopt first
-    // so any required reset executes on the new owner. Only an already-attached selected runtime can
-    // reset directly; detached sessions adopt first so a stale coordinator owner cannot receive it.
-    let branchContextResetPerformed = false
-    let agentContextResetPerformed = false
-    let shouldResumeSession = false
-    let contextResetFromResume = false
-
-    // A specialist switch on Claude replaced the agent session on the main side (identity is baked
-    // into session _meta at creation). The runtime already adopted a fresh session, so here we only
-    // need to replay prior turns as a history preamble — no resetSessionContext, no notebook shutdown.
-    const specialistSwitchReplay = Boolean(currentSession?.specialistSwitchResetRequired)
-    if (specialistSwitchReplay) {
-      useSessionStore.getState().clearSpecialistSwitchResetRequired(targetSessionId)
-    }
-
-    try {
-      if (branchResetRequired) {
-        const resetCwd = targetCwd || currentSession?.cwd || runtime.state.cwd
-        if (!resetCwd) {
-          useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
-          return undefined
-        }
-
-        await shutdownNotebookForBranchChange(targetSessionId, resetCwd, sessionProjectName)
-        if (!selectedRuntimeChanged && !runtimeDetached) {
-          const reset = await runtime.resetSessionContext(
-            targetSessionId,
-            resetCwd,
-            sessionProjectName,
-            currentSession?.permissionProfile ?? permissionProfile
-          )
-          useSessionStore.getState().markResumed(
-            targetSessionId,
-            reset
-              ? {
-                  agentFrameworkId: reset.frameworkId,
-                  agentBackendId: reset.backendId,
-                  providerSessionId: reset.providerSessionId,
-                  providerContinuityToken: reset.providerContinuityToken
-                }
-              : undefined
-          )
-          agentContextResetPerformed = true
-        }
-        branchContextResetPerformed = true
-      }
-
-      shouldResumeSession = !agentContextResetPerformed && runtimeMustAdoptSession
-      if (shouldResumeSession) {
-        // Empty string is treated as missing; fall back to runtime cwd.
-        const resumeCwd = targetCwd || runtime.state.cwd
-        if (!resumeCwd) {
-          useSessionStore.getState().failRun(targetSessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
-          return undefined
-        }
-
-        const resumeResult = await runtime.resumeSession(
-          targetSessionId,
-          resumeCwd,
-          sessionProjectName,
-          currentSession?.permissionProfile ?? permissionProfile,
-          currentSession?.agentFrameworkId,
-          currentSession?.agentBackendId,
-          currentSession?.specialistId,
-          currentSession?.providerSessionId,
-          currentSession?.providerContinuityToken
-        )
-
-        contextResetFromResume = Boolean(resumeResult?.contextReset)
-        useSessionStore.getState().markResumed(
-          targetSessionId,
-          resumeResult
-            ? {
-                agentFrameworkId: resumeResult.frameworkId,
-                agentBackendId: resumeResult.backendId,
-                providerSessionId: resumeResult.providerSessionId,
-                providerContinuityToken: resumeResult.providerContinuityToken
-              }
-            : undefined
-        )
-
-        // A provider may resume an existing selected-runtime session without resetting its hidden
-        // history. Branch isolation and text-only models both require a fresh context in that case.
-        if ((branchContextResetPerformed || resumeNeedsImageFiltering) && !contextResetFromResume) {
-          const reset = await runtime.resetSessionContext(
-            targetSessionId,
-            resumeCwd,
-            sessionProjectName,
-            currentSession?.permissionProfile ?? permissionProfile
-          )
-          useSessionStore.getState().markResumed(
-            targetSessionId,
-            reset
-              ? {
-                  agentFrameworkId: reset.frameworkId,
-                  agentBackendId: reset.backendId,
-                  providerSessionId: reset.providerSessionId,
-                  providerContinuityToken: reset.providerContinuityToken
-                }
-              : undefined
-          )
-          contextResetFromResume = true
-        }
-
-        // The coordinator waits for the prior owner to stop before committing adoption, but its
-        // retained events still cross the asynchronous renderer bridge. Apply the latest accepted
-        // snapshot before opening the new optimistic run so a terminal event cannot settle that run.
-        await drainRuntimeEvents?.(targetSessionId)
-      }
-    } catch (error) {
-      useSessionStore.getState().failRun(targetSessionId, getResumeFailureMessage(error))
-      return undefined
-    } finally {
-      if (sendPreparationRequired) {
-        sessionSendPreparationsInFlight.delete(targetSessionId)
-        onSendPreparationStateChange?.(targetSessionId, false)
-      }
-    }
-
-    const preparedSession = useSessionStore
-      .getState()
-      .sessions.find((session) => session.id === targetSessionId)
-    // Preparation crosses async runtime and notebook boundaries. Deletion or hydration may remove the
-    // target meanwhile; never let the generic append seam recreate that stale existing-session id.
-    if ((currentSession || requireExistingSession) && !preparedSession) return undefined
-
-    // An edited resend replays only the retained Branch prefix.
-    const historyCutMessageId = truncateFromMessageId
-    const historyCutIndex =
-      historyCutMessageId && preparedSession
-        ? preparedSession.messages.findIndex((message) => message.id === historyCutMessageId)
-        : -1
-    if (truncateFromMessageId && historyCutIndex < 0) return undefined
-    const pendingHistoryReplay = preparedSession?.pendingHistoryReplay
-    const resumeReplayCutMessageId =
-      pendingHistoryReplay?.kind === 'before-message' ? pendingHistoryReplay.messageId : undefined
-    const resumeReplayCutIndex =
-      resumeReplayCutMessageId && preparedSession
-        ? preparedSession.messages.findIndex((message) => message.id === resumeReplayCutMessageId)
-        : -1
-    // A Branch switch can remove the interrupted prompt named by the recovery cutoff. In that case
-    // replay the selected Branch in full; keep the marker until prompt acceptance so a failed send
-    // remains retryable and switching back can still apply the original cutoff.
-    const historyMessages = (
-      preparedSession && historyCutIndex >= 0
-        ? preparedSession.messages.slice(0, historyCutIndex)
-        : preparedSession && resumeReplayCutIndex >= 0
-          ? preparedSession.messages.slice(0, resumeReplayCutIndex)
-          : preparedSession?.messages
-    )?.filter((message) => message.id !== preparedSession?.pendingContextReplayMessageId)
-
-    // Resume before creating the optimistic run. A draining runtime can emit its terminal event while
-    // adoption is in flight; keeping the old Runtime Segment active until resume succeeds lets that
-    // event settle the prior turn instead of accidentally finishing the incoming prompt.
-    let historyPreamble: string | undefined
-    let historyAttachments: UploadedAttachment[] | undefined
-    let historyImages: AcpMessageImage[] | undefined
+    const prepared = await prepareExistingWorkspacePrompt(runtime, {
+      sessionId: targetSessionId,
+      requireExistingSession,
+      cwd: targetCwd,
+      projectName: sessionProjectName,
+      permissionProfile,
+      selectedRuntime: {
+        frameworkId: agentFrameworkId,
+        backendId: agentBackendId,
+        supportsImageInput
+      },
+      replay: {
+        descriptor: historyReplayDescriptor,
+        cutMessageId: truncateFromMessageId,
+        force: forceHistoryReplay,
+        includeResumeFallback: Boolean(forcedSkillIds?.length)
+      },
+      onPreparationStateChange: onSendPreparationStateChange,
+      drainRuntimeEvents
+    })
+    if (!prepared) return undefined
 
     if (truncateFromMessageId) {
       useSessionStore.getState().truncateSessionFromMessage(targetSessionId, truncateFromMessageId)
@@ -992,65 +743,20 @@ const sendWorkspaceMessage = async (
       parts,
       turnIntent,
       cwd: targetCwd,
-      projectId: projectId ?? preparedSession?.projectId,
-      // Bind the optimistic prompt to the selected Runtime Segment only when this send adopted
-      // that runtime. A local Branch reset otherwise continues on the current owner.
-      agentFrameworkId: shouldResumeSession ? agentFrameworkId : preparedSession?.agentFrameworkId,
-      agentBackendId: shouldResumeSession ? agentBackendId : preparedSession?.agentBackendId,
+      projectId: projectId ?? prepared.appendOwnership.projectId,
+      agentFrameworkId: prepared.appendOwnership.agentFrameworkId,
+      agentBackendId: prepared.appendOwnership.agentBackendId,
       agentModel
     })
 
     // appendUserMessage can reject stale session ids after local deletion or hydration changes.
     if (!appended) return undefined
 
-    // Replay prior turns only after an intentional context replacement. historyMessages ends before
-    // the newly appended user message, so the turn being sent is never duplicated into its preamble.
-    if (
-      (branchContextResetPerformed ||
-        contextResetFromResume ||
-        forceHistoryReplay ||
-        specialistSwitchReplay ||
-        preparedSession?.pendingContextReplayMessageId ||
-        pendingHistoryReplay) &&
-      historyMessages
-    ) {
-      const replay = buildWorkspaceReplay(
-        historyMessages,
-        historyReplayDescriptor,
-        agentFrameworkId,
-        sessionProjectName,
-        supportsImageInput
-      )
-      historyPreamble = replay?.historyPreamble
-      historyAttachments = replayAttachmentsForModel(replay, supportsImageInput)
-      historyImages = supportsImageInput === false ? undefined : replay?.historyImages
-    }
-
-    const resumeFallback =
-      forcedSkillIds && forcedSkillIds.length > 0 && historyMessages
-        ? (() => {
-            const replay = buildWorkspaceReplay(
-              historyMessages,
-              historyReplayDescriptor,
-              agentFrameworkId,
-              sessionProjectName,
-              supportsImageInput
-            )
-            return {
-              historyPreamble: replay?.historyPreamble,
-              historyAttachments: replayAttachmentsForModel(replay, supportsImageInput),
-              historyImages: supportsImageInput === false ? undefined : replay?.historyImages
-            }
-          })()
-        : undefined
-    const contextReset = Boolean(
-      branchContextResetPerformed ||
-      contextResetFromResume ||
-      forceHistoryReplay ||
-      specialistSwitchReplay ||
-      preparedSession?.pendingContextReplayMessageId ||
-      pendingHistoryReplay
-    )
+    // Build after append to preserve the existing failure boundary: replay construction errors leave
+    // the optimistic user message visible for retry just as before this extraction.
+    const replay = prepared.replay()
+    const { historyPreamble, historyAttachments, historyImages, resumeFallback, contextReset } =
+      replay
 
     let promptAttachments = effectiveAttachments
 
@@ -1105,17 +811,7 @@ const sendWorkspaceMessage = async (
 
     void promptRequest
       .then((snapshot) => {
-        if (branchContextResetPerformed) {
-          useSessionStore.getState().clearBranchContextReset(targetSessionId)
-        }
-        if (preparedSession?.pendingContextReplayMessageId) {
-          useSessionStore.getState().clearPendingContextReplay(targetSessionId, appended.messageId)
-        }
-        if (pendingHistoryReplay) {
-          useSessionStore
-            .getState()
-            .clearPendingHistoryReplay(targetSessionId, pendingHistoryReplay)
-        }
+        prepared.acceptPrompt(appended.messageId)
         return snapshot
       })
       .catch((error) => {
