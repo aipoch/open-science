@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ComputeApprovalRequest } from '../../../shared/compute'
 import type { ConnectorApprovalRequest } from '../../../shared/settings'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useComputeStore } from '@/stores/compute-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -121,9 +122,14 @@ describe('NotificationBell', () => {
     expect(markAllRead).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['connector', 'compute'] as const)(
-    'reopens a pending sessionless %s approval from its in-memory broker request',
-    async (source) => {
+  it.each([
+    ['connector', undefined],
+    ['compute', undefined],
+    ['connector', 'session-1'],
+    ['compute', 'session-1']
+  ] as const)(
+    'reopens a pending %s approval with session %s from its in-memory broker request',
+    async (source, sessionId) => {
       const connectorRequest = {
         id: 'request-1',
         connector: 'pubchem',
@@ -144,14 +150,16 @@ describe('NotificationBell', () => {
       const replayApproval = vi.fn(async () => computeRequest)
       const enqueueConnector = vi.fn()
       const enqueueCompute = vi.fn()
+      const openSessionById = vi.fn()
       window.api.settings.replayConnectorApproval = replayConnectorApproval
       window.api.compute.replayApproval = replayApproval
       useSettingsStore.setState({ enqueueApproval: enqueueConnector })
       useComputeStore.setState({ enqueueApproval: enqueueCompute })
+      useNavigationStore.setState({ openSessionById })
       const item = useNotificationInboxStore.getState().items[0]
       useNotificationInboxStore.setState({
         markRead: vi.fn(async () => undefined),
-        items: item ? [{ ...item, source }] : []
+        items: item ? [{ ...item, source, sessionId }] : []
       })
       await act(async () => root.render(<NotificationBell />))
 
@@ -169,6 +177,11 @@ describe('NotificationBell', () => {
       } else {
         expect(replayApproval).toHaveBeenCalledWith('request-1')
         expect(enqueueCompute).toHaveBeenCalledWith(computeRequest)
+      }
+      if (sessionId) {
+        expect(openSessionById).toHaveBeenCalledWith(sessionId, 'notification')
+      } else {
+        expect(openSessionById).not.toHaveBeenCalled()
       }
       expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
     }

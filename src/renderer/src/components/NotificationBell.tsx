@@ -58,7 +58,7 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
 
 const replayPendingApproval = async (item: NotificationInboxItem): Promise<boolean> => {
-  if (item.actionState !== 'pending' || item.sessionId || item.projectId) return false
+  if (item.actionState !== 'pending') return false
   if (item.source === 'connector') {
     const request = await window.api.settings.replayConnectorApproval(item.originId)
     if (!request) return false
@@ -195,13 +195,14 @@ const NotificationBell = ({
 
   const openItem = async (item: NotificationInboxItem): Promise<void> => {
     if (item.readAt === undefined) await markRead([item.id])
+    const replayedApproval = await replayPendingApproval(item)
     if (item.sessionId) {
       useNavigationStore.getState().openSessionById(item.sessionId, 'notification')
       setOpen(false)
     } else if (item.projectId) {
       useNavigationStore.getState().openProject(item.projectId, 'notification')
       setOpen(false)
-    } else if (await replayPendingApproval(item)) {
+    } else if (replayedApproval) {
       setOpen(false)
     }
   }
