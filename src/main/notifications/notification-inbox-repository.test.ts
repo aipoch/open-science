@@ -3,12 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import {
   MAX_NOTIFICATION_INBOX_ITEMS,
-  NotificationInboxDbRepository
+  NotificationInboxDbRepository,
+  type NotificationInboxClient
 } from './notification-inbox-repository'
 
 let storageRoot: string | undefined
@@ -221,5 +222,32 @@ describe('NotificationInboxDbRepository', () => {
         { sessionId: 'session-archive', readAt: 5000 }
       ]
     })
+  })
+
+  it('chunks multi-id read, deletion, and catalog mutations inside transactions', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }))
+    const deleteMany = vi.fn(async () => ({ count: 1 }))
+    const sessionIds = Array.from({ length: 501 }, (_, index) => `session-${index}`)
+    const fakeClient = {
+      $transaction: async (operation: (transaction: NotificationInboxClient) => Promise<unknown>) =>
+        operation(fakeClient),
+      notificationInboxItem: {
+        updateMany,
+        deleteMany,
+        count: vi.fn(async () => 0),
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => sessionIds.map((sessionId) => ({ sessionId })))
+      }
+    } as unknown as NotificationInboxClient
+    const repository = new NotificationInboxDbRepository(() => Promise.resolve(fakeClient))
+
+    await repository.markRead(sessionIds, 6000)
+    await repository.markSessionsRead(sessionIds, 6000)
+    await repository.markSessionTaskOutcomesRead(sessionIds, 6000)
+    await repository.deleteSessions(sessionIds)
+    await repository.reconcileSessionCatalog([])
+
+    expect(updateMany).toHaveBeenCalledTimes(6)
+    expect(deleteMany).toHaveBeenCalledTimes(4)
   })
 })

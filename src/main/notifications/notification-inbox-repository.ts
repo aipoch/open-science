@@ -10,6 +10,7 @@ import type {
 export const MAX_NOTIFICATION_INBOX_ITEMS = 1000
 const DEFAULT_SNAPSHOT_LIMIT = 50
 const MAX_SNAPSHOT_LIMIT = 200
+const SQLITE_IN_CHUNK_SIZE = 500
 
 type NotificationInboxClient = Pick<
   PrismaClient,
@@ -47,6 +48,17 @@ type NotificationRepositorySnapshot = Readonly<{
 const normalizeIds = (values: readonly string[]): string[] => [
   ...new Set(values.map((value) => value.trim()).filter(Boolean))
 ]
+
+const mutateInChunks = async <Value>(
+  values: readonly Value[],
+  mutate: (chunk: Value[]) => Promise<{ count: number }>
+): Promise<number> => {
+  let count = 0
+  for (let offset = 0; offset < values.length; offset += SQLITE_IN_CHUNK_SIZE) {
+    count += (await mutate(values.slice(offset, offset + SQLITE_IN_CHUNK_SIZE))).count
+  }
+  return count
+}
 
 const toInboxItem = (row: DbNotificationInboxItem): NotificationInboxItem => ({
   id: row.id,
@@ -137,9 +149,13 @@ export class NotificationInboxDbRepository {
           select: { sequence: true }
         })
         if (expired.length > 0) {
-          await transaction.notificationInboxItem.deleteMany({
-            where: { sequence: { in: expired.map((row) => row.sequence) } }
-          })
+          await mutateInChunks(
+            expired.map((row) => row.sequence),
+            (sequences) =>
+              transaction.notificationInboxItem.deleteMany({
+                where: { sequence: { in: sequences } }
+              })
+          )
         }
         return stateFor(transaction, true)
       })
@@ -178,10 +194,7 @@ export class NotificationInboxDbRepository {
 
   markRead(ids: readonly string[], readAt: number): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(ids).slice(0, MAX_NOTIFICATION_INBOX_ITEMS)
-    return this.updateReadState(
-      normalized.length === 0 ? undefined : { id: { in: normalized } },
-      readAt
-    )
+    return this.updateReadStateForValues('id', normalized, readAt)
   }
 
   markAllRead(throughSequence: number, readAt: number): Promise<NotificationRepositoryState> {
@@ -194,10 +207,7 @@ export class NotificationInboxDbRepository {
     readAt: number
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
-    return this.updateReadState(
-      normalized.length === 0 ? undefined : { sessionId: { in: normalized } },
-      readAt
-    )
+    return this.updateReadStateForValues('sessionId', normalized, readAt)
   }
 
   markSessionTaskOutcomesRead(
@@ -205,17 +215,25 @@ export class NotificationInboxDbRepository {
     readAt: number
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
-    return this.updateReadState(
-      normalized.length === 0
-        ? undefined
-        : { sessionId: { in: normalized }, kind: { startsWith: 'task.' } },
-      readAt
-    )
+    return this.updateReadStateForValues('sessionId', normalized, readAt, {
+      kind: { startsWith: 'task.' }
+    })
   }
 
   deleteSessions(sessionIds: readonly string[]): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
-    return this.deleteWhere(normalized.length === 0 ? undefined : { sessionId: { in: normalized } })
+    if (normalized.length === 0) return this.currentState()
+    return this.enqueue(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const count = await mutateInChunks(normalized, (sessionIdsChunk) =>
+          transaction.notificationInboxItem.deleteMany({
+            where: { sessionId: { in: sessionIdsChunk } }
+          })
+        )
+        return stateFor(transaction, count > 0)
+      })
+    })
   }
 
   reconcileSessionCatalog(
@@ -234,13 +252,12 @@ export class NotificationInboxDbRepository {
             row.sessionId && !existing.has(row.sessionId) ? [row.sessionId] : []
           )
         )
-        const result =
-          removed.length === 0
-            ? { count: 0 }
-            : await transaction.notificationInboxItem.deleteMany({
-                where: { sessionId: { in: removed } }
-              })
-        return stateFor(transaction, result.count > 0)
+        const count = await mutateInChunks(removed, (sessionIdsChunk) =>
+          transaction.notificationInboxItem.deleteMany({
+            where: { sessionId: { in: sessionIdsChunk } }
+          })
+        )
+        return stateFor(transaction, count > 0)
       })
     })
   }
@@ -279,9 +296,13 @@ export class NotificationInboxDbRepository {
           select: { sequence: true }
         })
         if (expired.length > 0) {
-          await transaction.notificationInboxItem.deleteMany({
-            where: { sequence: { in: expired.map((row) => row.sequence) } }
-          })
+          await mutateInChunks(
+            expired.map((row) => row.sequence),
+            (sequences) =>
+              transaction.notificationInboxItem.deleteMany({
+                where: { sequence: { in: sequences } }
+              })
+          )
         }
         return stateFor(transaction, changed)
       })
@@ -305,15 +326,23 @@ export class NotificationInboxDbRepository {
     })
   }
 
-  private deleteWhere(
-    where: Record<string, unknown> | undefined
+  private updateReadStateForValues(
+    field: 'id' | 'sessionId',
+    values: readonly string[],
+    readAt: number,
+    where: Record<string, unknown> = {}
   ): Promise<NotificationRepositoryState> {
-    if (!where) return this.currentState()
+    if (values.length === 0) return this.currentState()
     return this.enqueue(async () => {
       const client = await this.getClient()
       return client.$transaction(async (transaction) => {
-        const result = await transaction.notificationInboxItem.deleteMany({ where })
-        return stateFor(transaction, result.count > 0)
+        const count = await mutateInChunks(values, (chunk) =>
+          transaction.notificationInboxItem.updateMany({
+            where: { ...where, [field]: { in: chunk }, readAt: null },
+            data: { readAt: new Date(readAt) }
+          })
+        )
+        return stateFor(transaction, count > 0)
       })
     })
   }
