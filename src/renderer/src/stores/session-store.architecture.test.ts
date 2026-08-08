@@ -15,6 +15,7 @@ import {
   isElementAccessExpression,
   isExportAssignment,
   isExportDeclaration,
+  isFunctionDeclaration,
   isFunctionLike,
   isIdentifier,
   isImportDeclaration,
@@ -183,6 +184,181 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
     return undefined
   }
 
+  type DynamicLoaderBinding = Readonly<{
+    kind: 'dynamic' | 'require'
+    parameterIndex: number
+  }>
+  const scopeDeclaresName = (scope: Node, name: string): boolean => {
+    let declared = false
+    const find = (node: Node): void => {
+      if (declared) return
+      if (node !== scope && isFunctionLike(node)) {
+        declared = isFunctionDeclaration(node) && node.name?.text === name
+        return
+      }
+      if (node !== scope && (isBlock(node) || isSourceFile(node))) return
+      if (isVariableDeclaration(node) && bindingContains(node.name, name)) {
+        declared = true
+        return
+      }
+      forEachChild(node, find)
+    }
+    find(scope)
+    return declared
+  }
+  const isLocallyBound = (identifier: Node & { text: string }): boolean => {
+    let current: Node | undefined = identifier.parent
+    while (current) {
+      if (
+        isFunctionLike(current) &&
+        current.parameters.some((parameter) => bindingContains(parameter.name, identifier.text))
+      ) {
+        return true
+      }
+      if (
+        isCatchClause(current) &&
+        current.variableDeclaration &&
+        bindingContains(current.variableDeclaration.name, identifier.text)
+      ) {
+        return true
+      }
+      if (
+        (isBlock(current) || isSourceFile(current)) &&
+        scopeDeclaresName(current, identifier.text)
+      ) {
+        return true
+      }
+      current = current.parent
+    }
+    return false
+  }
+  const resolveParameterOwner = (
+    identifier: Node & { text: string }
+  ):
+    | Readonly<{
+        callable: Node & { parameters: readonly { name: Node }[] }
+        parameterIndex: number
+      }>
+    | undefined => {
+    let current: Node | undefined = identifier.parent
+    while (current) {
+      if (
+        isCatchClause(current) &&
+        current.variableDeclaration &&
+        bindingContains(current.variableDeclaration.name, identifier.text)
+      ) {
+        return undefined
+      }
+      if (
+        (isBlock(current) || isSourceFile(current)) &&
+        scopeDeclaresName(current, identifier.text)
+      ) {
+        return undefined
+      }
+      if (isFunctionLike(current)) {
+        const parameterIndex = current.parameters.findIndex(
+          ({ name }) => isIdentifier(name) && name.text === identifier.text
+        )
+        if (parameterIndex >= 0) return { callable: current, parameterIndex }
+      }
+      current = current.parent
+    }
+    return undefined
+  }
+  const namedCallableDeclaration = (
+    callable: Node
+  ): Readonly<{ declaration: Node; name: string }> | undefined => {
+    if (isFunctionDeclaration(callable) && callable.name) {
+      return { declaration: callable, name: callable.name.text }
+    }
+    const parent = callable.parent
+    return isVariableDeclaration(parent) &&
+      parent.initializer === callable &&
+      isIdentifier(parent.name)
+      ? { declaration: parent, name: parent.name.text }
+      : undefined
+  }
+  const dynamicLoaderBindings = new Map<Node, DynamicLoaderBinding>()
+  const ambiguousDynamicLoaders = new Set<Node>()
+  const dynamicLoaderNames = new Set<string>()
+  const indexDynamicLoaders = (node: Node): void => {
+    if (isCallExpression(node)) {
+      const [argument] = node.arguments
+      const kind =
+        node.expression.kind === SyntaxKind.ImportKeyword
+          ? 'dynamic'
+          : isIdentifier(node.expression) &&
+              node.expression.text === 'require' &&
+              !isLocallyBound(node.expression)
+            ? 'require'
+            : undefined
+      const owner =
+        kind && argument && isIdentifier(argument) ? resolveParameterOwner(argument) : undefined
+      const named = owner ? namedCallableDeclaration(owner.callable) : undefined
+      if (kind && owner && named) {
+        const binding: DynamicLoaderBinding = { kind, parameterIndex: owner.parameterIndex }
+        const previous = dynamicLoaderBindings.get(named.declaration)
+        if (
+          previous &&
+          (previous.kind !== binding.kind || previous.parameterIndex !== binding.parameterIndex)
+        ) {
+          ambiguousDynamicLoaders.add(named.declaration)
+          dynamicLoaderBindings.delete(named.declaration)
+        } else if (!ambiguousDynamicLoaders.has(named.declaration)) {
+          dynamicLoaderBindings.set(named.declaration, binding)
+          dynamicLoaderNames.add(named.name)
+        }
+      }
+    }
+    forEachChild(node, indexDynamicLoaders)
+  }
+  if (/\b(?:import|require)\s*\(/.test(source)) indexDynamicLoaders(sourceFile)
+
+  const resolveCallableDeclaration = (identifier: Node & { text: string }): Node | undefined => {
+    let current: Node | undefined = identifier.parent
+    while (current) {
+      if (
+        isFunctionLike(current) &&
+        current.parameters.some((parameter) => bindingContains(parameter.name, identifier.text))
+      ) {
+        return undefined
+      }
+      if (
+        isCatchClause(current) &&
+        current.variableDeclaration &&
+        bindingContains(current.variableDeclaration.name, identifier.text)
+      ) {
+        return undefined
+      }
+      if (isBlock(current) || isSourceFile(current)) {
+        const declarations: Node[] = []
+        const find = (node: Node): void => {
+          if (node !== current && isFunctionLike(node)) {
+            if (isFunctionDeclaration(node) && node.name?.text === identifier.text) {
+              declarations.push(node)
+            }
+            return
+          }
+          if (node !== current && (isBlock(node) || isSourceFile(node))) return
+          if (isVariableDeclaration(node) && bindingContains(node.name, identifier.text)) {
+            declarations.push(node)
+          }
+          forEachChild(node, find)
+        }
+        find(current)
+        if (declarations.length > 0) {
+          return (
+            declarations
+              .filter((node) => node.getStart(sourceFile) <= identifier.getStart(sourceFile))
+              .at(-1) ?? declarations[0]
+          )
+        }
+      }
+      current = current.parent
+    }
+    return undefined
+  }
+
   const visit = (node: Node): void => {
     if (isImportDeclaration(node) && isStringLiteralLike(node.moduleSpecifier)) {
       const bindings = node.importClause?.namedBindings
@@ -211,14 +387,22 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
         kind: 'export'
       })
     } else if (isCallExpression(node)) {
-      const [argument] = node.arguments
-      const kind =
-        isIdentifier(node.expression) && node.expression.text === 'require'
+      const directKind =
+        isIdentifier(node.expression) &&
+        node.expression.text === 'require' &&
+        !isLocallyBound(node.expression)
           ? 'require'
           : node.expression.kind === SyntaxKind.ImportKeyword
             ? 'dynamic'
             : undefined
+      const loaderBinding =
+        !directKind && isIdentifier(node.expression) && dynamicLoaderNames.has(node.expression.text)
+          ? resolveCallableDeclaration(node.expression)
+          : undefined
+      const indirectBinding = loaderBinding ? dynamicLoaderBindings.get(loaderBinding) : undefined
+      const kind = directKind ?? indirectBinding?.kind
       if (kind) {
+        const argument = node.arguments[indirectBinding?.parameterIndex ?? 0]
         const specifier =
           argument && isStringLiteralLike(argument)
             ? argument.text
@@ -811,9 +995,108 @@ describe('Session Store architecture guard regressions', () => {
       importBoundaryViolations(
         consumerFixture,
         [
+          'const load = ({ cache }: { cache: boolean }, specifier: string) => import(specifier)',
+          "void load({ cache: true }, '../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (_options: object, specifier: string) => import(specifier)',
+          "void load({}, '../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
           "const path = '../../stores/session-store-run-output-helpers'",
           'const load = (path: string) => import(path)',
           "void load('./feature')"
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (specifier: string) => import(specifier)',
+          "void load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'function load(specifier: string) { return require(specifier) }',
+          "void load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (specifier: string) => import(specifier)',
+          'function feature(load: (specifier: string) => void) {',
+          "  load('../../stores/session-store-run-output-helpers')",
+          '}'
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (specifier: string) => import(specifier)',
+          '{',
+          '  const load = (_specifier: string) => undefined',
+          "  load('../../stores/session-store-run-output-helpers')",
+          '}'
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (specifier: string) => () => import(specifier)',
+          "void load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual(['pages/workspace/session-store-fixture.ts imports a private Session Store owner'])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (specifier: string) => {',
+          "  { const specifier = './feature'; return import(specifier) }",
+          '}',
+          "void load('../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'const load = (require: (specifier: string) => unknown, specifier: string) =>',
+          '  require(specifier)',
+          "void load((specifier) => specifier, '../../stores/session-store-run-output-helpers')"
+        ].join('\n')
+      )
+    ).toEqual([])
+    expect(
+      importBoundaryViolations(
+        consumerFixture,
+        [
+          'function feature(require: (specifier: string) => unknown) {',
+          "  require('../../stores/session-store-run-output-helpers')",
+          '}'
         ].join('\n')
       )
     ).toEqual([])
