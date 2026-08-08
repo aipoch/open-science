@@ -1,7 +1,7 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
-import type { Prisma, PrismaClient } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
 
 import type {
   ArtifactProducerUnavailableReason,
@@ -14,6 +14,7 @@ import type {
   NotebookRunInputFile,
   NotebookRunRecord
 } from '../../shared/notebook'
+import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { NotebookRunRepository } from '../notebook/repository'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import {
@@ -57,7 +58,7 @@ type PreparedArtifactVersionPersistence = {
 }
 
 type ArtifactProvenanceProducerCaptureOptions = {
-  getClient: () => Promise<PrismaClient>
+  inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
   notebookRepository: Pick<NotebookRunRepository, 'findExisting'>
   createId: () => string
 }
@@ -495,48 +496,14 @@ class ArtifactProvenanceProducerCapture {
     projectId: string,
     inputs: NotebookRunInputFile[]
   ): Promise<void> {
-    const client = await this.options.getClient()
     for (const input of inputs) {
-      if (input.sourceProjectId !== projectId) {
+      const validation = await this.options.inputAuthority.validateVersion(projectId, input)
+      if (validation.state === 'project-mismatch') {
         throw new Error(`Notebook input belongs to another Project: ${input.inputFileVersionId}`)
       }
-      if (input.sourceKind === 'upload-version') {
-        const version = await client.uploadVersion.findUnique({
-          where: { id: input.inputFileVersionId },
-          include: { uploadFile: true }
-        })
-        if (
-          !version ||
-          version.state !== 'ready' ||
-          version.uploadFileId !== input.sourceFileId ||
-          version.uploadFile.projectId !== input.sourceProjectId ||
-          version.uploadFile.sessionId !== input.sourceSessionId ||
-          version.versionNumber !== input.sourceVersionNumber ||
-          version.contentStorageKey !== input.storageKey ||
-          version.checksum !== input.checksum ||
-          Number(version.sizeBytes) !== input.sizeBytes
-        ) {
-          throw new Error(`Notebook Upload input identity is corrupt: ${input.inputFileVersionId}`)
-        }
-        continue
-      }
-
-      const version = await client.artifactVersion.findUnique({
-        where: { id: input.inputFileVersionId },
-        include: { artifact: true }
-      })
-      if (
-        !version ||
-        version.state !== 'finalized' ||
-        version.artifactId !== input.sourceFileId ||
-        version.artifact.projectId !== input.sourceProjectId ||
-        version.artifact.sessionId !== input.sourceSessionId ||
-        version.versionNumber !== input.sourceVersionNumber ||
-        version.contentStorageKey !== input.storageKey ||
-        version.checksum !== input.checksum ||
-        Number(version.sizeBytes) !== input.sizeBytes
-      ) {
-        throw new Error(`Notebook Artifact input identity is corrupt: ${input.inputFileVersionId}`)
+      if (validation.state !== 'available') {
+        const label = input.sourceKind === 'upload-version' ? 'Upload' : 'Artifact'
+        throw new Error(`Notebook ${label} input identity is corrupt: ${input.inputFileVersionId}`)
       }
     }
   }

@@ -7,6 +7,7 @@ import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 
@@ -128,7 +129,12 @@ const setup = async (): Promise<NotebookInputRegistry> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
   client = createProjectDbClient(storageRoot)
   await ensureProjectSchema(client)
-  return new NotebookInputRegistry({ storageRoot, getClient: () => Promise.resolve(client!) })
+  return new NotebookInputRegistry({
+    inputAuthority: new ImmutableInputAuthority({
+      storageRoot,
+      getClient: () => Promise.resolve(client!)
+    })
+  })
 }
 
 describe('NotebookInputRegistry', () => {
@@ -307,7 +313,58 @@ describe('NotebookInputRegistry', () => {
     expect(() => lease.getRunInputFiles()).toThrow(/closed/i)
   })
 
-  it('rejects same-size input corruption before returning a managed path', async () => {
+  it('rechecks Version state and immutable metadata before a run', async () => {
+    const registry = await setup()
+    await createUpload({
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      uploadFileId: 'upload-1',
+      versionId: 'upload-version-1',
+      filename: 'groups.csv',
+      content: 'group\nA\n'
+    })
+    const attachment = {
+      id: 'upload-1',
+      versionId: 'upload-version-1',
+      versionNumber: 1,
+      sessionId: 'source-session-1',
+      name: 'groups.csv',
+      originalName: 'groups.csv',
+      path: '/ignored',
+      size: 8
+    }
+    await client!.uploadVersion.update({
+      where: { id: 'upload-version-1' },
+      data: { state: 'staging' }
+    })
+    await expect(
+      registry.registerTurn({
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-staging',
+        uploads: [attachment],
+        references: []
+      })
+    ).rejects.toThrow(/unavailable in this Project/)
+
+    await client!.uploadVersion.update({
+      where: { id: 'upload-version-1' },
+      data: { state: 'ready' }
+    })
+    const turn = {
+      projectId: 'project-1',
+      appSessionId: 'active-session',
+      promptMessageId: 'prompt-ready'
+    }
+    await registry.registerTurn({ ...turn, uploads: [attachment], references: [] })
+    await client!.uploadVersion.update({
+      where: { id: 'upload-version-1' },
+      data: { versionNumber: 2 }
+    })
+    await expect(registry.openRun(turn)).rejects.toThrow(/registration no longer matches/i)
+  })
+
+  it('rejects same-size input corruption during turn registration', async () => {
     const registry = await setup()
     const storageKey = await createUpload({
       projectId: 'project-1',
@@ -320,10 +377,23 @@ describe('NotebookInputRegistry', () => {
     await writeManagedContent(storageKey, 'group\nB\n')
 
     await expect(
-      registry.resolvePreview({
+      registry.registerTurn({
         projectId: 'project-1',
-        sourceKind: 'upload-version',
-        inputFileVersionId: 'upload-version-1'
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'source-session-1',
+            name: 'groups.csv',
+            originalName: 'groups.csv',
+            path: '/ignored',
+            size: 8
+          }
+        ],
+        references: []
       })
     ).rejects.toThrow(/checksum/i)
   })

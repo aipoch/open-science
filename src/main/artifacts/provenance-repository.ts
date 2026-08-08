@@ -21,6 +21,7 @@ import {
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
 import { ArtifactRepository } from './repository'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { defaultArtifactDurability, type ArtifactDurability } from './durability'
 import {
   ArtifactProvenanceVersionWriter,
@@ -51,6 +52,7 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 type ArtifactProvenanceRepositoryOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
+  inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'findExisting'>
   loadSession?: (
@@ -128,6 +130,12 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    const inputAuthority =
+      options.inputAuthority ??
+      new ImmutableInputAuthority({
+        storageRoot: options.storageRoot,
+        getClient: options.getClient
+      })
     this.readModel = new ArtifactProvenanceReadModel({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -142,7 +150,7 @@ class ArtifactProvenanceRepository {
         this.resolveVersionDerivedPath(request, filename)
     })
     this.producerCapture = new ArtifactProvenanceProducerCapture({
-      getClient: options.getClient,
+      inputAuthority,
       notebookRepository,
       createId: this.createId
     })

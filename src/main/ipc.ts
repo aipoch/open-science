@@ -56,6 +56,7 @@ import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
 import { ConnectorService } from './connectors/service'
 import { registerFileSaveHandlers } from './file-save'
+import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
 import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
@@ -398,9 +399,14 @@ const createApplicationModules = async (
 
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
+  const immutableInputAuthority = new ImmutableInputAuthority({
+    storageRoot: resolveDataRoot(),
+    getClient: () => getProjectDbClient(resolveStorageRoot())
+  })
   const artifactProvenanceRepository = new ArtifactProvenanceRepository({
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveStorageRoot()),
+    inputAuthority: immutableInputAuthority,
     compatibilityRepository: artifactRepository,
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
@@ -412,8 +418,7 @@ const createApplicationModules = async (
   // The upload repository above is shared so staging recovery, Session upgrade, prompt finalization,
   // and previews all observe one durable Version authority.
   const notebookInputRegistry = new NotebookInputRegistry({
-    storageRoot: resolveDataRoot(),
-    getClient: () => getProjectDbClient(resolveStorageRoot())
+    inputAuthority: immutableInputAuthority
   })
   // Shared local-fs service backs both the "This computer" browser IPC and the managed-preview
   // resolver below, so path validation stays identical across both entry points.

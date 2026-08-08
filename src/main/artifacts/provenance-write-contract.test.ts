@@ -5,6 +5,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
+import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -233,6 +234,66 @@ const appendNotebookRun = async (
     path: await realpath(sourcePath),
     sizeBytes: sourceStat.size,
     mtimeMs: sourceStat.mtimeMs
+  }
+}
+
+const createReadyUploadInput = async (
+  value: Fixture
+): Promise<{ input: NotebookRunInputFile; inputPath: string }> => {
+  const content = 'source-A'
+  const storageKey =
+    'uploads/project-1/source-session-1/upload-file-1/versions/upload-version-1/content'
+  const inputPath = join(value.storageRoot, ...storageKey.split('/'))
+  const createdAt = new Date('2026-08-08T08:00:00.000Z')
+  await mkdir(dirname(inputPath), { recursive: true })
+  await writeFile(inputPath, content)
+  await value.client.fileOriginSession.upsert({
+    where: {
+      projectId_sessionId: { projectId: 'project-1', sessionId: 'source-session-1' }
+    },
+    create: { projectId: 'project-1', sessionId: 'source-session-1' },
+    update: {}
+  })
+  await value.client.uploadFile.create({
+    data: {
+      id: 'upload-file-1',
+      projectId: 'project-1',
+      sessionId: 'source-session-1',
+      filename: 'input.csv',
+      originalFilename: 'input.csv',
+      versions: {
+        create: {
+          id: 'upload-version-1',
+          versionNumber: 1,
+          state: 'ready',
+          contentStorageKey: storageKey,
+          filename: 'input.csv',
+          originalFilename: 'input.csv',
+          contentType: 'text/csv',
+          sizeBytes: BigInt(Buffer.byteLength(content)),
+          checksum: sha256(content),
+          createdAt
+        }
+      }
+    }
+  })
+  return {
+    inputPath,
+    input: {
+      inputFileVersionId: 'upload-version-1',
+      sourceKind: 'upload-version',
+      sourceFileId: 'upload-file-1',
+      sourceVersionNumber: 1,
+      sourceCreatedAt: createdAt.toISOString(),
+      sourceProjectId: 'project-1',
+      sourceSessionId: 'source-session-1',
+      filename: 'input.csv',
+      contentType: 'text/csv',
+      sizeBytes: Buffer.byteLength(content),
+      checksum: sha256(content),
+      storageKey,
+      association: 'resolver-accessed'
+    }
   }
 }
 
@@ -468,6 +529,73 @@ describe('artifact provenance input authority', () => {
         })
       )
     ).rejects.toThrow(error)
+    await expect(value.client.artifactVersion.count()).resolves.toBe(0)
+  })
+
+  it('rejects corrupt immutable input bytes at Provenance commit time', async () => {
+    const value = await fixture()
+    const { input, inputPath } = await createReadyUploadInput(value)
+    const inputAuthority = new ImmutableInputAuthority({
+      storageRoot: value.storageRoot,
+      getClient: () => Promise.resolve(value.client)
+    })
+    await inputAuthority.resolveVersion({
+      projectId: 'project-1',
+      sourceKind: input.sourceKind,
+      inputFileVersionId: input.inputFileVersionId,
+      expectedSourceFileId: input.sourceFileId
+    })
+    const repository = new ArtifactProvenanceRepository({
+      ...value.repositoryOptions,
+      inputAuthority
+    })
+    const observation = await appendNotebookRun(value, {
+      runId: 'corrupt-input-run',
+      filename: 'plot.png',
+      payload: 'derived bytes',
+      ownsSource: true,
+      inputFiles: [input]
+    })
+    await writeFile(inputPath, 'source-B')
+    await value.stagePng('derived bytes')
+
+    await expect(
+      repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'corrupt-input-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'corrupt-input-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: observation
+        })
+      )
+    ).rejects.toThrow(/input content checksum/i)
+    await expect(value.client.artifactVersion.count()).resolves.toBe(0)
+  })
+
+  it('rejects immutable input metadata drift at Provenance commit time', async () => {
+    const value = await fixture()
+    const { input } = await createReadyUploadInput(value)
+    const observation = await appendNotebookRun(value, {
+      runId: 'metadata-drift-run',
+      filename: 'plot.png',
+      payload: 'derived bytes',
+      ownsSource: true,
+      inputFiles: [{ ...input, sourceVersionNumber: 2 }]
+    })
+    await value.stagePng('derived bytes')
+
+    await expect(
+      value.repository.createVersion(
+        createArtifactVersionRequest({
+          writeOperationId: 'metadata-drift-operation',
+          notebookSessionId: 'session-1',
+          producerRunId: 'metadata-drift-run',
+          sourceKind: 'localPath',
+          sourceFileObservation: observation
+        })
+      )
+    ).rejects.toThrow(`Notebook Upload input identity is corrupt: ${input.inputFileVersionId}`)
     await expect(value.client.artifactVersion.count()).resolves.toBe(0)
   })
 
