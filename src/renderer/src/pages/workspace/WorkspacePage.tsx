@@ -151,10 +151,10 @@ const WorkspacePage = ({
     useState<PermissionProfileId>(defaultPermissionProfile)
   // Draft auto-review state for a not-yet-created conversation. Auto-review defaults off, so a new
   // conversation starts disabled; the user can toggle it on before sending. On send it is stamped
-  // onto the created session (see sendCurrentMessage).
+  // onto the created session through the Conversation submit transaction.
   const [newConversationAutoReviewEnabled, setNewConversationAutoReviewEnabled] = useState(false)
   // Draft compute hosts for a not-yet-created conversation. Cleared when a new conversation draft
-  // is started, and stamped onto the session when the first message is sent (see sendCurrentMessage).
+  // is started, and stamped onto the session by the Conversation submit transaction.
   const [newConversationEnabledComputeHosts, setNewConversationEnabledComputeHosts] = useState<
     string[]
   >([])
@@ -655,7 +655,7 @@ const WorkspacePage = ({
   }
 
   // Persists the auto-review toggle for the active session; for a not-yet-created conversation it
-  // updates the draft state, which sendCurrentMessage stamps onto the new session.
+  // updates the draft state, which the Conversation submit transaction stamps onto the new session.
   const changeAutoReviewEnabled = (enabled: boolean): void => {
     if (!activeSession) {
       setNewConversationAutoReviewEnabled(enabled)
@@ -667,8 +667,8 @@ const WorkspacePage = ({
 
   // Enables or disables a compute host for the active session (single-select semantics).
   // Enabling one host replaces any existing selection; disabling clears the set.
-  // For a not-yet-created conversation, updates the draft state; sendCurrentMessage stamps it onto
-  // the new session. For an existing session, updates the session store and main-process registry.
+  // For a not-yet-created conversation, the Conversation submit transaction stamps this draft state
+  // onto the new session. Existing sessions update the store and main-process registry immediately.
   const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
     // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
     const newEnabledHosts = enabled ? [providerId] : []

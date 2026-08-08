@@ -99,6 +99,7 @@
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-page.architecture.test.ts",
           "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
           "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts",
           "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
