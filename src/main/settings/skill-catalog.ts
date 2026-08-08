@@ -45,6 +45,7 @@ import {
   provisionAppClaudeConfigDir,
   type ClaudeRuntimeModelConfig
 } from './claude-config-provision'
+import { tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 
@@ -268,8 +269,17 @@ class SkillCatalogModule {
     return this.listSkills()
   }
 
+  // Decrypts the stored GitHub personal access token, if configured. Returns undefined when
+  // no token is set or decryption fails (e.g. keychain unavailable) — the caller falls back
+  // to unauthenticated requests (60 req/hour instead of 5 000).
+  private async githubToken(): Promise<string | undefined> {
+    const settings = await this.options.repository.getSettings()
+    return tryDecryptKey(settings.githubTokenRef)
+  }
+
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
+    const token = await this.githubToken()
+    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch, token)
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -317,7 +327,8 @@ class SkillCatalogModule {
   async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
-    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
+    const token = await this.githubToken()
+    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch, token)
     const suffix = location.path ? `/${location.path}` : ''
     const revision = location.ref ? `@${location.ref}` : ''
     return {
@@ -327,12 +338,13 @@ class SkillCatalogModule {
   }
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
+    const token = await this.githubToken()
     if (parseGitHubRepo(request.repo)) {
-      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+      return { skills: await this.userSkills.scanRepo(request.repo, netFetch, token) }
     }
     return {
       skills: [],
-      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+      repositories: await searchGitHubSkillRepositories(request.repo, netFetch, token)
     }
   }
 

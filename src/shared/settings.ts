@@ -398,6 +398,9 @@ export type SettingsSnapshot = {
   closePreference?: CloseActionPreference
   // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
   appIconVariant: AppIconVariant
+  // GitHub personal access token state (never the plaintext token). When hasToken is true, the
+  // skill import flow uses authenticated API requests (5 000 req/hour instead of 60).
+  githubCredentials: GitHubCredentialsView
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -1135,6 +1138,12 @@ export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
+
+// GitHub credential state surfaced to the renderer (never the plaintext token).
+export type GitHubCredentialsView = { hasToken: boolean }
+
+// Request to set or clear the GitHub personal access token for authenticated skill import.
+export type SetGitHubCredentialsRequest = { token?: string }
 
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {

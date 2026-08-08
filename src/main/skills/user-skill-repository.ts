@@ -561,7 +561,7 @@ class UserSkillRepository {
   // Imports a single skill directory from a public GitHub URL, deduplicating against prior imports of
   // the same source: an unchanged re-import is a no-op, a changed one refreshes the files in place, and
   // a new source (or a same-name skill from a different source) is imported as a fresh slug.
-  async importFromGitHub(url: string, fetchImpl?: FetchLike): Promise<ImportOutcome> {
+  async importFromGitHub(url: string, fetchImpl?: FetchLike, token?: string): Promise<ImportOutcome> {
     const location = parseGitHubSkillUrl(url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
 
@@ -571,7 +571,7 @@ class UserSkillRepository {
     // Fetch over the network OUTSIDE the lock (it's slow); everything that touches disk — recovery,
     // dedup, slug allocation, and the swap — runs in one critical section so two concurrent imports
     // can't both claim the same slug and clobber each other.
-    const files = await fetchSkillFiles(location, fetcher)
+    const files = await fetchSkillFiles(location, fetcher, token)
     const signature = signatureOf(files)
     const base = toSlug(location.path.split('/').filter(Boolean).pop() ?? location.repo) || 'skill'
 
@@ -598,14 +598,14 @@ class UserSkillRepository {
 
   // Lazily reads one scanned GitHub candidate for the read-only renderer preview. Unlike import,
   // this downloads only SKILL.md while retaining the bounded directory walk for the file list.
-  async previewGitHubSkill(url: string, fetchImpl?: FetchLike): Promise<ParsedSkillPreview> {
+  async previewGitHubSkill(url: string, fetchImpl?: FetchLike, token?: string): Promise<ParsedSkillPreview> {
     const location = parseGitHubSkillUrl(url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
 
     const fetcher = fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined)
     if (!fetcher) throw new Error('No fetch implementation available.')
 
-    const { skillMd, files } = await fetchSkillPreview(location, fetcher)
+    const { skillMd, files } = await fetchSkillPreview(location, fetcher, token)
     const fallbackName = location.path.split('/').filter(Boolean).pop() ?? location.repo
 
     return parsedSkillPreview(skillMd.toString('utf8'), files, fallbackName)
@@ -808,7 +808,8 @@ class UserSkillRepository {
   // Scans a GitHub repo for skill directories, marking which are already imported (by source URL).
   async scanRepo(
     repoInput: string,
-    fetchImpl?: FetchLike
+    fetchImpl?: FetchLike,
+    token?: string
   ): Promise<(ScannedSkill & { alreadyImported: boolean })[]> {
     const repo = parseGitHubRepo(repoInput)
     if (!repo) throw new Error('Not a recognizable GitHub repo (owner/repo or a github.com URL).')
@@ -818,7 +819,7 @@ class UserSkillRepository {
 
     // Scan over the network outside the lock; build the imported index under the lock, after recovery.
     const [found, index] = await Promise.all([
-      scanRepoForSkills(repo, fetcher),
+      scanRepoForSkills(repo, fetcher, token),
       this.runExclusive(async () => {
         await this.doRecoverImportedTransactions()
         return this.importedIndex()

@@ -181,6 +181,10 @@ export type StoredSettings = {
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string
+  // GitHub personal access token for authenticated skill import API requests (encrypted via
+  // safeStorage). When absent, GitHub API calls are unauthenticated (60 req/hour); when present,
+  // authenticated requests raise the limit to 5 000 req/hour.
+  githubTokenRef?: string
   // Set once the one-time legacy-absolute-path-to-$DATA normalization pass has completed successfully.
   // Absent means it still needs to run (or a previous attempt failed and should retry).
   pathsNormalizedAt?: number

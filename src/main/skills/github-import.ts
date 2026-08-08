@@ -47,6 +47,12 @@ export type FetchLike = (
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
 
+// Builds request headers for GitHub API calls. When a personal access token is provided, the
+// Authorization header raises the rate limit from 60 to 5 000 requests/hour — critical for repos
+// containing many skills.
+const githubHeaders = (token?: string): Record<string, string> =>
+  token ? { ...GITHUB_HEADERS, Authorization: `Bearer ${token}` } : GITHUB_HEADERS
+
 // Reads a download body into a Buffer, stopping as soon as the running total crosses `limit` (so an
 // oversized/endless body is never drained). Prefers the streaming reader; falls back to arrayBuffer()
 // when no stream is exposed, still enforcing the cap on the buffered result. Peak memory is bounded by
@@ -131,7 +137,8 @@ export type FetchedSkillPreview = { skillMd: Buffer; files: string[] }
 // and request count share the import caps, while the rendered body uses the smaller IPC preview cap.
 const fetchSkillPreview = async (
   location: GitHubSkillLocation,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  token?: string
 ): Promise<FetchedSkillPreview> => {
   const rootPrefix = location.path ? `${location.path}/` : ''
   const files: string[] = []
@@ -151,7 +158,7 @@ const fetchSkillPreview = async (
       throw new Error(`Skill directory nesting exceeds ${SKILL_IMPORT_LIMITS.maxDepth} levels.`)
     }
 
-    const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
+    const response = await request(contentsUrl(location, path), { headers: githubHeaders(token) })
     if (!response.ok) {
       throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
     }
@@ -174,7 +181,7 @@ const fetchSkillPreview = async (
       files.push(relativePath)
 
       if (relativePath.toLowerCase() !== 'skill.md' || !entry.download_url) continue
-      const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
+      const raw = await request(entry.download_url, { headers: githubHeaders(token) })
       if (!raw.ok) throw new Error(`Failed to download ${entry.path} (${raw.status})`)
 
       const previewTooLarge = (): never => {
@@ -199,7 +206,8 @@ const fetchSkillPreview = async (
 // Recursively downloads every file under a skill directory via the public GitHub contents API.
 const fetchSkillFiles = async (
   location: GitHubSkillLocation,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  token?: string
 ): Promise<FetchedSkillFile[]> => {
   const rootPrefix = location.path ? `${location.path}/` : ''
 
@@ -225,7 +233,7 @@ const fetchSkillFiles = async (
       throw new Error(`Skill directory nesting exceeds ${SKILL_IMPORT_LIMITS.maxDepth} levels.`)
     }
 
-    const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
+    const response = await request(contentsUrl(location, path), { headers: githubHeaders(token) })
     if (!response.ok) {
       throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
     }
@@ -241,7 +249,7 @@ const fetchSkillFiles = async (
         if (fileCount >= SKILL_IMPORT_LIMITS.maxFiles) {
           throw new Error(`Skill has too many files (limit ${SKILL_IMPORT_LIMITS.maxFiles}).`)
         }
-        const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
+        const raw = await request(entry.download_url, { headers: githubHeaders(token) })
         if (!raw.ok) {
           throw new Error(`Failed to download ${entry.path} (${raw.status})`)
         }
@@ -314,7 +322,8 @@ const parseGitHubRepo = (input: string): GitHubRepoRef | null => {
 
 const searchGitHubSkillRepositories = async (
   input: string,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  token?: string
 ): Promise<GitHubRepositorySearchView[]> => {
   const keywords = input.trim()
   const searchTerms = `${keywords} SKILL.md`
@@ -324,7 +333,7 @@ const searchGitHubSkillRepositories = async (
   const query = `${searchTerms} in:name,description,topics,readme`
   const response = await fetchImpl(
     `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=10`,
-    { headers: GITHUB_HEADERS }
+    { headers: githubHeaders(token) }
   )
   if (response.status === 403 || response.status === 429) {
     throw new Error(
@@ -373,12 +382,13 @@ const searchGitHubSkillRepositories = async (
 // each. Resolve branch/tag refs to a commit first so a later preview and import read the same snapshot.
 const scanRepoForSkills = async (
   repo: GitHubRepoRef,
-  fetchImpl: FetchLike
+  fetchImpl: FetchLike,
+  token?: string
 ): Promise<ScannedSkill[]> => {
   let ref = repo.ref
   if (!ref) {
     const meta = await fetchImpl(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
-      headers: GITHUB_HEADERS
+      headers: githubHeaders(token)
     })
     if (!meta.ok) throw new Error(`GitHub API request failed (${meta.status}).`)
     ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
@@ -386,7 +396,7 @@ const scanRepoForSkills = async (
 
   const commitResponse = await fetchImpl(
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`,
-    { headers: GITHUB_HEADERS }
+    { headers: githubHeaders(token) }
   )
   if (!commitResponse.ok) throw new Error(`GitHub API request failed (${commitResponse.status}).`)
   const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
@@ -394,7 +404,7 @@ const scanRepoForSkills = async (
 
   const treeResponse = await fetchImpl(
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`,
-    { headers: GITHUB_HEADERS }
+    { headers: githubHeaders(token) }
   )
   if (!treeResponse.ok) throw new Error(`GitHub API request failed (${treeResponse.status}).`)
 

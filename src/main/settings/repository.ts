@@ -537,6 +537,11 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
       normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
   }
 
+  // GitHub personal access token for authenticated skill import API requests.
+  const githubTokenRef = asString(value.githubTokenRef)
+
+  if (githubTokenRef) settings.githubTokenRef = githubTokenRef
+
   // Selected agent backend; only the known ids survive so a bad value can't leak through.
   const agentFrameworkId = asString(value.agentFrameworkId)
 
@@ -1192,6 +1197,14 @@ class SettingsRepository {
       connectors.contactEmail = contactEmail || undefined
       connectors.ncbiApiKeyRef = apiKeyRef || undefined
     })
+  }
+
+  // Sets or clears the GitHub personal access token reference for authenticated skill import.
+  async setGitHubCredentials(tokenRef: string | undefined): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      githubTokenRef: tokenRef || undefined
+    }))
   }
 
   // Appends a fully-formed custom MCP server record.

@@ -33,6 +33,7 @@ import {
   type SetConnectorAutoAllowRequest,
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
+  type SetGitHubCredentialsRequest,
   type SetPackageMirrorRequest,
   type SetClosePreferenceRequest,
   type SetConversationSkillImportEnabledRequest,
@@ -320,6 +321,9 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
+  )
+  ipcMainHandle('settings:set-github-credentials', (_event, request: SetGitHubCredentialsRequest) =>
+    service.setGitHubCredentials(request)
   )
   ipcMainHandle('settings:add-custom-server', (_event, request: AddCustomServerRequest) =>
     workflows.connectors.addCustomServer(request)

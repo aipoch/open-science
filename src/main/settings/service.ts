@@ -30,6 +30,7 @@ import type {
   SetConnectorAutoAllowRequest,
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
+  SetGitHubCredentialsRequest,
   SetPackageMirrorRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
@@ -74,7 +75,7 @@ import type { CodexDetectDeps } from './codex-detect'
 import type { InstallManagedOpencodeOptions } from './managed-opencode'
 import type { InstallManagedCodexOptions, ManagedCodexInstallOutcome } from './managed-codex'
 import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './managed-claude'
-import { isEncryptionAvailable } from './crypto'
+import { encryptKey, isEncryptionAvailable } from './crypto'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
 import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './preferences'
@@ -277,6 +278,7 @@ class SettingsService {
       conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
       closePreference: preferences.closePreference,
       appIconVariant: preferences.appIconVariant,
+      githubCredentials: { hasToken: !!settings.githubTokenRef },
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -838,6 +840,13 @@ class SettingsService {
   // Sets or clears the shared contact email and NCBI API key (encrypted at rest), returning state.
   async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
     return this.connectors.setNcbiCredentials(request)
+  }
+
+  // Sets or clears the GitHub personal access token (encrypted at rest) for authenticated skill import.
+  async setGitHubCredentials(request: SetGitHubCredentialsRequest): Promise<SettingsSnapshot> {
+    const tokenRef = request.token ? encryptKey(request.token) : undefined
+    await this.repository.setGitHubCredentials(tokenRef)
+    return this.getSettingsView()
   }
 
   // Adds a user-provided custom MCP server (add-time trust is the caller's responsibility). The
