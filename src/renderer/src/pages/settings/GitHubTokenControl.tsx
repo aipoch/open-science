@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, KeyRound, LoaderCircle } from 'lucide-react'
 
 import type { GitHubTokenStatus } from '../../../../shared/settings'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -111,7 +112,10 @@ const GitHubTokenControl = (): React.JSX.Element => {
                 Personal access token
               </label>
               <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                Used only for GitHub Skill requests and encrypted with system credential storage.
+                Used only for GitHub Skill requests and encrypted with system credential storage.{' '}
+                <ExternalTextLink href="https://github.com/settings/tokens">
+                  Manage tokens on GitHub
+                </ExternalTextLink>
               </p>
               <Input
                 id="github-token"

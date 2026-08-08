@@ -64,6 +64,13 @@ describe('GitHubTokenControl', () => {
     )
     expect(save?.disabled).toBe(true)
 
+    const settingsLink = document.body.querySelector<HTMLAnchorElement>(
+      'a[href="https://github.com/settings/tokens"]'
+    )
+    expect(settingsLink?.textContent).toContain('Manage tokens on GitHub')
+    expect(settingsLink?.target).toBe('_blank')
+    expect(settingsLink?.rel).toBe('noreferrer')
+
     enterToken('github_pat_verified')
     expect(save?.disabled).toBe(false)
     await click('Verify and save')
