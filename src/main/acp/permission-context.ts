@@ -669,6 +669,10 @@ class AcpPermissionContext {
     return true
   }
 
+  hasTrustedCodexMcpToolCall(sessionId: string, toolCallId: string): boolean {
+    return this.codexMcpToolIdentities.get(sessionId)?.has(toolCallId) ?? false
+  }
+
   cancelAllPending(): void {
     this.broker.cancelAllPending()
     this.humanOnlyRequestIds.clear()

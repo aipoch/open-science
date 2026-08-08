@@ -3065,7 +3065,98 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.elicitationResponses).toEqual([{ action: 'accept' }])
   })
 
-  it('does not reuse a consumed Codex MCP approval correlation', async () => {
+  it.each([
+    {
+      decision: 'allows',
+      optionKind: 'allow_once',
+      expectedResponse: { action: 'accept' as const }
+    },
+    {
+      decision: 'denies',
+      optionKind: 'reject_once',
+      expectedResponse: { action: 'decline' as const }
+    }
+  ])(
+    'routes Codex MCP approval elicitations through permission controls when the user $decision',
+    async ({ optionKind, expectedResponse }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['codex-notebook-approval-session'], {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+        codexMcpToolCallBeforeElicitation: {
+          toolCallId: 'call-notebook-state',
+          server: 'open-science-notebook',
+          tool: 'notebook_state'
+        },
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'call-notebook-state',
+          message: 'Allow the open-science-notebook MCP server to run notebook_state?',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              persist: {
+                type: 'string',
+                title: 'Approval scope',
+                oneOf: [
+                  { const: 'once', title: 'Allow once' },
+                  { const: 'session', title: 'Allow for this session' },
+                  { const: 'always', title: "Allow and don't ask again" }
+                ]
+              }
+            },
+            required: ['persist']
+          },
+          _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'] }
+        })
+      })
+      const permissionRequests: AcpPermissionRequest[] = []
+      let publishedElicitationCount = 0
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: codexFramework,
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            permissionRequests.push(request)
+            const selectedOption = request.options.find((option) => option.kind === optionKind)
+            if (!selectedOption) throw new Error(`Missing ${optionKind} permission option`)
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              optionId: selectedOption.optionId
+            })
+          },
+          onStateChanged: (snapshot) => {
+            const request = snapshot.pendingElicitations?.[0]
+            if (!request) return
+            publishedElicitationCount += 1
+            runtime.respondToElicitation({ requestId: request.requestId, action: 'decline' })
+          }
+        }
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the notebook' })
+
+      expect(publishedElicitationCount).toBe(0)
+      expect(permissionRequests).toHaveLength(1)
+      expect(permissionRequests[0]).toMatchObject({
+        sessionId: session.sessionId,
+        toolCallId: 'call-notebook-state',
+        providerToolName: 'notebook_state',
+        isMcp: true
+      })
+      expect(fakeAgent.elicitationResponses).toEqual([expectedResponse])
+    }
+  )
+
+  it('declines a repeated Codex MCP approval after its correlation is consumed', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['codex-choice-replay-session'], {
       modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
@@ -3122,11 +3213,8 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'replay approval' })
 
-    expect(publishedApprovalCount).toBe(1)
-    expect(fakeAgent.elicitationResponses).toEqual([
-      { action: 'accept' },
-      { action: 'accept', content: { persist: 'once' } }
-    ])
+    expect(publishedApprovalCount).toBe(0)
+    expect(fakeAgent.elicitationResponses).toEqual([{ action: 'accept' }, { action: 'decline' }])
   })
 
   it('acknowledges an app-owned MCP choice and silently continues after the user answers', async () => {

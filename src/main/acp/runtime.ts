@@ -1369,17 +1369,44 @@ class AcpRuntime {
       typeof meta === 'object' && meta !== null && meta.codex_approval_kind === 'mcp_tool_call'
     const toolCallId = 'toolCallId' in params ? params.toolCallId : undefined
     const frameworkId = this.getSessionFramework(sessionId)
-    if (
-      frameworkId === 'codex' &&
-      isCodexMcpToolApproval &&
-      typeof toolCallId === 'string' &&
-      this.permissionContext.consumeTrustedCodexMcpToolCall(
-        sessionId,
-        toolCallId,
-        'open-science-notebook/ask_user_question'
-      )
-    ) {
-      return Promise.resolve({ action: 'accept' })
+    // Codex ACP can surface an MCP approval through elicitation/create instead of
+    // session/request_permission. Keep that provider detail behind the existing permission owner so
+    // the renderer never mistakes an authorization prompt for structured user input.
+    if (frameworkId === 'codex' && isCodexMcpToolApproval) {
+      if (typeof toolCallId !== 'string') return Promise.resolve({ action: 'decline' })
+      if (
+        this.permissionContext.consumeTrustedCodexMcpToolCall(
+          sessionId,
+          toolCallId,
+          'open-science-notebook/ask_user_question'
+        )
+      ) {
+        return Promise.resolve({ action: 'accept' })
+      }
+      if (!this.permissionContext.hasTrustedCodexMcpToolCall(sessionId, toolCallId)) {
+        return Promise.resolve({ action: 'decline' })
+      }
+
+      const allowOnceOptionId = 'codex-elicitation-allow-once'
+      return this.permissionContext
+        .handleProviderRequest({
+          sessionId: params.sessionId,
+          toolCall: { toolCallId, kind: 'execute', status: 'pending' },
+          options: [
+            { optionId: allowOnceOptionId, name: 'Allow once', kind: 'allow_once' },
+            {
+              optionId: 'codex-elicitation-reject-once',
+              name: 'Deny',
+              kind: 'reject_once'
+            }
+          ],
+          _meta: { is_mcp_tool_approval: true }
+        })
+        .then((response) =>
+          response.outcome.outcome === 'selected' && response.outcome.optionId === allowOnceOptionId
+            ? { action: 'accept' as const }
+            : { action: 'decline' as const }
+        )
     }
 
     const promptInteraction = this.sessionInteractions.current(sessionId)
