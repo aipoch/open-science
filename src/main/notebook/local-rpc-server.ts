@@ -26,6 +26,11 @@ import type {
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
+  sanitizeAgentUserChoiceRequest,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult
+} from '../../shared/elicitation'
+import {
   stripAgentsReservedParams,
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
@@ -118,6 +123,7 @@ type NotebookLocalRpcServerOptions = {
       input?: unknown
     }): Promise<unknown>
   }
+  requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
   artifactProvenance?: {
     createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile>
     replayVersion?(request: ReplayArtifactVersionRequest): Promise<ArtifactVersionFile | undefined>
@@ -171,7 +177,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
-const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall'])
+const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall', 'requestUserInput'])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
 
@@ -211,6 +217,7 @@ class NotebookLocalRpcServer {
   private readonly computeService: NotebookLocalRpcServerOptions['computeService']
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly planService: NotebookLocalRpcServerOptions['planService']
+  private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
@@ -245,6 +252,7 @@ class NotebookLocalRpcServer {
     this.computeService = options.computeService
     this.skillImporter = options.skillImporter
     this.planService = options.planService
+    this.requestUserInput = options.requestUserInput
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.agentsService = options.agentsService
@@ -801,6 +809,13 @@ class NotebookLocalRpcServer {
         operation: params.operation as 'generate' | 'approve' | 'reject' | 'updateStepStatus',
         input: params.input
       })
+    }
+
+    if (method === 'requestUserInput') {
+      if (!this.requestUserInput) throw new Error('User input is not configured.')
+      const request = sanitizeAgentUserChoiceRequest(params)
+      if (!request) throw new Error('Invalid user choice request.')
+      return this.requestUserInput(request)
     }
 
     if (method === 'resolveNotebookInput') {

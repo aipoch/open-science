@@ -20,7 +20,7 @@ export type NotificationKind =
   'task.completed' | 'task.needs-attention' | 'task.failed' | 'authorization.required'
 
 export type NotificationSource =
-  'agent-tool' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
+  'agent-tool' | 'agent-question' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
 
 export type NotificationActionState = 'pending' | 'resolved' | 'rejected' | 'expired' | 'cancelled'
 

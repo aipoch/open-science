@@ -244,6 +244,10 @@ const resumeInterruptedWorkspaceSession = async (
   }
 }
 
+// After an auto-recovery, ignore further overflow events for this session for a short window so a retry
+// that immediately overflows again falls through to a visible error instead of looping. Prevention (the
+// per-session inline-image budget) makes a second overflow unlikely, so this is a backstop, not the norm.
+
 const CONTEXT_OVERFLOW_RECOVERY_COOLDOWN_MS = 15_000
 
 const compactWorkspaceSession = async (

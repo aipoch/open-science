@@ -42,6 +42,7 @@ type NotificationInboxController = Readonly<{
     originId: string,
     actionState: NotificationActionState
   ): Promise<void>
+  settleAction(dedupeKey: string, actionState: NotificationActionState): Promise<void>
   markRead(ids: readonly string[]): Promise<void>
   markAllRead(throughSequence: number): Promise<void>
   markSessionsRead(sessionIds: readonly string[]): Promise<void>
@@ -68,6 +69,8 @@ type WireNotificationInboxControllerDependencies = Readonly<{
 const authorizationDedupeKey = (source: NotificationSource, originId: string): string =>
   `authorization:${source}:${originId}`
 
+const agentQuestionDedupeKey = (originId: string): string => `input:agent-question:${originId}`
+
 const isTaskOutcome = (kind: NotificationKind): boolean => kind.startsWith('task.')
 
 export const createNotificationInboxController = (
@@ -76,7 +79,7 @@ export const createNotificationInboxController = (
   const createId = dependencies.createId ?? randomUUID
   const now = dependencies.now ?? Date.now
   const deletedSessionIds = new Set<string>()
-  const pendingAuthorizationRecords = new Map<string, Promise<void>>()
+  const pendingActionRecords = new Map<string, Promise<void>>()
   let revision = 1
   let unreadCount = 0
   let latestSequence = 0
@@ -183,30 +186,34 @@ export const createNotificationInboxController = (
 
   const record = (input: NotificationInboxRecord): Promise<void> => {
     const operation = recordNow(input)
-    if (input.kind !== 'authorization.required') return operation
+    if (input.actionState !== 'pending') return operation
 
-    const previous = pendingAuthorizationRecords.get(input.dedupeKey)
+    const previous = pendingActionRecords.get(input.dedupeKey)
     const barrier = previous
       ? Promise.allSettled([previous, operation]).then(() => undefined)
       : operation.catch(() => undefined)
-    pendingAuthorizationRecords.set(input.dedupeKey, barrier)
+    pendingActionRecords.set(input.dedupeKey, barrier)
     void barrier.finally(() => {
-      if (pendingAuthorizationRecords.get(input.dedupeKey) === barrier) {
-        pendingAuthorizationRecords.delete(input.dedupeKey)
+      if (pendingActionRecords.get(input.dedupeKey) === barrier) {
+        pendingActionRecords.delete(input.dedupeKey)
       }
     })
     return operation
   }
 
-  const settleAuthorization = async (
+  const settleAction = async (
+    dedupeKey: string,
+    actionState: NotificationActionState
+  ): Promise<void> => {
+    await pendingActionRecords.get(dedupeKey)
+    await mutate(() => dependencies.repository.settle(dedupeKey, actionState, now()))
+  }
+
+  const settleAuthorization = (
     source: NotificationSource,
     originId: string,
     actionState: NotificationActionState
-  ): Promise<void> => {
-    const dedupeKey = authorizationDedupeKey(source, originId)
-    await pendingAuthorizationRecords.get(dedupeKey)
-    await mutate(() => dependencies.repository.settle(dedupeKey, actionState, now()))
-  }
+  ): Promise<void> => settleAction(authorizationDedupeKey(source, originId), actionState)
 
   const markRead = (ids: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markRead(ids, now()))
@@ -254,6 +261,7 @@ export const createNotificationInboxController = (
     getSnapshot,
     record,
     settleAuthorization,
+    settleAction,
     markRead,
     markAllRead,
     markSessionsRead,
@@ -285,7 +293,7 @@ export const wireNotificationInboxController = (
   )
 }
 
-export { authorizationDedupeKey }
+export { agentQuestionDedupeKey, authorizationDedupeKey }
 export type {
   NotificationInboxBadge,
   NotificationInboxController,

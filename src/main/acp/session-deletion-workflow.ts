@@ -2,7 +2,9 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
 import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
+import type { AcpElicitationOwner } from './elicitation-owner'
 import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import type { AcpPermissionContext } from './permission-context'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
@@ -21,6 +23,8 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   supportsSessionDelete: () => boolean
   supportsSessionClose: () => boolean
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearSession'>
+  elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
+  appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   interactions: Pick<AcpSessionInteractionOwner, 'supersedeCurrent'>
   capabilities: Pick<AcpSessionCapabilityOwner, 'revokeSession'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
@@ -56,6 +60,8 @@ class AcpSessionDeletionWorkflow {
     const attachment = target?.attachment
 
     this.deps.permission.cancelForSession(appSessionId)
+    this.deps.elicitation.cancelForSession(appSessionId)
+    this.deps.appContinuations.delete(appSessionId)
     if (attachment) await this.deleteProviderSession(attachment.session.sessionId)
 
     if (attachment) {

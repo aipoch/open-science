@@ -74,6 +74,16 @@ describe('resolveCanonicalMcpToolIdentity', () => {
   )
 
   it.each([
+    'mcp__open-science-notebook__ask_user_question',
+    'mcp.open-science-notebook.ask_user_question',
+    'open_science_notebook_ask_user_question'
+  ])('normalizes a configured user-choice alias %s', (reportedName) => {
+    expect(resolveCanonicalMcpToolIdentity(reportedName, ['open-science-notebook'])).toBe(
+      'open-science-notebook/ask_user_question'
+    )
+  })
+
+  it.each([
     'mcp__open-science-notebook__notebook_execute',
     'mcp.open-science-notebook.notebook_execute',
     'open_science_notebook_notebook_execute'

@@ -1,19 +1,22 @@
 import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import type { AcpTurnTokenUsage } from '../../../shared/acp'
+import type { AcpTurnTokenUsage, ElicitationAnswer } from '../../../shared/acp'
 import type {
   PersistedChatSession,
   PersistedPendingHistoryReplay,
   PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
-import type { AppendMessageResult } from './session-store-message-graph-helpers'
-import { synchronizeSessionGraph } from './session-store-message-graph-owner'
+import {
+  synchronizeSessionGraph,
+  type AppendMessageResult
+} from './session-store-message-graph-helpers'
 import {
   canStartActivityGroup,
   projectActivePlan,
   projectActivityGroupCompletion,
   projectActivityGroupStart,
+  projectElicitationDraftAnswers,
   projectToolActivity,
   type UpsertToolActivityInput
 } from './session-store-run-activity-helpers'
@@ -90,6 +93,11 @@ export type SessionRunProjectionActions = {
   finishCompaction: (sessionId: string) => void
   failCompaction: (sessionId: string, error: string) => void
   upsertToolActivity: (input: UpsertToolActivityInput) => void
+  setElicitationDraftAnswers: (
+    sessionId: string,
+    activityId: string,
+    answers: ElicitationAnswer[]
+  ) => void
   setActivePlanProjection: (sessionId: string, projection: ActivePlanProjection) => void
   beginActivityGroup: (
     sessionId: string,
@@ -211,6 +219,15 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, input.sessionId, (session) =>
           projectToolActivity(session, input)
+        )
+      }))
+    },
+
+    setElicitationDraftAnswers: (sessionId, activityId, answers) => {
+      if (!sessionId || !activityId) return
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectElicitationDraftAnswers(session, activityId, answers)
         )
       }))
     },

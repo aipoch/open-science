@@ -225,6 +225,44 @@ describe('AcpSessionUpdateProjector', () => {
     expect(effects.every(Object.isFrozen)).toBe(true)
   })
 
+  it.each([
+    ['claude-code', 'mcp__open-science-notebook__ask_user_question'],
+    ['opencode', 'open_science_notebook_ask_user_question'],
+    ['codex', 'mcp.open-science-notebook.ask_user_question']
+  ] as const)(
+    'keeps the %s app-owned user-choice MCP call out of the visible activity timeline',
+    (framework, providerToolName) => {
+      const projector = createProjector()
+      const effects = projector.route(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'choice-tool-1',
+            title: providerToolName,
+            status: 'failed',
+            _meta:
+              framework === 'claude-code'
+                ? { claudeCode: { toolName: providerToolName } }
+                : { toolName: providerToolName }
+          }
+        },
+        {
+          framework,
+          eventId: 'event-choice-tool',
+          visible: true,
+          reconnectPending: false,
+          mcpServerNames: ['open-science-notebook']
+        }
+      )
+
+      expect(effects.map((effect) => effect.kind)).toEqual([
+        'context-observation',
+        'context-refresh'
+      ])
+    }
+  )
+
   it('suppresses only the unscoped Codex compaction warning', () => {
     const projector = createProjector()
     const warning =

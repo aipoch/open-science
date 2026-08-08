@@ -1,5 +1,4 @@
 import type { StoreApi } from 'zustand'
-
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -13,7 +12,6 @@ import {
   sanitizeToolActivity,
   type MessagePart,
   type PersistedActivityGroup,
-  type PersistedChatSession,
   type PersistedToolActivity,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
@@ -27,7 +25,9 @@ import {
   createPersistedUpload,
   createTitleFromMessage,
   createTitleFromUploads,
-  projectSessionGraph,
+  isBeforeTimelineItem,
+  projectElicitationRevision,
+  synchronizeSessionGraph,
   type SessionMessageGraphActions
 } from './session-store-message-graph-helpers'
 import {
@@ -45,13 +45,11 @@ let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
 let conversationBranchSequence = 0
-let runtimeSegmentSequence = 0
 
 export const createMessageId = (): string => {
   messageSequence += 1
   return `message-${Date.now()}-${messageSequence}`
 }
-
 const createPendingSessionId = (): string => {
   pendingSessionSequence += 1
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
@@ -61,37 +59,10 @@ export const createSortIndex = (): number => {
   timelineSequence += 1
   return timelineSequence
 }
-
 const createConversationBranchId = (): string => {
   conversationBranchSequence += 1
   return `message-branch-${Date.now()}-${conversationBranchSequence}`
 }
-
-export const createRuntimeSegmentId = (): string => {
-  runtimeSegmentSequence += 1
-  return `runtime-segment-${Date.now()}-${runtimeSegmentSequence}`
-}
-
-export const synchronizeSessionGraph = (
-  session: ChatSession,
-  messages: ChatMessage[],
-  now: number,
-  frameworkId = session.agentFrameworkId ?? 'claude-code',
-  backendId = session.agentBackendId,
-  model = session.agentModel,
-  forceRuntimeSegment = false
-): NonNullable<PersistedChatSession['conversationGraph']> =>
-  projectSessionGraph(
-    session,
-    messages,
-    now,
-    createRuntimeSegmentId(),
-    frameworkId,
-    backendId,
-    model,
-    forceRuntimeSegment
-  )
-
 const createMessage = (
   role: ChatMessageRole,
   content: string,
@@ -557,8 +528,8 @@ export const createSessionMessageGraphOwner = <
               (message) =>
                 (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
             )
-            const activities = session.activities?.filter(
-              (activity) => activity.createdAt < cutMessage.createdAt
+            const activities = session.activities?.filter((activity) =>
+              isBeforeTimelineItem(activity, cutMessage)
             )
             const retainedActivityIds = new Set(activities?.map((activity) => activity.id) ?? [])
             const activityGroups = session.activityGroups
@@ -600,6 +571,39 @@ export const createSessionMessageGraphOwner = <
           })
         }) as Partial<State>
     )
+  },
+
+  setElicitationHistoryReplayRequest: (sessionId, requestId) => {
+    const state = get()
+    set({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? { ...session, elicitationHistoryReplayRequestId: requestId }
+          : session
+      )
+    } as Partial<State>)
+  },
+
+  reviseSessionFromElicitation: (sessionId, activityId) => {
+    if (!sessionId || !activityId) return false
+    let revised = false
+    set(
+      (state) =>
+        ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== sessionId) return session
+            const projection = projectElicitationRevision(
+              session,
+              activityId,
+              createConversationBranchId(),
+              Date.now()
+            )
+            revised = Boolean(projection)
+            return projection ?? session
+          })
+        }) as Partial<State>
+    )
+    return revised
   },
 
   activateMessageBranch: (sessionId, branchId) => {

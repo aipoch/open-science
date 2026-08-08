@@ -310,6 +310,317 @@ describe('ConversationPanel composer intake', () => {
     window.api = previousApi
   })
 
+  it('hides the ordinary composer while structured input is pending', () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Skill type',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'integration', label: 'Multi-omics integration' },
+          { value: 'clinical', label: 'Clinical statistics' }
+        ]
+      },
+      {
+        id: 'question_0_custom',
+        label: 'Other',
+        kind: 'text' as const
+      }
+    ]
+    const activeSession: ChatSession = {
+      id: 'session-elicitation',
+      projectId: 'project-a',
+      title: 'Structured input',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-ask-1',
+          kind: 'tool',
+          title: 'AskUserQuestion',
+          status: 'in_progress',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'What kind of skill are you trying to create?',
+            fields,
+            state: 'pending'
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    renderPanel({
+      activeSession,
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-1',
+          sessionId: activeSession.id,
+          toolCallId: 'tool-ask-1',
+          message: 'What kind of skill are you trying to create?',
+          fields
+        }
+      ]
+    })
+
+    const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
+    expect(elicitationComposer).not.toBeNull()
+    expect(elicitationComposer?.classList.contains('max-h-[min(70dvh,44rem)]')).toBe(true)
+    expect(elicitationComposer?.classList.contains('overflow-visible')).toBe(true)
+    expect(elicitationComposer?.classList.contains('px-px')).toBe(true)
+    expect(elicitationComposer?.classList.contains('pb-px')).toBe(true)
+    const resizeHandle = container.querySelector(
+      '[aria-label="Resize question panel"]'
+    ) as HTMLButtonElement
+    expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle.classList.contains('touch-none')).toBe(true)
+    expect(resizeHandle.classList.contains('[@media(pointer:coarse)]:h-11')).toBe(true)
+    const scrollSurface = container.querySelector(
+      '[data-testid="elicitation-composer-scroll"]'
+    ) as HTMLDivElement
+    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(scrollSurface.classList.contains('overscroll-contain')).toBe(true)
+    expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
+    expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
+    expect(scrollSurface.classList.contains('shadow-card-opaque')).toBe(false)
+
+    const optionRows = container.querySelectorAll<HTMLElement>(
+      '[data-elicitation-option-row="true"]'
+    )
+    expect(optionRows).toHaveLength(2)
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
+    scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
+    optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
+
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 200 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('380px')
+
+    act(() => {
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 400 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 400 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
+
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 288 }) as DOMRect
+    act(() => {
+      resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('320px')
+
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 300 }) as DOMRect
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('398px')
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+
+    const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
+    expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
+    expect(surfaceFade?.classList.contains('h-12')).toBe(true)
+    expect(surfaceFade?.classList.contains('bg-gradient-to-t')).toBe(true)
+    expect(surfaceFade?.classList.contains('from-bg-10')).toBe(true)
+    expect(surfaceFade?.classList.contains('to-bg-10/0')).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="composer-card-backdrop"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
+    const hiddenComposer = container.querySelector('[role="textbox"]')?.closest('form')
+    expect(hiddenComposer?.hidden).toBe(true)
+    expect(hiddenComposer?.classList.contains('hidden')).toBe(true)
+    expect(container.querySelector('[aria-label="Cancel run"]')?.closest('form')?.hidden).toBe(true)
+
+    renderPanel({
+      activeSession: {
+        ...activeSession,
+        status: 'idle',
+        activities: activeSession.activities?.map((activity) => ({
+          ...activity,
+          status: 'completed',
+          elicitation: activity.elicitation
+            ? {
+                ...activity.elicitation,
+                state: 'answered',
+                answers: [{ fieldId: 'question_0', value: 'integration' }]
+              }
+            : undefined
+        }))
+      },
+      pendingElicitations: []
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(false)
+  })
+
+  it('serializes a pending question ahead of Plan approval in the shared blocking lane', () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Scope',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'focused', label: 'Focused' },
+          { value: 'broad', label: 'Broad' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const pendingActivity: NonNullable<ChatSession['activities']>[number] = {
+      id: 'tool-choice-before-plan',
+      kind: 'tool',
+      title: 'Choose a scope',
+      status: 'in_progress',
+      eventIds: [],
+      sortIndex: 1,
+      promptMessageId: 'interaction-1',
+      createdAt: 1,
+      updatedAt: 1,
+      elicitation: {
+        message: 'Which scope should the Plan use?',
+        fields,
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-before-plan' }
+      }
+    }
+    const session: ChatSession = {
+      id: 'session-choice-before-plan',
+      projectId: 'project-a',
+      title: 'Choice before Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      activities: [pendingActivity],
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ activeSession: session, canEditDraft: false })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"] h3')?.textContent).toBe(
+      'Scope'
+    )
+    expect(container.textContent).not.toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+
+    renderPanel({
+      activeSession: {
+        ...session,
+        activities: [
+          {
+            ...pendingActivity,
+            status: 'completed',
+            elicitation: {
+              ...pendingActivity.elicitation!,
+              state: 'answered',
+              answers: [{ fieldId: 'question_0', value: 'focused' }]
+            }
+          }
+        ]
+      },
+      canEditDraft: false
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.textContent).toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+  })
+
+  it('restores a durable pending choice from the persisted activity', async () => {
+    const onRespondToElicitation = vi.fn().mockResolvedValue(undefined)
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Approach',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'minimal', label: 'Minimal' },
+          { value: 'expanded', label: 'Expanded' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const activeSession: ChatSession = {
+      id: 'session-restored-choice',
+      projectId: 'project-a',
+      title: 'Restored choice',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-choice-1',
+          kind: 'tool',
+          title: 'Choose an approach',
+          status: 'failed',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Choose an approach',
+            fields,
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    renderPanel({ activeSession, pendingElicitations: [], onRespondToElicitation })
+
+    const option = container.querySelector<HTMLButtonElement>(
+      '[data-testid="elicitation-option-minimal"]'
+    )
+    expect(option).not.toBeNull()
+    await act(async () => option?.click())
+    expect(option?.getAttribute('data-selected')).toBe('true')
+    expect(onRespondToElicitation).not.toHaveBeenCalled()
+    const finish = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Finish'
+    )
+    await act(async () => finish?.click())
+
+    expect(onRespondToElicitation).toHaveBeenCalledWith({
+      requestId: 'choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-restored-choice',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields,
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      }
+    })
+  })
+
   it('shows file type and per-file size behavior before selection', () => {
     renderPanel()
 

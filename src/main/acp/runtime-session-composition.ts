@@ -1,7 +1,9 @@
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import { createLogger } from '../logger'
+import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'
+import { AcpElicitationOwner } from './elicitation-owner'
 import { AcpPermissionContext } from './permission-context'
 import { ReviewerSessionOwner } from './reviewer-session-owner'
 import type { AcpRuntimeOptions } from './runtime'
@@ -21,16 +23,26 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     sessionRegistry.entries(true).map(({ appSessionId }) => appSessionId)
   const promptInFlightSessionIds = (): string[] => {
     const interactions = base.sessionInteractions.snapshot()
-    return [
-      ...interactions.filter(({ kind }) => kind === 'prompt'),
-      ...interactions.filter(({ kind }) => kind === 'compaction')
-    ].map(({ sessionId }) => sessionId)
+    return Array.from(
+      new Set([
+        ...interactions.filter(({ kind }) => kind === 'prompt').map(({ sessionId }) => sessionId),
+        ...interactions
+          .filter(({ kind }) => kind === 'compaction')
+          .map(({ sessionId }) => sessionId),
+        ...appContinuations.sessionIds()
+      ])
+    )
   }
   const agentPromptInFlightSessionIds = (): string[] =>
-    base.sessionInteractions
-      .snapshot()
-      .filter(({ kind }) => kind === 'prompt')
-      .map(({ sessionId }) => sessionId)
+    Array.from(
+      new Set([
+        ...base.sessionInteractions
+          .snapshot()
+          .filter(({ kind }) => kind === 'prompt')
+          .map(({ sessionId }) => sessionId),
+        ...appContinuations.sessionIds()
+      ])
+    )
   const snapshotProjection = (): RuntimeSnapshotProjection => {
     const sessionIds = activeSessionIds()
     const promptInFlightIds = promptInFlightSessionIds()
@@ -43,6 +55,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     return {
       sessionId: sessionRegistry.currentSessionId,
       sessionIds,
+      pendingElicitations: elicitationOwner.getPendingRequests(),
       pendingPermissions: permissionContext.getPendingRequests(),
       permissionProfiles,
       permissionGrants: Object.fromEntries(
@@ -63,6 +76,24 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     interactions: base.sessionInteractions,
     snapshotProjection,
     callbacks
+  })
+  const appContinuations = new AcpAppContinuationOwner({
+    activityChanged: base.notifyGenerationActivityChanged
+  })
+  base.generationActivity.bindAdditionalActivity(() => appContinuations.hasPending())
+  const elicitationOwner = new AcpElicitationOwner({
+    onProjection: (request, projection) => {
+      publication.pushEvent({
+        kind: 'tool',
+        level: 'info',
+        sessionId: request.sessionId,
+        toolCallId: request.toolCallId,
+        promptMessageId: request.durable?.promptMessageId,
+        title: request.message,
+        status: 'in_progress',
+        elicitation: projection
+      })
+    }
   })
   const sessionRegistry = new AcpSessionRegistry({
     addStartupBlocker: (token) => base.generationActivity.acquireStartup(token),
@@ -193,6 +224,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     sessionEnvironment,
     contextUsagePolicy,
     publication,
+    appContinuations,
+    elicitationOwner,
     permissionContext,
     reviewerSessions,
     sessionUpdateProjector

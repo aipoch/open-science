@@ -23,6 +23,7 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     canonicalName: 'open-science-notebook',
     openCodeName: 'open_science_notebook',
     tools: [
+      'ask_user_question',
       'notebook_execute',
       'repl_execute',
       'bash_execute',

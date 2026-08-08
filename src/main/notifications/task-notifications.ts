@@ -11,7 +11,10 @@ import type {
   ConnectorApprovalRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
-import type { NotificationInboxController } from './notification-inbox-controller'
+import {
+  agentQuestionDedupeKey,
+  type NotificationInboxController
+} from './notification-inbox-controller'
 
 export type TaskNotification = {
   title: string
@@ -38,7 +41,7 @@ export type TaskNotificationServiceDeps = {
   onAttentionError?: (error: unknown) => void
   // Durable inbox recording is shared by desktop, Web, and headless clients. Failures are reported
   // without changing the underlying task or approval lifecycle.
-  inbox?: Pick<NotificationInboxController, 'record' | 'settleAuthorization'>
+  inbox?: Pick<NotificationInboxController, 'record' | 'settleAction' | 'settleAuthorization'>
   onInboxError?: (error: unknown) => void
 }
 
@@ -126,7 +129,9 @@ const AUTHORIZATION_INBOX_SUMMARY = {
   compute: 'A compute request needs your approval.',
   'skill-import': 'A Skill import needs your approval.',
   'session-plan': 'A plan needs your approval.'
-} as const satisfies Record<NotificationSource, string>
+} as const satisfies Record<Exclude<NotificationSource, 'agent-question'>, string>
+
+const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
@@ -232,6 +237,14 @@ export const describePermissionNotification = (
   promptSnippet?: string
 ): TaskNotification => describeApprovalNotification(request.title, promptSnippet)
 
+const describeAgentQuestionNotification = (promptSnippet?: string): TaskNotification => ({
+  title: 'Response needed',
+  body: promptSnippet
+    ? `${quoteSnippet(promptSnippet)} needs your response.`
+    : 'The agent needs your response.',
+  attention: true
+})
+
 // Maps a parked connector approval (the external data-egress gate) to the notification to show.
 // The tool call blocks for up to five minutes waiting on the user, so this is the same "requires
 // attention" case as an ACP permission request, over a separate mechanism.
@@ -253,11 +266,12 @@ export type TrackedPrompt = {
 // are monotonic per service instance.
 type ChainEntry = { token: number; snippet?: string }
 
-// Watches agent-turn lifecycle events and posts an OS notification when a turn ends while the app
-// is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
+// Watches agent-turn lifecycle and structured-input events and posts an OS notification when the
+// app is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
 // unit-testable; wiring lives in main/ipc.ts.
 export class TaskNotificationService {
   private readonly tracks = new Map<string, ChainEntry[]>()
+  private readonly pendingAgentQuestions = new Map<string, Set<string>>()
   private trackCounter = 0
   private activationHandler: ((sessionId?: string) => void) | undefined
   private attentionHandlers: TaskNotificationAttentionHandlers | undefined
@@ -363,14 +377,28 @@ export class TaskNotificationService {
     }
   }
 
-  // Observes every runtime event (wired next to the 'acp:event' broadcast); only terminal events
-  // for a session can produce a notification, and never while the user is looking at the app.
+  // Observes every runtime event (wired next to the 'acp:event' broadcast); terminal events and
+  // pending questions can produce a notification, never while the user is looking at the app.
   handleRuntimeEvent = async (event: AcpRuntimeEvent): Promise<void> => {
+    if (event.elicitation && event.sessionId) {
+      await this.handleElicitationEvent(event)
+      return
+    }
     if (event.kind !== 'stop' && event.kind !== 'error') return
 
     const { sessionId } = event
 
     if (!sessionId) return
+
+    // App-owned choice turns finish normally while the durable card waits. Keep the original prompt
+    // tracked so the post-answer continuation owns the eventual completion notification.
+    if (
+      event.kind === 'stop' &&
+      event.text === 'end_turn' &&
+      (this.pendingAgentQuestions.get(sessionId)?.size ?? 0) > 0
+    ) {
+      return
+    }
 
     const tracked = this.trackedFor(sessionId)
     const snippet = tracked?.snippet
@@ -407,6 +435,52 @@ export class TaskNotificationService {
       createdAt: event.timestamp
     })
 
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
+  }
+
+  private async handleElicitationEvent(event: AcpRuntimeEvent): Promise<void> {
+    const { elicitation, sessionId } = event
+    if (!elicitation || !sessionId) return
+    const originId = elicitation.durable?.requestId ?? event.toolCallId ?? event.id
+    const dedupeKey = agentQuestionDedupeKey(originId)
+
+    if (elicitation.state !== 'pending') {
+      const pending = this.pendingAgentQuestions.get(sessionId)
+      pending?.delete(originId)
+      if (pending?.size === 0) this.pendingAgentQuestions.delete(sessionId)
+      const state: NotificationActionState =
+        elicitation.state === 'answered'
+          ? 'resolved'
+          : elicitation.state === 'declined'
+            ? 'rejected'
+            : 'cancelled'
+      try {
+        await this.deps.inbox?.settleAction(dedupeKey, state)
+      } catch (error) {
+        reportTaskNotificationError(this.deps.onInboxError, error)
+      }
+      return
+    }
+
+    const tracked = this.trackedFor(sessionId)
+    if (!tracked) return
+    const pending = this.pendingAgentQuestions.get(sessionId) ?? new Set<string>()
+    if (pending.has(originId)) return
+    pending.add(originId)
+    this.pendingAgentQuestions.set(sessionId, pending)
+
+    const notification = describeAgentQuestionNotification(tracked.snippet)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey,
+      kind: 'task.needs-attention',
+      source: 'agent-question',
+      sessionId,
+      originId,
+      title: notification.title,
+      summary: AGENT_QUESTION_INBOX_SUMMARY,
+      actionState: 'pending'
+    })
     await this.deliver(notification, sessionId)
     await inboxUpdate
   }

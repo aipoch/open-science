@@ -18,6 +18,7 @@ import {
 } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
 import { sanitizeActivityGroupTitle } from './activity-groups'
+import { sanitizeElicitationProjection, type ElicitationProjection } from './elicitation'
 import {
   parsePlanDocumentV1,
   planStepTitles,
@@ -204,6 +205,7 @@ export type PersistedToolActivity = {
   rawOutput?: unknown
   terminalOutput?: string
   terminalExitCode?: number | null
+  elicitation?: ElicitationProjection
   createdAt: number
   updatedAt: number
 }
@@ -974,6 +976,7 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const rawOutput = sanitizeRawPayload(activity.rawOutput)
   const terminalOutput = asCappedString(activity.terminalOutput, MAX_PERSISTED_TEXT_CHARS)
   const terminalExitCode = asNumber(activity.terminalExitCode)
+  const elicitation = sanitizeElicitationProjection(activity.elicitation)
 
   if (providerToolName) sanitized.providerToolName = providerToolName
   if (activityGroupId) sanitized.activityGroupId = activityGroupId
@@ -985,15 +988,22 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   if (rawOutput !== undefined) sanitized.rawOutput = rawOutput
   if (terminalOutput !== undefined) sanitized.terminalOutput = terminalOutput
   if (terminalExitCode !== undefined) sanitized.terminalExitCode = terminalExitCode
+  if (elicitation) sanitized.elicitation = elicitation
 
   return sanitized
 }
 
 // Runtime activity state cannot resume after a restart, so restore open activities as failed.
-const normalizeActivityAfterRestore = (activity: PersistedToolActivity): PersistedToolActivity =>
-  activity.status === 'pending' || activity.status === 'in_progress'
-    ? { ...activity, status: 'failed' }
-    : activity
+const normalizeActivityAfterRestore = (activity: PersistedToolActivity): PersistedToolActivity => ({
+  ...activity,
+  ...((activity.status === 'pending' || activity.status === 'in_progress') &&
+  !activity.elicitation?.durable
+    ? { status: 'failed' as const }
+    : {}),
+  ...(activity.elicitation?.state === 'pending' && !activity.elicitation.durable
+    ? { elicitation: { ...activity.elicitation, state: 'cancelled' as const } }
+    : {})
+})
 
 export const sanitizeActivityGroup = (group: unknown): PersistedActivityGroup | undefined => {
   if (!isRecord(group)) return undefined
@@ -1309,6 +1319,9 @@ const sanitizeConversationGraph = (
               : {}),
             ...(asString(candidate.forkMessageId)
               ? { forkMessageId: asString(candidate.forkMessageId) }
+              : {}),
+            ...(asString(candidate.forkActivityId)
+              ? { forkActivityId: asString(candidate.forkActivityId) }
               : {}),
             ...(asString(candidate.supersededMessageId)
               ? { supersededMessageId: asString(candidate.supersededMessageId) }

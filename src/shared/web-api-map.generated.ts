@@ -11,6 +11,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.getState': 'acp:get-state',
   'acp.resetSessionContext': 'acp:reset-session-context',
   'acp.respondPlan': 'acp:respond-plan',
+  'acp.respondToElicitation': 'acp:respond-elicitation',
   'acp.respondToPermission': 'acp:respond-permission',
   'acp.resumeSession': 'acp:resume-session',
   'acp.revokePermissionGrant': 'acp:revoke-permission-grant',

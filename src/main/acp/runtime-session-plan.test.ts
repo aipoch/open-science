@@ -153,6 +153,7 @@ const createRuntimeHarness = (options: {
       lookup: () => ({ attachment: { session: { sessionId: 'provider-session-1' } } })
     },
     sessionPlanWorkflow,
+    appContinuations: { delete: vi.fn(() => false) },
     artifactTurns: {
       promptMessageIdFor: () => 'interaction-1'
     },
@@ -160,6 +161,7 @@ const createRuntimeHarness = (options: {
       delete: vi.fn(async () => ({ status: 'closed' }))
     },
     permissionContext: { cancelForSession: vi.fn() },
+    elicitationOwner: { cancelForSession: vi.fn() },
     publication: { emitState: vi.fn() },
     callbacks: { onEvent: options.onEvent },
     pushEvent: (event: unknown) => options.onEvent?.(event),

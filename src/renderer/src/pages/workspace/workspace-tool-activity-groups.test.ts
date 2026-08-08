@@ -112,6 +112,30 @@ describe('groupConversationItems', () => {
     }
   })
 
+  it('keeps structured input standalone between adjacent tool groups', () => {
+    const grouped = groupConversationItems([
+      activityItem(createActivity({ id: 'a1', sortIndex: 1 })),
+      activityItem(
+        createActivity({
+          id: 'ask-1',
+          sortIndex: 2,
+          elicitation: {
+            message: 'Choose one',
+            fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+            state: 'pending'
+          }
+        })
+      ),
+      activityItem(createActivity({ id: 'a2', sortIndex: 3 }))
+    ])
+
+    expect(grouped.map((item) => item.type)).toEqual([
+      'activity-group',
+      'activity',
+      'activity-group'
+    ])
+  })
+
   it('splits adjacent activities at declared group boundaries', () => {
     const grouped = groupConversationItems(
       [

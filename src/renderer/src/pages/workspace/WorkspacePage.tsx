@@ -11,6 +11,10 @@ import {
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import {
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitation
+} from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
@@ -515,6 +519,7 @@ const WorkspacePage = ({
     setPermissionProfile,
     revokePermissionGrant
   } = useWorkspaceAgentRuntime()
+  const { respondToElicitation } = useWorkspaceElicitation()
 
   // Auto-trigger an analysis turn when a remote job finishes (design §11).
   useJobAnalysisEffect({ enabled: isSessionPersistenceReady, sendMessage })
@@ -950,6 +955,10 @@ const WorkspacePage = ({
   const visiblePermissionRequests = useMemo(
     () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
     [activeSession?.id, pendingPermissions]
+  )
+  const visibleElicitationRequests = useMemo(
+    () => pendingWorkspaceElicitations(activeSession),
+    [activeSession]
   )
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
   const activePermissionProfile =
@@ -2482,6 +2491,7 @@ const WorkspacePage = ({
             isUploadingAttachments={isUploadingAttachments}
             notebookReference={activeNotebookReference}
             pendingPermissions={visiblePermissionRequests}
+            pendingElicitations={visibleElicitationRequests}
             permissionProfile={activePermissionProfile}
             permissionProfileState={activePermissionProfileState}
             permissionGrants={activePermissionGrants}
@@ -2509,6 +2519,7 @@ const WorkspacePage = ({
             onTogglePreviewPanel={togglePreviewPanel}
             onOpenSidebar={() => setIsMobileSidebarOpen(true)}
             onRespondToPermission={respondToVisiblePermission}
+            onRespondToElicitation={respondToElicitation}
             onPermissionProfileChange={changePermissionProfile}
             onRevokePermissionGrant={revokeActivePermissionGrant}
             onClearPermissionGrants={clearActivePermissionGrants}

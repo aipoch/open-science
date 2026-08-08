@@ -6,6 +6,7 @@ import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
+  MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport
 } from '@/components/ui/message-scroller'
@@ -42,6 +43,7 @@ import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
@@ -384,6 +386,24 @@ const ProvenanceMessagesTimeline = ({
                       activity={conversationItem.activity}
                       contentPaddingClassName="px-0 md:px-0"
                     />
+                  )
+                }
+
+                if (conversationItem.type === 'activity') {
+                  return (
+                    <MessageScrollerItem
+                      key={conversationItem.id}
+                      messageId={conversationItem.id}
+                      className="min-w-0"
+                    >
+                      <div className="py-3">
+                        {conversationItem.activity.elicitation ? (
+                          <WorkspaceElicitationCard
+                            elicitation={conversationItem.activity.elicitation}
+                          />
+                        ) : null}
+                      </div>
+                    </MessageScrollerItem>
                   )
                 }
 

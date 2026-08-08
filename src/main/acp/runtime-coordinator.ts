@@ -9,6 +9,7 @@ import type {
   AcpCreateSessionResponse,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -23,8 +24,9 @@ import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
-import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
 import type { AgentModelChangeTarget } from '../agent-framework'
+import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 
 const MAX_EVENTS = 500
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
@@ -225,6 +227,7 @@ class AcpRuntimeCoordinator {
       ...(primary?.error ? { error: primary.error } : {}),
       events,
       pendingPermissions: snapshots.flatMap(({ snapshot }) => snapshot.pendingPermissions),
+      pendingElicitations: snapshots.flatMap(({ snapshot }) => snapshot.pendingElicitations ?? []),
       permissionProfiles: Object.assign(
         {},
         ...snapshots.map(({ snapshot }) => snapshot.permissionProfiles)
@@ -743,6 +746,23 @@ class AcpRuntimeCoordinator {
     return this.getSnapshot()
   }
 
+  respondToElicitation(response: ElicitationResponse): AcpStateSnapshot {
+    const runtime =
+      Array.from(this.runtimes).find((candidate) =>
+        candidate
+          .getSnapshot()
+          .pendingElicitations?.some((request) => request.requestId === response.requestId)
+      ) ??
+      (response.request ? this.findRuntimeForSession(response.request.sessionId) : undefined) ??
+      this.getActiveRuntime()
+    runtime.respondToElicitation(response)
+    return this.getSnapshot()
+  }
+
+  async requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {
+    return this.runtimeForSession(input.sessionId).requestUserInput(input)
+  }
+
   // Keeps an app-owned approval on the runtime that owns the conversation, so the existing ACP
   // broker/card can be used across framework generations without a parallel responder path.
   async requestAppApproval(input: {
@@ -1183,7 +1203,8 @@ class AcpRuntimeCoordinator {
     // which re-discovers and adopts it under the selected framework.
     const active = new Set([
       ...snapshot.promptInFlightSessionIds,
-      ...snapshot.pendingPermissions.map((request) => request.sessionId)
+      ...snapshot.pendingPermissions.map((request) => request.sessionId),
+      ...(snapshot.pendingElicitations ?? []).map((request) => request.sessionId)
     ])
     return snapshot.sessionIds.filter((sessionId) => active.has(sessionId))
   }

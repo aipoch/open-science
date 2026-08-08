@@ -546,7 +546,8 @@ const applyWorkspaceRuntimeEvent = async (
       rawInput: event.rawInput,
       rawOutput: event.rawOutput,
       terminalOutput: event.terminalOutput,
-      terminalExitCode: event.terminalExitCode
+      terminalExitCode: event.terminalExitCode,
+      elicitation: event.elicitation
     })
     const sessionAfterToolEvent = useSessionStore
       .getState()

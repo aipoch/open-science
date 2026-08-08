@@ -3,6 +3,13 @@ import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/s
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
+import {
+  MAX_AGENT_USER_CHOICE_OPTIONS,
+  MAX_AGENT_USER_CHOICE_QUESTIONS,
+  MAX_ELICITATION_LABEL_CHARS,
+  MAX_ELICITATION_MESSAGE_CHARS,
+  MIN_AGENT_USER_CHOICE_OPTIONS
+} from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 
@@ -14,6 +21,7 @@ const MAX_ENVIRONMENT_RESULTS = 30
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Notebook tool instructions (only applies when using open-science-notebook tools).',
+  'In Default mode, use `ask_user_question` as the first tool call when a request has materially different interpretations; do not inspect or use other tools first, and never print a textual choice list. Put all 1-3 known questions in one call with 2-4 real options each. Infer minor reversible details and omit Other; the UI adds custom, agent-decide, and Skip. It shows questions one at a time, then continues the task after Finish. A pending result ends the turn normally.',
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
   'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun a cell. Python/R data kernels cannot call connectors. Use `repl_execute` for `host.mcp`/`host.compute`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read the same `OPEN_SCIENCE_HANDOFF_DIR` path from Python/R.',
   'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
@@ -93,6 +101,28 @@ const listRuntimesToolSchema = {
 const bindRuntimeToolSchema = {
   language: z.enum(['python', 'r']),
   runtimeId: z.string().min(1)
+}
+
+const userChoiceOptionSchema = z.object({
+  label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS),
+  description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).optional()
+})
+
+const userChoiceQuestionSchema = z.object({
+  question: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS),
+  header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
+  options: z
+    .array(userChoiceOptionSchema)
+    .min(MIN_AGENT_USER_CHOICE_OPTIONS)
+    .max(MAX_AGENT_USER_CHOICE_OPTIONS)
+    .refine(
+      (options) => new Set(options.map((option) => option.label)).size === options.length,
+      'Option labels must be unique.'
+    )
+})
+
+const requestUserInputToolSchema = {
+  questions: z.array(userChoiceQuestionSchema).min(1).max(MAX_AGENT_USER_CHOICE_QUESTIONS)
 }
 
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
@@ -698,6 +728,11 @@ const compactRestartResult = (raw: unknown): unknown => {
   }
 }
 
+const compactUserChoiceResult = (raw: unknown): unknown => {
+  const record = asRecord(raw)
+  return record ? pickDefined(record, ['action', 'answer']) : raw
+}
+
 const resultPage = (input: unknown, defaultLimit: number): { offset: number; limit: number } => {
   const record = asRecord(input)
   const offset =
@@ -868,6 +903,16 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
 
 // Tool definitions stay data-driven so schema, title, and RPC method cannot drift independently.
 const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
+  {
+    name: 'ask_user_question',
+    title: 'Ask the user to choose',
+    description:
+      'In Default mode, collect 1-3 decisions when a request has materially different interpretations. Use this as the first tool call, before inspecting the workspace or using other tools, and include every known question in one call. Never print a textual choice list. Give each question 2-4 unique options with descriptions and omit Other; the app adds custom, agent-decide, and Skip. Questions appear one at a time. A pending result ends the turn normally; the app continues after Finish.',
+    method: 'requestUserInput',
+    inputSchema: requestUserInputToolSchema,
+    mapResult: compactUserChoiceResult,
+    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+  },
   {
     name: 'notebook_execute',
     title: 'Execute notebook code',

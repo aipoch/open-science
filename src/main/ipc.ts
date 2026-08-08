@@ -1064,6 +1064,11 @@ const createApplicationModules = async (
           return runtime.callSessionPlan(input)
         }
       },
+      requestUserInput: (request) => {
+        const runtime = runtimeRef.current
+        if (!runtime) throw new Error('ACP runtime is not initialized.')
+        return runtime.requestUserInput(request)
+      },
       artifactProvenance: {
         createVersion: (request) =>
           sessionPersistenceCoordinator.runSessionMutation(

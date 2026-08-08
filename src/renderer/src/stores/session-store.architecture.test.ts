@@ -934,6 +934,8 @@ describe('Session Store architecture', () => {
       'branchInNewSession',
       'clearPendingContextReplay',
       'removeMessage',
+      'reviseSessionFromElicitation',
+      'setElicitationHistoryReplayRequest',
       'truncateSessionFromMessage'
     ])
     expect(
@@ -961,6 +963,7 @@ describe('Session Store architecture', () => {
       'setAgentPromptInFlight',
       'setAgentStatus',
       'setAwaitingFirstAgentOutput',
+      'setElicitationDraftAnswers',
       'upsertToolActivity'
     ])
   })

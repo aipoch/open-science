@@ -43,6 +43,7 @@ export type PersistedMessageBranch = {
   agentFrameId: string
   parentBranchId?: string
   forkMessageId?: string
+  forkActivityId?: string
   supersededMessageId?: string
   headMessageId?: string
   createdAt: number
@@ -202,23 +203,75 @@ export const resolveActiveConversationActivities = (
   graph: PersistedConversationGraph
 ): { activities: PersistedToolActivity[]; activityGroups: PersistedActivityGroup[] } => {
   const messageIds = new Set(resolveActiveConversationMessages(graph).map((message) => message.id))
-  const activities = graph.activities
-    .filter((activity) => messageIds.has(activity.promptMessageId))
-    .map(({ agentFrameId, messageBranchId, promptMessageId, runtimeSegmentId, ...activity }) => {
+  const frame = graph.frames.find((candidate) => candidate.id === graph.activeFrameId)
+  const activeBranch = frame
+    ? graph.branches.find((candidate) => candidate.id === frame.activeBranchId)
+    : undefined
+  if (!activeBranch) throw new Error('Active Message Branch not found.')
+  const branchesById = indexById(graph.branches)
+  const branchAncestry: PersistedMessageBranch[] = []
+  let branch: PersistedMessageBranch | undefined = activeBranch
+  while (branch) {
+    branchAncestry.unshift(branch)
+    branch = branch.parentBranchId ? branchesById.get(branch.parentBranchId) : undefined
+  }
+  const branchIndexes = new Map(branchAncestry.map((candidate, index) => [candidate.id, index]))
+  const isLegacyCompatibleBranch = (branchId: string): boolean => {
+    let candidate = branchesById.get(branchId)
+    while (candidate) {
+      if (candidate.forkActivityId && !branchIndexes.has(candidate.id)) return false
+      candidate = candidate.parentBranchId ? branchesById.get(candidate.parentBranchId) : undefined
+    }
+    return true
+  }
+  const activitiesById = indexById(graph.activities)
+  const isAtOrAfter = (
+    activity: Pick<PersistedToolActivity, 'createdAt' | 'sortIndex'>,
+    cutoff: Pick<PersistedToolActivity, 'createdAt' | 'sortIndex'>
+  ): boolean =>
+    activity.createdAt > cutoff.createdAt ||
+    (activity.createdAt === cutoff.createdAt && activity.sortIndex >= cutoff.sortIndex)
+  const isActivityVisible = (activity: PersistedBranchActivity): boolean => {
+    const branchIndex = branchIndexes.get(activity.messageBranchId)
+    if (!messageIds.has(activity.promptMessageId)) return false
+    // Older schema-v1 graphs were synchronized by moving shared activities to whichever Branch was
+    // active at save time. Preserve that prompt-based visibility unless an explicit Activity cutoff
+    // proves the off-path Branch is a revised-answer continuation.
+    if (branchIndex === undefined) return isLegacyCompatibleBranch(activity.messageBranchId)
+    return branchAncestry.slice(branchIndex + 1).every((descendant) => {
+      const cutoff = descendant.forkActivityId
+        ? activitiesById.get(descendant.forkActivityId)
+        : undefined
+      return !cutoff || !isAtOrAfter(activity, cutoff)
+    })
+  }
+  const visibleBranchActivities = graph.activities.filter(isActivityVisible)
+  const visibleActivityIds = new Set(visibleBranchActivities.map((activity) => activity.id))
+  const activities = visibleBranchActivities.map(
+    ({ agentFrameId, messageBranchId, promptMessageId, runtimeSegmentId, ...activity }) => {
       void agentFrameId
       void messageBranchId
       void promptMessageId
       void runtimeSegmentId
       return activity
-    })
-  const activityGroups = graph.activityGroups
-    .filter((group) => messageIds.has(group.promptMessageId))
-    .map(({ agentFrameId, messageBranchId, promptMessageId, ...group }) => {
+    }
+  )
+  const activityGroups = graph.activityGroups.flatMap(
+    ({ agentFrameId, messageBranchId, promptMessageId, ...group }): PersistedActivityGroup[] => {
+      if (
+        !messageIds.has(promptMessageId) ||
+        (!branchIndexes.has(messageBranchId) && !isLegacyCompatibleBranch(messageBranchId))
+      ) {
+        return []
+      }
+      const activityIds = group.activityIds.filter((id) => visibleActivityIds.has(id))
+      if (group.activityIds.length > 0 && activityIds.length === 0) return []
       void agentFrameId
       void messageBranchId
       void promptMessageId
-      return group
-    })
+      return [{ ...group, activityIds }]
+    }
+  )
   return { activities, activityGroups }
 }
 
@@ -227,10 +280,15 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
   const frames = indexById(graph.frames)
   const branches = indexById(graph.branches)
   const messages = indexById(graph.messages)
+  const activities = indexById(graph.activities)
   if (frames.size !== graph.frames.length || branches.size !== graph.branches.length) {
     throw new Error('Conversation graph contains duplicate ids.')
   }
-  if (messages.size !== graph.messages.length || !frames.has(graph.rootFrameId)) {
+  if (
+    messages.size !== graph.messages.length ||
+    activities.size !== graph.activities.length ||
+    !frames.has(graph.rootFrameId)
+  ) {
     throw new Error('Conversation graph contains duplicate or missing root data.')
   }
   if (!frames.has(graph.activeFrameId))
@@ -276,6 +334,9 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
     const ids = new Set(path.map((message) => message.id))
     if (branch.forkMessageId && !ids.has(branch.forkMessageId)) {
       throw new Error('Message Branch fork is not on its path.')
+    }
+    if (branch.forkActivityId && !activities.has(branch.forkActivityId)) {
+      throw new Error('Message Branch Activity fork is missing.')
     }
   }
 
@@ -418,8 +479,15 @@ export const synchronizeActiveConversationActivities = (
       promptMessageId: prompt.id,
       runtimeSegmentId
     }
-    if (existing) Object.assign(existing, scoped)
-    else {
+    if (existing) {
+      const { agentFrameId, messageBranchId, promptMessageId, runtimeSegmentId } = existing
+      Object.assign(existing, scoped, {
+        agentFrameId,
+        messageBranchId,
+        promptMessageId,
+        runtimeSegmentId
+      })
+    } else {
       next.activities.push(scoped)
       byActivityId.set(scoped.id, scoped)
     }
@@ -443,8 +511,10 @@ export const synchronizeActiveConversationActivities = (
       promptMessageId: prompt.id
     }
     const existing = byGroupId.get(group.id)
-    if (existing) Object.assign(existing, scoped)
-    else {
+    if (existing) {
+      const { agentFrameId, messageBranchId, promptMessageId } = existing
+      Object.assign(existing, scoped, { agentFrameId, messageBranchId, promptMessageId })
+    } else {
       next.activityGroups.push(scoped)
       byGroupId.set(scoped.id, scoped)
     }
@@ -478,6 +548,56 @@ export const forkEditedConversationMessage = (
     forkMessageId: target.parentMessageId,
     supersededMessageId: target.id,
     headMessageId: target.parentMessageId,
+    createdAt: now,
+    updatedAt: now
+  })
+  frame.activeBranchId = branchId
+  validateConversationGraph(next)
+  return next
+}
+
+// Starts a sibling continuation after an existing active-path Message and before the selected
+// Activity. Structured-answer edits retain the shared transcript while keeping the old question and
+// downstream answer on the parent Branch.
+export const forkConversationAfterActivity = (
+  graph: PersistedConversationGraph,
+  messageId: string,
+  activityId: string,
+  branchId: string,
+  now: number
+): PersistedConversationGraph => {
+  const next = structuredClone(graph)
+  const frame = next.frames.find((candidate) => candidate.id === next.activeFrameId)
+  if (!frame) throw new Error('Active Agent Frame not found.')
+  const parentBranch = next.branches.find((candidate) => candidate.id === frame.activeBranchId)
+  if (!parentBranch) throw new Error('Active Message Branch not found.')
+  const path = resolveMessageBranchPath(next, parentBranch.id)
+  const target = path.find((message) => message.id === messageId)
+  if (!target) throw new Error('Conversation Branch fork Message is not on the active path.')
+  const activity = next.activities.find(
+    (candidate) =>
+      candidate.id === activityId &&
+      path.some((message) => message.id === candidate.promptMessageId)
+  )
+  if (
+    !activity ||
+    !resolveActiveConversationActivities(next).activities.some(
+      (candidate) => candidate.id === activity.id
+    )
+  ) {
+    throw new Error('Conversation Branch fork Activity is not on the active path.')
+  }
+  if (next.branches.some((branch) => branch.id === branchId)) {
+    throw new Error(`Conversation Branch already exists: ${branchId}`)
+  }
+
+  next.branches.push({
+    id: branchId,
+    agentFrameId: frame.id,
+    parentBranchId: parentBranch.id,
+    forkMessageId: target.id,
+    forkActivityId: activity.id,
+    headMessageId: target.id,
     createdAt: now,
     updatedAt: now
   })

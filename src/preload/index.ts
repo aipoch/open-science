@@ -117,6 +117,8 @@ const api: OpenScienceAPI = {
     deleteSession: (request) => electronRendererContracts.invoke('acp.deleteSession', request),
     respondToPermission: (response) =>
       electronRendererContracts.invoke('acp.respondToPermission', response),
+    respondToElicitation: (response) =>
+      electronRendererContracts.invoke('acp.respondToElicitation', response),
     setPermissionProfile: (request) =>
       electronRendererContracts.invoke('acp.setPermissionProfile', request),
     revokePermissionGrant: (request) =>

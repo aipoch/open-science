@@ -37,6 +37,25 @@ const errorEvent = (
   ...(options.recoverable ? { recoverable: options.recoverable } : {})
 })
 
+const elicitationEvent = (
+  state: NonNullable<AcpRuntimeEvent['elicitation']>['state'],
+  requestId = 'choice-1'
+): AcpRuntimeEvent => ({
+  id: `elicitation-${state}`,
+  timestamp: 1,
+  kind: 'tool',
+  level: 'info',
+  sessionId: 'session-1',
+  toolCallId: 'tool-choice-1',
+  title: 'Choose an approach',
+  elicitation: {
+    message: 'Choose an approach',
+    fields: [],
+    state,
+    durable: { kind: 'agent-user-choice', requestId }
+  }
+})
+
 const permissionRequest = (title: string, sessionId = 'session-1'): AcpPermissionRequest => ({
   requestId: 'req-1',
   sessionId,
@@ -311,6 +330,7 @@ describe('TaskNotificationService', () => {
   it('records task outcomes and authorization requests even when native delivery is suppressed', async () => {
     const inbox = {
       record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
       settleAuthorization: vi.fn(async () => undefined)
     }
     const show = vi.fn()
@@ -370,6 +390,53 @@ describe('TaskNotificationService', () => {
       title: 'Task completed',
       body: 'The agent finished responding.'
     })
+  })
+
+  it('parks completion on a question and settles it before the continuation completes', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    const { service, shown, attentionRequests } = createService({ inbox })
+
+    service.trackPrompt({ sessionId: 'session-1', text: 'Build a small internal tool' })
+    await service.handleRuntimeEvent(elicitationEvent('pending'))
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({
+      title: 'Response needed',
+      body: '"Build a small internal tool" needs your response.'
+    })
+    expect(attentionRequests).toEqual([1])
+    expect(inbox.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupeKey: 'input:agent-question:choice-1',
+        kind: 'task.needs-attention',
+        source: 'agent-question',
+        actionState: 'pending'
+      })
+    )
+    expect(inbox.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'task.completed' })
+    )
+
+    await service.handleRuntimeEvent(elicitationEvent('answered'))
+    await service.handleRuntimeEvent(stopEvent('end_turn'))
+
+    expect(inbox.settleAction).toHaveBeenCalledWith('input:agent-question:choice-1', 'resolved')
+    expect(inbox.record).toHaveBeenCalledWith(expect.objectContaining({ kind: 'task.completed' }))
+  })
+
+  it('does not redeliver a question when more steps append to the same request', async () => {
+    const { service, shown } = createService({})
+    service.trackPrompt({ sessionId: 'session-1', text: 'Build a small internal tool' })
+
+    await service.handleRuntimeEvent(elicitationEvent('pending'))
+    await service.handleRuntimeEvent(elicitationEvent('pending'))
+
+    expect(shown).toHaveLength(1)
   })
 
   it('does not notify while the app is focused', async () => {
@@ -579,7 +646,11 @@ describe('TaskNotificationService', () => {
     async (_label, event, kind, summary) => {
       const record = vi.fn(async () => undefined)
       const { service } = createService({
-        inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
+        inbox: {
+          record,
+          settleAction: vi.fn(async () => undefined),
+          settleAuthorization: vi.fn(async () => undefined)
+        }
       })
 
       service.trackPrompt({ sessionId: 'session-1', text: 'secret prompt text' })
@@ -612,7 +683,11 @@ describe('TaskNotificationService', () => {
   it('does not record task outcomes for cancellation or recoverable retries', async () => {
     const record = vi.fn(async () => undefined)
     const { service } = createService({
-      inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
+      inbox: {
+        record,
+        settleAction: vi.fn(async () => undefined),
+        settleAuthorization: vi.fn(async () => undefined)
+      }
     })
 
     service.trackPrompt({ sessionId: 'cancelled', text: 'Cancel me' })
@@ -634,6 +709,7 @@ describe('TaskNotificationService', () => {
     const { service, shown, inboxErrors } = createService({
       inbox: {
         record: () => Promise.reject(error),
+        settleAction: vi.fn(async () => undefined),
         settleAuthorization: vi.fn(async () => undefined)
       }
     })
@@ -653,6 +729,7 @@ describe('TaskNotificationService', () => {
           new Promise<void>((resolve) => {
             finishInbox = resolve
           }),
+        settleAction: vi.fn(async () => undefined),
         settleAuthorization: vi.fn(async () => undefined)
       }
     })

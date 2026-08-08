@@ -195,6 +195,26 @@ const isArtifactSaveTool = (
   )
 }
 
+const isAgentUserChoiceTool = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean => {
+  const mcpServerNames = context?.mcpServerNames
+  if (!mcpServerNames) return false
+  if (!mcpServerNames.map(canonicalAppMcpServerName).includes('open-science-notebook')) return false
+
+  if (trustedMcpToolIdentity(params) === 'open-science-notebook/ask_user_question') return true
+  if (context.frameworkId === 'codex') return false
+
+  const providerToolName = extractProviderToolName(params.toolCall)
+  if (!providerToolName) return false
+
+  return (
+    resolveCanonicalMcpToolIdentity(providerToolName, mcpServerNames) ===
+    'open-science-notebook/ask_user_question'
+  )
+}
+
 // Returns an option only when the application can make a provider-neutral decision. Full access is the
 // user's explicit, dialog-confirmed choice, so it auto-approves everything (for frameworks that delegate
 // permissions rather than bypassing natively — a native-bypass agent sends no requests here at all).
@@ -208,6 +228,13 @@ const resolveAutomaticPermission = (
   }
 
   if (isOpenCodeNativeSkillPermission(params, context)) {
+    return resolveAllowOptionId(params)
+  }
+
+  // Asking the user is itself the authorization boundary: the call cannot execute code or mutate
+  // external state, and it remains blocked until the renderer answers or cancels it. Do not insert a
+  // redundant permission card before the actual choice card.
+  if (isAgentUserChoiceTool(params, context)) {
     return resolveAllowOptionId(params)
   }
 

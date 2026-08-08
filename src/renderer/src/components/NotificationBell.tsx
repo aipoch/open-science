@@ -41,6 +41,11 @@ const iconFor = (item: NotificationInboxItem): React.JSX.Element => {
 }
 
 const actionLabel = (item: NotificationInboxItem): string | undefined => {
+  if (item.source === 'agent-question') {
+    if (item.actionState === 'pending') return 'Needs response'
+    if (item.actionState === 'resolved') return 'Answered'
+    if (item.actionState === 'rejected') return 'Skipped'
+  }
   if (item.actionState === 'pending') return 'Needs approval'
   if (item.actionState === 'expired') return 'Expired'
   if (item.actionState === 'cancelled') return 'Cancelled'

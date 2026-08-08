@@ -44,6 +44,7 @@ import type {
   HandoffLifecycleEventSource,
   HandoffRetryRequest
 } from '../../../../shared/handoff-lifecycle'
+import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 import { MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../../../shared/artifacts'
@@ -53,12 +54,14 @@ import {
 } from '../../../../shared/artifact-provenance'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
@@ -340,6 +343,7 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  pendingElicitations = [],
   handoffLifecycleSource,
   onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
@@ -866,6 +870,42 @@ const WorkspaceMessageScrollerImpl = ({
 
                   if (item.type === 'plan-activity') {
                     return <WorkspacePlanActivityRecord key={item.id} activity={item.activity} />
+                  }
+
+                  if (item.type === 'activity') {
+                    if (!item.activity.elicitation) return null
+                    const elicitationRequest =
+                      pendingElicitations.find(
+                        (request) => request.toolCallId === item.activity.id
+                      ) ??
+                      (activeSession && item.activity.elicitation.durable
+                        ? {
+                            requestId: item.activity.elicitation.durable.requestId,
+                            sessionId: activeSession.id,
+                            toolCallId: item.activity.id,
+                            message: item.activity.elicitation.message,
+                            fields: item.activity.elicitation.fields,
+                            durable: item.activity.elicitation.durable
+                          }
+                        : undefined)
+                    return (
+                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                        <div className="px-4 pb-1 pt-3 md:px-6">
+                          <div className="mx-auto w-full max-w-4xl">
+                            <WorkspaceElicitationCard
+                              key={elicitationRequest?.requestId ?? item.activity.id}
+                              elicitation={item.activity.elicitation}
+                              request={elicitationRequest}
+                              variant={
+                                item.activity.elicitation.state === 'pending'
+                                  ? 'pending-placeholder'
+                                  : 'default'
+                              }
+                            />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                    )
                   }
 
                   return (

@@ -2,6 +2,8 @@ import * as acp from '@agentclientprotocol/sdk'
 import type {
   AuthenticateRequest,
   ClientConnection,
+  CreateElicitationRequest,
+  CreateElicitationResponse,
   InitializeRequest,
   InitializeResponse,
   RequestPermissionRequest,
@@ -41,6 +43,9 @@ type AcpProcessExitContext = AcpProcessEventContext &
   }>
 
 type AcpAgentConnectionHooks = Readonly<{
+  createElicitation: (
+    request: CreateElicitationRequest
+  ) => CreateElicitationResponse | Promise<CreateElicitationResponse>
   requestPermission: (
     request: RequestPermissionRequest
   ) => RequestPermissionResponse | Promise<RequestPermissionResponse>
@@ -273,6 +278,9 @@ class AcpAgentConnectionAdapter {
       .client({ name: 'open-science' })
       .onRequest(acp.methods.client.session.requestPermission, (context) =>
         hooks.requestPermission(context.params)
+      )
+      .onRequest(acp.methods.client.elicitation.create, (context) =>
+        hooks.createElicitation(context.params)
       )
       .onNotification(acp.methods.client.session.update, (context) =>
         hooks.observeSessionUpdate(context.params)

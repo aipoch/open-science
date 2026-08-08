@@ -2741,6 +2741,7 @@ describe('session store public contract', () => {
         'renameSession',
         'replaceMessageArtifacts',
         'replaceMessageUploads',
+        'reviseSessionFromElicitation',
         'selectSession',
         'setActivePlanProjection',
         'setAgentPromptInFlight',
@@ -2749,6 +2750,8 @@ describe('session store public contract', () => {
         'setAwaitingFirstAgentOutput',
         'setBranchSwitchBlocked',
         'setContextUsage',
+        'setElicitationDraftAnswers',
+        'setElicitationHistoryReplayRequest',
         'setEnabledComputeHosts',
         'setFixLoopActive',
         'setPermissionPending',
@@ -2772,6 +2775,8 @@ describe('session store public contract', () => {
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+      'src/renderer/src/lib/acp/useWorkspaceElicitation.ts',
+      'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
@@ -2898,6 +2903,7 @@ describe('session store public contract', () => {
         agentPromptInFlight: true,
         branchContextResetRequired: true,
         specialistSwitchResetRequired: true,
+        elicitationHistoryReplayRequestId: 'choice-replay',
         branchSwitchBlocked: true,
         pendingContextReplayMessageId: 'message-1',
         activePlanProjection: createPlanProjection('active-version'),
@@ -2940,6 +2946,7 @@ describe('session store public contract', () => {
       'agentPromptInFlight',
       'branchContextResetRequired',
       'specialistSwitchResetRequired',
+      'elicitationHistoryReplayRequestId',
       'branchSwitchBlocked',
       'pendingContextReplayMessageId',
       'runtimeContext'
@@ -3471,6 +3478,195 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0].filesRevision).toBe(3)
   })
 
+  it('persists completed steps for a pending multi-question elicitation', () => {
+    seedSession({
+      activities: [
+        {
+          ...createActivity('choice-1', baseTime + 200),
+          elicitation: {
+            message: 'Choose two settings',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Scope',
+                kind: 'single-select',
+                options: [{ value: 'general', label: 'General' }]
+              },
+              { id: 'question_0_custom', label: 'Other', kind: 'text' },
+              {
+                id: 'question_1',
+                label: 'Language',
+                kind: 'single-select',
+                options: [{ value: 'chinese', label: 'Chinese' }]
+              },
+              { id: 'question_1_custom', label: 'Other', kind: 'text' }
+            ],
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'choice-request-1' }
+          }
+        }
+      ]
+    })
+
+    useSessionStore
+      .getState()
+      .setElicitationDraftAnswers('session-1', 'choice-1', [
+        { fieldId: 'question_0', value: 'general' }
+      ])
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities?.[0].elicitation?.draftAnswers).toEqual([
+      { fieldId: 'question_0', value: 'general' }
+    ])
+    expect(toPersistedSession(session).activities?.[0].elicitation?.draftAnswers).toEqual([
+      { fieldId: 'question_0', value: 'general' }
+    ])
+
+    useSessionStore.getState().setElicitationDraftAnswers('session-1', 'choice-1', [])
+    expect(
+      useSessionStore.getState().sessions[0].activities?.[0].elicitation?.draftAnswers
+    ).toBeUndefined()
+  })
+
+  it('forks immediately before a durable elicitation and preserves the old downstream Branch', () => {
+    const choiceAt = baseTime + 200
+    const choiceSortIndex = 100
+    seedSession({
+      messages: [
+        createMessage('user-1', 'user', baseTime, { sortIndex: 10 }),
+        createMessage('agent-1', 'agent', baseTime + 100, { sortIndex: 20 }),
+        createMessage('user-2', 'user', choiceAt, { sortIndex: 80 }),
+        createMessage('question-preamble', 'agent', choiceAt, { sortIndex: 90 }),
+        createMessage('agent-2', 'agent', choiceAt, { sortIndex: 110 })
+      ],
+      activities: [
+        { ...createActivity('act-before', choiceAt), sortIndex: 95 },
+        {
+          ...createActivity('choice-1', choiceAt),
+          sortIndex: choiceSortIndex,
+          promptMessageId: 'user-2',
+          elicitation: {
+            message: 'Choose a direction',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Direction',
+                kind: 'single-select',
+                options: [
+                  { value: 'A', label: 'A' },
+                  { value: 'B', label: 'B' }
+                ]
+              }
+            ],
+            state: 'answered',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-request-1',
+              promptMessageId: 'user-2'
+            },
+            answers: [{ fieldId: 'question_0', value: 'A' }]
+          }
+        },
+        { ...createActivity('act-after', choiceAt), sortIndex: 105 }
+      ]
+    })
+
+    const revised = useSessionStore.getState().reviseSessionFromElicitation('session-1', 'choice-1')
+
+    expect(revised).toBe(true)
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'question-preamble'
+    ])
+    expect(session.activities?.map((activity) => activity.id)).toEqual(['act-before'])
+    expect(session.conversationGraph?.branches).toHaveLength(2)
+    expect(toPersistedSession(session).messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'question-preamble'
+    ])
+    expect(toPersistedSession(session).messages.at(-1)).not.toHaveProperty('sortIndex')
+    expect(toPersistedSession(session).activities?.map((activity) => activity.id)).toEqual([
+      'act-before'
+    ])
+
+    const originalBranchId = session.conversationGraph?.branches[0].id
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2',
+      'question-preamble',
+      'agent-2'
+    ])
+    expect(
+      useSessionStore.getState().sessions[0].activities?.map((activity) => activity.id)
+    ).toEqual(['act-before', 'choice-1', 'act-after'])
+  })
+
+  it('rebuilds renderer ordering for repeated same-timestamp revisions', () => {
+    const choiceAt = baseTime + 200
+    seedSession({
+      messages: [
+        createMessage('user-1', 'user', baseTime),
+        createMessage('agent-1', 'agent', baseTime + 100),
+        createMessage('user-2', 'user', choiceAt),
+        createMessage('agent-2', 'agent', choiceAt)
+      ],
+      activities: [
+        {
+          ...createActivity('choice-1', choiceAt),
+          promptMessageId: 'user-2',
+          elicitation: {
+            message: 'Choose a direction',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Direction',
+                kind: 'single-select',
+                options: [
+                  { value: 'A', label: 'A' },
+                  { value: 'B', label: 'B' }
+                ]
+              }
+            ],
+            state: 'answered',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-request-1',
+              promptMessageId: 'user-2'
+            },
+            answers: [{ fieldId: 'question_0', value: 'A' }]
+          }
+        }
+      ]
+    })
+
+    expect(useSessionStore.getState().reviseSessionFromElicitation('session-1', 'choice-1')).toBe(
+      true
+    )
+    const originalBranchId =
+      useSessionStore.getState().sessions[0].conversationGraph?.branches[0].id
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+
+    expect(
+      useSessionStore.getState().sessions[0].messages.find((message) => message.id === 'agent-2')
+        ?.sortIndex
+    ).toBeDefined()
+    expect(useSessionStore.getState().reviseSessionFromElicitation('session-1', 'choice-1')).toBe(
+      true
+    )
+    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
+      'user-1',
+      'agent-1',
+      'user-2'
+    ])
+  })
+
   it('ignores unknown session or message ids', () => {
     seedSession()
     const before = useSessionStore.getState().sessions[0]
@@ -3781,5 +3977,36 @@ describe('truncateSessionFromMessage', () => {
 
     useSessionStore.getState().clearSpecialistSwitchResetRequired('session-1')
     expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+  })
+
+  it('never persists the transient elicitation history replay request id', () => {
+    seedSession()
+    useSessionStore.getState().setElicitationHistoryReplayRequest('session-1', 'choice-retry')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.elicitationHistoryReplayRequestId).toBe('choice-retry')
+    expect(toPersistedSession(session)).not.toHaveProperty('elicitationHistoryReplayRequestId')
+  })
+
+  it('keeps the elicitation replay requirement across a durable save acknowledgement', () => {
+    seedSession()
+    useSessionStore.getState().setElicitationHistoryReplayRequest('session-1', 'choice-retry')
+
+    const source = useSessionStore.getState().sessions[0]
+    const durable = {
+      ...toPersistedSession(source),
+      title: 'Acknowledged title',
+      updatedAt: source.updatedAt + 1
+    }
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: durable,
+      mode: 'replace-persisted-if-current'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Acknowledged title',
+      elicitationHistoryReplayRequestId: 'choice-retry'
+    })
   })
 })

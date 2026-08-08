@@ -2,7 +2,12 @@
 import { act, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
-import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
+import {
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession,
+  type ToolActivity
+} from '@/stores/session-store'
 import {
   createInitialReviewState,
   selectProjectSessionReviews,
@@ -124,6 +129,18 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   ...overrides
 })
 
+const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Tool',
+  status: 'in_progress',
+  eventIds: ['event-1'],
+  sortIndex: 1,
+  createdAt: 1710000000001,
+  updatedAt: 1710000000001,
+  ...overrides
+})
+
 const createUpload = (overrides: Partial<UploadedAttachment> = {}): UploadedAttachment => ({
   id: 'upload-1',
   sessionId: 'session-42',
@@ -236,6 +253,105 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       root.unmount()
     })
     container.remove()
+  })
+
+  it('reserves a read-only transcript card while structured input waits below', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const projection = {
+      message: 'Choose an approach',
+      fields: [
+        {
+          id: 'approach',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          required: true,
+          options: [
+            { value: 'minimal', label: 'Minimal change', description: 'Reuse the activity.' },
+            { value: 'expanded', label: 'Expanded model' }
+          ]
+        }
+      ],
+      state: 'pending' as const
+    }
+    const session = createSession({
+      activities: [createActivity({ id: 'tool-ask-1', elicitation: projection })]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          onSendEditedMessage={vi.fn()}
+          pendingElicitations={[
+            {
+              requestId: 'elicitation-1',
+              sessionId: session.id,
+              toolCallId: 'tool-ask-1',
+              message: projection.message,
+              fields: projection.fields
+            }
+          ]}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-card"]')).not.toBeNull()
+    expect(container.textContent).toContain('Choose an approach')
+    expect(container.textContent).toContain('Awaiting your answer…')
+    expect(
+      container.querySelector('[data-testid="elicitation-pending-placeholder"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-option-minimal"]')).toBeNull()
+  })
+
+  it('rehydrates a durable answered question as a read-only message review', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const projection = {
+      message: 'Choose an approach',
+      fields: [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          options: [
+            { value: 'Minimal', label: 'Minimal change' },
+            { value: 'Expanded', label: 'Expanded model' }
+          ]
+        },
+        { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+      ],
+      state: 'answered' as const,
+      durable: {
+        kind: 'agent-user-choice' as const,
+        requestId: 'elicitation-answered',
+        promptMessageId: 'message-1'
+      },
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    }
+    const session = createSession({
+      status: 'idle',
+      activities: [createActivity({ id: 'tool-ask-answered', elicitation: projection })]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    expect(container.textContent).toContain('Minimal change')
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
+        ?.click()
+    })
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-option-Expanded"]')).not.toBeNull()
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.textContent).not.toContain('Submit')
+    expect(container.textContent).not.toContain('Finish')
   })
 
   it('updates the visible message-branch review card when a running review completes', async () => {

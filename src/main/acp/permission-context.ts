@@ -656,6 +656,19 @@ class AcpPermissionContext {
     )
   }
 
+  consumeTrustedCodexMcpToolCall(
+    sessionId: string,
+    toolCallId: string,
+    mcpIdentity: string
+  ): boolean {
+    const identities = this.codexMcpToolIdentities.get(sessionId)
+    if (identities?.get(toolCallId)?.mcpIdentity !== mcpIdentity) return false
+
+    identities.delete(toolCallId)
+    if (identities.size === 0) this.codexMcpToolIdentities.delete(sessionId)
+    return true
+  }
+
   cancelAllPending(): void {
     this.broker.cancelAllPending()
     this.humanOnlyRequestIds.clear()

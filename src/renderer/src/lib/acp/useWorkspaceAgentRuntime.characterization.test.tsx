@@ -30,6 +30,7 @@ const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnap
   sessionIds: [],
   events: [],
   pendingPermissions: [],
+  pendingElicitations: [],
   permissionProfiles: {},
   permissionGrants: {},
   contextUsageBySession: {},
@@ -51,6 +52,7 @@ type RuntimeMock = {
   cancel: Mock
   deleteSession: Mock
   respondToPermission: Mock
+  respondToElicitation: Mock
   setPermissionProfile: Mock
   revokePermissionGrant: Mock
 }
@@ -67,6 +69,7 @@ const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   cancel: vi.fn(),
   deleteSession: vi.fn(),
   respondToPermission: vi.fn().mockResolvedValue(state),
+  respondToElicitation: vi.fn().mockResolvedValue(state),
   setPermissionProfile: vi.fn(),
   revokePermissionGrant: vi.fn().mockResolvedValue(state)
 })
@@ -133,6 +136,15 @@ describe('workspace Agent Runtime hook contract', () => {
           toolCallId: 'tool-1',
           title: 'Allow command?',
           options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-1',
+          sessionId: 'session-1',
+          toolCallId: 'tool-choice-1',
+          message: 'Choose an approach',
+          fields: []
         }
       ],
       permissionProfiles: {

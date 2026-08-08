@@ -68,6 +68,7 @@ const createFakeRuntime = (options: {
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
+  requestUserInput: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -134,6 +135,7 @@ const createFakeRuntime = (options: {
     )
     return snapshot
   })
+  const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -221,6 +223,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     respondToPermission,
+    requestUserInput,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -244,6 +247,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     respondToPermission,
+    requestUserInput,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
       options.callbacks.onEvent?.(event)
@@ -2235,6 +2239,20 @@ describe('AcpRuntimeCoordinator', () => {
       permission.requestId,
       'cancelled'
     )
+
+    await expect(
+      coordinator.requestUserInput({
+        sessionId: 'session-1',
+        questions: [
+          {
+            question: 'Which approach?',
+            options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+          }
+        ]
+      })
+    ).resolves.toEqual({ action: 'answered', answer: 'Minimal' })
+    expect(created[0].requestUserInput).toHaveBeenCalledOnce()
+    expect(created[1].requestUserInput).not.toHaveBeenCalled()
   })
 
   it('does not reuse persisted event namespaces across coordinator lifetimes', async () => {

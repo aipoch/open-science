@@ -239,6 +239,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.onState',
       'acp.resetSessionContext',
       'acp.respondPlan',
+      'acp.respondToElicitation',
       'acp.respondToPermission',
       'acp.resumeSession',
       'acp.revokePermissionGrant',
@@ -568,10 +569,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 185 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 186 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(186)
+    expect(runtimeContracts).toHaveLength(187)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

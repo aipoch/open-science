@@ -11,7 +11,13 @@ import {
   type PersistedChatSession,
   type SessionPlanRuntimeContext
 } from './session-persistence'
-import { createLinearConversationGraph } from './conversation-graph'
+import {
+  activateConversationBranch,
+  createLinearConversationGraph,
+  forkConversationAfterActivity,
+  resolveActiveConversationActivities,
+  synchronizeActiveConversationActivities
+} from './conversation-graph'
 import type { ActivePlanProjection } from './session-plan/contract'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
@@ -508,6 +514,119 @@ describe('message image persistence', () => {
   })
 })
 
+describe('conversation Activity fork persistence', () => {
+  it('round-trips the Activity cutoff that separates revised answer Branches', () => {
+    const messages = [
+      {
+        id: 'user-1',
+        role: 'user' as const,
+        content: 'Build something',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'agent-1',
+        role: 'agent' as const,
+        content: 'Choose one',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'agent-2',
+        role: 'agent' as const,
+        content: 'Old answer path',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 4,
+        updatedAt: 4
+      }
+    ]
+    const graph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages,
+        createdAt: 1,
+        updatedAt: 4
+      }),
+      [
+        {
+          id: 'before-choice',
+          kind: 'tool',
+          title: 'Inspect context',
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          promptMessageId: 'user-1',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'choice-1',
+          kind: 'tool',
+          title: 'Choose one',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          promptMessageId: 'user-1',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      []
+    )
+    const forked = forkConversationAfterActivity(graph, 'agent-1', 'choice-1', 'revised-choice', 5)
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        id: 'session-1',
+        projectId: 'project-a',
+        title: 'Choice revision',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: messages.slice(0, 2),
+        activities: [
+          {
+            id: 'before-choice',
+            kind: 'tool',
+            title: 'Inspect context',
+            status: 'completed',
+            sortIndex: 0,
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 5
+          }
+        ],
+        conversationGraph: forked,
+        createdAt: 1,
+        updatedAt: 5
+      })
+    )
+
+    expect(
+      restored?.conversationGraph?.branches.find((branch) => branch.id === 'revised-choice')
+        ?.forkActivityId
+    ).toBe('choice-1')
+    expect(
+      restored?.conversationGraph?.activities.find((item) => item.id === 'before-choice')
+    ).toMatchObject({
+      messageBranchId: graph.branches[0].id
+    })
+    expect(
+      resolveActiveConversationActivities(restored!.conversationGraph!).activities.map(
+        (item) => item.id
+      )
+    ).toEqual(['before-choice'])
+    expect(
+      resolveActiveConversationActivities(
+        activateConversationBranch(restored!.conversationGraph!, graph.branches[0].id)
+      ).activities.map((item) => item.id)
+    ).toEqual(['before-choice', 'choice-1'])
+  })
+})
+
 describe('turn token usage persistence', () => {
   it('round-trips valid totals and drops invalid usage fields', () => {
     const restored = normalizeSessionFile({
@@ -625,6 +744,56 @@ describe('context usage persistence', () => {
 })
 
 describe('sanitizeToolActivity', () => {
+  it('keeps a valid structured-input projection on the tool activity', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-ask-1',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Which approach should I use?',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select',
+            required: true,
+            options: [
+              {
+                value: 'minimal',
+                label: 'Minimal change',
+                description: 'Reuse the existing activity model.'
+              }
+            ]
+          }
+        ],
+        state: 'answered',
+        answers: [{ fieldId: 'question_0', value: 'minimal' }],
+        respondedAt: 42
+      }
+    })
+
+    expect(activity?.elicitation).toEqual({
+      message: 'Which approach should I use?',
+      fields: [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select',
+          required: true,
+          options: [
+            {
+              value: 'minimal',
+              label: 'Minimal change',
+              description: 'Reuse the existing activity model.'
+            }
+          ]
+        }
+      ],
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'minimal' }],
+      respondedAt: 42
+    })
+  })
+
   it('keeps identity fields and known text/diff content', () => {
     const activity = sanitizeToolActivity({
       id: 'tool-1',
@@ -882,6 +1051,65 @@ describe('normalizeSessionFile with activities', () => {
     )
 
     expect(activities?.[0]?.status).toBe('failed')
+  })
+
+  it('restores a durable pending agent choice as actionable', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'Waiting for an answer',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        elicitation: {
+          message: 'Choose one',
+          fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+          state: 'pending',
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-1'
+          },
+          draftAnswers: [{ fieldId: 'choice', value: 'First step' }]
+        },
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]).toMatchObject({
+      status: 'in_progress',
+      elicitation: {
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' },
+        draftAnswers: [{ fieldId: 'choice', value: 'First step' }]
+      }
+    })
+  })
+
+  it('still cancels a non-durable pending protocol elicitation on restore', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'Waiting for an answer',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        elicitation: {
+          message: 'Choose one',
+          fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+          state: 'pending'
+        },
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]).toMatchObject({
+      status: 'failed',
+      elicitation: { state: 'cancelled' }
+    })
   })
 
   it('restores open conversation graph activities as failed', () => {

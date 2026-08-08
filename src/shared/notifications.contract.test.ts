@@ -11,7 +11,7 @@ describe('message center projection contract', () => {
 
   it('keeps management lifecycle events outside notification sources', () => {
     expectTypeOf<NotificationSource>().toEqualTypeOf<
-      'agent-tool' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
+      'agent-tool' | 'agent-question' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
     >()
     expectTypeOf<'project' | 'session'>().not.toMatchTypeOf<NotificationSource>()
   })

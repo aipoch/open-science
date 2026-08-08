@@ -206,6 +206,17 @@ const startFakeAgent = (
       text: string
       prompt: ContentBlock[]
     }) => Promise<PromptResponse | void> | PromptResponse | void
+    elicitationForPrompt?: (context: {
+      sessionId: string
+      text: string
+    }) => acp.CreateElicitationRequest | undefined
+    codexMcpToolCallBeforeElicitation?: {
+      toolCallId: string
+      server: string
+      tool: string
+      arguments?: Record<string, unknown>
+    }
+    elicitationRepeatCount?: number
     toolForPrompt?: (text: string) => { toolCallId: string; title: string } | undefined
     replyForPrompt?: (text: string) => string
     usageForPrompt?: (text: string) => { used: number; size: number } | undefined
@@ -226,6 +237,8 @@ const startFakeAgent = (
   modeChanges: Array<{ sessionId: string; modeId: string }>
   configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }>
   actions: string[]
+  initializeRequests: acp.InitializeRequest[]
+  elicitationResponses: acp.CreateElicitationResponse[]
 } => {
   const authRequests: unknown[] = []
   const providerConfigurations: unknown[] = []
@@ -242,22 +255,27 @@ const startFakeAgent = (
   const modeChanges: Array<{ sessionId: string; modeId: string }> = []
   const configChanges: Array<{ sessionId: string; configId: string; value: string | boolean }> = []
   const actions: string[] = []
+  const initializeRequests: acp.InitializeRequest[] = []
+  const elicitationResponses: acp.CreateElicitationResponse[] = []
   let sessionIndex = 0
   let resumeIndex = 0
 
   acp
     .agent({ name: 'test-agent' })
-    .onRequest(acp.methods.agent.initialize, () => ({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: {
-        loadSession: false,
-        sessionCapabilities: {
-          ...(options.supportsClose === false ? {} : { close: {} }),
-          ...(options.supportsResume === false ? {} : { resume: {} })
-        }
-      },
-      authMethods: []
-    }))
+    .onRequest(acp.methods.agent.initialize, (ctx) => {
+      initializeRequests.push(ctx.params)
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: {
+            ...(options.supportsClose === false ? {} : { close: {} }),
+            ...(options.supportsResume === false ? {} : { resume: {} })
+          }
+        },
+        authMethods: []
+      }
+    })
     .onRequest(acp.methods.agent.authenticate, (ctx) => {
       authRequests.push(ctx.params)
       return {}
@@ -368,6 +386,38 @@ const startFakeAgent = (
         text,
         prompt: ctx.params.prompt
       })
+      const elicitation = options.elicitationForPrompt?.({
+        sessionId: ctx.params.sessionId,
+        text
+      })
+      if (elicitation) {
+        const codexMcpToolCall = options.codexMcpToolCallBeforeElicitation
+        if (codexMcpToolCall) {
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: codexMcpToolCall.toolCallId,
+              kind: 'execute',
+              title: `mcp.${codexMcpToolCall.server}.${codexMcpToolCall.tool}`,
+              status: 'pending',
+              rawInput: {
+                server: codexMcpToolCall.server,
+                tool: codexMcpToolCall.tool,
+                arguments: codexMcpToolCall.arguments ?? {}
+              },
+              _meta: { is_mcp_tool_call: true }
+            }
+          })
+        }
+        for (let index = 0; index < (options.elicitationRepeatCount ?? 1); index += 1) {
+          const response = await ctx.client.request(
+            acp.methods.client.elicitation.create,
+            elicitation
+          )
+          elicitationResponses.push(response)
+        }
+      }
       const tool = options.toolForPrompt?.(text)
       if (tool) {
         await ctx.client.notify(acp.methods.client.session.update, {
@@ -444,7 +494,9 @@ const startFakeAgent = (
     cancelledSessions,
     modeChanges,
     configChanges,
-    actions
+    actions,
+    initializeRequests,
+    elicitationResponses
   }
 }
 
@@ -1955,6 +2007,7 @@ describe('ACP runtime session management', () => {
     for (const prompt of fakeAgent.prompts) {
       expect(prompt.text).not.toContain('`open_science_activity_begin_activity_group`')
       expect(prompt.text).toContain('`open_science_artifacts_write_artifact_file`')
+      expect(prompt.text).toContain('`open_science_notebook_ask_user_question`')
       expect(prompt.text).toContain('`open_science_notebook_notebook_execute`')
       expect(prompt.text).toContain('open_science_skills_request_skill_import')
       expect(prompt.text).not.toContain('`open-science-')
@@ -2786,6 +2839,674 @@ describe('ACP runtime session management', () => {
     expect(resolveManagedUpload).not.toHaveBeenCalled()
     expect(resolveSessionUpload).not.toHaveBeenCalled()
     expect(registerTurnInputs).not.toHaveBeenCalled()
+  })
+
+  it('advertises form elicitation and resumes the prompt with a structured answer', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['elicitation-session'], {
+      elicitationForPrompt: ({ sessionId }) => ({
+        mode: 'form',
+        sessionId,
+        toolCallId: 'tool-ask-1',
+        message: 'Choose an approach',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            question_0: {
+              type: 'string',
+              title: 'Approach',
+              enum: ['minimal', 'expanded']
+            }
+          },
+          required: ['question_0']
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          const request = snapshot.pendingElicitations?.[0]
+          if (!request) return
+          runtime.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'minimal' }]
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'ask me' })
+
+    expect(fakeAgent.initializeRequests[0].clientCapabilities).toMatchObject({
+      elicitation: { form: {} }
+    })
+    expect(fakeAgent.elicitationResponses).toEqual([
+      { action: 'accept', content: { question_0: 'minimal' } }
+    ])
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool',
+          toolCallId: 'tool-ask-1',
+          elicitation: expect.objectContaining({
+            state: 'answered',
+            answers: [{ fieldId: 'question_0', value: 'minimal' }]
+          })
+        })
+      ])
+    )
+  })
+
+  it('makes a provider-native AskUserQuestion form durable for restore and revision', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['native-choice-session'], {
+      elicitationForPrompt: ({ sessionId }) => ({
+        mode: 'form',
+        sessionId,
+        toolCallId: 'tool-native-choice',
+        message: 'Please answer the following questions.',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            question_0: {
+              type: 'string',
+              title: 'Scope',
+              description: 'Which scope should I use?',
+              oneOf: [
+                { const: 'Focused', title: 'Focused' },
+                { const: 'Broad', title: 'Broad' }
+              ]
+            },
+            question_0_custom: {
+              type: 'string',
+              title: 'Other',
+              description: 'Type your own answer instead of choosing an option above (optional).'
+            },
+            question_1: {
+              type: 'string',
+              title: 'Output',
+              description: 'Which output should I produce?',
+              oneOf: [
+                { const: 'CLI', title: 'CLI' },
+                { const: 'App', title: 'App' }
+              ]
+            },
+            question_1_custom: {
+              type: 'string',
+              title: 'Other',
+              description: 'Type your own answer instead of choosing an option above (optional).'
+            }
+          }
+        }
+      })
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          const request = snapshot.pendingElicitations?.[0]
+          if (!request) return
+          runtime.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [
+              { fieldId: 'question_0', value: 'Focused' },
+              { fieldId: 'question_1', value: 'CLI' }
+            ]
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Help me choose a direction first',
+      provenanceContext: { promptMessageId: 'prompt-native-choice' }
+    })
+
+    expect(fakeAgent.elicitationResponses).toEqual([
+      {
+        action: 'accept',
+        content: { question_0: 'Focused', question_1: 'CLI' }
+      }
+    ])
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: 'tool-native-choice',
+          elicitation: expect.objectContaining({
+            state: 'answered',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: expect.any(String),
+              promptMessageId: 'prompt-native-choice'
+            }
+          })
+        })
+      ])
+    )
+  })
+
+  it('silently accepts Codex MCP approval for the trusted user-choice tool', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codex-choice-approval-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      codexMcpToolCallBeforeElicitation: {
+        toolCallId: 'call-ask-user-question',
+        server: 'open-science-notebook',
+        tool: 'ask_user_question'
+      },
+      elicitationForPrompt: ({ sessionId }) => ({
+        mode: 'form',
+        sessionId,
+        toolCallId: 'call-ask-user-question',
+        message: 'Allow the open-science-notebook MCP server to run ask_user_question?',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            persist: {
+              type: 'string',
+              title: 'Approval scope',
+              oneOf: [
+                { const: 'once', title: 'Allow once' },
+                { const: 'session', title: 'Allow for this session' },
+                { const: 'always', title: "Allow and don't ask again" }
+              ]
+            }
+          },
+          required: ['persist']
+        },
+        _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'] }
+      })
+    })
+    let publishedApprovalCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          const request = snapshot.pendingElicitations?.[0]
+          if (!request) return
+          publishedApprovalCount += 1
+          runtime.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'persist', value: 'once' }]
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'ask me to choose' })
+
+    expect(publishedApprovalCount).toBe(0)
+    expect(fakeAgent.elicitationResponses).toEqual([{ action: 'accept' }])
+  })
+
+  it('does not reuse a consumed Codex MCP approval correlation', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codex-choice-replay-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      codexMcpToolCallBeforeElicitation: {
+        toolCallId: 'call-ask-user-question',
+        server: 'open-science-notebook',
+        tool: 'ask_user_question'
+      },
+      elicitationRepeatCount: 2,
+      elicitationForPrompt: ({ sessionId }) => ({
+        mode: 'form',
+        sessionId,
+        toolCallId: 'call-ask-user-question',
+        message: 'Allow the open-science-notebook MCP server to run ask_user_question?',
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            persist: {
+              type: 'string',
+              title: 'Approval scope',
+              enum: ['once']
+            }
+          },
+          required: ['persist']
+        },
+        _meta: { codex_approval_kind: 'mcp_tool_call' }
+      })
+    })
+    let publishedApprovalCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      },
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          const request = snapshot.pendingElicitations?.[0]
+          if (!request) return
+          publishedApprovalCount += 1
+          runtime.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'persist', value: 'once' }]
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'replay approval' })
+
+    expect(publishedApprovalCount).toBe(1)
+    expect(fakeAgent.elicitationResponses).toEqual([
+      { action: 'accept' },
+      { action: 'accept', content: { persist: 'once' } }
+    ])
+  })
+
+  it('acknowledges an app-owned MCP choice and silently continues after the user answers', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['user-choice-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.requestUserInput({
+        sessionId: session.sessionId,
+        questions: [
+          {
+            question: 'Which implementation should I use?',
+            header: 'Approach',
+            options: [
+              { label: 'Minimal', description: 'Make the smallest focused change.' },
+              { label: 'Expanded', description: 'Include optional extensions.' }
+            ]
+          }
+        ]
+      })
+    ).resolves.toEqual({ action: 'pending' })
+
+    const request = runtime.getSnapshot().pendingElicitations?.[0]
+    expect(request).toMatchObject({
+      sessionId: session.sessionId,
+      durable: { kind: 'agent-user-choice', requestId: expect.any(String) }
+    })
+
+    const accepted = runtime.respondToElicitation({
+      requestId: request!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+    expect(accepted.promptInFlightSessionIds).toContain(session.sessionId)
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0]).toMatchObject({
+      sessionId: 'user-choice-session',
+      text: expect.stringContaining('Minimal')
+    })
+    await vi.waitFor(() =>
+      expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool',
+          elicitation: expect.objectContaining({
+            state: 'answered',
+            answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+          })
+        })
+      ])
+    )
+  })
+
+  it('waits for every queued app-owned choice before continuing with all answers', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['queued-user-choice-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.requestUserInput({
+      sessionId: session.sessionId,
+      questions: [
+        {
+          question: 'Which stack should I use?',
+          options: [{ label: 'Python' }, { label: 'R' }]
+        }
+      ]
+    })
+    await runtime.requestUserInput({
+      sessionId: session.sessionId,
+      questions: [
+        {
+          question: 'Which output should I produce?',
+          options: [{ label: 'Notebook' }, { label: 'Report' }]
+        }
+      ]
+    })
+
+    const [request] = runtime.getSnapshot().pendingElicitations ?? []
+    expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1)
+    expect(request.fields).toMatchObject([
+      { id: 'question_0', description: 'Which stack should I use?' },
+      { id: 'question_0_custom' },
+      { id: 'question_1', description: 'Which output should I produce?' },
+      { id: 'question_1_custom' }
+    ])
+    expect(
+      runtime
+        .getSnapshot()
+        .events.filter((event) => event.kind === 'tool' && event.elicitation?.state === 'pending')
+        .at(-1)?.elicitation?.fields
+    ).toMatchObject(request.fields)
+    runtime.respondToElicitation({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: 'Python' },
+        { fieldId: 'question_1', value: 'Report' }
+      ]
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0].text).toContain('Which stack should I use?')
+    expect(fakeAgent.prompts[0].text).toContain('Python')
+    expect(fakeAgent.prompts[0].text).toContain('Which output should I produce?')
+    expect(fakeAgent.prompts[0].text).toContain('Report')
+  })
+
+  it('publishes one multi-question choice and continues only after every answer', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['batched-user-choice-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.requestUserInput({
+      sessionId: session.sessionId,
+      questions: [
+        {
+          question: 'Which stack should I use?',
+          options: [{ label: 'Python' }, { label: 'R' }]
+        },
+        {
+          question: 'Which output should I produce?',
+          options: [{ label: 'Notebook' }, { label: 'Report' }]
+        }
+      ]
+    })
+
+    const [request] = runtime.getSnapshot().pendingElicitations ?? []
+    expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1)
+    expect(request.fields).toMatchObject([
+      { id: 'question_0', description: 'Which stack should I use?' },
+      { id: 'question_0_custom' },
+      { id: 'question_1', description: 'Which output should I produce?' },
+      { id: 'question_1_custom' }
+    ])
+    expect(fakeAgent.prompts).toHaveLength(0)
+
+    runtime.respondToElicitation({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [
+        { fieldId: 'question_0', value: 'Python' },
+        { fieldId: 'question_1', value: 'Report' }
+      ]
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0].text).toContain('Which stack should I use?')
+    expect(fakeAgent.prompts[0].text).toContain('Python')
+    expect(fakeAgent.prompts[0].text).toContain('Which output should I produce?')
+    expect(fakeAgent.prompts[0].text).toContain('Report')
+  })
+
+  it('keeps the asking turn normal after publishing an app-owned choice', async () => {
+    const process = new FakeAgentProcess()
+    const cancelledSessions: string[] = []
+
+    acp
+      .agent({ name: 'ordered-user-choice-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'ordered-choice-session' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: 'choice-intro',
+            content: { type: 'text', text: 'I need one detail before I continue.' }
+          }
+        })
+        await runtime.requestUserInput({
+          sessionId: ctx.params.sessionId,
+          questions: [
+            {
+              question: 'Which stack should I use?',
+              options: [{ label: 'Python' }, { label: 'R' }]
+            }
+          ]
+        })
+        return {
+          stopReason: cancelledSessions.includes(ctx.params.sessionId) ? 'cancelled' : 'end_turn'
+        }
+      })
+      .onNotification(acp.methods.agent.session.cancel, (ctx) => {
+        cancelledSessions.push(ctx.params.sessionId)
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'build a useful skill' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(cancelledSessions).toEqual([])
+    const events = runtime.getSnapshot().events
+    const introIndex = events.findIndex(
+      (event) => event.kind === 'message' && event.text === 'I need one detail before I continue.'
+    )
+    const choiceIndex = events.findIndex(
+      (event) => event.kind === 'tool' && event.elicitation?.state === 'pending'
+    )
+    expect(introIndex).toBeGreaterThanOrEqual(0)
+    expect(choiceIndex).toBeGreaterThan(introIndex)
+  })
+
+  it('rehydrates a persisted app-owned choice before silently continuing', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const request = {
+      requestId: 'choice-restored-1',
+      sessionId: session.sessionId,
+      toolCallId: 'tool-choice-restored-1',
+      message: 'Choose an approach',
+      fields: [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          options: [
+            { value: 'Minimal', label: 'Minimal' },
+            { value: 'Expanded', label: 'Expanded' }
+          ]
+        },
+        { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+      ],
+      durable: {
+        kind: 'agent-user-choice' as const,
+        requestId: 'choice-restored-1',
+        promptMessageId: 'prompt-restored-1'
+      }
+    }
+
+    runtime.respondToElicitation({
+      requestId: request.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0].text).toContain('Expanded')
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: 'tool-choice-restored-1',
+          promptMessageId: 'prompt-restored-1',
+          elicitation: expect.objectContaining({
+            state: 'answered',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-restored-1',
+              promptMessageId: 'prompt-restored-1'
+            }
+          })
+        })
+      ])
+    )
+  })
+
+  it('rejects a mismatched restored choice without leaving a pending request', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['mismatched-choice-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    expect(() =>
+      runtime.respondToElicitation({
+        requestId: 'outer-choice-id',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request: {
+          requestId: 'inner-choice-id',
+          sessionId: session.sessionId,
+          toolCallId: 'tool-choice-mismatch',
+          message: 'Choose an approach',
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [
+                { value: 'Minimal', label: 'Minimal' },
+                { value: 'Expanded', label: 'Expanded' }
+              ]
+            }
+          ],
+          durable: { kind: 'agent-user-choice', requestId: 'inner-choice-id' }
+        }
+      })
+    ).toThrow('Restored structured input request id does not match the response')
+    expect(runtime.getSnapshot().pendingElicitations).toEqual([])
+  })
+
+  it('waits for the asking turn to stop before silently continuing with the answer', async () => {
+    const process = new FakeAgentProcess()
+    const firstPrompt = createDeferred()
+    const fakeAgent = startFakeAgent(process, ['queued-choice-session'], {
+      onPrompt: async ({ text }) => {
+        if (text === 'Ask before continuing') await firstPrompt.promise
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const askingTurn = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Ask before continuing'
+    })
+    await vi.waitFor(() => expect(runtime.getSnapshot().promptInFlight).toBe(true))
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+
+    await runtime.requestUserInput({
+      sessionId: session.sessionId,
+      questions: [
+        {
+          question: 'Which implementation should I use?',
+          options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+        }
+      ]
+    })
+    const request = runtime.getSnapshot().pendingElicitations?.[0]
+    runtime.respondToElicitation({
+      requestId: request!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+    await runtime.requestProviderReconnect()
+
+    expect(fakeAgent.prompts).toHaveLength(1)
+
+    firstPrompt.resolve()
+    await askingTurn
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+    expect(fakeAgent.prompts[1].text).toContain('Minimal')
+    await vi.waitFor(() => expect(process.killed).toBe(true))
   })
 
   it('sends staged uploads as ACP prompt content blocks', async () => {
@@ -5300,7 +6021,36 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[0].text).toContain(
       'Notebook tool instructions (only applies when using open-science-notebook tools)'
     )
+    expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
+    expect(fakeAgent.prompts[0].text).toContain('Default mode')
     expect(fakeAgent.prompts[0].text).not.toContain('<open_science_artifact_instructions>')
+  })
+
+  it('gives native Codex the blocking choice tool without relying on Plan mode', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['codex-native-session'], {
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: codexFramework,
+      notebook: {
+        projectName: 'default-project',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Ask me to choose' })
+
+    expect(
+      fakeAgent.newSessions[0].mcpServers.map((server) => (server as { name: string }).name)
+    ).toEqual(['open-science-notebook'])
+    expect(fakeAgent.prompts[0].text).toContain('`ask_user_question`')
+    expect(fakeAgent.prompts[0].text).toContain('Default mode')
   })
 
   it('does not tell Codex to skip the native SKILL.md read required for progressive loading', async () => {
@@ -15251,6 +16001,7 @@ describe('ACP runtime session management', () => {
       }
     })
     const createdSessionMeta = JSON.stringify(fakeAgent.newSessions[0]._meta)
+    expect(createdSessionMeta).toContain('mcp__open-science-notebook__ask_user_question')
     expect(createdSessionMeta).toContain('mcp__open-science-notebook__notebook_execute')
     expect(createdSessionMeta).not.toContain('`notebook_execute`')
   })
@@ -16598,6 +17349,90 @@ describe('ACP runtime session management', () => {
     await prompt
 
     expect(permissionResponses).toEqual([{ outcome: { outcome: 'selected', optionId: 'reject' } }])
+  })
+
+  it('continues a Claude turn after a rejected permission cancels the provider prompt', async () => {
+    const process = new FakeAgentProcess()
+    const continuationGate = createDeferred<PromptResponse>()
+    const prompts: string[] = []
+    let promptIndex = 0
+
+    acp
+      .agent({ name: 'claude-rejected-permission-agent' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: false,
+          sessionCapabilities: { close: {} }
+        },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remote-session-1' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        const text = ctx.params.prompt
+          .map((content) => (content.type === 'text' ? content.text : ''))
+          .join('')
+        prompts.push(text)
+
+        if (promptIndex++ === 0) {
+          const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId: 'denied-command',
+              title: 'Run command',
+              kind: 'execute',
+              status: 'pending',
+              rawInput: { command: 'ls -la' }
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
+            ]
+          })
+          expect(response).toEqual({
+            outcome: { outcome: 'selected', optionId: 'reject-once' }
+          })
+          return { stopReason: 'cancelled' }
+        }
+
+        return continuationGate.promise
+      })
+      .onNotification(acp.methods.agent.session.cancel, () => {
+        continuationGate.resolve({ stopReason: 'cancelled' })
+      })
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework: claudeCodeFramework,
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: {
+        onPermissionRequest: (request) => {
+          runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId: 'reject-once'
+          })
+        }
+      }
+    })
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'inspect the workspace' })
+
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+    expect(prompts[1]).toContain('permission')
+    expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
+
+    const cancelSnapshot = await runtime.cancelPrompt({ sessionId: session.sessionId })
+    expect(cancelSnapshot.promptInFlightSessionIds).toEqual([session.sessionId])
+    await vi.waitFor(() => expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([]))
   })
 
   it('keeps a cancelling prompt in flight until the agent returns its stop response', async () => {

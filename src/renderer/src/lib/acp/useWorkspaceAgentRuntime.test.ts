@@ -25,6 +25,7 @@ import {
   resendEditedWorkspaceMessage,
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
+import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
 import {
   cancelWorkspaceRun,
   compactWorkspaceSession,
@@ -613,6 +614,560 @@ describe('workspace session deletion', () => {
     )
 
     expect(useSessionStore.getState().sessions).toHaveLength(1)
+  })
+})
+
+describe('workspace durable elicitation', () => {
+  beforeEach(() => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-choice-1',
+      content: 'Build something',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'opencode',
+      agentBackendId: 'opencode:provider-1'
+    })
+    useSessionStore.getState().finishRun('session-choice-1')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reattaches a restored session before submitting its durable answer', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: false,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+      }
+    }
+
+    await respondToWorkspaceElicitation(
+      { state: createSnapshot(), resumeSession, respondToElicitation },
+      response
+    )
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'session-choice-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'opencode',
+      'opencode:provider-1',
+      undefined,
+      undefined,
+      undefined
+    )
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      respondToElicitation.mock.invocationCallOrder[0]
+    )
+    expect(respondToElicitation).toHaveBeenCalledWith(response)
+  })
+
+  it('replays prior history when restoring the provider resets its context', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+      }
+    }
+
+    await respondToWorkspaceElicitation(
+      { state: createSnapshot(), resumeSession, respondToElicitation },
+      response,
+      { supportsImageInput: true }
+    )
+
+    expect(respondToElicitation).toHaveBeenCalledWith({
+      ...response,
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBeUndefined()
+  })
+
+  it('keeps context-reset history for a retry after submitting the answer fails', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('bridge failed'))
+      .mockResolvedValueOnce(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-retry',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-retry',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-retry',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-retry' }
+      }
+    }
+
+    await expect(
+      respondToWorkspaceElicitation(
+        { state: createSnapshot(), resumeSession, respondToElicitation },
+        response,
+        { supportsImageInput: true }
+      )
+    ).rejects.toThrow('bridge failed')
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBe(
+      'choice-retry'
+    )
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession,
+        respondToElicitation
+      },
+      response,
+      { supportsImageInput: true }
+    )
+
+    expect(resumeSession).toHaveBeenCalledTimes(1)
+    expect(respondToElicitation).toHaveBeenLastCalledWith({
+      ...response,
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBeUndefined()
+  })
+
+  it('rewinds from an answered question and replays the retained history with the replacement answer', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    const prompt = session.messages[0]
+    const questionAt = prompt.createdAt + 10
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === session.id
+          ? {
+              ...candidate,
+              agentModel: 'old-model',
+              messages: [
+                ...candidate.messages,
+                {
+                  id: 'question-preamble',
+                  role: 'agent' as const,
+                  content: 'Question preamble',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  sortIndex: 9,
+                  createdAt: questionAt,
+                  updatedAt: questionAt
+                },
+                {
+                  id: 'downstream-answer',
+                  role: 'agent' as const,
+                  content: 'The old answer path',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  sortIndex: 11,
+                  createdAt: questionAt,
+                  updatedAt: questionAt
+                }
+              ],
+              activities: [
+                {
+                  id: 'tool-choice-answered',
+                  kind: 'tool' as const,
+                  title: 'Choose an approach',
+                  status: 'completed' as const,
+                  eventIds: ['choice-event'],
+                  sortIndex: 10,
+                  promptMessageId: prompt.id,
+                  createdAt: questionAt,
+                  updatedAt: questionAt,
+                  elicitation: {
+                    message: 'Choose an approach',
+                    fields: [
+                      {
+                        id: 'question_0',
+                        label: 'Approach',
+                        kind: 'single-select' as const,
+                        options: [
+                          { value: 'Minimal', label: 'Minimal' },
+                          { value: 'Expanded', label: 'Expanded' }
+                        ]
+                      }
+                    ],
+                    state: 'answered' as const,
+                    durable: {
+                      kind: 'agent-user-choice' as const,
+                      requestId: 'choice-revision',
+                      promptMessageId: prompt.id
+                    },
+                    answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+                  }
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:provider-2'
+    })
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: false,
+      frameworkId: 'codex',
+      backendId: 'codex:provider-2'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot([session.id]))
+    const onSendPreparationStateChange = vi.fn()
+    const response = {
+      requestId: 'choice-revision',
+      action: 'accept' as const,
+      replacePreviousAnswer: true,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request: {
+        requestId: 'choice-revision',
+        sessionId: session.id,
+        toolCallId: 'tool-choice-answered',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'choice-revision',
+          promptMessageId: prompt.id
+        }
+      }
+    }
+
+    const revision = respondToWorkspaceElicitation(
+      {
+        state: createSnapshot([session.id]),
+        resumeSession,
+        resetSessionContext,
+        respondToElicitation
+      },
+      response,
+      {
+        supportsImageInput: true,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:provider-2',
+        agentModel: 'new-model',
+        onSendPreparationStateChange
+      }
+    )
+    const competingSendPrompt = vi.fn()
+    const competing = await sendWorkspaceMessage(
+      {
+        state: createSnapshot([session.id]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: competingSendPrompt
+      },
+      {
+        sessionId: session.id,
+        text: 'race the revision',
+        cwd: session.cwd,
+        projectId: session.projectId,
+        supportsImageInput: true
+      }
+    )
+    expect(competing).toBeUndefined()
+    expect(competingSendPrompt).not.toHaveBeenCalled()
+    await revision
+
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      shutdown.mock.invocationCallOrder[0]
+    )
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      respondToElicitation.mock.invocationCallOrder[0]
+    )
+    expect(resumeSession).toHaveBeenCalledWith(
+      session.id,
+      session.cwd,
+      session.projectId,
+      'ask',
+      'opencode',
+      'opencode:provider-1',
+      undefined,
+      undefined,
+      undefined
+    )
+    expect(onSendPreparationStateChange.mock.calls).toEqual([
+      [session.id, true],
+      [session.id, false]
+    ])
+    expect(respondToElicitation).toHaveBeenCalledWith({
+      ...response,
+      request: {
+        ...response.request,
+        toolCallId: expect.stringMatching(/^ask-user-question-revision-/)
+      },
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(respondToElicitation.mock.calls[0]?.[0].historyReplay?.historyPreamble).toContain(
+      'Question preamble'
+    )
+    expect(respondToElicitation.mock.calls[0]?.[0].historyReplay?.historyPreamble).not.toContain(
+      'The old answer path'
+    )
+    const revised = useSessionStore.getState().sessions[0]
+    expect(revised.messages.map((message) => message.content)).toEqual([
+      'Build something',
+      'Question preamble'
+    ])
+    expect(revised.activities).toEqual([])
+    expect(revised.conversationGraph?.branches).toHaveLength(2)
+    expect(revised.agentFrameworkId).toBe('codex')
+    expect(revised.agentBackendId).toBe('codex:provider-2')
+    expect(revised.agentModel).toBe('new-model')
+    expect(revised.conversationGraph?.runtimeSegments.at(-1)?.model).toBe('new-model')
+  })
+
+  it('restores the transcript and forces replay when a revised answer cannot be submitted', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    const prompt = session.messages[0]
+    const questionAt = prompt.createdAt + 10
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === session.id
+          ? {
+              ...candidate,
+              messages: [
+                ...candidate.messages,
+                {
+                  id: 'old-downstream',
+                  role: 'agent' as const,
+                  content: 'The old answer path',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  createdAt: questionAt + 10,
+                  updatedAt: questionAt + 10
+                }
+              ],
+              activities: [
+                {
+                  id: 'answered-choice',
+                  kind: 'tool' as const,
+                  title: 'Choose an approach',
+                  status: 'completed' as const,
+                  eventIds: [],
+                  sortIndex: 1,
+                  promptMessageId: prompt.id,
+                  createdAt: questionAt,
+                  updatedAt: questionAt,
+                  elicitation: {
+                    message: 'Choose an approach',
+                    fields: [
+                      {
+                        id: 'question_0',
+                        label: 'Approach',
+                        kind: 'single-select' as const,
+                        options: [
+                          { value: 'Minimal', label: 'Minimal' },
+                          { value: 'Expanded', label: 'Expanded' }
+                        ]
+                      }
+                    ],
+                    state: 'answered' as const,
+                    durable: {
+                      kind: 'agent-user-choice' as const,
+                      requestId: 'failed-revision',
+                      promptMessageId: prompt.id
+                    },
+                    answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+                  }
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const response = {
+      requestId: 'failed-revision',
+      action: 'accept' as const,
+      replacePreviousAnswer: true,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request: {
+        requestId: 'failed-revision',
+        sessionId: session.id,
+        toolCallId: 'answered-choice',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'failed-revision',
+          promptMessageId: prompt.id
+        }
+      }
+    }
+
+    await expect(
+      respondToWorkspaceElicitation(
+        {
+          state: createSnapshot([session.id]),
+          resumeSession: vi.fn(),
+          resetSessionContext,
+          respondToElicitation: vi.fn().mockRejectedValue(new Error('bridge unavailable'))
+        },
+        response,
+        { supportsImageInput: true }
+      )
+    ).rejects.toThrow('bridge unavailable')
+
+    const restored = useSessionStore.getState().sessions[0]
+    expect(restored.messages.map((message) => message.content)).toEqual([
+      'Build something',
+      'The old answer path'
+    ])
+    expect(restored.activities?.map((activity) => activity.id)).toEqual(['answered-choice'])
+    expect(restored.branchContextResetRequired).toBe(true)
+
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot([session.id]))
+    const replayReset = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const sent = await sendWorkspaceMessage(
+      {
+        state: createSnapshot([session.id]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: replayReset,
+        sendPrompt
+      },
+      {
+        sessionId: session.id,
+        text: 'continue safely',
+        cwd: session.cwd,
+        projectId: session.projectId,
+        supportsImageInput: true,
+        agentFrameworkId: 'opencode',
+        agentBackendId: 'opencode:provider-1'
+      }
+    )
+
+    expect(sent).toBeDefined()
+    expect(replayReset).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    expect(sendPrompt.mock.calls[0]?.[5]).toContain('The old answer path')
   })
 })
 

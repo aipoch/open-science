@@ -92,6 +92,7 @@ class AcpRuntimeSnapshotOwner {
       toolLocations: event.toolLocations,
       rawInput: event.rawInput,
       rawOutput: event.rawOutput,
+      elicitation: event.elicitation,
       runId: event.runId,
       promptMessageId: event.promptMessageId,
       artifactSessionId: event.artifactSessionId,

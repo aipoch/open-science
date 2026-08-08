@@ -208,6 +208,48 @@ describe('createNotificationInboxController', () => {
     expect(settle).toHaveBeenCalledWith('authorization:agent-tool:request-1', 'rejected', 4000)
   })
 
+  it('waits for an in-flight question record before settling its action', async () => {
+    let finishRecord:
+      | ((state: { changed: boolean; unreadCount: number; latestSequence: number }) => void)
+      | undefined
+    const record = vi.fn(
+      () =>
+        new Promise<{ changed: boolean; unreadCount: number; latestSequence: number }>(
+          (resolve) => {
+            finishRecord = resolve
+          }
+        )
+    )
+    const settle = vi.fn(async () => ({ changed: true, unreadCount: 1, latestSequence: 1 }))
+    const db = repository({ record, settle } as never)
+    const inbox = createNotificationInboxController({
+      headless: true,
+      repository: db,
+      onChanged: vi.fn(),
+      createId: () => 'question-1',
+      now: () => 4500
+    })
+
+    const recording = inbox.record({
+      dedupeKey: 'input:agent-question:choice-1',
+      kind: 'task.needs-attention',
+      source: 'agent-question',
+      sessionId: 'session-1',
+      originId: 'choice-1',
+      title: 'Response needed',
+      summary: 'The agent is waiting for your response.',
+      actionState: 'pending'
+    })
+    const settling = inbox.settleAction('input:agent-question:choice-1', 'resolved')
+    await Promise.resolve()
+
+    expect(settle).not.toHaveBeenCalled()
+    finishRecord?.({ changed: true, unreadCount: 1, latestSequence: 1 })
+    await Promise.all([recording, settling])
+
+    expect(settle).toHaveBeenCalledWith('input:agent-question:choice-1', 'resolved', 4500)
+  })
+
   it('auto-acknowledges only task outcomes when a conversation becomes visible', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({

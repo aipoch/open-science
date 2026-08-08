@@ -1,6 +1,7 @@
 import {
   createLinearConversationGraph,
   ensureConversationRuntimeSegment,
+  forkConversationAfterActivity,
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../../shared/conversation-graph'
@@ -91,8 +92,27 @@ export type SessionMessageGraphActions = {
   clearPendingContextReplay: (sessionId: string, messageId: string) => void
   removeMessage: (sessionId: string, messageId: string) => void
   truncateSessionFromMessage: (sessionId: string, messageId: string) => void
+  reviseSessionFromElicitation: (sessionId: string, activityId: string) => boolean
+  setElicitationHistoryReplayRequest: (sessionId: string, requestId?: string) => void
   activateMessageBranch: (sessionId: string, branchId: string) => void
 }
+
+let runtimeSegmentSequence = 0
+
+export const createRuntimeSegmentId = (): string => {
+  runtimeSegmentSequence += 1
+  return `runtime-segment-${Date.now()}-${runtimeSegmentSequence}`
+}
+
+export const isBeforeTimelineItem = (
+  item: { createdAt: number; sortIndex?: number },
+  boundary: { createdAt: number; sortIndex?: number }
+): boolean =>
+  item.createdAt < boundary.createdAt ||
+  (item.createdAt === boundary.createdAt &&
+    item.sortIndex !== undefined &&
+    boundary.sortIndex !== undefined &&
+    item.sortIndex < boundary.sortIndex)
 
 export const projectSessionGraph = (
   session: ChatSession,
@@ -142,6 +162,105 @@ export const projectSessionGraph = (
     persistedGroups,
     session.activeRunRuntimeSegmentId
   )
+}
+
+export const synchronizeSessionGraph = (
+  session: ChatSession,
+  messages: ChatMessage[],
+  now: number,
+  frameworkId = session.agentFrameworkId ?? 'claude-code',
+  backendId = session.agentBackendId,
+  model = session.agentModel,
+  forceRuntimeSegment = false
+): NonNullable<PersistedChatSession['conversationGraph']> =>
+  projectSessionGraph(
+    session,
+    messages,
+    now,
+    createRuntimeSegmentId(),
+    frameworkId,
+    backendId,
+    model,
+    forceRuntimeSegment
+  )
+
+// Rewind immediately before a completed structured question while preserving the superseded
+// downstream transcript on its Message Branch. Main later projects the replacement activity with
+// a fresh toolCallId after accepting the revised answer.
+export const projectElicitationRevision = (
+  session: ChatSession,
+  activityId: string,
+  branchId: string,
+  now: number
+): ChatSession | undefined => {
+  const target = session.activities?.find((activity) => activity.id === activityId)
+  if (!target?.elicitation?.durable) return undefined
+
+  const promptMessageId = target.promptMessageId ?? target.elicitation.durable.promptMessageId
+  const promptIndex = promptMessageId
+    ? session.messages.findIndex((message) => message.id === promptMessageId)
+    : -1
+  const recordedForkMessageId = session.conversationGraph?.branches.find(
+    (branch) =>
+      branch.forkActivityId === target.id &&
+      branch.forkMessageId &&
+      session.messages.some((message) => message.id === branch.forkMessageId)
+  )?.forkMessageId
+  const recordedForkIndex = recordedForkMessageId
+    ? session.messages.findIndex((message) => message.id === recordedForkMessageId)
+    : -1
+  const messages = session.messages.filter(
+    (message, index) =>
+      (recordedForkIndex >= 0
+        ? index <= recordedForkIndex
+        : isBeforeTimelineItem(message, target)) || index <= promptIndex
+  )
+  const forkMessage = messages.at(-1)
+  if (!forkMessage) return undefined
+
+  const activities = session.activities?.filter((activity) =>
+    isBeforeTimelineItem(activity, target)
+  )
+  const retainedActivityIds = new Set(activities?.map((activity) => activity.id) ?? [])
+  const activityGroups = session.activityGroups
+    ?.map((group) => ({
+      ...group,
+      activityIds: group.activityIds.filter((id) => retainedActivityIds.has(id))
+    }))
+    .filter((group) => group.activityIds.length > 0)
+  const retainedMessageIds = new Set(messages.map((message) => message.id))
+  const removedMessages = session.messages.filter((message) => !retainedMessageIds.has(message.id))
+  const hasFiles = removedMessages.some(
+    (message) => (message.uploads?.length ?? 0) > 0 || (message.artifactIds?.length ?? 0) > 0
+  )
+  let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
+  try {
+    conversationGraph = forkConversationAfterActivity(
+      synchronizeSessionGraph(session, session.messages, now),
+      forkMessage.id,
+      target.id,
+      branchId,
+      now
+    )
+  } catch {
+    return undefined
+  }
+
+  return {
+    ...session,
+    status: 'idle',
+    messages,
+    activities,
+    activityGroups,
+    conversationGraph,
+    activeRun: undefined,
+    agentStatus: undefined,
+    error: undefined,
+    errorReportable: undefined,
+    interrupted: undefined,
+    filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
+    updatedAt: now
+  }
 }
 
 export const createTitleFromMessage = (content: string): string => {

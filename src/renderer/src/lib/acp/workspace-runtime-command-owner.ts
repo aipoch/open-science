@@ -20,7 +20,10 @@ import {
   resolveHistoryReplayTarget,
   type HistoryReplayDescriptor
 } from './history-preamble'
-import { prepareExistingWorkspacePrompt } from './workspace-runtime-prompt-preparation-owner'
+import {
+  isWorkspacePromptPreparationInFlight,
+  prepareExistingWorkspacePrompt
+} from './workspace-runtime-prompt-preparation-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
 type SendWorkspaceMessageInput = {
@@ -418,6 +421,7 @@ const sendWorkspaceMessage = async (
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     if (input.requireExistingSession && !session) return undefined
+    if (isWorkspacePromptPreparationInFlight(sessionId)) return undefined
     if (
       runtime.state.promptInFlightSessionIds.includes(sessionId) ||
       (session?.compacting && !input.allowCompactionRecovery) ||

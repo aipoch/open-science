@@ -3,6 +3,21 @@ import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
+import type {
+  ElicitationProjection,
+  ElicitationResponse as BaseElicitationResponse,
+  PendingElicitationRequest
+} from './elicitation'
+
+export { MAX_ELICITATION_MESSAGE_CHARS, resolveAgentUserChoiceQuestions } from './elicitation'
+export type {
+  AgentUserChoiceQuestion,
+  ElicitationAnswer,
+  ElicitationField,
+  ElicitationProjection,
+  ElicitationValue,
+  PendingElicitationRequest
+} from './elicitation'
 
 const ACP_MESSAGE_IMAGE_MIME_TYPES = [
   'image/avif',
@@ -18,6 +33,16 @@ export type AcpMessageImage = {
   mimeType: AcpMessageImageMimeType
   data: string
   byteLength: number
+}
+
+export type ElicitationResponse = BaseElicitationResponse & {
+  // Added only when a restored provider session had to adopt fresh context. The bounded transcript
+  // and media use the same replay path as ordinary post-reset prompts.
+  historyReplay?: {
+    historyPreamble?: string
+    historyAttachments?: UploadedAttachment[]
+    historyImages?: AcpMessageImage[]
+  }
 }
 
 // Message images are embedded in runtime IPC and session JSON, so keep each block small enough to
@@ -353,6 +378,7 @@ export type AcpRuntimeEvent = {
   // Terminal metadata carries Bash stdout/stderr and exit code when terminal output is streamed.
   terminalOutput?: string
   terminalExitCode?: number | null
+  elicitation?: ElicitationProjection
   // Prompt identity scopes chat, tool/activity, stop/error, and Artifact events to the originating
   // user turn. App-owned continuations retain it after the renderer's ordinary active run has settled.
   runId?: string
@@ -445,6 +471,8 @@ export type AcpStateSnapshot = {
   error?: string
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
+  // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
+  pendingElicitations?: PendingElicitationRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
   // Open Science-owned grants by app conversation, so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>

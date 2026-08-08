@@ -10,6 +10,8 @@ type DisconnectCurrent = (...args: [boolean, number]) => Promise<AcpStateSnapsho
 type CloseState = Readonly<{
   invalidatePendingSessionStartups: () => void
   disposePermissionContext: () => void
+  disposeElicitationOwner: () => void
+  clearPendingAppContinuations: () => void
   clearReviewerState: () => void
   clearPlanInteractions: () => void
   settleActivePrompts: () => readonly unknown[]
@@ -102,6 +104,8 @@ class AcpConnectionCloseWorkflow {
       }
     }
     runCleanup('permission-context', this.options.state.disposePermissionContext)
+    runCleanup('elicitation-owner', this.options.state.disposeElicitationOwner)
+    this.options.state.clearPendingAppContinuations()
     runCleanup('reviewer-state', this.options.state.clearReviewerState)
     runCleanup('plan-interactions', this.options.state.clearPlanInteractions)
     this.options.state.supersedeInteractions()
@@ -135,6 +139,8 @@ class AcpConnectionCloseWorkflow {
     const interruptedPrompts = this.options.state.settleActivePrompts()
     this.options.state.invalidatePendingSessionStartups()
     this.options.state.disposePermissionContext()
+    this.options.state.disposeElicitationOwner()
+    this.options.state.clearPendingAppContinuations()
     this.options.state.clearReviewerState()
     this.options.state.clearPlanInteractions()
     this.options.resources.cleanupUnexpectedClose(teardownGeneration)

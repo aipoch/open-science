@@ -63,7 +63,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   permissionGrantRegistry?: PermissionGrantRegistry
   initializationBarrier?: Promise<unknown>
   taskNotifications?: TaskNotificationService
-  notificationInbox?: Pick<NotificationInboxController, 'record' | 'settleAuthorization'>
+  notificationInbox?: Pick<
+    NotificationInboxController,
+    'record' | 'settleAction' | 'settleAuthorization'
+  >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (

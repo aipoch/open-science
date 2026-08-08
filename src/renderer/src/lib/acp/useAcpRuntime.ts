@@ -1,6 +1,7 @@
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
+  ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
@@ -18,6 +19,7 @@ const emptyAcpState: AcpStateSnapshot = {
   sessionIds: [],
   events: [],
   pendingPermissions: [],
+  pendingElicitations: [],
   permissionProfiles: {},
   permissionGrants: {},
   contextUsageBySession: {},
@@ -90,6 +92,7 @@ const useAcpRuntime = (): {
     turnIntent?: AcpPromptRequest['turnIntent']
   ) => Promise<AcpStateSnapshot>
   respondToPermission: (requestId: string, optionId?: string) => Promise<AcpStateSnapshot>
+  respondToElicitation: (response: ElicitationResponse) => Promise<AcpStateSnapshot>
   setPermissionProfile: (
     sessionId: string,
     profile: PermissionProfileId
@@ -361,6 +364,21 @@ const useAcpRuntime = (): {
     []
   )
 
+  const respondToElicitation = useCallback(
+    async (response: ElicitationResponse): Promise<AcpStateSnapshot> => {
+      setActionError(null)
+      try {
+        const snapshot = await window.api.acp.respondToElicitation(response)
+        setState(snapshot)
+        return snapshot
+      } catch (error) {
+        setActionError(getErrorMessage(error))
+        throw error
+      }
+    },
+    []
+  )
+
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId) => {
       const request: AcpSetPermissionProfileRequest = { sessionId, profile }
@@ -396,6 +414,7 @@ const useAcpRuntime = (): {
     cancel,
     sendPrompt,
     respondToPermission,
+    respondToElicitation,
     setPermissionProfile,
     revokePermissionGrant
   }

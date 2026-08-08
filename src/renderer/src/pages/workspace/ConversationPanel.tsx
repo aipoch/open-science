@@ -1,7 +1,11 @@
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpContextUsage
+  AcpContextUsage,
+  ElicitationAnswer,
+  ElicitationProjection,
+  ElicitationResponse,
+  PendingElicitationRequest
 } from '../../../../shared/acp'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type {
@@ -32,7 +36,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -49,7 +53,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
-import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -66,6 +70,7 @@ import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
@@ -112,6 +117,126 @@ const attachmentRemoveButtonClassName = cn(
   composerInteractiveTransitionClassName
 )
 
+const ELICITATION_MIN_HEIGHT_PX = 288
+const ELICITATION_MAX_HEIGHT_PX = 704
+const ELICITATION_MAX_VIEWPORT_RATIO = 0.7
+const ELICITATION_RESIZE_STEP_PX = 32
+
+type ElicitationResizeBounds = { min: number; max: number }
+type ElicitationDragState = {
+  pointerId: number
+  startHeight: number
+  startY: number
+}
+
+const ResizableElicitationComposer = ({ children }: { children: ReactNode }): React.JSX.Element => {
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<ElicitationDragState | undefined>(undefined)
+  const [height, setHeight] = useState<number>()
+
+  const resizeBounds = (): ElicitationResizeBounds => {
+    const surface = surfaceRef.current
+    const max = Math.round(
+      Math.min(window.innerHeight * ELICITATION_MAX_VIEWPORT_RATIO, ELICITATION_MAX_HEIGHT_PX)
+    )
+    const scrollSurface = surface?.querySelector<HTMLElement>(
+      '[data-testid="elicitation-composer-scroll"]'
+    )
+    const secondOption = surface?.querySelectorAll<HTMLElement>(
+      '[data-elicitation-option-row="true"]'
+    )[1]
+    const measuredMinimum =
+      scrollSurface && secondOption
+        ? Math.ceil(
+            secondOption.getBoundingClientRect().bottom -
+              scrollSurface.getBoundingClientRect().top +
+              ELICITATION_RESIZE_STEP_PX
+          )
+        : 0
+
+    return {
+      min: Math.min(max, Math.max(ELICITATION_MIN_HEIGHT_PX, measuredMinimum)),
+      max
+    }
+  }
+
+  const resizeTo = (nextHeight: number): void => {
+    const bounds = resizeBounds()
+    setHeight(Math.min(bounds.max, Math.max(bounds.min, Math.round(nextHeight))))
+  }
+
+  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>): void => {
+    if (
+      !surfaceRef.current ||
+      event.isPrimary === false ||
+      (event.button !== 0 && event.pointerType === 'mouse')
+    )
+      return
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startHeight: surfaceRef.current.getBoundingClientRect().height,
+      startY: event.clientY
+    }
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>): void => {
+    const dragState = dragStateRef.current
+    if (!dragState || dragState.pointerId !== event.pointerId) return
+    resizeTo(dragState.startHeight - (event.clientY - dragState.startY))
+  }
+
+  const endPointerDrag = (event: PointerEvent<HTMLButtonElement>): void => {
+    if (dragStateRef.current?.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    dragStateRef.current = undefined
+  }
+
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    const currentHeight = surfaceRef.current?.getBoundingClientRect().height
+    if (!currentHeight) return
+    resizeTo(
+      currentHeight +
+        (event.key === 'ArrowUp' ? ELICITATION_RESIZE_STEP_PX : -ELICITATION_RESIZE_STEP_PX)
+    )
+  }
+
+  return (
+    <div
+      ref={surfaceRef}
+      className="relative z-10 flex min-h-0 w-full min-w-0 max-h-[min(70dvh,44rem)] flex-col overflow-visible px-px pb-px pt-8 [@media(pointer:coarse)]:pt-11"
+      data-testid="elicitation-composer"
+      style={height === undefined ? undefined : { height }}
+    >
+      <button
+        type="button"
+        aria-label="Resize question panel"
+        className="group absolute inset-x-0 top-0 grid h-8 cursor-ns-resize touch-none select-none place-items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 active:bg-bg-200 [@media(pointer:coarse)]:h-11"
+        onKeyDown={handleResizeKeyDown}
+        onPointerCancel={endPointerDrag}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endPointerDrag}
+      >
+        <span
+          aria-hidden="true"
+          className="h-1 w-12 rounded-full bg-text-300/70 transition-colors duration-200 group-hover:bg-text-100 group-focus-visible:bg-text-100"
+        />
+      </button>
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-border-200 bg-bg-000 shadow-sm"
+        data-testid="elicitation-composer-scroll"
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
   if (size < 1024) return `${size} B`
@@ -139,6 +264,7 @@ type ConversationPanelProps = {
   isUploadingAttachments: boolean
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
+  pendingElicitations?: PendingElicitationRequest[]
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
@@ -175,6 +301,7 @@ type ConversationPanelProps = {
   onTogglePreviewPanel?: () => void
   onOpenSidebar?: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => Promise<void>
+  onRespondToElicitation?: (response: ElicitationResponse) => Promise<void>
   onPermissionProfileChange: (profile: PermissionProfileId) => void
   onRevokePermissionGrant: (categoryKey: string) => void
   onClearPermissionGrants: () => void
@@ -223,6 +350,7 @@ const ConversationPanel = ({
   isUploadingAttachments,
   notebookReference,
   pendingPermissions,
+  pendingElicitations = [],
   permissionProfile,
   permissionProfileState,
   permissionGrants,
@@ -250,6 +378,7 @@ const ConversationPanel = ({
   onTogglePreviewPanel = () => undefined,
   onOpenSidebar,
   onRespondToPermission,
+  onRespondToElicitation = async () => undefined,
   onPermissionProfileChange,
   onRevokePermissionGrant,
   onClearPermissionGrants,
@@ -272,6 +401,7 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
+  const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
@@ -325,6 +455,45 @@ const ConversationPanel = ({
       ? effectiveSpecialistSkills.skillIds
       : specialistId
         ? []
+        : undefined
+
+  const sessionActivities = activeSession?.activities ?? []
+  // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
+  // first must reserve the single bottom interaction lane so the ordinary composer never competes
+  // with a question that is waiting for an answer.
+  const livePendingElicitationRequest = pendingElicitations.find((request) => {
+    const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
+      ?.elicitation?.state
+    return state === undefined || state === 'pending'
+  })
+  const pendingElicitationActivity = livePendingElicitationRequest
+    ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
+    : sessionActivities.find((activity) => activity.elicitation?.state === 'pending')
+  const restoredElicitation = pendingElicitationActivity?.elicitation
+  const pendingElicitationRequest: PendingElicitationRequest | undefined =
+    livePendingElicitationRequest ??
+    (activeSession &&
+    pendingElicitationActivity &&
+    restoredElicitation?.state === 'pending' &&
+    restoredElicitation.durable
+      ? {
+          requestId: restoredElicitation.durable.requestId,
+          sessionId: activeSession.id,
+          toolCallId: pendingElicitationActivity.id,
+          message: restoredElicitation.message,
+          fields: restoredElicitation.fields,
+          durable: restoredElicitation.durable
+        }
+      : undefined)
+  const pendingElicitation: ElicitationProjection | undefined =
+    pendingElicitationActivity?.elicitation?.state === 'pending'
+      ? pendingElicitationActivity.elicitation
+      : !pendingElicitationActivity && pendingElicitationRequest
+        ? {
+            message: pendingElicitationRequest.message,
+            fields: pendingElicitationRequest.fields,
+            state: 'pending'
+          }
         : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
@@ -461,6 +630,7 @@ const ConversationPanel = ({
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
+            pendingElicitations={pendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />
@@ -469,7 +639,11 @@ const ConversationPanel = ({
         <div className="relative shrink-0">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-bg-10 to-bg-10/0"
+            data-testid="composer-surface-fade"
+            className={cn(
+              'pointer-events-none absolute inset-x-0 bg-gradient-to-t from-bg-10 to-bg-10/0',
+              pendingElicitation ? '-top-12 h-12' : '-top-6 h-6'
+            )}
           />
 
           <div className="px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-2">
@@ -594,7 +768,14 @@ const ConversationPanel = ({
                 ) : null}
 
                 <div className="relative">
-                  <div aria-hidden="true" className="relative -mb-8 rounded-2xl bg-bg-200 pb-8" />
+                  <div
+                    aria-hidden="true"
+                    data-testid="composer-card-backdrop"
+                    className={cn(
+                      'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
+                      pendingElicitation && 'hidden'
+                    )}
+                  />
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
@@ -644,7 +825,25 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {pendingPlan ? (
+                  {pendingElicitation ? (
+                    <ResizableElicitationComposer>
+                      <WorkspaceElicitationCard
+                        key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
+                        elicitation={pendingElicitation}
+                        request={pendingElicitationRequest}
+                        embedded
+                        onRespond={onRespondToElicitation}
+                        onDraftChange={(answers: ElicitationAnswer[]) => {
+                          if (!activeSession || !pendingElicitationActivity) return
+                          setElicitationDraftAnswers(
+                            activeSession.id,
+                            pendingElicitationActivity.id,
+                            answers
+                          )
+                        }}
+                      />
+                    </ResizableElicitationComposer>
+                  ) : pendingPlan ? (
                     <WorkspacePlanCard
                       className="relative z-10"
                       projection={pendingPlan}
@@ -655,12 +854,13 @@ const ConversationPanel = ({
                     />
                   ) : null}
 
-                  {/* Composer keeps draft input local until submit delegates to the session store.
-                      Enter-to-send is owned by ComposerEditor; the form only guards native submit. */}
+                  {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
+                      owns the lane and makes the ordinary controls unreachable. */}
                   <form
+                    hidden={Boolean(pendingElicitation || pendingPlan)}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      pendingPlan && 'hidden'
+                      (pendingElicitation || pendingPlan) && 'hidden'
                     )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}

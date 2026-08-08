@@ -5,7 +5,7 @@ import type {
   PersistedChatSession,
   PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
-import { synchronizeSessionGraph } from './session-store-message-graph-owner'
+import { synchronizeSessionGraph } from './session-store-message-graph-helpers'
 import {
   completeOpenActivities,
   completeOpenActivityGroups,

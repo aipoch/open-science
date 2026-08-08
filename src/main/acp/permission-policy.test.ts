@@ -7,7 +7,8 @@ import {
   isWithinWorkspace,
   resolveAllowOptionId,
   resolveAutomaticPermission,
-  resolveMcpProviderLeafIdentity
+  resolveMcpProviderLeafIdentity,
+  withTrustedMcpToolIdentity
 } from './permission-policy'
 
 const createPermissionRequest = (
@@ -249,6 +250,73 @@ describe('permission policy', () => {
         { profile: 'ask', mcpServerNames: ['open-science-artifacts'] }
       )
     ).toBeUndefined()
+  })
+
+  it('auto-approves only the server-qualified user choice capability without prompting', () => {
+    for (const providerToolName of [
+      'mcp__open-science-notebook__ask_user_question',
+      'mcp__open_science_notebook__ask_user_question',
+      'mcp.open-science-notebook.ask_user_question',
+      'open-science-notebook_ask_user_question',
+      'open_science_notebook_ask_user_question'
+    ]) {
+      expect(
+        resolveAutomaticPermission(
+          createPermissionRequest('other', undefined, { providerToolName }),
+          {
+            profile: 'ask',
+            frameworkId: 'claude-code',
+            mcpServerNames: ['open-science-notebook']
+          }
+        )
+      ).toBe('allow')
+    }
+
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, { title: 'ask_user_question' }),
+        { profile: 'ask', mcpServerNames: ['open-science-notebook'] }
+      )
+    ).toBeUndefined()
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, {
+          providerToolName: 'mcp__third-party__ask_user_question'
+        }),
+        { profile: 'ask', mcpServerNames: ['open-science-notebook'] }
+      )
+    ).toBeUndefined()
+  })
+
+  it('does not trust a self-reported Codex user choice identity', () => {
+    expect(
+      resolveAutomaticPermission(
+        createPermissionRequest('other', undefined, {
+          providerToolName: 'mcp.open-science-notebook.ask_user_question'
+        }),
+        {
+          profile: 'ask',
+          frameworkId: 'codex',
+          mcpServerNames: ['open-science-notebook']
+        }
+      )
+    ).toBeUndefined()
+  })
+
+  it('auto-approves a runtime-trusted sparse Codex user choice without prompting', () => {
+    expect(
+      resolveAutomaticPermission(
+        withTrustedMcpToolIdentity(
+          createPermissionRequest('other', undefined, { title: 'Ask the user to choose' }),
+          'open-science-notebook/ask_user_question'
+        ),
+        {
+          profile: 'ask',
+          frameworkId: 'codex',
+          mcpServerNames: ['open-science-notebook']
+        }
+      )
+    ).toBe('allow')
   })
 
   it('does not trust raw input to identify an activity group declaration', () => {

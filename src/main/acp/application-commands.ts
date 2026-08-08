@@ -7,6 +7,7 @@ import type {
   AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -81,6 +82,11 @@ const acpCommands = Object.freeze({
     readonly [response: AcpPermissionResponse],
     AcpStateSnapshot
   >('acp:respond-permission'),
+  respondElicitation: defineApplicationCommand<
+    'acp:respond-elicitation',
+    readonly [response: ElicitationResponse],
+    AcpStateSnapshot
+  >('acp:respond-elicitation'),
   setPermissionProfile: defineApplicationCommand<
     'acp:set-permission-profile',
     readonly [request: AcpSetPermissionProfileRequest],
@@ -116,6 +122,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.cancel,
   acpCommands.deleteSession,
   acpCommands.respondPermission,
+  acpCommands.respondElicitation,
   acpCommands.setPermissionProfile,
   acpCommands.revokePermissionGrant,
   acpCommands.getPlanProjection,
@@ -132,6 +139,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'cancelPrompt'
   | 'deleteSession'
   | 'respondToPermission'
+  | 'respondToElicitation'
   | 'setPermissionProfile'
   | 'revokePermissionGrant'
   | 'getSessionPlanProjection'
@@ -209,6 +217,12 @@ const registerAcpCommands = (
           throw new Error('Only a current human caller can respond to permission requests.')
         }
         return dependencies.runtime.respondToPermission(invocation.args[0])
+      },
+      'acp:respond-elicitation': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can respond to structured questions.')
+        }
+        return dependencies.runtime.respondToElicitation(invocation.args[0])
       },
       'acp:set-permission-profile': (invocation) =>
         dependencies.runtime.setPermissionProfile(invocation.args[0]),

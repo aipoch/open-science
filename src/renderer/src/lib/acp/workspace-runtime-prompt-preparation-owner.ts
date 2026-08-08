@@ -16,6 +16,10 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import type { useAcpRuntime } from './useAcpRuntime'
+import {
+  acquireWorkspacePromptPreparation,
+  isWorkspacePromptPreparationInFlight
+} from './workspace-prompt-preparation-lock'
 
 type WorkspacePromptPreparationRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
@@ -63,10 +67,6 @@ type PreparedExistingWorkspacePrompt = {
   replay: () => PreparedWorkspacePromptReplay
   acceptPrompt: (messageId: string) => void
 }
-
-// Adoption and Branch reset intentionally finish before the optimistic run opens. This lease closes
-// the otherwise idle-looking interval without letting a stale terminal event settle the next run.
-const preparationsInFlight = new Set<string>()
 
 const isReplayImage = (attachment: Pick<UploadedAttachment, 'name' | 'mimeType'>): boolean =>
   imageAttachmentMimeType(attachment.name, attachment.mimeType) !== undefined
@@ -163,11 +163,10 @@ const prepareExistingWorkspacePrompt = async (
     hasHistoryImages(currentSession?.messages ?? [])
   const preparationRequired = branchResetRequired || runtimeMustAdoptSession
 
-  if (preparationRequired) {
-    if (preparationsInFlight.has(sessionId)) return undefined
-    preparationsInFlight.add(sessionId)
-    request.onPreparationStateChange?.(sessionId, true)
-  }
+  const releasePreparation = preparationRequired
+    ? acquireWorkspacePromptPreparation(sessionId, request.onPreparationStateChange)
+    : undefined
+  if (preparationRequired && !releasePreparation) return undefined
 
   let branchContextResetPerformed = false
   let agentContextResetPerformed = false
@@ -270,10 +269,7 @@ const prepareExistingWorkspacePrompt = async (
     useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
     return undefined
   } finally {
-    if (preparationRequired) {
-      preparationsInFlight.delete(sessionId)
-      request.onPreparationStateChange?.(sessionId, false)
-    }
+    releasePreparation?.()
   }
 
   const preparedSession = useSessionStore
@@ -387,5 +383,11 @@ const prepareExistingWorkspacePrompt = async (
   }
 }
 
-export { getResumeFailureMessage, prepareExistingWorkspacePrompt }
+export {
+  acquireWorkspacePromptPreparation,
+  getResumeFailureMessage,
+  isWorkspacePromptPreparationInFlight,
+  prepareExistingWorkspacePrompt,
+  shutdownNotebookForBranchChange
+}
 export type { PrepareExistingWorkspacePromptRequest, PreparedExistingWorkspacePrompt }

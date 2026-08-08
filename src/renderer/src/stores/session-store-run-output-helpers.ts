@@ -11,13 +11,12 @@ import {
   type PersistedArtifact,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
-import { createPersistedUpload } from './session-store-message-graph-helpers'
-import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import {
-  createMessageId,
-  createSortIndex,
+  createPersistedUpload,
   synchronizeSessionGraph
-} from './session-store-message-graph-owner'
+} from './session-store-message-graph-helpers'
+import type { AppendMessageResult } from './session-store-message-graph-helpers'
+import { createMessageId, createSortIndex } from './session-store-message-graph-owner'
 import type { ChatMessage, ChatSession } from './session-store-persistence-owner'
 
 export type AppendAgentMessageChunkInput = {

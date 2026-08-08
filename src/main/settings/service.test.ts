@@ -2719,6 +2719,12 @@ describe('SettingsService: preflight & spawn config', () => {
         expect.objectContaining({
           type: 'function',
           function: expect.objectContaining({
+            name: 'mcp__open_science_notebook__ask_user_question'
+          })
+        }),
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
             name: 'mcp__open_science_notebook__notebook_execute',
             description: expect.stringContaining('MUST call host.mcp')
           })

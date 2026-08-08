@@ -6,6 +6,7 @@ import type {
 } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
 
+import type { ElicitationProjection } from '../../../shared/acp'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -54,6 +55,7 @@ export type ToolActivity = {
   rawOutput?: unknown
   terminalOutput?: string
   terminalExitCode?: number | null
+  elicitation?: ElicitationProjection
   createdAt: number
   updatedAt: number
 }
@@ -77,6 +79,9 @@ export type ChatSession = Omit<
   activeRunRuntimeSegmentId?: string
   branchContextResetRequired?: boolean
   specialistSwitchResetRequired?: boolean
+  // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
+  // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
+  elicitationHistoryReplayRequestId?: string
   branchSwitchBlocked?: boolean
   conversationGraphSyncBlocked?: boolean
   pendingContextReplayMessageId?: string
@@ -144,6 +149,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     activeRunRuntimeSegmentId,
     branchContextResetRequired,
     specialistSwitchResetRequired,
+    elicitationHistoryReplayRequestId,
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
@@ -164,6 +170,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void activeRunRuntimeSegmentId
   void branchContextResetRequired
   void specialistSwitchResetRequired
+  void elicitationHistoryReplayRequestId
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
   void pendingContextReplayMessageId
@@ -250,6 +257,7 @@ const withTransientSessionState = (
     activeRunRuntimeSegmentId: source.activeRunRuntimeSegmentId,
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
+    elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
     pendingContextReplayMessageId: source.pendingContextReplayMessageId

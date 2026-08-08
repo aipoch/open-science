@@ -121,6 +121,30 @@ describe('NotificationBell', () => {
     expect(document.body.textContent).not.toContain('Resolved')
   })
 
+  it('labels pending agent questions as responses instead of approvals', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.needs-attention',
+              source: 'agent-question',
+              title: 'Response needed'
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain('Needs response')
+    expect(document.body.textContent).not.toContain('Needs approval')
+  })
+
   it('keeps opening passive and marks messages only through explicit actions', async () => {
     const markRead = vi.fn(async () => undefined)
     const markAllRead = vi.fn(async () => undefined)

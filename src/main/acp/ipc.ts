@@ -14,6 +14,7 @@ import type {
   AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -77,6 +78,9 @@ const registerAcpIpcHandlerSet = (
     'acp:respond-plan',
     (_event, request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]) =>
       runtime.respondSessionPlan(request)
+  )
+  ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) =>
+    runtime.respondToElicitation(response)
   )
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
     runtime.setPermissionProfile(request)

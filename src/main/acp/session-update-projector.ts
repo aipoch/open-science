@@ -18,6 +18,7 @@ import type { AcpSessionRegistry } from './session-registry'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
+const AGENT_USER_CHOICE_TOOL = 'open-science-notebook/ask_user_question'
 
 type AcpSessionUpdateRouting = Readonly<{
   framework?: AgentFrameworkId
@@ -221,10 +222,18 @@ class AcpSessionUpdateProjector {
       return Object.freeze(effects)
     }
 
+    const appOwnedUserChoiceTool =
+      event.kind === 'tool' &&
+      [event.providerToolName, event.title].some(
+        (name) =>
+          resolveCanonicalMcpToolIdentity(name, routing.mcpServerNames) === AGENT_USER_CHOICE_TOOL
+      )
+
     if (routing.visible) {
       if (!routing.reconnectPending) {
         effects.push(deepFreeze({ kind: 'context-refresh' as const, sessionId: routed.sessionId }))
       }
+      if (appOwnedUserChoiceTool) return Object.freeze(effects)
       if (event.kind === 'tool' && event.status === 'failed') {
         const canonicalTool = event.providerToolName
           ? resolveCanonicalMcpToolIdentity(event.providerToolName, routing.mcpServerNames)

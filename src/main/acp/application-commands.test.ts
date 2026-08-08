@@ -50,6 +50,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     cancelPrompt: vi.fn(async () => snapshot),
     deleteSession: vi.fn(async () => snapshot),
     respondToPermission: vi.fn(async () => snapshot),
+    respondToElicitation: vi.fn(() => snapshot),
     getSessionPlanProjection: vi.fn(async () => null),
     respondSessionPlan: vi.fn(async () => ({ projection: {} as never, changed: true })),
     setPermissionProfile: vi.fn(async () => snapshot),
@@ -93,6 +94,7 @@ describe('ACP application commands', () => {
       'acp:get-plan-projection',
       'acp:get-state',
       'acp:reset-session-context',
+      'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
       'acp:resume-session',
@@ -124,6 +126,7 @@ describe('ACP application commands', () => {
     const cancel = { sessionId: 'session-1' }
     const deleteSession = { sessionId: 'session-2' }
     const permission = { requestId: 'permission-1', optionId: 'allow-once' }
+    const elicitation = { requestId: 'question-1', action: 'decline' as const }
     const profile = { sessionId: 'session-1', profile: 'auto' as const }
     const grant = { sessionId: 'session-1', categoryKey: 'mcp:literature/search' }
 
@@ -161,6 +164,9 @@ describe('ACP application commands', () => {
       router.dispatcher.invoke(acpCommands.respondPermission, invocation([permission]))
     ).resolves.toBe(snapshot)
     await expect(
+      router.dispatcher.invoke(acpCommands.respondElicitation, invocation([elicitation]))
+    ).resolves.toBe(snapshot)
+    await expect(
       router.dispatcher.invoke(acpCommands.setPermissionProfile, invocation([profile]))
     ).resolves.toBe(snapshot)
     await expect(
@@ -177,6 +183,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith(cancel)
     expect(dependencies.runtime.deleteSession).toHaveBeenCalledWith(deleteSession)
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledWith(permission)
+    expect(dependencies.runtime.respondToElicitation).toHaveBeenCalledWith(elicitation)
     expect(dependencies.runtime.setPermissionProfile).toHaveBeenCalledWith(profile)
     expect(dependencies.runtime.revokePermissionGrant).toHaveBeenCalledWith(grant)
   })
@@ -450,6 +457,44 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Caller authorization is no longer current.')
 
     expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(humanCallers.length)
+  })
+
+  it('accepts structured answers only from a current human-originated caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const response = { requestId: 'question-1', action: 'decline' as const }
+    const humanCallers = [
+      createElectronCallerContext(7),
+      createWebCallerContext('local-web'),
+      createWebCallerContext('remote-web', { location: 'remote' })
+    ]
+
+    for (const callerContext of humanCallers) {
+      await expect(
+        router.dispatcher.invoke(
+          acpCommands.respondElicitation,
+          invocation([response], callerContext)
+        )
+      ).resolves.toBe(snapshot)
+    }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([response], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can respond to structured questions.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation(
+          [response],
+          createWebCallerContext('stale', { isAuthorizationCurrent: () => false })
+        )
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+
+    expect(dependencies.runtime.respondToElicitation).toHaveBeenCalledTimes(humanCallers.length)
   })
 
   it('keeps permission-profile changes on their separate current policy', async () => {

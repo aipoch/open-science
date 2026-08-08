@@ -180,6 +180,62 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
   )
 }
 
+describe('WorkspaceMessageScroller structured input render', () => {
+  it('renders a completed custom answer as a standalone transcript card', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            title: 'AskUserQuestion',
+            elicitation: {
+              message: 'What kind of skill are you trying to create?',
+              fields: [{ id: 'question_0_custom', label: 'Other', kind: 'text' }],
+              state: 'answered',
+              answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="elicitation-card"')
+    expect(html).toContain('What kind of skill are you trying to create?')
+    expect(html).toContain('A literature review skill')
+    expect(html).not.toContain('data-testid="tool-group"')
+  })
+
+  it('renders the selected option label instead of its protocol value', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            elicitation: {
+              message: 'Choose an approach',
+              fields: [
+                {
+                  id: 'approach',
+                  label: 'Approach',
+                  kind: 'single-select',
+                  options: [{ value: 'minimal', label: 'Minimal change' }]
+                }
+              ],
+              state: 'answered',
+              answers: [{ fieldId: 'approach', value: 'minimal' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Minimal change')
+    expect(html).not.toContain('>minimal<')
+  })
+})
+
 describe('WorkspaceMessageScroller loading render', () => {
   it('renders elapsed time beside the activity step count', async () => {
     const html = await renderScroller(

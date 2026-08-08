@@ -5,8 +5,10 @@ import {
   activateConversationBranch,
   createLinearConversationGraph,
   ensureConversationRuntimeSegment,
+  forkConversationAfterActivity,
   forkEditedConversationMessage,
   getActiveConversationContext,
+  resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
@@ -63,6 +65,164 @@ describe('conversation graph', () => {
     const restored = activateConversationBranch(edited, originalBranchId)
     expect(resolveActiveConversationMessages(restored).map((node) => node.id)).toEqual(['u1', 'a1'])
     expect(restored.messages.map((node) => node.id).sort()).toEqual(['a1', 'a2', 'u1', 'u2'])
+  })
+
+  it('forks a continuation after a retained Message without replacing it', () => {
+    const original = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [
+          message('u1', 'user', 'original question', 1),
+          message('a1', 'agent', 'question preamble', 2),
+          message('a2', 'agent', 'answer after the choice', 3)
+        ],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 3
+      }),
+      [
+        {
+          id: 'before-choice',
+          kind: 'tool',
+          title: 'Inspect context',
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          promptMessageId: 'u1',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'old-choice',
+          kind: 'tool',
+          title: 'Choose a direction',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          promptMessageId: 'u1',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      []
+    )
+    const originalBranchId = original.branches[0].id
+    const forked = forkConversationAfterActivity(
+      original,
+      'a1',
+      'old-choice',
+      'branch-revised-choice',
+      4
+    )
+    const revised = synchronizeActiveConversationActivities(
+      synchronizeActiveConversationMessages(
+        forked,
+        [
+          message('u1', 'user', 'original question', 1),
+          message('a1', 'agent', 'question preamble', 2),
+          message('a3', 'agent', 'revised answer', 5)
+        ],
+        5
+      ),
+      [
+        {
+          id: 'before-choice',
+          kind: 'tool',
+          title: 'Inspect context',
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          promptMessageId: 'u1',
+          createdAt: 1,
+          updatedAt: 5
+        },
+        {
+          id: 'new-choice',
+          kind: 'tool',
+          title: 'Choose a direction',
+          status: 'completed',
+          sortIndex: 2,
+          eventIds: [],
+          promptMessageId: 'u1',
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      []
+    )
+
+    expect(resolveActiveConversationMessages(revised).map((node) => node.id)).toEqual([
+      'u1',
+      'a1',
+      'a3'
+    ])
+    expect(getActiveConversationContext(revised, 'u1').messageBranchAncestry).toEqual([
+      originalBranchId,
+      'branch-revised-choice'
+    ])
+    expect(resolveActiveConversationActivities(revised).activities.map((item) => item.id)).toEqual([
+      'before-choice',
+      'new-choice'
+    ])
+    const restored = activateConversationBranch(revised, originalBranchId)
+    expect(resolveActiveConversationMessages(restored).map((node) => node.id)).toEqual([
+      'u1',
+      'a1',
+      'a2'
+    ])
+    expect(resolveActiveConversationActivities(restored).activities.map((item) => item.id)).toEqual(
+      ['before-choice', 'old-choice']
+    )
+    expect(revised.activities.find((item) => item.id === 'before-choice')?.messageBranchId).toBe(
+      originalBranchId
+    )
+  })
+
+  it('keeps prompt-bound legacy activities visible after old saves moved them to a child Branch', () => {
+    const legacy = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-legacy',
+        messages: [message('u1', 'user', 'question', 1)],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      [
+        {
+          id: 'shared-legacy-activity',
+          kind: 'tool',
+          title: 'Shared activity',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          promptMessageId: 'u1',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      []
+    )
+    const parentBranchId = legacy.branches[0].id
+    legacy.branches.push({
+      id: 'legacy-child',
+      agentFrameId: legacy.rootFrameId,
+      parentBranchId,
+      forkMessageId: 'u1',
+      headMessageId: 'u1',
+      createdAt: 2,
+      updatedAt: 2
+    })
+    legacy.frames[0].activeBranchId = 'legacy-child'
+    legacy.activities[0].messageBranchId = 'legacy-child'
+
+    expect(resolveActiveConversationActivities(legacy).activities.map((item) => item.id)).toEqual([
+      'shared-legacy-activity'
+    ])
+    expect(
+      resolveActiveConversationActivities(
+        activateConversationBranch(legacy, parentBranchId)
+      ).activities.map((item) => item.id)
+    ).toEqual(['shared-legacy-activity'])
   })
 
   it('starts a new Runtime Segment on framework changes without forking Messages', () => {

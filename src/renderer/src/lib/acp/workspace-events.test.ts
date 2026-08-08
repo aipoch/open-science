@@ -997,6 +997,112 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('merges and persists elicitation state on its tool activity', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'elicitation-event-1',
+        kind: 'tool',
+        toolCallId: 'tool-ask-1',
+        title: 'Choose an approach',
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'pending',
+          fields: [
+            {
+              id: 'approach',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [{ value: 'minimal', label: 'Minimal change' }]
+            }
+          ]
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'elicitation-event-2',
+        kind: 'tool',
+        toolCallId: 'tool-ask-1',
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'answered',
+          fields: [
+            {
+              id: 'approach',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [{ value: 'minimal', label: 'Minimal change' }]
+            }
+          ],
+          answers: [{ fieldId: 'approach', value: 'minimal' }],
+          respondedAt: 1710000001000
+        }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities).toEqual([
+      expect.objectContaining({
+        id: 'tool-ask-1',
+        eventIds: ['elicitation-event-1', 'elicitation-event-2'],
+        elicitation: expect.objectContaining({
+          state: 'answered',
+          answers: [{ fieldId: 'approach', value: 'minimal' }]
+        })
+      })
+    ])
+    expect(toPersistedSession(session).activities).toEqual([
+      expect.objectContaining({
+        elicitation: expect.objectContaining({ state: 'answered' })
+      })
+    ])
+  })
+
+  it('finishes a turn normally while a durable user choice remains pending', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'choice-pending',
+        kind: 'tool',
+        toolCallId: 'choice-tool',
+        promptMessageId,
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'pending',
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-request',
+            ...(promptMessageId ? { promptMessageId } : {})
+          },
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [
+                { value: 'minimal', label: 'Minimal' },
+                { value: 'expanded', label: 'Expanded' }
+              ]
+            },
+            { id: 'question_0_custom', label: 'Other', kind: 'text' }
+          ]
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'choice-turn-stop', kind: 'stop', text: 'end_turn', promptMessageId })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('idle')
+    expect(session.interrupted).toBeUndefined()
+    expect(session.resumeRecovery).toBeUndefined()
+    expect(session.activities?.[0].elicitation?.state).toBe('pending')
+  })
+
   it('attaches artifact events to the current message and finalizes their file paths', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
     const finalizedArtifact = createArtifactFile({

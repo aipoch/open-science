@@ -1,5 +1,6 @@
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 
+import type { ElicitationAnswer, ElicitationProjection } from '../../../shared/acp'
 import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { PersistedActivityGroup } from '../../../shared/session-persistence'
@@ -27,6 +28,7 @@ export type UpsertToolActivityInput = {
   rawOutput?: unknown
   terminalOutput?: string
   terminalExitCode?: number | null
+  elicitation?: ElicitationProjection
 }
 
 export const completeOpenActivityGroups = (
@@ -181,6 +183,7 @@ export const projectToolActivity = (
               rawOutput: input.rawOutput ?? activity.rawOutput,
               terminalOutput: input.terminalOutput ?? activity.terminalOutput,
               terminalExitCode: input.terminalExitCode ?? activity.terminalExitCode,
+              elicitation: input.elicitation ?? activity.elicitation,
               eventIds: [...activity.eventIds, input.eventId],
               updatedAt: activityWasTerminal ? activity.updatedAt : eventTimestamp
             }
@@ -213,6 +216,7 @@ export const projectToolActivity = (
     rawOutput: input.rawOutput,
     terminalOutput: input.terminalOutput,
     terminalExitCode: input.terminalExitCode,
+    elicitation: input.elicitation,
     createdAt: eventTimestamp,
     updatedAt: eventTimestamp
   }
@@ -227,6 +231,35 @@ export const projectToolActivity = (
             : group
         )
       : session.activityGroups,
+    updatedAt: now
+  }
+}
+
+// Saves completed steps from a pending multi-question choice without resolving the Agent request.
+// The final answer still crosses the elicitation response boundary after every step is answered.
+export const projectElicitationDraftAnswers = (
+  session: ChatSession,
+  activityId: string,
+  answers: ElicitationAnswer[]
+): ChatSession => {
+  const target = session.activities?.find((activity) => activity.id === activityId)
+  if (target?.elicitation?.state !== 'pending') return session
+
+  const now = Date.now()
+  return {
+    ...session,
+    activities: session.activities?.map((activity) =>
+      activity.id === activityId && activity.elicitation
+        ? {
+            ...activity,
+            elicitation: {
+              ...activity.elicitation,
+              draftAnswers: answers.length > 0 ? structuredClone(answers) : undefined
+            },
+            updatedAt: now
+          }
+        : activity
+    ),
     updatedAt: now
   }
 }

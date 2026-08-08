@@ -179,6 +179,69 @@ describe('ACP permission context', () => {
     expect(context.snapshot().sessions).not.toHaveProperty('provider-session')
   })
 
+  it('consumes a Codex MCP identity only for the matching session, call, and tool', () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    observe(
+      context,
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          kind: 'execute',
+          title: 'mcp.open-science-notebook.ask_user_question',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'ask_user_question',
+            arguments: {}
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      'codex'
+    )
+
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'wrong-session',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'wrong-call',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/notebook_state'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(true)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
+  })
+
   it('correlates sparse Codex approvals and bounds retained provider aliases', async () => {
     const context = new AcpPermissionContext({
       emitPermissionRequest: vi.fn(),

@@ -233,6 +233,7 @@ describe('ACP module transport seam', () => {
       'acp:get-plan-projection',
       'acp:get-state',
       'acp:reset-session-context',
+      'acp:respond-elicitation',
       'acp:respond-permission',
       'acp:respond-plan',
       'acp:resume-session',
