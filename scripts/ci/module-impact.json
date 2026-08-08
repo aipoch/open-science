@@ -30,7 +30,10 @@
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
       "consumerModules": ["workspace_page"],
       "testFiles": {
-        "owner": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"],
+        "owner": [
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx"
+        ],
         "contract": [
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"
         ],
