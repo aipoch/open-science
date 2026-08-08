@@ -14,16 +14,10 @@ import {
 } from '../../stores/preview-workbench-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
-  cancelWorkspaceRun,
   createWorkspaceRuntimeEventProcessor,
-  compactWorkspaceSession,
-  deleteWorkspaceSession,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
-  processContextOverflowRecovery,
   processVisibleWorkspaceRuntimeEvents,
-  recoverContextOverflowWorkspaceSession,
-  resumeInterruptedWorkspaceSession,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
@@ -31,6 +25,15 @@ import {
   resendEditedWorkspaceMessage,
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
+import {
+  cancelWorkspaceRun,
+  compactWorkspaceSession,
+  createWorkspaceRuntimeSessionLifecycleOwner,
+  deleteWorkspaceSession,
+  processContextOverflowRecovery,
+  recoverContextOverflowWorkspaceSession,
+  resumeInterruptedWorkspaceSession
+} from './workspace-runtime-session-lifecycle-owner'
 
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
   id: 'event-1',
@@ -4012,6 +4015,70 @@ describe('recovering from a request-size overflow', () => {
     })
     useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
   }
+
+  it('keeps overflow dedup and Plan authority inside the lifecycle owner', async () => {
+    seedOverflowedConversation()
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      artifactVersionId: 'plan-version-1',
+      revision: 12,
+      approval: 'approved',
+      lifecycle: 'in_progress'
+    } as never)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const overflowEvent = createEvent({
+      id: 'owner-overflow-1',
+      kind: 'error',
+      level: 'error',
+      recoverable: 'context-overflow',
+      sessionId: 'session-1'
+    })
+
+    expect(Object.keys(owner)).toEqual([
+      'recordPromptPlanAuthority',
+      'processRuntimeEvents',
+      'compact',
+      'resume',
+      'cancel',
+      'delete'
+    ])
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      planContinuation: { artifactVersionId: 'plan-version-1', revision: 9 }
+    })
+    owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+    owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.compactSession).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt.mock.calls[0]?.[11]).toEqual({
+      projectId: 'default-project',
+      artifactVersionId: 'plan-version-1',
+      expectedRevision: 12
+    })
+  })
 
   it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
