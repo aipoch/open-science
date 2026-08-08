@@ -17,6 +17,9 @@ const workspaceToolActivityStylePath = resolve(__dirname, 'workspace-tool-activi
 const workspaceWebSearchActivityRowPath = resolve(__dirname, 'WorkspaceWebSearchActivityRow.tsx')
 const workspaceWebSearchDetailsPath = resolve(__dirname, 'workspace-web-search-details.ts')
 const agentMarkdownPath = resolve(__dirname, '../../components/streamdown/AgentMarkdown.tsx')
+const projectFilesFacadePath = resolve(__dirname, 'ProjectFilesView.tsx')
+const projectFilesPresentationOwnerPath = resolve(__dirname, 'project-files-presentation-owner.tsx')
+const rawLineCount = (source: string): number => source.trimEnd().split(/\r?\n/).length
 const componentFileNames = [
   'WorkspaceSidebar.tsx',
   'ConversationPanel.tsx',
@@ -39,6 +42,31 @@ describe('workspace page component boundaries', () => {
       expect(workspacePageSource).toContain(`import { ${componentName} } from './${componentName}'`)
       expect(workspacePageSource).toContain(`<${componentName}`)
     }
+  })
+
+  it('keeps project file presentation behind its private owner module', () => {
+    const facadeSource = readFileSync(projectFilesFacadePath, 'utf8')
+    const presentationSource = readFileSync(projectFilesPresentationOwnerPath, 'utf8')
+    const previewToolSource = readFileSync(
+      resolve(__dirname, 'previews/PreviewToolContent.tsx'),
+      'utf8'
+    )
+    const moduleImpact = JSON.parse(
+      readFileSync(resolve(__dirname, '../../../../../scripts/ci/module-impact.json'), 'utf8')
+    ) as {
+      modules: { project_files_view: { ownerPaths: string[] } }
+    }
+
+    expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
+    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(660)
+    expect(facadeSource).toContain("from './project-files-presentation-owner'")
+    expect(presentationSource).not.toContain("from './ProjectFilesView'")
+    expect(facadeSource.match(/export \{ ProjectFilesView \}/g)).toHaveLength(1)
+    expect(previewToolSource).toContain("from '../ProjectFilesView'")
+    expect(previewToolSource).not.toContain('project-files-presentation-owner')
+    expect(moduleImpact.modules.project_files_view.ownerPaths).toContain(
+      'src/renderer/src/pages/workspace/project-files-presentation-owner.tsx'
+    )
   })
 
   it('starts session persistence from the app shell and passes readiness into the workspace', () => {
@@ -193,7 +221,8 @@ describe('workspace page component boundaries', () => {
       workspaceActivityGroupPath,
       resolve(__dirname, 'ComposerModelPicker.tsx'),
       resolve(__dirname, 'NotebookPreview.tsx'),
-      resolve(__dirname, 'ProjectFilesView.tsx'),
+      projectFilesFacadePath,
+      projectFilesPresentationOwnerPath,
       resolve(__dirname, '../../components/FileDropOverlay.tsx'),
       resolve(__dirname, 'previews/renderers/PdbPreview.tsx')
     ]

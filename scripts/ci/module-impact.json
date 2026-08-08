@@ -50,6 +50,7 @@
     "project_files_view": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
+        "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
         "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
         "src/renderer/src/pages/workspace/project-files-query-model.ts",
         "src/renderer/src/pages/workspace/use-project-files-index.ts"
@@ -59,10 +60,14 @@
       "testFiles": {
         "owner": [
           "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-components.test.tsx",
           "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
         ],
         "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
-        "consumer": []
+        "consumer": [
+          "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
+          "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx"
+        ]
       },
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
