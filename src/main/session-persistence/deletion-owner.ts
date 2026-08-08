@@ -15,6 +15,7 @@ import {
 } from '../uploads/repository'
 import type { ProjectSessionDeletionState } from './repository'
 import type { SessionPersistenceStateOwner } from './state-owner'
+import { hasLegacySessionUpload } from './legacy-upload'
 
 type ProjectSessionDeletionResult =
   { status: 'completed' } | { status: 'orphan-retained'; reason: 'missing-upload-authority' }
@@ -103,11 +104,6 @@ const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Sess
 
 const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
-
-const hasLegacySessionUpload = (session: PersistedChatSession): boolean =>
-  [...session.messages, ...(session.conversationGraph?.messages ?? [])].some((message) =>
-    message.uploads?.some((upload) => !upload.versionId)
-  )
 
 class SessionPersistenceDeletionOwner {
   private readonly repository: SessionDeletionRepository
