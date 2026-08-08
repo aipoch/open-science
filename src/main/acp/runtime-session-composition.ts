@@ -136,6 +136,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     permissionGrantRegistry: options.permissionGrantRegistry,
     setTimer: base.setTimer,
     clearTimer: base.clearTimer,
+    onPermissionSettled: callbacks.onPermissionSettled,
     onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
       log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
     }

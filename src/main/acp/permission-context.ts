@@ -7,7 +7,8 @@ import type {
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpPermissionResponse
+  AcpPermissionResponse,
+  AcpPermissionSettlementState
 } from '../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
@@ -114,6 +115,7 @@ type AcpPermissionContextOptions = {
     toolCallId: string
     waitMs: number
   }) => void
+  onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
 }
 
 type PermissionContextSessionSnapshot = {
@@ -273,7 +275,8 @@ class AcpPermissionContext {
         )
       },
       options.conversationGrants,
-      options.permissionGrantRegistry
+      options.permissionGrantRegistry,
+      options.onPermissionSettled
     )
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout

@@ -13,6 +13,7 @@ import type {
   AcpDeleteSessionRequest,
   AcpPermissionRequest,
   AcpPermissionResponse,
+  AcpPermissionSettlementState,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -108,6 +109,7 @@ export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
+  onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
   onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   // Fires after the provider prompt yields its first update/terminal response. Reaching this point
   // proves startup did not reject before the provider accepted the request.

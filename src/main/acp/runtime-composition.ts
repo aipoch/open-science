@@ -136,6 +136,13 @@ const createAcpRuntime = ({
           (error) => log.warn('permission notification failed', errorLogFields(error))
         )
       }
+    },
+    onPermissionSettled: (requestId, state) => {
+      if (!notificationInbox) return
+      runTaskNotificationInBackground(
+        () => notificationInbox.settleAuthorization('agent-tool', requestId, state),
+        (error) => log.warn('permission inbox settlement failed', errorLogFields(error))
+      )
     }
   }
 

@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto'
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpPermissionResponse
+  AcpPermissionResponse,
+  AcpPermissionSettlementState
 } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type {
@@ -685,7 +686,11 @@ class AcpPermissionBroker {
   constructor(
     private readonly emitPermissionRequest: EmitPermissionRequest,
     private readonly conversationGrants = new ConversationPermissionGrantStore(),
-    private readonly permissionGrantRegistry?: PermissionGrantRegistry
+    private readonly permissionGrantRegistry?: PermissionGrantRegistry,
+    private readonly onPermissionSettled?: (
+      requestId: string,
+      state: AcpPermissionSettlementState
+    ) => void
   ) {}
 
   // Returns serializable pending requests for runtime snapshots.
@@ -1045,24 +1050,29 @@ class AcpPermissionBroker {
     this.pendingRequests.delete(response.requestId)
 
     if (response.cancelled || !response.optionId) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
     // Only options projected to the renderer are valid responses. This keeps provider-specific
     // persistent policy actions hidden at the protocol boundary as well as in the UI.
     if (!pending.request.options.some((option) => option.optionId === response.optionId)) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
     const selected = pending.request.options.find((option) => option.optionId === response.optionId)
+    const settlementState: AcpPermissionSettlementState = selected?.kind
+      .toLowerCase()
+      .startsWith('reject')
+      ? 'rejected'
+      : 'resolved'
     const rememberedScope =
       selected?.scope === 'session' || selected?.scope === 'project' || selected?.scope === 'global'
     const providerOptionId = rememberedScope ? pending.providerAllowOnceOptionId : response.optionId
 
     if (!providerOptionId) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
@@ -1085,9 +1095,13 @@ class AcpPermissionBroker {
               }
       try {
         await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
-        pending.resolve({ outcome: { outcome: 'selected', optionId: providerOptionId } })
+        this.settlePending(
+          pending,
+          { outcome: { outcome: 'selected', optionId: providerOptionId } },
+          settlementState
+        )
       } catch (error) {
-        pending.resolve({ outcome: { outcome: 'cancelled' } })
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
         throw new Error('Permission approval could not be saved; the tool call was cancelled.', {
           cause: error
         })
@@ -1100,14 +1114,31 @@ class AcpPermissionBroker {
       this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
     }
 
-    pending.resolve({
-      outcome: {
-        outcome: 'selected',
-        optionId: providerOptionId
-      }
-    })
+    this.settlePending(
+      pending,
+      {
+        outcome: {
+          outcome: 'selected',
+          optionId: providerOptionId
+        }
+      },
+      settlementState
+    )
 
     return true
+  }
+
+  private settlePending(
+    pending: PendingPermission,
+    response: RequestPermissionResponse,
+    state: AcpPermissionSettlementState
+  ): void {
+    pending.resolve(response)
+    try {
+      this.onPermissionSettled?.(pending.request.requestId, state)
+    } catch {
+      // Notification projection failures must never change the permission decision.
+    }
   }
 
   // Returns a one-shot allow option when this category has an app-owned session grant.

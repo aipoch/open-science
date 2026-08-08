@@ -1827,8 +1827,7 @@ const createApplicationModules = async (
     acp: {
       runtime,
       workflows: acpHandlerWorkflows,
-      archiveAvailability: archiveCoordinator,
-      notificationInbox
+      archiveAvailability: archiveCoordinator
     },
     notebook: {
       workflows: notebookCommands,

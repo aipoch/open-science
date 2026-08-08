@@ -100,6 +100,31 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items[0]).not.toHaveProperty('readAt')
   })
 
+  it('acknowledges visible task outcomes without marking authorization messages read', async () => {
+    const repository = await createRepository()
+    await record(repository, 'visible')
+    await repository.record({
+      id: 'approval-visible',
+      dedupeKey: 'authorization:agent-tool:request-visible',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-visible',
+      originId: 'request-visible',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
+
+    await repository.markSessionTaskOutcomesRead(['session-visible'], 2500)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.find((item) => item.kind === 'task.completed')?.readAt).toBe(2500)
+    expect(
+      snapshot.items.find((item) => item.kind === 'authorization.required')?.readAt
+    ).toBeUndefined()
+  })
+
   it('migrates legacy unread sessions exactly once and clears the old projection', async () => {
     const repository = await createRepository()
     await client!.unreadTaskSession.create({ data: { sessionId: 'legacy-session' } })
@@ -139,13 +164,27 @@ describe('NotificationInboxDbRepository', () => {
     const repository = await createRepository()
     await record(repository, 'archive')
     await record(repository, 'delete')
+    await repository.record({
+      id: 'approval-archive',
+      dedupeKey: 'authorization:agent-tool:request-archive',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-archive',
+      originId: 'request-archive',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
 
     await repository.markSessionsRead(['session-archive'], 5000)
     await repository.deleteSessions(['session-delete'])
 
     await expect(repository.snapshot()).resolves.toMatchObject({
       unreadCount: 0,
-      items: [{ sessionId: 'session-archive', readAt: 5000 }]
+      items: [
+        { sessionId: 'session-archive', readAt: 5000 },
+        { sessionId: 'session-archive', readAt: 5000 }
+      ]
     })
   })
 })

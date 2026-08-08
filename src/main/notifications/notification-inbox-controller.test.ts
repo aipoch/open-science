@@ -18,6 +18,11 @@ const repository = (
     markRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
     markAllRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
     markSessionsRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
+    markSessionTaskOutcomesRead: vi.fn(async () => ({
+      changed: true,
+      unreadCount: 0,
+      latestSequence: 1
+    })),
     deleteSessions: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 0 })),
     reconcileSessionCatalog: vi.fn(async () => ({
       changed: false,
@@ -116,5 +121,68 @@ describe('createNotificationInboxController', () => {
     await inbox.markAllRead(42)
 
     expect(db.markAllRead).toHaveBeenCalledWith(42, 3000)
+  })
+
+  it('waits for an in-flight authorization record before settling it', async () => {
+    let releaseAvailability: ((available: boolean) => void) | undefined
+    const order: string[] = []
+    const record = vi.fn(async () => {
+      order.push('record')
+      return { changed: true, unreadCount: 1, latestSequence: 1 }
+    })
+    const settle = vi.fn(async () => {
+      order.push('settle')
+      return { changed: true, unreadCount: 1, latestSequence: 1 }
+    })
+    const db = repository({ record, settle } as never)
+    const inbox = createNotificationInboxController({
+      headless: false,
+      repository: db,
+      onChanged: vi.fn(),
+      createId: () => 'approval-1',
+      now: () => 4000
+    })
+    inbox.setSessionAvailability(
+      () =>
+        new Promise<boolean>((resolve) => {
+          releaseAvailability = resolve
+        })
+    )
+
+    const recording = inbox.record({
+      dedupeKey: 'authorization:agent-tool:request-1',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-1',
+      originId: 'request-1',
+      title: 'Approval needed',
+      summary: 'A tool request needs your approval.',
+      actionState: 'pending'
+    })
+    const settling = inbox.settleAuthorization('agent-tool', 'request-1', 'rejected')
+    await Promise.resolve()
+
+    expect(settle).not.toHaveBeenCalled()
+    releaseAvailability?.(true)
+    await Promise.all([recording, settling])
+
+    expect(order).toEqual(['record', 'settle'])
+    expect(settle).toHaveBeenCalledWith('authorization:agent-tool:request-1', 'rejected', 4000)
+  })
+
+  it('auto-acknowledges only task outcomes when a conversation becomes visible', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({
+      headless: false,
+      repository: db,
+      onChanged: vi.fn(),
+      now: () => 5000
+    })
+    inbox.configureDesktop({ isAppFocused: () => true, badge: { setCount: vi.fn() } })
+
+    await inbox.syncViewState({ visibleSessionId: 'session-1' })
+
+    expect(db.markSessionTaskOutcomesRead).toHaveBeenCalledWith(['session-1'], 5000)
+    expect(db.markSessionsRead).not.toHaveBeenCalled()
   })
 })

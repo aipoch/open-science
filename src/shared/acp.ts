@@ -605,6 +605,8 @@ export type AcpPermissionResponse = {
   cancelled?: boolean
 }
 
+export type AcpPermissionSettlementState = 'resolved' | 'rejected' | 'cancelled'
+
 export type AcpRevokePermissionGrantRequest = {
   sessionId: string
   categoryKey: string

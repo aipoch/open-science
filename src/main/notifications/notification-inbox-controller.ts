@@ -76,6 +76,7 @@ export const createNotificationInboxController = (
   const createId = dependencies.createId ?? randomUUID
   const now = dependencies.now ?? Date.now
   const deletedSessionIds = new Set<string>()
+  const pendingAuthorizationRecords = new Map<string, Promise<void>>()
   let revision = 1
   let unreadCount = 0
   let latestSequence = 0
@@ -157,7 +158,7 @@ export const createNotificationInboxController = (
     return { revision, ...snapshot }
   }
 
-  const record = async (input: NotificationInboxRecord): Promise<void> => {
+  const recordNow = async (input: NotificationInboxRecord): Promise<void> => {
     const sessionId = input.sessionId?.trim() || undefined
     if (sessionId && deletedSessionIds.has(sessionId)) return
     if (sessionId && isSessionAvailable && !(await isSessionAvailable(sessionId))) return
@@ -179,14 +180,32 @@ export const createNotificationInboxController = (
     )
   }
 
-  const settleAuthorization = (
+  const record = (input: NotificationInboxRecord): Promise<void> => {
+    const operation = recordNow(input)
+    if (input.kind !== 'authorization.required') return operation
+
+    const previous = pendingAuthorizationRecords.get(input.dedupeKey)
+    const barrier = previous
+      ? Promise.allSettled([previous, operation]).then(() => undefined)
+      : operation.catch(() => undefined)
+    pendingAuthorizationRecords.set(input.dedupeKey, barrier)
+    void barrier.finally(() => {
+      if (pendingAuthorizationRecords.get(input.dedupeKey) === barrier) {
+        pendingAuthorizationRecords.delete(input.dedupeKey)
+      }
+    })
+    return operation
+  }
+
+  const settleAuthorization = async (
     source: NotificationSource,
     originId: string,
     actionState: NotificationActionState
-  ): Promise<void> =>
-    mutate(() =>
-      dependencies.repository.settle(authorizationDedupeKey(source, originId), actionState, now())
-    )
+  ): Promise<void> => {
+    const dedupeKey = authorizationDedupeKey(source, originId)
+    await pendingAuthorizationRecords.get(dedupeKey)
+    await mutate(() => dependencies.repository.settle(dedupeKey, actionState, now()))
+  }
 
   const markRead = (ids: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markRead(ids, now()))
@@ -196,6 +215,9 @@ export const createNotificationInboxController = (
 
   const markSessionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionsRead(sessionIds, now()))
+
+  const markVisibleSessionTaskOutcomesRead = (sessionIds: readonly string[]): Promise<void> =>
+    mutate(() => dependencies.repository.markSessionTaskOutcomesRead(sessionIds, now()))
 
   const deleteSessions = async (sessionIds: readonly string[]): Promise<void> => {
     for (const sessionId of sessionIds) {
@@ -210,8 +232,9 @@ export const createNotificationInboxController = (
 
   const syncViewState = async (state: UnreadTaskViewState): Promise<void> => {
     visibleSessionId = state.visibleSessionId?.trim() || undefined
-    if (isAppFocused() && visibleSessionId) await markSessionsRead([visibleSessionId])
-    else refreshBadge()
+    if (isAppFocused() && visibleSessionId) {
+      await markVisibleSessionTaskOutcomesRead([visibleSessionId])
+    } else refreshBadge()
   }
 
   const handleAppFocus = async (): Promise<void> => {
@@ -221,7 +244,7 @@ export const createNotificationInboxController = (
     }
     const candidate = visibleSessionId
     const visible = await confirmVisibleSession(candidate)
-    if (isAppFocused() && visible) await markSessionsRead([candidate])
+    if (isAppFocused() && visible) await markVisibleSessionTaskOutcomesRead([candidate])
     else refreshBadge()
   }
 
