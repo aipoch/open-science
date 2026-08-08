@@ -310,7 +310,10 @@ describe('HomePage activity overview', () => {
     )
 
     const activeSection = container.querySelector<HTMLElement>('[aria-label="Active sessions"]')
+    const scroller = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    expect(scroller?.classList.contains('overflow-x-auto')).toBe(true)
+    expect(cards[0]?.classList.contains('shrink-0')).toBe(true)
     expect([...cards].map((card) => card.getAttribute('aria-label'))).toEqual([
       'Open session Plan review, needs you',
       'Open session Permission request, needs you',

@@ -37,6 +37,13 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   const page = await app.completeOnboarding()
   await prepareVisualPage(page)
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Theme: Light' }).click()
+  const systemDescription = page.getByText('Match your device', { exact: true })
+  await expect(systemDescription).toBeVisible()
+  await expect(systemDescription).toHaveCSS('white-space', 'nowrap')
+  await page.keyboard.press('Escape')
+
   await expectStableScreenshot(page, 'home-empty.png')
 
   await page.getByRole('button', { name: 'New project' }).click()

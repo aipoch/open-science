@@ -92,14 +92,14 @@ export const ThemePreferenceMenu = ({ className }: ThemePreferenceMenuProps): Re
           <ActiveIcon className="size-4" strokeWidth={2} aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuLabel>Theme</DropdownMenuLabel>
         {THEME_OPTIONS.map(({ value, label, description, Icon }) => (
           <DropdownMenuItem key={value} onSelect={() => setPreference(value)} className="gap-2">
             <Icon className="size-4 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
             <span className="flex-1">
               <span className="block leading-tight">{label}</span>
-              <span className="block text-xs leading-tight text-muted-foreground">
+              <span className="block whitespace-nowrap text-xs leading-tight text-muted-foreground">
                 {description}
               </span>
             </span>

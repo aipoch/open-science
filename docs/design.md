@@ -542,9 +542,10 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
   `running` from `waiting on you` rather than presenting one ambiguous total.
 - Active sessions: when any non-archived Session is `running`, `waiting-permission`, or
-  `waiting-plan-approval`, show a responsive card deck above the Project/Recent columns. Waiting
-  Sessions come first, every card opens its Session, and cards contain only the Session title, Project
-  name, state, and state-relative time.
+  `waiting-plan-approval`, show a single-row horizontal card scroller above the Project/Recent
+  columns. Cards occupy one column on compact screens and half the row on desktop. Waiting Sessions
+  come first, every card opens its Session, and cards contain only the Session title, Project name,
+  state, and state-relative time.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
   `waiting-plan-approval` map to `Needs you`. Use the existing `session-running` and
   `session-waiting` tokens. Only status dots pulse, and they remain static under reduced motion.

@@ -468,7 +468,7 @@ const HomePage = ({
 
         {activeSessions.length > 0 ? (
           <section className="mt-8 sm:mt-10" aria-label="Active sessions">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto p-1">
               {activeSessions.map((session) => {
                 const activity = getHomeSessionActivity(session)
                 const needsYou = activity === 'needs-you'
@@ -480,7 +480,7 @@ const HomePage = ({
                   <button
                     key={session.id}
                     type="button"
-                    className="group flex min-h-36 min-w-0 flex-col rounded-2xl border border-border-200/70 bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                    className="group flex min-h-36 w-full min-w-0 shrink-0 snap-start flex-col rounded-2xl border border-border-200/70 bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none md:w-[calc(50%_-_0.375rem)]"
                     onClick={() => openSession(session.projectId, session.id, 'user')}
                     aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : 'running'}`}
                   >
