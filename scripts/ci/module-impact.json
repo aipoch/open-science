@@ -39,6 +39,7 @@
       "testFiles": {
         "owner": [
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
