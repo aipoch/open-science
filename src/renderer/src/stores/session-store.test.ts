@@ -2463,6 +2463,42 @@ describe('session store', () => {
       expect(accepted.messages[0]).toMatchObject({ interrupted: true })
     })
 
+    it('abandons stale Resume authority when the user starts a newer turn', () => {
+      hydrateInterrupted({
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Analyze the first cohort',
+            status: 'complete',
+            eventIds: [],
+            interrupted: true,
+            createdAt: 10,
+            updatedAt: 11
+          }
+        ]
+      })
+
+      const appended = useSessionStore.getState().appendUserMessage({
+        sessionId: 'resumable-session',
+        content: 'Analyze the second cohort instead'
+      })
+      const session = useSessionStore.getState().sessions[0]
+
+      expect(appended?.messageId).toBeTruthy()
+      expect(session.interrupted).toBeUndefined()
+      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.activeRun?.promptMessageId).toBe(appended?.messageId)
+      expect(session.messages).toHaveLength(2)
+      expect(session.messages[0]).toMatchObject({ id: 'prompt-1', interrupted: true })
+      expect(toPersistedSession(session).resumeRecovery).toBeUndefined()
+    })
+
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {
       useSessionStore.getState().appendUserMessage({
         sessionId: 'transport-session-1',

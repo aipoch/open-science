@@ -249,6 +249,9 @@ export const createSessionMessageGraphOwner = <
                 ...session,
                 status: 'running',
                 activeRun,
+                activeRunRuntimeSegmentId: undefined,
+                interrupted: undefined,
+                resumeRecovery: undefined,
                 ...(session.isPending
                   ? {
                       agentFrameworkId,
