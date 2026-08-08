@@ -3,6 +3,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('electron', () => ({
+  app: { getPath: () => '/home/user', isPackaged: true }
+}))
+
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import {
   createLinearConversationGraph,
@@ -33,6 +37,7 @@ import {
   type SessionMutationRepository,
   type SessionProvenancePersistence
 } from './coordinator'
+import { SessionRepository } from './repository'
 
 const createSession = (overrides: Partial<PersistedChatSession> = {}): PersistedChatSession => ({
   id: 'session-1',
@@ -1467,6 +1472,61 @@ describe('SessionPersistenceCoordinator', () => {
     )
     expect(fileIndex.syncSession).toHaveBeenCalledWith(session)
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
+  })
+
+  it('preserves a live permission wait when another client hydrates in the same process', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-live-permission-hydration-'))
+    const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => true })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    try {
+      await repository.saveSession(createSession())
+      await coordinator.loadAll()
+
+      await coordinator.saveSession(
+        createSession({
+          status: 'waiting-permission',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 3 },
+          messages: [
+            {
+              id: 'prompt-1',
+              role: 'user',
+              content: 'Run the notebook cell',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 3,
+              updatedAt: 3
+            }
+          ],
+          activities: [
+            {
+              id: 'notebook-call-1',
+              kind: 'tool',
+              title: 'Notebook cell',
+              status: 'in_progress',
+              sortIndex: 1,
+              eventIds: [],
+              createdAt: 3,
+              updatedAt: 3
+            }
+          ]
+        })
+      )
+
+      const rehydrated = await coordinator.loadAll()
+
+      expect(rehydrated.sessions[0]).toMatchObject({
+        status: 'waiting-permission',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 3 }
+      })
+      expect(rehydrated.sessions[0].resumeRecovery).toBeUndefined()
+      expect(rehydrated.sessions[0].error).toBeUndefined()
+      expect(rehydrated.sessions[0].messages[0].interrupted).toBeUndefined()
+      expect(rehydrated.sessions[0].activities?.[0].status).toBe('in_progress')
+      expect(rehydrated.sessions[0].conversationGraph?.activities[0]?.status).toBe('in_progress')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('records a phased terminal aggregate for complete Session hydration', async () => {

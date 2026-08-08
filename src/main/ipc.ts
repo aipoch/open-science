@@ -366,7 +366,16 @@ const createApplicationModules = async (
       diagnosticErrorFields(error)
     )
   }
-  const sessionRepository = createDefaultSessionRepository()
+  // Session reads and permission scope validation both need a late-bound view of ACP ownership:
+  // startup runs before the runtime exists, while later reads must preserve live prompt state.
+  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
+    current: undefined
+  }
+  const sessionRepository = createDefaultSessionRepository((projectId, sessionId) =>
+    (runtimeRef.current?.getActivePromptSessions() ?? []).some(
+      (session) => session.projectName === projectId && session.sessionId === sessionId
+    )
+  )
   const projectRepository = createDefaultProjectRepository()
   const previewStateRepository = createDefaultPreviewStateRepository()
 
@@ -462,12 +471,6 @@ const createApplicationModules = async (
   })
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)
 
-  // Permission scope validation starts before the ACP coordinator is constructed. Keep the late-bound
-  // reference here so a first-turn Session grant can recognize its live owner before the renderer's
-  // asynchronous session persistence finishes.
-  const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
-    current: undefined
-  }
   const notebookActivityRef: {
     current:
       { getActiveNotebookSessions(): { projectName: string; sessionId: string }[] } | undefined

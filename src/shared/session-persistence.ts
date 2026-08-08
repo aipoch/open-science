@@ -1232,7 +1232,7 @@ const sanitizeMessage = (
 
 const sanitizeConversationGraph = (
   value: unknown,
-  options: { preserveLegacyUploadPaths?: boolean } = {}
+  options: { preserveLegacyUploadPaths?: boolean; preserveRuntimeState?: boolean } = {}
 ): PersistedConversationGraph | undefined => {
   if (!isRecord(value) || value.schemaVersion !== 1) return undefined
   const rootFrameId = asString(value.rootFrameId)
@@ -1329,7 +1329,7 @@ const sanitizeConversationGraph = (
         if (!message || !agentFrameId || !introducedOnBranchId) return []
         return [
           {
-            ...normalizeMessageAfterRestore(message),
+            ...(options.preserveRuntimeState ? message : normalizeMessageAfterRestore(message)),
             agentFrameId,
             introducedOnBranchId,
             ...(asString(candidate.parentMessageId)
@@ -1391,7 +1391,9 @@ const sanitizeConversationGraph = (
         return activity && agentFrameId && messageBranchId && promptMessageId && runtimeSegmentId
           ? [
               {
-                ...normalizeActivityAfterRestore(activity),
+                ...(options.preserveRuntimeState
+                  ? activity
+                  : normalizeActivityAfterRestore(activity)),
                 agentFrameId,
                 messageBranchId,
                 promptMessageId,
@@ -1411,7 +1413,9 @@ const sanitizeConversationGraph = (
         return group && agentFrameId && messageBranchId && promptMessageId
           ? [
               {
-                ...normalizeActivityGroupAfterRestore(group),
+                ...(options.preserveRuntimeState
+                  ? group
+                  : normalizeActivityGroupAfterRestore(group)),
                 agentFrameId,
                 messageBranchId,
                 promptMessageId
@@ -1511,7 +1515,7 @@ const sanitizePendingHistoryReplay = (
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
 const sanitizeSession = (
   session: unknown,
-  options: { preserveLegacyUploadPaths?: boolean } = {}
+  options: { preserveLegacyUploadPaths?: boolean; preserveRuntimeState?: boolean } = {}
 ): PersistedChatSession | undefined => {
   if (!isRecord(session)) return undefined
 
@@ -1526,13 +1530,17 @@ const sanitizeSession = (
     ? session.activities
         .map(sanitizeToolActivity)
         .filter((item): item is PersistedToolActivity => !!item)
-        .map(normalizeActivityAfterRestore)
+        .map((activity) =>
+          options.preserveRuntimeState ? activity : normalizeActivityAfterRestore(activity)
+        )
     : []
   const activityGroups = Array.isArray(session.activityGroups)
     ? session.activityGroups
         .map(sanitizeActivityGroup)
         .filter((item): item is PersistedActivityGroup => !!item)
-        .map(normalizeActivityGroupAfterRestore)
+        .map((group) =>
+          options.preserveRuntimeState ? group : normalizeActivityGroupAfterRestore(group)
+        )
     : []
   let sanitized: PersistedChatSession = {
     id,
@@ -1623,7 +1631,7 @@ const sanitizeSession = (
 
   // Normalize before graph creation so a legacy flat transcript never seeds a streaming message or
   // loses the active prompt identity while activeRun is cleared.
-  sanitized = normalizeSessionAfterRestore(sanitized)
+  if (!options.preserveRuntimeState) sanitized = normalizeSessionAfterRestore(sanitized)
 
   if (session.conversationGraph !== undefined) {
     const graph = sanitizeConversationGraph(session.conversationGraph, options)
@@ -1644,7 +1652,7 @@ const sanitizeSession = (
 
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
-  sanitized = normalizeSessionAfterRestore(sanitized)
+  if (!options.preserveRuntimeState) sanitized = normalizeSessionAfterRestore(sanitized)
   const activeUserMessageIds = new Set(
     sanitized.messages.filter((message) => message.role === 'user').map((message) => message.id)
   )
@@ -1697,11 +1705,14 @@ export const createSessionFile = (session: PersistedChatSession): PersistedSessi
   }
 }
 
-// Reads one session-file payload, tolerating either the envelope or a bare session object, and applies
-// the same sanitization + interrupted-run normalization used by the legacy whole-state loader.
+// Reads one session-file payload, tolerating either the envelope or a bare session object. Runtime
+// recovery is skipped only when the main process confirms that the owning prompt is still active.
 export const normalizeSessionFile = (
   value: unknown,
-  options: { preserveLegacyUploadPaths?: boolean } = {}
+  options: {
+    preserveLegacyUploadPaths?: boolean
+    preserveRuntimeState?: boolean | ((sessionId: string) => boolean)
+  } = {}
 ): PersistedChatSession | undefined => {
   if (!isRecord(value)) return undefined
 
@@ -1714,7 +1725,16 @@ export const normalizeSessionFile = (
     return undefined
   }
 
-  return sanitizeSession(rawSession, options)
+  const sessionId = asString(rawSession.id)
+  const preserveRuntimeState =
+    typeof options.preserveRuntimeState === 'function'
+      ? sessionId !== undefined && options.preserveRuntimeState(sessionId)
+      : options.preserveRuntimeState
+
+  return sanitizeSession(rawSession, {
+    preserveLegacyUploadPaths: options.preserveLegacyUploadPaths,
+    preserveRuntimeState
+  })
 }
 
 // Tiny app-level pointer restoring the last-open project + session after a restart.
