@@ -78,6 +78,29 @@ describe('ApprovalBroker', () => {
     expect(() => broker.respond('nope', 'once')).not.toThrow()
   })
 
+  it('exposes a pending request until it settles', async () => {
+    const timer = makeTimer()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const decision = broker.request({ connector: 'biomart', method: 'get_data', argsPreview: '{}' })
+    expect(broker.getPending('id-1')).toEqual({
+      id: 'id-1',
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{}',
+      availableScopes: ['once']
+    })
+
+    broker.respond('id-1', 'deny')
+    await decision
+    expect(broker.getPending('id-1')).toBeNull()
+  })
+
   it('runs concurrent requests independently', async () => {
     const timers: Array<() => void> = []
     let n = 0

@@ -61,6 +61,7 @@ export class ComputeApprovalBroker {
   private readonly pending = new Map<
     string,
     {
+      request: ComputeApprovalRequest
       resolve: (decision: ComputeApprovalDecision) => void
       timer: ReturnType<typeof setTimeout>
       providerId: string
@@ -92,12 +93,17 @@ export class ComputeApprovalBroker {
   ): Promise<ComputeApprovalDecision> {
     const id = this.deps.generateId()
     const providerId = info.provider_id
+    const request = { id, ...info }
 
     return new Promise<ComputeApprovalDecision>((resolve) => {
       const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
-      this.pending.set(id, { resolve, timer, providerId })
-      this.deps.broadcast({ id, ...info }, context)
+      this.pending.set(id, { request, resolve, timer, providerId })
+      this.deps.broadcast(request, context)
     })
+  }
+
+  getPending(id: string): ComputeApprovalRequest | null {
+    return this.pending.get(id)?.request ?? null
   }
 
   // Like request(), but checks conversation and project grants first. If a grant matches, resolves

@@ -33,7 +33,11 @@ type ApprovalBrokerDeps = {
 export class ApprovalBroker {
   private readonly pending = new Map<
     string,
-    { resolve: (decision: ApprovalDecision) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      request: ConnectorApprovalRequest
+      resolve: (decision: ApprovalDecision) => void
+      timer: ReturnType<typeof setTimeout>
+    }
   >()
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -48,12 +52,17 @@ export class ApprovalBroker {
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies it).
   request(info: ApprovalInfo): Promise<ApprovalDecision> {
     const id = this.deps.generateId()
+    const request = { id, ...info, availableScopes: info.availableScopes ?? ['once'] }
 
     return new Promise<ApprovalDecision>((resolve) => {
       const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
-      this.pending.set(id, { resolve, timer })
-      this.deps.broadcast({ id, ...info, availableScopes: info.availableScopes ?? ['once'] })
+      this.pending.set(id, { request, resolve, timer })
+      this.deps.broadcast(request)
     })
+  }
+
+  getPending(id: string): ConnectorApprovalRequest | null {
+    return this.pending.get(id)?.request ?? null
   }
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).

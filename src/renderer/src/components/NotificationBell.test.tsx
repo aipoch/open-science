@@ -3,13 +3,21 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ComputeApprovalRequest } from '../../../shared/compute'
+import type { ConnectorApprovalRequest } from '../../../shared/settings'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { NotificationBell } from './NotificationBell'
 
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  window.api = {
+    settings: { replayConnectorApproval: vi.fn(async () => null) },
+    compute: { replayApproval: vi.fn(async () => null) }
+  } as unknown as Window['api']
   useNotificationInboxStore.setState({
     revision: 1,
     unreadCount: 1,
@@ -112,6 +120,59 @@ describe('NotificationBell', () => {
     await act(async () => markAll?.click())
     expect(markAllRead).toHaveBeenCalledTimes(1)
   })
+
+  it.each(['connector', 'compute'] as const)(
+    'reopens a pending sessionless %s approval from its in-memory broker request',
+    async (source) => {
+      const connectorRequest = {
+        id: 'request-1',
+        connector: 'pubchem',
+        method: 'search',
+        argsPreview: '{}',
+        availableScopes: ['once']
+      } satisfies ConnectorApprovalRequest
+      const computeRequest = {
+        id: 'request-1',
+        provider_id: 'ssh:cluster',
+        provider_name: 'Cluster',
+        shape: 'direct_ssh',
+        intent: 'Run a command',
+        command_preview: 'pwd',
+        command_full: 'pwd'
+      } satisfies ComputeApprovalRequest
+      const replayConnectorApproval = vi.fn(async () => connectorRequest)
+      const replayApproval = vi.fn(async () => computeRequest)
+      const enqueueConnector = vi.fn()
+      const enqueueCompute = vi.fn()
+      window.api.settings.replayConnectorApproval = replayConnectorApproval
+      window.api.compute.replayApproval = replayApproval
+      useSettingsStore.setState({ enqueueApproval: enqueueConnector })
+      useComputeStore.setState({ enqueueApproval: enqueueCompute })
+      const item = useNotificationInboxStore.getState().items[0]
+      useNotificationInboxStore.setState({
+        markRead: vi.fn(async () => undefined),
+        items: item ? [{ ...item, source }] : []
+      })
+      await act(async () => root.render(<NotificationBell />))
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+      )
+      const message = [...document.body.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Approval needed')
+      )
+      await act(async () => message?.click())
+
+      if (source === 'connector') {
+        expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
+        expect(enqueueConnector).toHaveBeenCalledWith(connectorRequest)
+      } else {
+        expect(replayApproval).toHaveBeenCalledWith('request-1')
+        expect(enqueueCompute).toHaveBeenCalledWith(computeRequest)
+      }
+      expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+    }
+  )
 
   it('uses a bottom drawer on mobile and notifies its host when opening', async () => {
     stubMobileViewport()

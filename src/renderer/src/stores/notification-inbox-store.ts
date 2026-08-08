@@ -36,9 +36,7 @@ export const useNotificationInboxStore = create<NotificationInboxStore>((set, ge
       if (get().status === 'idle') set({ status: 'loading', error: undefined })
       try {
         const snapshot = await api.getSnapshot()
-        if (snapshot.revision >= get().revision) {
-          set({ ...snapshot, status: 'ready', error: undefined })
-        }
+        set({ ...snapshot, status: 'ready', error: undefined })
       } catch (error) {
         set({ status: 'error', error: errorMessage(error) })
       }

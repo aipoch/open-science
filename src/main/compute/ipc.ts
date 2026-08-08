@@ -183,6 +183,7 @@ type ComputeHandlers = {
   // Responds to a pending approval request from the renderer. Decision now includes
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
+  approvalReplay: (id: string) => ComputeApprovalRequest | null
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -371,6 +372,7 @@ const createComputeHandlers = (
     },
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision),
+    approvalReplay: (id) => broker.getPending(id),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
@@ -593,6 +595,9 @@ const registerComputeIpcHandlerSet = ({
     (_event, request: { id: string; decision: ComputeApprovalDecision }) => {
       handlers.approvalRespond(request.id, request.decision)
     }
+  )
+  ipcMainHandle('compute:approval-replay', (_event, id: unknown) =>
+    typeof id === 'string' ? handlers.approvalReplay(id) : null
   )
   // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
   ipcMainHandle(

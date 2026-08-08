@@ -18,8 +18,10 @@ import type { NotificationInboxItem } from '../../../shared/notifications'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
+import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { useSettingsStore } from '@/stores/settings-store'
 
 type NotificationBellProps = Readonly<{
   className?: string
@@ -54,6 +56,23 @@ const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
+
+const replayPendingApproval = async (item: NotificationInboxItem): Promise<boolean> => {
+  if (item.actionState !== 'pending' || item.sessionId || item.projectId) return false
+  if (item.source === 'connector') {
+    const request = await window.api.settings.replayConnectorApproval(item.originId)
+    if (!request) return false
+    useSettingsStore.getState().enqueueApproval(request)
+    return true
+  }
+  if (item.source === 'compute') {
+    const request = await window.api.compute.replayApproval(item.originId)
+    if (!request) return false
+    useComputeStore.getState().enqueueApproval(request)
+    return true
+  }
+  return false
+}
 
 // One shared entry point for Home, desktop Workspace, and the always-visible mobile conversation
 // header. The backend owns read state, so multiple rendered bells always converge after one action.
@@ -181,6 +200,8 @@ const NotificationBell = ({
       setOpen(false)
     } else if (item.projectId) {
       useNavigationStore.getState().openProject(item.projectId, 'notification')
+      setOpen(false)
+    } else if (await replayPendingApproval(item)) {
       setOpen(false)
     }
   }

@@ -1094,6 +1094,9 @@ const createApplicationModules = async (
     ipcMainHandle('connectors:approval-respond', (_event, request: RespondApprovalRequest) => {
       approvalBroker.respond(request.id, request.decision)
     })
+    ipcMainHandle('connectors:approval-replay', (_event, id: unknown) =>
+      typeof id === 'string' ? approvalBroker.getPending(id) : null
+    )
     ipcMainHandle(
       'skills:conversation-import-respond',
       (_event, response: ConversationSkillImportApprovalResponse) => {
