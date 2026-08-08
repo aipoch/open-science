@@ -2447,11 +2447,16 @@ describe('session store', () => {
         status: 'running',
         interrupted: true,
         resumeRecovery: { promptMessageId: 'prompt-1' },
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'prompt-1' },
         activeRun: { promptMessageId: 'prompt-1' },
         activeRunRuntimeSegmentId: prepared?.runtimeSegmentId
       })
       expect(toPersistedSession(running).resumeRecovery).toMatchObject({
         promptMessageId: 'prompt-1'
+      })
+      expect(toPersistedSession(running).pendingHistoryReplay).toEqual({
+        kind: 'before-message',
+        messageId: 'prompt-1'
       })
 
       useSessionStore.getState().completeInterruptedTurnResume('resumable-session')
@@ -2460,6 +2465,7 @@ describe('session store', () => {
       expect(accepted.activeRun?.promptMessageId).toBe('prompt-1')
       expect(accepted.interrupted).toBeUndefined()
       expect(accepted.resumeRecovery).toBeUndefined()
+      expect(accepted.pendingHistoryReplay).toBeUndefined()
       expect(accepted.messages[0]).toMatchObject({ interrupted: true })
     })
 

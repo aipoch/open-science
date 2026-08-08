@@ -172,6 +172,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           providerContinuityToken:
             update === undefined ? session.providerContinuityToken : update.providerContinuityToken
         }
+        const isRetryingPreparedContext = contextReset && session.pendingHistoryReplay !== undefined
         const conversationGraph = contextReset
           ? synchronizeSessionGraph(
               withProvider,
@@ -180,7 +181,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
               withProvider.agentFrameworkId ?? 'claude-code',
               withProvider.agentBackendId,
               withProvider.agentModel,
-              true
+              !isRetryingPreparedContext
             )
           : withProvider.conversationGraph
         const runtimeSegmentId = conversationGraph?.runtimeSegments
@@ -196,7 +197,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           agentStatus: undefined,
           error: undefined,
           errorReportable: undefined,
-          pendingHistoryReplay: undefined,
+          pendingHistoryReplay: contextReset
+            ? (session.pendingHistoryReplay ?? {
+                kind: 'before-message',
+                messageId: promptMessageId
+              })
+            : session.pendingHistoryReplay,
           compacting: undefined,
           conversationGraph,
           updatedAt: now

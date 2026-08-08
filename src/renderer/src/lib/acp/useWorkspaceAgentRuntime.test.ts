@@ -3327,6 +3327,68 @@ describe('resuming an interrupted session on demand', () => {
     ).toHaveLength(2)
   })
 
+  it('retains fresh-adoption replay authority until the continuation is accepted', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Summarize the source material',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The source material is summarized.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const interrupted = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Now compare the findings',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('provider rejected continuation'))
+        .mockResolvedValueOnce(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      interrupted: true,
+      resumeRecovery: { promptMessageId: interrupted?.messageId },
+      pendingHistoryReplay: { kind: 'before-message', messageId: interrupted?.messageId }
+    })
+    const firstRuntimeSegmentId =
+      runtime.continueInterruptedTurn.mock.calls[0]?.[0].contextReset?.runtimeSegmentId
+
+    runtime.state = createSnapshot(['session-1'])
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledTimes(2)
+    expect(runtime.continueInterruptedTurn.mock.calls[1]?.[0].contextReset).toMatchObject({
+      runtimeSegmentId: firstRuntimeSegmentId
+    })
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+  })
+
   it('does not continue a recovery prompt removed while stale events are draining', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

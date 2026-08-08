@@ -533,7 +533,11 @@ describe('TaskRunner', () => {
     ])
     expect(prompts[0]?.historyPreamble).not.toContain('Delete the duplicates')
     expect(saved[0]).not.toHaveProperty('resumeRecovery')
-    expect(saved[0]).not.toHaveProperty('pendingHistoryReplay')
+    expect(saved[0].pendingHistoryReplay).toEqual({
+      kind: 'before-message',
+      messageId: 'interrupted-user'
+    })
+    expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
     expect(
       saved[0]?.messages.filter((message) => message.content === 'Delete the duplicates')
     ).toHaveLength(1)
@@ -603,7 +607,75 @@ describe('TaskRunner', () => {
           'Previous conversation:\n\nUser: Summarize the evidence\n\nAssistant: The evidence is mixed.'
       })
     ])
-    expect(saved[0]).not.toHaveProperty('pendingHistoryReplay')
+    expect(saved[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
+  })
+
+  it('retains full-history replay when the task prompt is rejected before acceptance', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Summarize the evidence',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'The evidence is mixed.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      pendingHistoryReplay: { kind: 'all' }
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({ sessionId: 'unused' }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+          throw new Error('provider rejected prompt')
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Compare the evidence groups.'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed.status).toBe('failed')
+    expect(prompts[0]).toMatchObject({
+      contextReset: true,
+      historyPreamble:
+        'Previous conversation:\n\nUser: Summarize the evidence\n\nAssistant: The evidence is mixed.'
+    })
+    expect(saved[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    expect(saved.at(-1)?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
   it('provides transcript fallback for skill-triggered reconnects', async () => {

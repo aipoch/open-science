@@ -1495,7 +1495,7 @@ const resumeInterruptedWorkspaceSession = async (
             runtime,
             sessionId,
             promptMessageId,
-            false,
+            session.pendingHistoryReplay !== undefined,
             options
           ))
         ) {
@@ -1547,7 +1547,7 @@ const resumeInterruptedWorkspaceSession = async (
         runtime,
         sessionId,
         promptMessageId,
-        Boolean(resumeResult?.contextReset),
+        Boolean(resumeResult?.contextReset || session.pendingHistoryReplay),
         options,
         providerUpdate
       )

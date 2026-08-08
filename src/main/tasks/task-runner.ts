@@ -217,6 +217,13 @@ const createHistoryPreamble = (messages: PersistedChatMessage[]): string | undef
   return transcript ? `Previous conversation:\n\n${transcript}` : undefined
 }
 
+const consumePendingHistoryReplay = (session: PersistedChatSession): PersistedChatSession => {
+  if (!session.pendingHistoryReplay) return session
+  const accepted = { ...session }
+  delete accepted.pendingHistoryReplay
+  return accepted
+}
+
 const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => ({
   id: session.id,
   projectId: session.projectId,
@@ -537,11 +544,10 @@ class TaskRunner {
           updatedAt: now
         }
 
-    // Starting a new authored turn consumes recovery authority. Delete the keys from the prepared
-    // snapshot so later saves and restarts cannot present Resume for the completed handoff.
+    // Starting a new authored turn consumes the old Resume authority. History replay remains durable
+    // until the provider accepts this replacement turn, so a pre-acceptance rejection can retry it.
     if (existing) {
       delete session.resumeRecovery
-      delete session.pendingHistoryReplay
     }
 
     await this.dependencies.sessions.save(session)
@@ -586,10 +592,13 @@ class TaskRunner {
       cancellationAtPromptFailure = run.cancellation
     }
 
+    const acceptedSession =
+      promptError === undefined ? consumePendingHistoryReplay(session) : session
+
     let completed: CompletedTaskSession | undefined
     let completionError: unknown
     try {
-      completed = await this.completeSession(session, run.events)
+      completed = await this.completeSession(acceptedSession, run.events)
     } catch (error) {
       if (error instanceof PartialTaskCompletionError) {
         completed = error.completion
@@ -604,14 +613,14 @@ class TaskRunner {
     const promptFailureWasCancelled = cancellationAtPromptFailure?.accepted === true
     const failure = completionError ?? (promptFailureWasCancelled ? undefined : promptError)
     if (failure) {
-      await this.failRun(run, session, completed, failure)
+      await this.failRun(run, acceptedSession, completed, failure)
       return
     }
 
     try {
       await this.dependencies.sessions.save(completed!.session)
     } catch (error) {
-      await this.failRun(run, session, completed, error)
+      await this.failRun(run, acceptedSession, completed, error)
       return
     }
     const terminalCancellation = run.cancellation
