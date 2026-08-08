@@ -67,7 +67,7 @@ const createConversationBranchId = (): string => {
   return `message-branch-${Date.now()}-${conversationBranchSequence}`
 }
 
-const createRuntimeSegmentId = (): string => {
+export const createRuntimeSegmentId = (): string => {
   runtimeSegmentSequence += 1
   return `runtime-segment-${Date.now()}-${runtimeSegmentSequence}`
 }
@@ -78,7 +78,8 @@ export const synchronizeSessionGraph = (
   now: number,
   frameworkId = session.agentFrameworkId ?? 'claude-code',
   backendId = session.agentBackendId,
-  model = session.agentModel
+  model = session.agentModel,
+  forceRuntimeSegment = false
 ): NonNullable<PersistedChatSession['conversationGraph']> =>
   projectSessionGraph(
     session,
@@ -87,7 +88,8 @@ export const synchronizeSessionGraph = (
     createRuntimeSegmentId(),
     frameworkId,
     backendId,
-    model
+    model,
+    forceRuntimeSegment
   )
 
 const createMessage = (
@@ -97,7 +99,8 @@ const createMessage = (
   streamId?: string,
   eventIds: string[] = [],
   uploads: PersistedUploadedAttachment[] = [],
-  parts?: MessagePart[]
+  parts?: MessagePart[],
+  turnIntent?: ChatMessage['turnIntent']
 ): ChatMessage => {
   const now = Date.now()
   return buildMessage({
@@ -109,6 +112,7 @@ const createMessage = (
     eventIds,
     uploads,
     parts,
+    turnIntent,
     sortIndex: createSortIndex(),
     now
   })
@@ -190,6 +194,7 @@ export const createSessionMessageGraphOwner = <
     content,
     attachments = [],
     parts,
+    turnIntent,
     cwd,
     projectId,
     permissionProfile,
@@ -216,7 +221,8 @@ export const createSessionMessageGraphOwner = <
       undefined,
       [],
       uploads,
-      parts
+      parts,
+      turnIntent
     )
     const activeRun: ActiveRun = {
       promptMessageId: userMessage.id,
@@ -311,6 +317,7 @@ export const createSessionMessageGraphOwner = <
     content,
     attachments = [],
     parts,
+    turnIntent,
     cwd,
     projectId,
     permissionProfile,
@@ -324,6 +331,7 @@ export const createSessionMessageGraphOwner = <
       content,
       attachments,
       parts,
+      turnIntent,
       cwd,
       projectId,
       permissionProfile,
@@ -339,6 +347,7 @@ export const createSessionMessageGraphOwner = <
     content,
     attachments = [],
     parts,
+    turnIntent,
     permissionProfile,
     agentFrameworkId,
     agentBackendId,
@@ -373,7 +382,8 @@ export const createSessionMessageGraphOwner = <
       undefined,
       [],
       uploads,
-      parts
+      parts,
+      turnIntent
     )
     const messages = [
       ...sourceMessages.map(({ message, sortIndex }) => copySnapshotMessage(message, sortIndex)),

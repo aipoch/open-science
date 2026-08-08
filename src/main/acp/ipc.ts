@@ -11,6 +11,7 @@ import type {
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
+  AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
   AcpPromptRequest,
@@ -34,6 +35,11 @@ const registerAcpIpcHandlerSet = (
   )
   ipcMainHandle('acp:resume-session', (_event, request: AcpResumeSessionRequest) =>
     workflows.resumeSession(request)
+  )
+  ipcMainHandle(
+    'acp:continue-interrupted-turn',
+    (_event, request: AcpContinueInterruptedTurnRequest) =>
+      workflows.continueInterruptedTurn(request)
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     runtime.resetSessionContext(request)

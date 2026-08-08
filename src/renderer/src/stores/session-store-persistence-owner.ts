@@ -73,6 +73,8 @@ export type ChatSession = Omit<
   agentStatus?: string
   awaitingFirstAgentOutput?: boolean
   agentPromptInFlight?: boolean
+  // Transient provenance owner for responses emitted while an interrupted turn is resumed.
+  activeRunRuntimeSegmentId?: string
   branchContextResetRequired?: boolean
   specialistSwitchResetRequired?: boolean
   branchSwitchBlocked?: boolean
@@ -139,6 +141,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     agentStatus,
     awaitingFirstAgentOutput,
     agentPromptInFlight,
+    activeRunRuntimeSegmentId,
     branchContextResetRequired,
     specialistSwitchResetRequired,
     branchSwitchBlocked,
@@ -158,6 +161,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void agentStatus
   void awaitingFirstAgentOutput
   void agentPromptInFlight
+  void activeRunRuntimeSegmentId
   void branchContextResetRequired
   void specialistSwitchResetRequired
   void branchSwitchBlocked
@@ -243,6 +247,7 @@ const withTransientSessionState = (
     agentStatus: source.agentStatus,
     awaitingFirstAgentOutput: source.awaitingFirstAgentOutput,
     agentPromptInFlight: source.agentPromptInFlight,
+    activeRunRuntimeSegmentId: source.activeRunRuntimeSegmentId,
     branchContextResetRequired: source.branchContextResetRequired,
     specialistSwitchResetRequired: source.specialistSwitchResetRequired,
     branchSwitchBlocked: source.branchSwitchBlocked,

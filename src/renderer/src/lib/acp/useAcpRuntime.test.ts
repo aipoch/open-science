@@ -78,6 +78,7 @@ let acpApi: {
   disconnect: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
+  continueInterruptedTurn: ReturnType<typeof vi.fn>
   compactSession: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
@@ -111,6 +112,7 @@ beforeEach(() => {
     disconnect: vi.fn().mockResolvedValue(createSnapshot({ status: 'idle' })),
     createSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
     resumeSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+    continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot()),
     compactSession: vi.fn().mockResolvedValue(createSnapshot()),
     deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
     cancel: vi.fn().mockResolvedValue(createSnapshot()),
@@ -328,6 +330,21 @@ describe('useAcpRuntime payload construction', () => {
       providerSessionId: 'provider-session-1',
       providerContinuityToken: 'bridge-generation-1'
     })
+  })
+
+  it('forwards only the restricted interrupted-turn continuation contract', async () => {
+    const { result } = await mountRuntime()
+    const request = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
+
+    await act(async () => {
+      await result.current.continueInterruptedTurn(request)
+    })
+
+    expect(acpApi.continueInterruptedTurn).toHaveBeenCalledWith(request)
   })
 
   it('includes history preamble/attachments/images and resume fallback when a prompt replays context', async () => {

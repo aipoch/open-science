@@ -8,6 +8,7 @@ import {
   forkEditedConversationMessage,
   getActiveConversationContext,
   resolveActiveConversationMessages,
+  synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from './conversation-graph'
 
@@ -124,6 +125,100 @@ describe('conversation graph', () => {
     expect(completed.messages.find(({ id }) => id === response.id)?.runtimeSegmentId).toBe(
       completed.messages.find(({ id }) => id === prompt.id)?.runtimeSegmentId
     )
+  })
+
+  it('attributes a fresh-context continuation response to an explicitly forced Runtime Segment', () => {
+    const prompt = message('u1', 'user', 'continue this task', 1)
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [prompt],
+      frameworkId: 'codex',
+      backendId: 'codex-subscription',
+      model: 'gpt-5.5',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const resumed = ensureConversationRuntimeSegment(graph, {
+      id: 'runtime-resumed',
+      frameworkId: 'codex',
+      backendId: 'codex-subscription',
+      model: 'gpt-5.5',
+      startedAt: 2,
+      forceNew: true
+    })
+    const response = {
+      ...message('a1', 'agent', 'continued', 3),
+      responseToMessageId: prompt.id
+    }
+    const completed = synchronizeActiveConversationMessages(
+      resumed,
+      [prompt, response],
+      3,
+      'runtime-resumed'
+    )
+
+    expect(completed.runtimeSegments).toHaveLength(2)
+    expect(completed.messages.find(({ id }) => id === prompt.id)?.runtimeSegmentId).not.toBe(
+      'runtime-resumed'
+    )
+    expect(completed.messages.find(({ id }) => id === response.id)?.runtimeSegmentId).toBe(
+      'runtime-resumed'
+    )
+
+    const withPriorActivity = synchronizeActiveConversationActivities(
+      completed,
+      [
+        {
+          id: 'activity-prior',
+          kind: 'tool',
+          title: 'Initial analysis',
+          promptMessageId: prompt.id,
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      []
+    )
+
+    const withActivity = synchronizeActiveConversationActivities(
+      withPriorActivity,
+      [
+        {
+          id: 'activity-prior',
+          kind: 'tool',
+          title: 'Initial analysis',
+          promptMessageId: prompt.id,
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 3
+        },
+        {
+          id: 'activity-1',
+          kind: 'tool',
+          title: 'Continue analysis',
+          promptMessageId: prompt.id,
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      [],
+      'runtime-resumed'
+    )
+    expect(withActivity.activities.find(({ id }) => id === 'activity-1')).toMatchObject({
+      promptMessageId: prompt.id,
+      runtimeSegmentId: 'runtime-resumed'
+    })
+    expect(
+      withActivity.activities.find(({ id }) => id === 'activity-prior')?.runtimeSegmentId
+    ).not.toBe('runtime-resumed')
   })
 
   it('keeps graph-owned history when a stale flat projection is shorter or older', () => {

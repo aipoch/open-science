@@ -226,6 +226,7 @@ describe('ACP module transport seam', () => {
       'acp:cancel',
       'acp:compact-session',
       'acp:connect',
+      'acp:continue-interrupted-turn',
       'acp:create-session',
       'acp:delete-session',
       'acp:disconnect',

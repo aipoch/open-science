@@ -18,13 +18,19 @@ const CONVERSATION_GRAPH_SYNC_ERROR =
 
 const CLEARED_AGENT_RUN_STATE = {
   activeRun: undefined,
+  activeRunRuntimeSegmentId: undefined,
   agentStatus: undefined,
   awaitingFirstAgentOutput: undefined,
   agentPromptInFlight: undefined,
   compacting: undefined
 } satisfies Pick<
   ChatSession,
-  'activeRun' | 'agentStatus' | 'awaitingFirstAgentOutput' | 'agentPromptInFlight' | 'compacting'
+  | 'activeRun'
+  | 'activeRunRuntimeSegmentId'
+  | 'agentStatus'
+  | 'awaitingFirstAgentOutput'
+  | 'agentPromptInFlight'
+  | 'compacting'
 >
 
 const settleConversationGraphSyncFailure = (

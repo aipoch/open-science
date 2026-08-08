@@ -651,6 +651,41 @@ describe('ConversationPanel interrupted Session recovery', () => {
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
   })
 
+  it('does not show one Session resume progress on another active Session', async () => {
+    let resolveResume: (() => void) | undefined
+    const onResumeSession = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveResume = resolve
+        })
+    )
+    const interruptedSession: ChatSession = {
+      id: 'session-interrupted',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'idle',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    renderPanel({ activeSession: interruptedSession, onResumeSession })
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Resume session"]')?.click()
+    )
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+
+    renderPanel({
+      activeSession: { ...interruptedSession, id: 'session-other', interrupted: undefined },
+      onResumeSession
+    })
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+
+    await act(async () => resolveResume?.())
+  })
+
   it('keeps Resume disabled while Session persistence is unavailable', () => {
     const onResumeSession = vi.fn().mockResolvedValue(undefined)
     const interruptedSession: ChatSession = {

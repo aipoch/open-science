@@ -58,6 +58,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
   workflows: {
     createSession: vi.fn(async () => sessionResponse),
     resumeSession: vi.fn(async () => sessionResponse),
+    continueInterruptedTurn: vi.fn(async () => snapshot),
     sendPrompt: vi.fn(async () => snapshot)
   }
 })
@@ -85,6 +86,7 @@ describe('ACP application commands', () => {
       'acp:cancel',
       'acp:compact-session',
       'acp:connect',
+      'acp:continue-interrupted-turn',
       'acp:create-session',
       'acp:delete-session',
       'acp:disconnect',
@@ -113,6 +115,11 @@ describe('ACP application commands', () => {
     const connect = { cwd: '/workspace' }
     const createSession = { projectName: 'project-1', permissionProfile: 'ask' as const }
     const resumeSession = { sessionId: 'session-1', cwd: '/workspace' }
+    const interruptedTurn = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
     const compactSession = { sessionId: 'session-1', reason: 'manual' as const }
     const cancel = { sessionId: 'session-1' }
     const deleteSession = { sessionId: 'session-2' }
@@ -135,6 +142,9 @@ describe('ACP application commands', () => {
     await expect(
       router.dispatcher.invoke(acpCommands.resumeSession, invocation([resumeSession]))
     ).resolves.toBe(sessionResponse)
+    await expect(
+      router.dispatcher.invoke(acpCommands.continueInterruptedTurn, invocation([interruptedTurn]))
+    ).resolves.toBe(snapshot)
     await expect(
       router.dispatcher.invoke(acpCommands.resetSessionContext, invocation([resumeSession]))
     ).resolves.toMatchObject({ sessionId: 'session-1', contextReset: true })
@@ -161,6 +171,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.disconnect).toHaveBeenCalledWith()
     expect(dependencies.workflows.createSession).toHaveBeenCalledWith(createSession)
     expect(dependencies.workflows.resumeSession).toHaveBeenCalledWith(resumeSession)
+    expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledWith(interruptedTurn)
     expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith(resumeSession)
     expect(dependencies.runtime.compactSession).toHaveBeenCalledWith(compactSession)
     expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith(cancel)
@@ -168,6 +179,32 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledWith(permission)
     expect(dependencies.runtime.setPermissionProfile).toHaveBeenCalledWith(profile)
     expect(dependencies.runtime.revokePermissionGrant).toHaveBeenCalledWith(grant)
+  })
+
+  it('accepts interrupted-turn continuation only from a current human caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueInterruptedTurn,
+        invocation([request], createWebCallerContext('local-web'))
+      )
+    ).resolves.toBe(snapshot)
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueInterruptedTurn,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can continue an interrupted turn.')
+
+    expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
   it('discards renderer-supplied internal prompt controls before entering the workflow', async () => {

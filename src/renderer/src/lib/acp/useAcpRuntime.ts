@@ -1,4 +1,5 @@
 import type {
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
@@ -60,6 +61,7 @@ const useAcpRuntime = (): {
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
   ) => Promise<AcpCreateSessionResponse>
+  continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
@@ -255,6 +257,12 @@ const useAcpRuntime = (): {
     [runValueAction]
   )
 
+  const continueInterruptedTurn = useCallback(
+    (request: AcpContinueInterruptedTurnRequest) =>
+      runSendPromptAction(() => window.api.acp.continueInterruptedTurn(request)),
+    [runSendPromptAction]
+  )
+
   // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
   // adopting a fresh agent session so the next prompt can replay a bounded text transcript.
   const resetSessionContext = useCallback(
@@ -381,6 +389,7 @@ const useAcpRuntime = (): {
     disconnect,
     createSession,
     resumeSession,
+    continueInterruptedTurn,
     resetSessionContext,
     compactSession,
     deleteSession,

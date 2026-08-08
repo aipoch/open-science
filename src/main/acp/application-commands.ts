@@ -4,6 +4,7 @@ import type {
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
+  AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
   AcpPromptRequest,
@@ -45,6 +46,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpResumeSessionRequest],
     AcpCreateSessionResponse
   >('acp:resume-session'),
+  continueInterruptedTurn: defineApplicationCommand<
+    'acp:continue-interrupted-turn',
+    readonly [request: AcpContinueInterruptedTurnRequest],
+    AcpStateSnapshot
+  >('acp:continue-interrupted-turn'),
   resetSessionContext: defineApplicationCommand<
     'acp:reset-session-context',
     readonly [request: AcpResumeSessionRequest],
@@ -103,6 +109,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.disconnect,
   acpCommands.createSession,
   acpCommands.resumeSession,
+  acpCommands.continueInterruptedTurn,
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
@@ -161,6 +168,12 @@ const registerAcpCommands = (
         dependencies.workflows.createSession(invocation.args[0]),
       'acp:resume-session': (invocation) =>
         dependencies.workflows.resumeSession(invocation.args[0]),
+      'acp:continue-interrupted-turn': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can continue an interrupted turn.')
+        }
+        return dependencies.workflows.continueInterruptedTurn(invocation.args[0])
+      },
       'acp:reset-session-context': (invocation) =>
         dependencies.archiveAvailability
           ? dependencies.archiveAvailability.withSessionAvailableById(

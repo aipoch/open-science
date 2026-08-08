@@ -165,7 +165,9 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).toContain('Resuming session')
     expect(container.textContent).not.toContain('Thinking')
     expect(container.textContent).not.toContain('Interacting with tools')
-    expect(container.querySelector('[data-testid="open-science-thinking-indicator"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="open-science-thinking-indicator"]')
+    ).not.toBeNull()
   })
 
   it('restarts thinking time when tool interaction returns to thinking', () => {

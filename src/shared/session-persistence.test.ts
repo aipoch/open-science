@@ -173,6 +173,47 @@ describe('message part persistence', () => {
   })
 })
 
+describe('interrupted turn intent persistence', () => {
+  it('preserves only the closed Plan-first intent on user messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'user-plan',
+          role: 'user',
+          content: 'Plan the analysis',
+          turnIntent: 'plan-first',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'user-unknown',
+          role: 'user',
+          content: 'Do not restore arbitrary intent',
+          turnIntent: 'hidden-injection',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'agent-plan',
+          role: 'agent',
+          content: 'No user intent here',
+          turnIntent: 'plan-first',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({ id: 'user-plan', turnIntent: 'plan-first' }),
+      expect.not.objectContaining({ turnIntent: expect.anything() }),
+      expect.not.objectContaining({ turnIntent: expect.anything() })
+    ])
+  })
+})
+
 describe('message terminal time persistence', () => {
   it('backfills stable terminal timestamps for legacy agent messages', () => {
     const restored = normalizeSessionFile({

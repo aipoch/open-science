@@ -93,6 +93,7 @@ type PreloadApi = {
   acp: {
     connect: (request?: unknown) => unknown
     resumeSession: (request: unknown) => unknown
+    continueInterruptedTurn: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
     compactSession: (request: unknown) => unknown
   }
@@ -221,6 +222,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.cancel',
       'acp.compactSession',
       'acp.connect',
+      'acp.continueInterruptedTurn',
       'acp.createSession',
       'acp.deleteSession',
       'acp.disconnect',
@@ -551,10 +553,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 179 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 180 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(180)
+    expect(runtimeContracts).toHaveLength(181)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -905,6 +907,11 @@ const sampleConversationExport = {
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
+const sampleInterruptedTurnRequest = {
+  sessionId: 's-1',
+  projectId: 'project-1',
+  promptMessageId: 'prompt-1'
+}
 const sampleGitHubPreview = { url: 'https://github.com/acme/skills/tree/main/foo' }
 const sampleAgentHomePreview = { source: 'agents', slug: 'foo' }
 const sampleSessionArtifactSelection = {
@@ -1197,6 +1204,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resumeSession(sampleResumeRequest),
     channel: 'acp:resume-session',
     args: [sampleResumeRequest]
+  },
+  {
+    name: 'acp.continueInterruptedTurn → acp:continue-interrupted-turn',
+    invoke: (a) => a.acp.continueInterruptedTurn(sampleInterruptedTurnRequest),
+    channel: 'acp:continue-interrupted-turn',
+    args: [sampleInterruptedTurnRequest]
   },
   {
     name: 'acp.resetSessionContext → acp:reset-session-context',

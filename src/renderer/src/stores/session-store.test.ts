@@ -2406,6 +2406,63 @@ describe('session store', () => {
       })
     })
 
+    it('keeps recovery durable until a resumed continuation is accepted', () => {
+      hydrateInterrupted({
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:provider-a',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Continue the analysis',
+            status: 'complete',
+            eventIds: [],
+            interrupted: true,
+            createdAt: 10,
+            updatedAt: 11
+          }
+        ]
+      })
+
+      const prepared = useSessionStore.getState().prepareInterruptedTurnContinuation(
+        'resumable-session',
+        'prompt-1',
+        {
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:provider-a',
+          providerSessionId: 'provider-session-new',
+          providerContinuityToken: 'bridge-generation-new'
+        },
+        true
+      )
+      const running = useSessionStore.getState().sessions[0]
+
+      expect(prepared?.runtimeSegmentId).toBeTruthy()
+      expect(running).toMatchObject({
+        status: 'running',
+        interrupted: true,
+        resumeRecovery: { promptMessageId: 'prompt-1' },
+        activeRun: { promptMessageId: 'prompt-1' },
+        activeRunRuntimeSegmentId: prepared?.runtimeSegmentId
+      })
+      expect(toPersistedSession(running).resumeRecovery).toMatchObject({
+        promptMessageId: 'prompt-1'
+      })
+
+      useSessionStore.getState().completeInterruptedTurnResume('resumable-session')
+      const accepted = useSessionStore.getState().sessions[0]
+      expect(accepted.status).toBe('running')
+      expect(accepted.activeRun?.promptMessageId).toBe('prompt-1')
+      expect(accepted.interrupted).toBeUndefined()
+      expect(accepted.resumeRecovery).toBeUndefined()
+      expect(accepted.messages[0]).toMatchObject({ interrupted: true })
+    })
+
     it('markDisconnected flags a live drop and settles the half-streamed reply, keeping the user turn', () => {
       useSessionStore.getState().appendUserMessage({
         sessionId: 'transport-session-1',
@@ -2598,6 +2655,7 @@ describe('session store public contract', () => {
         'clearSelection',
         'clearSpecialistSwitchResetRequired',
         'completeActivityGroup',
+        'completeInterruptedTurnResume',
         'deleteSession',
         'failCompaction',
         'failRun',
@@ -2607,6 +2665,7 @@ describe('session store public contract', () => {
         'markDisconnected',
         'markResumed',
         'markSpecialistSwitchResetRequired',
+        'prepareInterruptedTurnContinuation',
         'recordArtifactError',
         'removeMessage',
         'removeSessionsForProject',

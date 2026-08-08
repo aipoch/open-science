@@ -886,10 +886,12 @@ const WorkspaceMessageScrollerImpl = ({
                   </MessageScrollerItem>
                 ))}
 
-                {(isResumingSession || agentLoadingPhase !== 'hidden') && activeSession ? (
+                {isResumingSession && activeSession ? (
+                  <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
+                ) : agentLoadingPhase !== 'hidden' && activeSession ? (
                   <WorkspaceAgentLoadingRow
                     sessionId={activeSession.id}
-                    phase={isResumingSession ? 'resuming' : agentLoadingPhase}
+                    phase={agentLoadingPhase}
                   />
                 ) : null}
               </div>

@@ -274,7 +274,8 @@ const ConversationPanel = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
-  const [isResuming, setIsResuming] = useState(false)
+  const [resumingSessionId, setResumingSessionId] = useState<string>()
+  const isResuming = activeSession?.id === resumingSessionId
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
@@ -327,13 +328,14 @@ const ConversationPanel = ({
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
-    if (!canResumeSession || isResuming) return
+    const sessionId = activeSession?.id
+    if (!canResumeSession || !sessionId || isResuming) return
 
-    setIsResuming(true)
+    setResumingSessionId(sessionId)
     try {
       await onResumeSession()
     } finally {
-      setIsResuming(false)
+      setResumingSessionId((current) => (current === sessionId ? undefined : current))
     }
   }
 
@@ -473,7 +475,7 @@ const ConversationPanel = ({
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
-                    red error box, so the user can re-attach the runtime and keep chatting. */}
+                    red error box, so the user can re-attach and continue the interrupted turn. */}
                 {activeSession?.interrupted ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? 'This session was interrupted.'}

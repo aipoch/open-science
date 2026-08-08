@@ -621,7 +621,7 @@ describe('workspace agent message sending', () => {
     vi.unstubAllGlobals()
   })
 
-  it('forwards Plan first for an existing Session without storing it on the user Message', async () => {
+  it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
@@ -642,9 +642,9 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[12]).toBe('plan-first')
     expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
       role: 'user',
-      content: 'analyze this dataset'
+      content: 'analyze this dataset',
+      turnIntent: 'plan-first'
     })
-    expect(useSessionStore.getState().sessions[0].messages[0]).not.toHaveProperty('turnIntent')
   })
 
   it('binds an explicit continuation prompt to the durable active Plan version', async () => {
@@ -2201,6 +2201,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -2786,7 +2787,7 @@ describe('resuming an interrupted session on demand', () => {
     ])
   }
 
-  it('re-attaches the session and unlocks the composer on success', async () => {
+  it('re-attaches a session with no recoverable user turn and unlocks the composer', async () => {
     const runtime = {
       state: createSnapshot(),
       createSession: vi.fn(),
@@ -2794,11 +2795,14 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
     seedDetachedSession()
 
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      historyReplayDescriptor: { target: 'codex-bridge' }
+    })
 
     expect(runtime.resumeSession).toHaveBeenCalledWith(
       'session-1',
@@ -2965,7 +2969,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
-  it('reconnects without re-sending or replacing the interrupted user turn', async () => {
+  it('reconnects and continues the interrupted turn without duplicating its user message', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Continue the analysis',
@@ -2984,6 +2988,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
@@ -2991,6 +2996,11 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(runtime.resumeSession).toHaveBeenCalled()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      promptMessageId: originalUserMessageId
+    })
 
     const session = useSessionStore.getState().sessions[0]
     const userMessages = session.messages.filter((message) => message.role === 'user')
@@ -2999,7 +3009,43 @@ describe('resuming an interrupted session on demand', () => {
     expect(userMessages[0].id).toBe(originalUserMessageId)
     expect(userMessages[0].content).toBe('Continue the analysis')
     expect(userMessages[0].interrupted).toBe(true)
+    expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('continues an interrupted turn that is still attached without reconnecting', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the attached turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalUserMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      promptMessageId: originalUserMessageId
+    })
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
+    expect(session.messages.filter((message) => message.role === 'user')).toHaveLength(1)
   })
 
   it('keeps recovery locked until stale renderer events are drained', async () => {
@@ -3021,7 +3067,8 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     const resumeRequest = resumeInterruptedWorkspaceSession(
@@ -3036,14 +3083,105 @@ describe('resuming an interrupted session on demand', () => {
       interrupted: true,
       resumeRecovery: expect.objectContaining({ promptMessageId: expect.any(String) })
     })
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
 
     drainGate.resolve()
     await resumeRequest
 
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: expect.any(String), startedAt: expect.any(Number) }
+    })
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+  })
+
+  it('keeps recovery active until Main observes the provider first update', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue after provider acceptance',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const providerFirstUpdate = createDeferred<AcpStateSnapshot>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn(() => providerFirstUpdate.promise),
+      sendPrompt: vi.fn()
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      flushPersistence: vi.fn().mockResolvedValue(undefined)
+    })
+    await vi.waitFor(() => expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce())
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      interrupted: true,
+      resumeRecovery: { promptMessageId: originalMessageId }
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({ id: originalMessageId, role: 'user', interrupted: true })
+    ])
+
+    providerFirstUpdate.resolve(createSnapshot(['session-1']))
+    await resumeRequest
+
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+  })
+
+  it('keeps the original turn retryable when continuation fails before provider acceptance', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Retry this continuation',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi
+        .fn()
+        .mockRejectedValue(new Error('provider rejected continuation')),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      flushPersistence: vi.fn().mockResolvedValue(undefined)
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      resumeRecovery: { promptMessageId: originalMessageId },
+      error: 'Agent session resume failed: provider rejected continuation'
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({
+        id: originalMessageId,
+        role: 'user',
+        content: 'Retry this continuation',
+        interrupted: true
+      })
+    ])
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('does not recreate an interrupted session deleted while reconnecting', async () => {
@@ -3062,6 +3200,7 @@ describe('resuming an interrupted session on demand', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(() => resumeGate.promise),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -3076,6 +3215,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
   })
 
   it('keeps recovery retryable and preserves the prompt when provider resume fails', async () => {
@@ -3097,6 +3237,7 @@ describe('resuming an interrupted session on demand', () => {
         .mockRejectedValueOnce(new Error('provider resume failed'))
         .mockResolvedValueOnce({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn()
     }
 
@@ -3118,13 +3259,14 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(runtime.resumeSession).toHaveBeenCalledTimes(2)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
     expect(
       useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
     ).toEqual([expect.objectContaining({ content: 'Do not lose this interrupted prompt' })])
   })
 
-  it('defers completed history replay to the next new turn after fresh adoption', async () => {
+  it('replays history while continuing the interrupted turn after fresh adoption', async () => {
     // A completed prior turn that must be replayed once the agent's context is gone.
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -3162,34 +3304,30 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
-    await flushRuntimeTasks()
-
-    expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    runtime.state = createSnapshot(['session-1'])
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      text: 'try another approach',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      historyReplayDescriptor: { target: 'codex-bridge' }
     })
     await flushRuntimeTasks()
 
-    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
-    expect(preamble).toContain('Plot the sales data')
-    expect(preamble).toContain('Done, saved chart.png')
-    expect(preamble).not.toContain('now add a trend line')
-    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('try another approach')
-    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        projectId: 'default-project',
+        promptMessageId: expect.any(String),
+        contextReset: expect.objectContaining({ historyReplayTarget: 'codex-bridge' })
+      })
+    )
     expect(
       useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
-    ).toHaveLength(3)
+    ).toHaveLength(2)
   })
 
-  it('replays the selected branch when it no longer contains the recovery cutoff', async () => {
+  it('does not continue a recovery prompt removed while stale events are draining', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Inspect the baseline data',
@@ -3213,6 +3351,8 @@ describe('resuming an interrupted session on demand', () => {
     })
     useSessionStore.getState().markDisconnected('session-1')
 
+    const drainGate = createDeferred<void>()
+    const drainRuntimeEvents = vi.fn(() => drainGate.promise)
     const runtime = {
       state: createSnapshot([]),
       createSession: vi.fn(),
@@ -3226,33 +3366,28 @@ describe('resuming an interrupted session on demand', () => {
         cwd: '/workspace/project',
         contextReset: true
       }),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    const resumeRequest = resumeInterruptedWorkspaceSession(
+      runtime,
+      'session-1',
+      drainRuntimeEvents
+    )
+    await vi.waitFor(() => expect(drainRuntimeEvents).toHaveBeenCalledWith('session-1'))
+
     useSessionStore.getState().truncateSessionFromMessage('session-1', interrupted?.messageId ?? '')
+    drainGate.resolve()
+    await resumeRequest
 
-    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({
-      kind: 'before-message',
-      messageId: interrupted?.messageId
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' }
     })
-    runtime.state = createSnapshot(['session-1'])
-    const sent = await sendWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      text: 'Apply an alternative transformation',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-    await flushRuntimeTasks()
-
-    expect(sent).toBeDefined()
-    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
-    const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
-    expect(preamble).toContain('Inspect the baseline data')
-    expect(preamble).toContain('The baseline is ready.')
-    expect(preamble).not.toContain('Apply the original transformation')
-    expect(preamble).not.toContain('Apply an alternative transformation')
-    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
   })
 
   it('replays full history after fresh adoption recovers an interrupted compaction', async () => {
@@ -3287,6 +3422,7 @@ describe('resuming an interrupted session on demand', () => {
         contextReset: true
       }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -3310,7 +3446,7 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
   })
 
-  it('marks the next new turn as fresh context when no earlier history is replayable', async () => {
+  it('continues a sole interrupted turn after fresh adoption', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Run the first notebook cell',
@@ -3332,6 +3468,7 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -3339,21 +3476,17 @@ describe('resuming an interrupted session on demand', () => {
     await flushRuntimeTasks()
 
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    runtime.state = createSnapshot(['session-1'])
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      text: 'Start over with a new request',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-    await flushRuntimeTasks()
-
-    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
-    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
-    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('Start over with a new request')
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextReset: expect.objectContaining({ runtimeSegmentId: expect.any(String) })
+      })
+    )
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toHaveLength(1)
   })
 
-  it('does not replay a history preamble when the interrupted resume kept agent context', async () => {
+  it('continues without history replay when the interrupted resume kept agent context', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Earlier prompt',
@@ -3385,6 +3518,7 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -3392,17 +3526,12 @@ describe('resuming an interrupted session on demand', () => {
     await flushRuntimeTasks()
 
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
-    runtime.state = createSnapshot(['session-1'])
-    await sendWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      text: 'start a separate next turn',
-      cwd: '/workspace/project',
-      projectId: 'default-project'
-    })
-    await flushRuntimeTasks()
-
-    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
-    expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('start a separate next turn')
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.not.objectContaining({ contextReset: expect.anything() })
+    )
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toHaveLength(2)
   })
 
   it('replays a history preamble when a resume resets agent context', async () => {

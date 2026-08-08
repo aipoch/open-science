@@ -8,7 +8,7 @@ import type { AgentLoadingPhase } from './agent-loading-message'
 
 type WorkspaceAgentLoadingRowProps = {
   sessionId: string
-  phase: Exclude<AgentLoadingPhase, 'hidden'>
+  phase: Exclude<AgentLoadingPhase, 'hidden'> | 'resuming'
 }
 
 const assistantMessageSurfaceClassName =

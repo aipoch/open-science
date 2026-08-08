@@ -3,6 +3,7 @@ import type {
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
   AcpRuntimeEvent,
   AcpDeleteSessionRequest,
@@ -342,6 +343,7 @@ export interface OpenScienceAPI {
     disconnect(): Promise<AcpStateSnapshot>
     createSession(request?: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
     resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
+    continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
     compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>

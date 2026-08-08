@@ -1,0 +1,205 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
+import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
+import { continueInterruptedTurn } from './interrupted-turn-continuation'
+
+const snapshot = (promptInFlightSessionIds: string[] = []): AcpStateSnapshot => ({
+  status: 'connected',
+  cwd: '/workspace',
+  sessionIds: ['session-1'],
+  events: [],
+  pendingPermissions: [],
+  permissionProfiles: {},
+  permissionGrants: {},
+  contextUsageBySession: {},
+  promptInFlight: promptInFlightSessionIds.length > 0,
+  agentPromptInFlightSessionIds: promptInFlightSessionIds,
+  promptInFlightSessionIds
+})
+
+const message = (
+  id: string,
+  role: PersistedChatMessage['role'],
+  content: string,
+  partial: Partial<PersistedChatMessage> = {}
+): PersistedChatMessage => ({
+  id,
+  role,
+  content,
+  status: 'complete',
+  eventIds: [],
+  createdAt: 1,
+  updatedAt: 1,
+  ...partial
+})
+
+const session = (messages: PersistedChatMessage[]): PersistedChatSession => ({
+  id: 'session-1',
+  projectId: 'project-1',
+  title: 'Interrupted turn',
+  cwd: '/workspace',
+  status: 'error',
+  agentFrameworkId: 'claude-code',
+  messages,
+  conversationGraph: createLinearConversationGraph({
+    sessionId: 'session-1',
+    messages,
+    frameworkId: 'claude-code',
+    createdAt: 1,
+    updatedAt: 1
+  }),
+  resumeRecovery: {
+    kind: 'resume-required',
+    cause: 'app-restart',
+    promptMessageId: 'prompt-1'
+  },
+  createdAt: 1,
+  updatedAt: 1
+})
+
+describe('continueInterruptedTurn', () => {
+  it('reconstructs app-owned continuation authority from the durable active user turn', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Analyze the attached evidence', {
+        turnIntent: 'plan-first',
+        parts: [
+          { type: 'skill', id: 'skill-1', name: 'Evidence Review' },
+          {
+            type: 'artifact',
+            id: 'artifact-1',
+            name: 'evidence.csv',
+            path: '/workspace/evidence.csv',
+            source: 'artifact'
+          }
+        ]
+      })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+    const runtime = {
+      getSnapshot: vi.fn(() => snapshot()),
+      getLatestUserPrompt: vi.fn(() => undefined),
+      startContinuation
+    }
+
+    await continueInterruptedTurn(
+      { runtime, loadSession: vi.fn(async () => durable) },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    expect(startContinuation).toHaveBeenCalledOnce()
+    expect(startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        text: expect.stringMatching(/continue the interrupted turn/i),
+        turnIntent: 'plan-first',
+        forcedSkillIds: ['skill-1'],
+        referencedArtifacts: [expect.objectContaining({ id: 'artifact-1' })],
+        suppressUserMessage: true,
+        provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
+      })
+    )
+    expect(startContinuation.mock.calls[0][0]).not.toHaveProperty('historyPreamble')
+  })
+
+  it.each([
+    ['Claude Code', 'claude-code', 'claude-code'],
+    ['OpenCode', 'opencode', 'opencode'],
+    ['Codex Responses', 'codex', 'codex-response'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ] as const)(
+    'replays the interrupted active branch into a validated fresh Runtime Segment for %s',
+    async (_name, frameworkId, historyReplayTarget) => {
+      const durable = session([
+        message('prompt-0', 'user', 'Collect baseline evidence'),
+        message('answer-0', 'agent', 'Baseline is ready', { responseToMessageId: 'prompt-0' }),
+        message('prompt-1', 'user', 'Compare the cohorts'),
+        message('answer-1', 'agent', 'I loaded both cohort tables', {
+          responseToMessageId: 'prompt-1',
+          status: 'error'
+        })
+      ])
+      durable.agentFrameworkId = frameworkId
+      durable.conversationGraph!.runtimeSegments.push({
+        id: 'runtime-resumed',
+        agentFrameId: durable.conversationGraph!.activeFrameId,
+        frameworkId,
+        startedAt: 2
+      })
+      const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+      await continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
+        },
+        {
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1',
+          contextReset: {
+            runtimeSegmentId: 'runtime-resumed',
+            historyReplayTarget,
+            contextWindow: 100_000,
+            supportsImageInput: false
+          }
+        }
+      )
+
+      const request = startContinuation.mock.calls[0][0]
+      expect(request.contextReset).toBe(true)
+      expect(request.provenanceContext?.runtimeSegmentId).toBe('runtime-resumed')
+      expect(request.historyPreamble).toContain('Collect baseline evidence')
+      expect(request.historyPreamble).toContain('Compare the cohorts')
+      expect(request.historyPreamble).toContain('I loaded both cohort tables')
+    }
+  )
+
+  it('does not dispatch a second continuation while the recovered prompt is already running', async () => {
+    const durable = session([message('prompt-1', 'user', 'Keep going')])
+    const startContinuation = vi.fn()
+    const current = snapshot(['session-1'])
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => current,
+            getLatestUserPrompt: () => ({
+              sessionId: 'session-1',
+              text: 'Keep going',
+              provenanceContext: { promptMessageId: 'prompt-1' }
+            }),
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
+        },
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+      )
+    ).resolves.toBe(current)
+    expect(startContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale or cross-branch recovery prompt', async () => {
+    const durable = session([message('prompt-1', 'user', 'Keep going')])
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation: vi.fn()
+          },
+          loadSession: vi.fn(async () => durable)
+        },
+        { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-other' }
+      )
+    ).rejects.toThrow(/no longer matches the interrupted turn/i)
+  })
+})

@@ -498,6 +498,11 @@ class AcpRuntimeCoordinator {
     })
   }
 
+  getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined {
+    const prompt = this.latestPromptRequests.get(sessionId)
+    return prompt?.provenanceContext?.promptMessageId === promptMessageId ? prompt : undefined
+  }
+
   // Captures the app-owned original user request while its provider prompt still owns this session.
   // The framework adapter calls this before requesting cancellation, so the continuation can retain
   // the same text, attachments, and provenance without fabricating another user action.

@@ -7,7 +7,10 @@ import type {
   PersistedPendingHistoryReplay
 } from '../../../shared/session-persistence'
 import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
-import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
+import {
+  createSessionMessageGraphOwner,
+  synchronizeSessionGraph
+} from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
 import {
   createSessionRunProjectionOwner,
@@ -57,6 +60,18 @@ type SessionStore = SessionStoreData &
         | 'pendingHistoryReplay'
       >
     ) => void
+    prepareInterruptedTurnContinuation: (
+      sessionId: string,
+      promptMessageId: string,
+      update:
+        | Pick<
+            PersistedChatSession,
+            'agentFrameworkId' | 'agentBackendId' | 'providerSessionId' | 'providerContinuityToken'
+          >
+        | undefined,
+      contextReset: boolean
+    ) => { runtimeSegmentId?: string } | undefined
+    completeInterruptedTurnResume: (sessionId: string) => void
     clearPendingHistoryReplay: (sessionId: string, replay: PersistedPendingHistoryReplay) => void
     markDisconnected: (sessionId: string, reason?: string) => void
     setBranchSwitchBlocked: (sessionId: string, blocked: boolean) => void
@@ -127,6 +142,81 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
                   : update.providerContinuityToken,
               pendingHistoryReplay: update?.pendingHistoryReplay ?? session.pendingHistoryReplay,
               compacting: undefined,
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  prepareInterruptedTurnContinuation: (sessionId, promptMessageId, update, contextReset) => {
+    let prepared: { runtimeSegmentId?: string } | undefined
+    set((state) => ({
+      sessions: state.sessions.map((session) => {
+        const prompt = session.messages.find((message) => message.id === promptMessageId)
+        if (
+          session.id !== sessionId ||
+          prompt?.role !== 'user' ||
+          session.resumeRecovery?.promptMessageId !== promptMessageId ||
+          (session.activeRun && session.activeRun.promptMessageId !== promptMessageId)
+        ) {
+          return session
+        }
+
+        const now = Date.now()
+        const withProvider = {
+          ...session,
+          agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
+          agentBackendId: update?.agentBackendId ?? session.agentBackendId,
+          providerSessionId: update?.providerSessionId ?? session.providerSessionId,
+          providerContinuityToken:
+            update === undefined ? session.providerContinuityToken : update.providerContinuityToken
+        }
+        const conversationGraph = contextReset
+          ? synchronizeSessionGraph(
+              withProvider,
+              withProvider.messages,
+              now,
+              withProvider.agentFrameworkId ?? 'claude-code',
+              withProvider.agentBackendId,
+              withProvider.agentModel,
+              true
+            )
+          : withProvider.conversationGraph
+        const runtimeSegmentId = conversationGraph?.runtimeSegments
+          .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
+          .at(-1)?.id
+        prepared = runtimeSegmentId ? { runtimeSegmentId } : {}
+        return {
+          ...withProvider,
+          status: 'running',
+          activeRun: { promptMessageId, startedAt: now },
+          activeRunRuntimeSegmentId: runtimeSegmentId,
+          awaitingFirstAgentOutput: true,
+          agentStatus: undefined,
+          error: undefined,
+          errorReportable: undefined,
+          pendingHistoryReplay: undefined,
+          compacting: undefined,
+          conversationGraph,
+          updatedAt: now
+        }
+      })
+    }))
+    return prepared
+  },
+
+  completeInterruptedTurnResume: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              interrupted: undefined,
+              resumeRecovery: undefined,
+              error: undefined,
+              errorReportable: undefined,
+              pendingHistoryReplay: undefined,
               updatedAt: Date.now()
             }
           : session

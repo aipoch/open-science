@@ -1209,7 +1209,8 @@ const createApplicationModules = async (
     runtime,
     createSessionWorkflow,
     taskNotifications,
-    archiveCoordinator
+    archiveCoordinator,
+    sessionRepository
   )
   const taskAgent = createAcpTaskAgentPort(
     runtime,

@@ -305,7 +305,8 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
 export const synchronizeActiveConversationMessages = (
   graph: PersistedConversationGraph,
   projection: PersistedChatMessage[],
-  updatedAt: number
+  updatedAt: number,
+  responseRuntimeSegmentId?: string
 ): PersistedConversationGraph => {
   const next = structuredClone(graph)
   const frame = next.frames.find((candidate) => candidate.id === next.activeFrameId)
@@ -315,6 +316,12 @@ export const synchronizeActiveConversationMessages = (
   const activeRuntimeSegmentId = next.runtimeSegments
     .filter((segment) => segment.agentFrameId === frame.id)
     .at(-1)?.id
+  const responseRuntimeSegment = responseRuntimeSegmentId
+    ? next.runtimeSegments.find((segment) => segment.id === responseRuntimeSegmentId)
+    : undefined
+  if (responseRuntimeSegmentId && responseRuntimeSegment?.agentFrameId !== frame.id) {
+    throw new Error('Response Runtime Segment is not owned by the active Agent Frame.')
+  }
   const existing = indexById(next.messages)
   const activePath = resolveMessageBranchPath(next, branch.id)
   const activeIds = new Set(activePath.map((message) => message.id))
@@ -335,7 +342,9 @@ export const synchronizeActiveConversationMessages = (
     }
     const runtimeSegmentId =
       message.role === 'agent' && message.responseToMessageId
-        ? (existing.get(message.responseToMessageId)?.runtimeSegmentId ?? activeRuntimeSegmentId)
+        ? (responseRuntimeSegmentId ??
+          existing.get(message.responseToMessageId)?.runtimeSegmentId ??
+          activeRuntimeSegmentId)
         : activeRuntimeSegmentId
     const node: PersistedMessageNode = {
       ...message,
@@ -370,13 +379,20 @@ export const synchronizeActiveConversationMessages = (
 export const synchronizeActiveConversationActivities = (
   graph: PersistedConversationGraph,
   activities: PersistedToolActivity[],
-  activityGroups: PersistedActivityGroup[]
+  activityGroups: PersistedActivityGroup[],
+  responseRuntimeSegmentId?: string
 ): PersistedConversationGraph => {
   const next = structuredClone(graph)
   const frame = next.frames.find((candidate) => candidate.id === next.activeFrameId)
   if (!frame) throw new Error('Active Agent Frame not found.')
   const branch = next.branches.find((candidate) => candidate.id === frame.activeBranchId)
   if (!branch) throw new Error('Active Message Branch not found.')
+  const responseRuntimeSegment = responseRuntimeSegmentId
+    ? next.runtimeSegments.find((segment) => segment.id === responseRuntimeSegmentId)
+    : undefined
+  if (responseRuntimeSegmentId && responseRuntimeSegment?.agentFrameId !== frame.id) {
+    throw new Error('Activity Runtime Segment is not owned by the active Agent Frame.')
+  }
   const path = resolveMessageBranchPath(next, branch.id)
   const userMessages = path.filter((message) => message.role === 'user')
   const promptForTime = (createdAt: number): PersistedMessageNode | undefined =>
@@ -388,7 +404,10 @@ export const synchronizeActiveConversationActivities = (
       ? userMessages.find((message) => message.id === activity.promptMessageId)
       : promptForTime(activity.createdAt)
     if (!prompt) continue
+    const existing = byActivityId.get(activity.id)
     const runtimeSegmentId =
+      existing?.runtimeSegmentId ??
+      responseRuntimeSegmentId ??
       prompt.runtimeSegmentId ??
       next.runtimeSegments.filter((segment) => segment.agentFrameId === frame.id).at(-1)?.id
     if (!runtimeSegmentId) continue
@@ -399,7 +418,6 @@ export const synchronizeActiveConversationActivities = (
       promptMessageId: prompt.id,
       runtimeSegmentId
     }
-    const existing = byActivityId.get(activity.id)
     if (existing) Object.assign(existing, scoped)
     else {
       next.activities.push(scoped)
@@ -523,6 +541,7 @@ export const ensureConversationRuntimeSegment = (
     backendId?: string
     model?: string
     startedAt: number
+    forceNew?: boolean
   }
 ): PersistedConversationGraph => {
   const next = structuredClone(graph)
@@ -530,6 +549,7 @@ export const ensureConversationRuntimeSegment = (
   if (!frame) throw new Error('Active Agent Frame not found.')
   const current = next.runtimeSegments.filter((segment) => segment.agentFrameId === frame.id).at(-1)
   if (
+    !input.forceNew &&
     current &&
     current.frameworkId === input.frameworkId &&
     current.backendId === input.backendId &&

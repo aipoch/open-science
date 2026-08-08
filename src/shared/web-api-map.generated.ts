@@ -3,6 +3,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.cancel': 'acp:cancel',
   'acp.compactSession': 'acp:compact-session',
   'acp.connect': 'acp:connect',
+  'acp.continueInterruptedTurn': 'acp:continue-interrupted-turn',
   'acp.createSession': 'acp:create-session',
   'acp.deleteSession': 'acp:delete-session',
   'acp.disconnect': 'acp:disconnect',

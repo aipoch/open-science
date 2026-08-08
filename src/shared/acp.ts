@@ -505,6 +505,20 @@ export type AcpResumeSessionRequest = {
   specialistId?: string
 }
 
+export type AcpContinueInterruptedTurnRequest = {
+  sessionId: string
+  projectId: string
+  promptMessageId: string
+  // Present only when session/resume adopted a fresh provider context. Main validates the Runtime
+  // Segment against the persisted active Conversation Branch before using the replay policy.
+  contextReset?: {
+    runtimeSegmentId: string
+    historyReplayTarget: import('./history-preamble').HistoryReplayTarget
+    contextWindow?: number
+    supportsImageInput?: boolean
+  }
+}
+
 export type AcpCompactSessionRequest = {
   sessionId: string
   reason?: 'manual' | 'overflow-recovery'

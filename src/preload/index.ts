@@ -106,6 +106,8 @@ const api: OpenScienceAPI = {
     disconnect: () => electronRendererContracts.invoke('acp.disconnect'),
     createSession: (request) => electronRendererContracts.invoke('acp.createSession', request),
     resumeSession: (request) => electronRendererContracts.invoke('acp.resumeSession', request),
+    continueInterruptedTurn: (request) =>
+      electronRendererContracts.invoke('acp.continueInterruptedTurn', request),
     resetSessionContext: (request) =>
       electronRendererContracts.invoke('acp.resetSessionContext', request),
     sendPrompt: (request) => electronRendererContracts.invoke('acp.sendPrompt', request),
