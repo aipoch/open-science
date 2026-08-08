@@ -15,7 +15,10 @@
       "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
       "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
       "testFiles": {
-        "owner": ["src/renderer/src/stores/session-store.test.ts"],
+        "owner": [
+          "src/renderer/src/stores/session-store.test.ts",
+          "src/renderer/src/stores/session-store.architecture.test.ts"
+        ],
         "contract": ["src/shared/session-persistence.test.ts"],
         "consumer": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"]
       },
