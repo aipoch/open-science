@@ -52,20 +52,18 @@ import type {
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { ArtifactPreview } from './artifact-preview'
-import {
-  ARTIFACT_IMAGE_PREVIEW_BYTES,
-  ARTIFACT_PREVIEW_BYTES,
-  getArtifactPreviewFormat
-} from './artifact-preview-utils'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 import { createPreviewFileItem } from './preview-file-item'
 import type { MessageArtifact } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { LocalFileBrowser } from './LocalFileBrowser'
-import { getPreviewThumbnailReadEncoding } from './preview-support'
-import { createKeyedRequestReader } from './project-file-preview-queue'
-import { isUnavailableFileError, FILE_MISSING_TAG } from './previews/preview-errors'
-import { createPreviewRequestScope, getPreviewFileReader } from './previews/preview-file-reader'
+import {
+  createProjectFilePreviewArtifact,
+  useProjectFilePreviewReader,
+  useProjectFilePreviews,
+  type ProjectFilePreviewReader
+} from './project-files-preview-owner'
+import { FILE_MISSING_TAG } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import {
@@ -117,35 +115,9 @@ const getCollapsedSessionOptions = (
   return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
 }
 
-type ProjectFilePreviewTarget = {
-  id: string
-  path: string
-  source: 'artifact' | 'upload'
-  artifact: MessageArtifact
-  projectId: string
-  sessionId: string
-  cacheKey: string
-  encoding?: 'utf8' | 'base64'
-}
-
-type ReadableProjectFilePreviewTarget = ProjectFilePreviewTarget & {
-  encoding: 'utf8' | 'base64'
-}
-
-type ProjectFilePreviewEntry = {
-  cacheKey: string
-  preview: ArtifactPreviewResult | undefined
-}
-
-// Each stable file id retains only its current path/version preview entry.
-type ProjectFilePreviewState = Record<string, ProjectFilePreviewEntry | undefined>
-
-type ProjectFilePreviewReadResult = ProjectFilePreviewEntry & { id: string }
 type FilePageLoadMode = 'manual' | 'scroll'
 type ProjectFilesViewMode = 'grid' | 'list'
 
-const PREVIEW_READ_CONCURRENCY = 4
-const MAX_PREVIEW_CACHE_ENTRIES = 96
 // Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
 const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
 // Shares count grammar between the toolbar summary and independently paginated section headers.
@@ -156,218 +128,6 @@ const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
 const MONTH_MS = 30 * DAY_MS
 const YEAR_MS = 365 * DAY_MS
-
-const createProjectFilePreviewArtifact = (file: ProjectFileItem): MessageArtifact => ({
-  id: file.sourceVersionId ?? file.sourceFileId,
-  artifactId: file.source === 'artifact' ? file.sourceFileId : undefined,
-  versionId: file.sourceVersionId,
-  kind: 'managed-file',
-  path: file.path,
-  name: file.name,
-  mimeType: file.mimeType,
-  size: file.size,
-  mtimeMs: file.mtimeMs
-})
-
-// A moved or rewritten file is a new cache entry even when its stable UI id stays the same.
-const getProjectFilePreviewCacheKey = ({
-  id,
-  path,
-  source,
-  artifact
-}: Pick<ProjectFilePreviewTarget, 'id' | 'path' | 'source' | 'artifact'>): string =>
-  JSON.stringify([source, id, path, artifact.size ?? null, artifact.mtimeMs ?? null])
-
-// Builds the source-neutral capability and source-specific read metadata used by File tiles.
-const createProjectFilePreviewTarget = (
-  target: Pick<
-    ProjectFilePreviewTarget,
-    'id' | 'path' | 'source' | 'artifact' | 'projectId' | 'sessionId'
-  >
-): ProjectFilePreviewTarget => ({
-  ...target,
-  cacheKey: getProjectFilePreviewCacheKey(target),
-  encoding: getPreviewThumbnailReadEncoding(getArtifactPreviewFormat(target.artifact))
-})
-
-// Skips unsupported, cached, and oversized image targets before any IPC reads start.
-const getMissingProjectFilePreviewTargets = (
-  targets: ProjectFilePreviewTarget[],
-  previews: ProjectFilePreviewState
-): ReadableProjectFilePreviewTarget[] =>
-  targets
-    .filter((target): target is ReadableProjectFilePreviewTarget => target.encoding !== undefined)
-    .filter((target) => previews[target.id]?.cacheKey !== target.cacheKey)
-    .filter(
-      (target) =>
-        target.encoding !== 'base64' ||
-        (typeof target.artifact.size === 'number' &&
-          target.artifact.size <= ARTIFACT_IMAGE_PREVIEW_BYTES)
-    )
-
-// Reads one tile through its source-specific IPC while retaining the source-neutral cache identity.
-const readProjectFilePreview = async (
-  target: ReadableProjectFilePreviewTarget
-): Promise<ProjectFilePreviewReadResult> => {
-  const readPreview = getPreviewFileReader(target.source)
-
-  try {
-    const preview = await readPreview({
-      path: target.path,
-      ...createPreviewRequestScope({
-        projectId: target.projectId,
-        sessionId: target.sessionId,
-        source: target.source,
-        path: target.path
-      }),
-      maxBytes:
-        target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
-      encoding: target.encoding
-    })
-
-    return { id: target.id, cacheKey: target.cacheKey, preview }
-  } catch (error) {
-    // Missing or out-of-root files are represented on the tile; only unexpected read failures belong
-    // in the console because unavailable files are a normal state after deletion or data-root changes.
-    if (!isUnavailableFileError(error)) {
-      console.error('Failed to read project file preview', error)
-    }
-    return { id: target.id, cacheKey: target.cacheKey, preview: undefined }
-  }
-}
-
-// Merges one completed read batch without dropping cached entries for other visible files.
-const mergeProjectFilePreviews = (
-  currentPreviews: ProjectFilePreviewState,
-  previews: ProjectFilePreviewReadResult[],
-  protectedIds: ReadonlySet<string>
-): ProjectFilePreviewState => {
-  const nextPreviews = previews.reduce<ProjectFilePreviewState>(
-    (nextPreviews, item) => {
-      // Reinsert completed entries so object insertion order acts as a compact LRU approximation.
-      delete nextPreviews[item.id]
-      nextPreviews[item.id] = { cacheKey: item.cacheKey, preview: item.preview }
-      return nextPreviews
-    },
-    { ...currentPreviews }
-  )
-
-  return trimProjectFilePreviews(nextPreviews, protectedIds)
-}
-
-// Current tiles stay protected; retain at most one compact page pool of hidden previews for return
-// navigation without letting collapsed or previously paged sections grow the cache indefinitely.
-const trimProjectFilePreviews = (
-  currentPreviews: ProjectFilePreviewState,
-  protectedIds: ReadonlySet<string>
-): ProjectFilePreviewState => {
-  const keys = Object.keys(currentPreviews)
-  const hiddenIds = keys.filter((id) => !protectedIds.has(id))
-  if (hiddenIds.length <= MAX_PREVIEW_CACHE_ENTRIES) return currentPreviews
-
-  const nextPreviews = { ...currentPreviews }
-  const removeCount = hiddenIds.length - MAX_PREVIEW_CACHE_ENTRIES
-  for (const id of hiddenIds.slice(0, removeCount)) {
-    delete nextPreviews[id]
-  }
-  return nextPreviews
-}
-
-type ProjectFilePreviewReader = ((
-  target: ReadableProjectFilePreviewTarget
-) => Promise<ProjectFilePreviewReadResult>) & {
-  setActiveKeys?: (keys: ReadonlySet<string>) => void
-}
-
-const getProjectFilePreviewRequestKey = (target: ProjectFilePreviewTarget): string =>
-  `${target.projectId}:${target.cacheKey}`
-
-// Shares one queue across render batches so preview reads remain capped and deduplicated even when
-// pagination, filters, or section expansion update the target list in quick succession.
-const createProjectFilePreviewReader = (
-  read: ProjectFilePreviewReader = readProjectFilePreview,
-  maxConcurrency = PREVIEW_READ_CONCURRENCY
-): ProjectFilePreviewReader =>
-  createKeyedRequestReader(read, getProjectFilePreviewRequestKey, maxConcurrency, {
-    getGenerationKey: (target) => target.projectId,
-    createCanceledResult: (target) => ({
-      id: target.id,
-      cacheKey: target.cacheKey,
-      preview: undefined
-    })
-  })
-
-/**
- * Maintains version-aware tile previews for the currently rendered file targets.
- *
- * Active request keys cancel queued reads for collapsed/filtered files. Attempted keys suppress retry
- * loops for failed reads, but are removed once a target leaves the active set so an evicted preview is
- * eligible for a fresh read when the user returns. Completed batches merge without evicting visible
- * tiles, while hidden entries are bounded separately.
- */
-const useProjectFilePreviews = (
-  previewTargets: ProjectFilePreviewTarget[],
-  previewReader: ProjectFilePreviewReader
-): ProjectFilePreviewState => {
-  const [filePreviews, setFilePreviews] = useState<ProjectFilePreviewState>({})
-  const attemptedCacheKeyByIdRef = useRef(new Map<string, string>())
-
-  useEffect(() => {
-    const activeCacheKeys = new Map(
-      previewTargets.map((target) => [target.id, target.cacheKey] as const)
-    )
-    const protectedIds = new Set(activeCacheKeys.keys())
-    const attemptedCacheKeys = attemptedCacheKeyByIdRef.current
-    let canceled = false
-    previewReader.setActiveKeys?.(new Set(previewTargets.map(getProjectFilePreviewRequestKey)))
-
-    // Attempts only suppress cache-eviction loops for the current render set. Hidden evicted files
-    // must be eligible for a fresh read when the user returns to them.
-    for (const [id, cacheKey] of attemptedCacheKeys) {
-      if (activeCacheKeys.get(id) !== cacheKey) attemptedCacheKeys.delete(id)
-    }
-    void Promise.resolve().then(() => {
-      if (!canceled) {
-        setFilePreviews((current) => trimProjectFilePreviews(current, protectedIds))
-      }
-    })
-
-    const missingTargets = getMissingProjectFilePreviewTargets(previewTargets, filePreviews).filter(
-      (target) => attemptedCacheKeys.get(target.id) !== target.cacheKey
-    )
-    if (missingTargets.length === 0) {
-      return () => {
-        canceled = true
-        previewReader.setActiveKeys?.(new Set())
-      }
-    }
-
-    let completed = false
-    for (const target of missingTargets) {
-      attemptedCacheKeys.set(target.id, target.cacheKey)
-    }
-
-    void Promise.all(missingTargets.map(previewReader)).then((previews) => {
-      completed = true
-      if (canceled) return
-      setFilePreviews((current) => mergeProjectFilePreviews(current, previews, protectedIds))
-    })
-
-    return () => {
-      canceled = true
-      previewReader.setActiveKeys?.(new Set())
-      if (!completed) {
-        for (const target of missingTargets) {
-          if (attemptedCacheKeys.get(target.id) === target.cacheKey) {
-            attemptedCacheKeys.delete(target.id)
-          }
-        }
-      }
-    }
-  }, [filePreviews, previewReader, previewTargets])
-
-  return filePreviews
-}
 
 // Converts one stable sentinel into guarded infinite loading. The root margin starts the next page
 // shortly before it becomes visible; environments without IntersectionObserver fall back to manual UI.
@@ -1512,39 +1272,16 @@ const ProjectFilesViewContent = ({
       visibleArtifactGroups
     ]
   )
-  const previewTargets = useMemo<ProjectFilePreviewTarget[]>(
+  const previewFiles = useMemo<ProjectFileItem[]>(
     // Collapsed sections are intentionally absent: they neither protect cache entries nor enqueue new
     // thumbnail reads. List rows use only the lightweight availability probe and need no thumbnails.
     () =>
       viewMode === 'grid'
-        ? [...(uploadsCollapsed ? [] : visibleUploadFiles), ...visibleArtifactFiles].map((file) =>
-            createProjectFilePreviewTarget({
-              id: file.id,
-              path: file.path,
-              source: file.source,
-              artifact: createProjectFilePreviewArtifact(file),
-              projectId: file.projectId,
-              sessionId: file.sessionId
-            })
-          )
+        ? [...(uploadsCollapsed ? [] : visibleUploadFiles), ...visibleArtifactFiles]
         : [],
     [uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
   )
-  const filePreviews = useProjectFilePreviews(previewTargets, previewReader)
-  // A previous version may remain cached while the current path loads; never render it as current.
-  const currentFilePreviewById = useMemo(
-    () =>
-      new Map(
-        previewTargets.map((target) => {
-          const entry = filePreviews[target.id]
-          return [
-            target.id,
-            entry?.cacheKey === target.cacheKey ? entry.preview : undefined
-          ] as const
-        })
-      ),
-    [filePreviews, previewTargets]
-  )
+  const currentFilePreviewById = useProjectFilePreviews(previewFiles, previewReader)
 
   const toggleSection = (sectionId: string): void => {
     setCollapsedSectionIds((currentIds) => {
@@ -1972,7 +1709,7 @@ const ProjectFilesViewContent = ({
 
 const ProjectFilesView = (): React.JSX.Element => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const [previewReader] = useState<ProjectFilePreviewReader>(() => createProjectFilePreviewReader())
+  const previewReader = useProjectFilePreviewReader()
 
   return (
     <ProjectFilesViewContent

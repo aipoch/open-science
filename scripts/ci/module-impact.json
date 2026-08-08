@@ -43,7 +43,10 @@
       "fallbackCapability": "renderer_view"
     },
     "project_files_view": {
-      "ownerPaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
+      "ownerPaths": [
+        "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
+        "src/renderer/src/pages/workspace/project-files-preview-owner.ts"
+      ],
       "interfacePaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
       "consumerModules": ["workspace_page"],
       "testFiles": {
