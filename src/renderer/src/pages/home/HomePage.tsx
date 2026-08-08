@@ -18,6 +18,7 @@ import { DropdownMenu } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -106,6 +107,7 @@ const HomePage = ({
   hasCompleteSessionCatalog,
   onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
+  useWorkspaceAgentRuntime()
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
   const createProject = useProjectStore((state) => state.createProject)
