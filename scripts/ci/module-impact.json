@@ -81,6 +81,7 @@
         "src/renderer/src/pages/workspace/WorkspacePage.tsx",
         "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
         "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-session-controller.ts",
         "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
         "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
         "src/renderer/src/pages/workspace/composer/composer-history.ts"
@@ -98,12 +99,20 @@
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
           "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
+          "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
           "src/renderer/src/pages/workspace/composer-attachment-intake.test.ts",
           "src/renderer/src/pages/workspace/composer-upload-transfer.test.ts",
           "src/renderer/src/pages/workspace/composer/composer-history.test.ts",
           "src/renderer/src/pages/workspace/workspace-components.test.tsx"
         ],
-        "contract": [],
+        "contract": [
+          "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
+          "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
+          "src/renderer/src/pages/workspace/HandoffLifecycleStatus.integration.test.tsx",
+          "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+          "src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts",
+          "src/renderer/src/stores/session-store.test.ts"
+        ],
         "consumer": []
       },
       "capabilityOverlays": ["renderer_state"],

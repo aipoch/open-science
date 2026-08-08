@@ -2820,6 +2820,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
+      'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',
