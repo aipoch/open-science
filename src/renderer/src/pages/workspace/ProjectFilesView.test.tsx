@@ -1483,6 +1483,170 @@ describe('ProjectFilesView', () => {
     expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
   })
 
+  it('advances group headers without loading their artifact pages until each section intersects', async () => {
+    const intersections = new Map<string, () => void>()
+    const observerOptions = new Map<string, IntersectionObserverInit | undefined>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        private readonly callback: IntersectionObserverCallback
+        private readonly options: IntersectionObserverInit | undefined
+
+        constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+          this.callback = callback
+          this.options = options
+        }
+
+        observe = (target: Element): void => {
+          const testId = target.getAttribute('data-testid')
+          if (!testId) return
+
+          const observer = this as unknown as IntersectionObserver
+          intersections.set(testId, () =>
+            this.callback([{ isIntersecting: true } as IntersectionObserverEntry], observer)
+          )
+          observerOptions.set(testId, this.options)
+        }
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+        takeRecords = (): IntersectionObserverEntry[] => []
+      }
+    )
+    const sessions = createArtifactSessions(11)
+    await renderView(sessions, false, () => {
+      vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+        totalCount: 11,
+        uploadCount: 0,
+        artifactCount: 11,
+        artifactGroupCount: 11,
+        isIndexComplete: true
+      })
+      vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
+        items: (request.cursor ? sessions.slice(10) : sessions.slice(0, 10)).map((session) => ({
+          sessionId: session.id,
+          artifactCount: 1
+        })),
+        nextCursor: request.cursor ? undefined : 'groups-page-2',
+        totalCount: 11
+      }))
+      vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+        items:
+          request.collection.kind === 'sessionArtifacts'
+            ? [
+                {
+                  id: `artifact:${request.collection.sessionId}`,
+                  source: 'artifact',
+                  sourceFileId: `artifact:${request.collection.sessionId}`,
+                  projectId: request.projectId,
+                  sessionId: request.collection.sessionId,
+                  name: `${request.collection.sessionId}.txt`,
+                  path: `managed/${request.collection.sessionId}.txt`,
+                  mimeType: 'text/plain',
+                  size: 10,
+                  sortAtMs: 10
+                }
+              ]
+            : [],
+        totalCount: request.collection.kind === 'sessionArtifacts' ? 1 : 0
+      }))
+    })
+
+    expect(intersections.has('group-page-sentinel')).toBe(true)
+    expect(observerOptions.get('group-page-sentinel')).toEqual({ rootMargin: '160px 0px' })
+    expect(window.api.projectFiles.listFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-11' }
+      })
+    )
+
+    await act(async () => {
+      intersections.get('group-page-sentinel')?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.textContent).toContain('Session 11')
+    expect(intersections.has('artifact-page-sentinel:session-11')).toBe(true)
+    expect(observerOptions.get('artifact-page-sentinel:session-11')).toEqual({
+      rootMargin: '160px 0px'
+    })
+    expect(window.api.projectFiles.listFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-11' }
+      })
+    )
+
+    await act(async () => {
+      intersections.get('artifact-page-sentinel:session-11')?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledWith({
+      projectId: 'default',
+      collection: { kind: 'sessionArtifacts', sessionId: 'session-11' },
+      limit: 20
+    })
+    expect(container.textContent).toContain('session-11.txt')
+  })
+
+  it('shows a failed upload page and retries it from the visible error state', async () => {
+    const upload = createUpload({
+      id: 'retry-upload',
+      name: 'retry.txt',
+      originalName: 'retry.txt',
+      mimeType: 'text/plain'
+    })
+    await renderView([
+      createSession({
+        messages: [createMessage({ uploads: [upload] })]
+      })
+    ])
+    const uploadItem: ProjectFileItem = {
+      id: 'upload:retry-upload',
+      source: 'upload',
+      sourceFileId: 'retry-upload',
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'retry.txt',
+      path: 'managed/retry.txt',
+      mimeType: 'text/plain',
+      size: 10,
+      sortAtMs: 10
+    }
+    let attempts = 0
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      if (request.collection.kind !== 'uploads') return { items: [], totalCount: 0 }
+
+      attempts += 1
+      if (attempts === 1) throw new Error('Upload page unavailable')
+      return { items: [uploadItem], totalCount: 1 }
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['upload'],
+        kind: 'upsert'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.textContent).toContain('Upload page unavailable')
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(attempts).toBe(2)
+    expect(container.textContent).not.toContain('Upload page unavailable')
+    expect(container.textContent).toContain('retry.txt')
+  })
+
   it('opens a filter menu with a "this computer" entry', async () => {
     await renderView([
       createSession({
@@ -1521,6 +1685,50 @@ describe('ProjectFilesView', () => {
     // localFs is absent in this environment, so the entry falls back to its default label.
     expect(document.body.textContent).toContain('This computer')
     expect(document.body.querySelector('[data-filter-id="all"] .lucide-boxes')).not.toBeNull()
+  })
+
+  it('selects an artifact source from the filter menu with the keyboard', async () => {
+    await renderView([
+      createSession({
+        title: 'Session A',
+        messages: [createMessage({ uploads: [createUpload({ originalName: 'keyboard.txt' })] })],
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: 'managed/generated.txt',
+            name: 'generated.txt',
+            mimeType: 'text/plain'
+          }
+        ]
+      })
+    ])
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+
+    await act(async () => {
+      filterButton?.focus()
+      filterButton?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
+      )
+      await Promise.resolve()
+    })
+
+    const uploadsOption = document.body.querySelector<HTMLElement>('[data-filter-id="uploads"]')
+    expect(uploadsOption).not.toBeNull()
+    await act(async () => {
+      uploadsOption?.focus()
+      uploadsOption?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(filterButton?.textContent).toContain('Your uploads')
+    expect(container.textContent).toContain('keyboard.txt')
+    expect(container.textContent).not.toContain('generated.txt')
+    expect(filterButton?.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('uses the global semantic menu surface and hover feedback for filter items', async () => {
