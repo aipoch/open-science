@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AcpStateSnapshot } from '../../../../shared/acp'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import {
@@ -82,6 +83,11 @@ beforeEach(() => {
   useNavigationStore.setState({ pendingProjectCreation: false })
   useSessionStore.setState(createInitialSessionState())
   useSettingsStore.setState(createInitialSettingsState())
+  useNotificationInboxStore.setState({
+    ...EMPTY_SNAPSHOT,
+    status: 'idle',
+    error: undefined
+  })
   runtimeStateListener = undefined
   window.api = {
     ...(window.api ?? {}),
@@ -338,7 +344,7 @@ describe('HomePage activity overview', () => {
       )
     )
 
-    const activeSection = container.querySelector<HTMLElement>('[aria-label="Active sessions"]')
+    const activeSection = container.querySelector<HTMLElement>('[aria-label="Session updates"]')
     const scroller = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
     expect(scroller?.classList.contains('overflow-x-auto')).toBe(true)
@@ -404,5 +410,105 @@ describe('HomePage activity overview', () => {
     expect(
       container.querySelector('[aria-label="Open session Live analysis, needs you"]')
     ).not.toBeNull()
+  })
+
+  it('shows an unread completed session until its result is marked read', async () => {
+    const now = 600_000
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const openSession = vi.fn()
+    const completedItem = {
+      id: 'completed-1',
+      sequence: 1,
+      dedupeKey: 'task:completed:finished',
+      kind: 'task.completed' as const,
+      projectId: project.id,
+      sessionId: 'finished',
+      originId: 'finished-run',
+      title: 'Finished analysis',
+      summary: 'A task completed.',
+      createdAt: now
+    }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [session('finished', 'Finished analysis', 'idle', now - 10 * 60_000)]
+    })
+    useNotificationInboxStore.setState({
+      revision: 1,
+      unreadCount: 1,
+      latestSequence: 1,
+      status: 'ready',
+      items: [completedItem]
+    })
+    useNavigationStore.setState({ openSession } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const completedCard = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open session Finished analysis, completed"]'
+    )
+    expect(completedCard?.textContent).toContain('Completed')
+    expect(completedCard?.textContent).toContain('just now')
+
+    await act(async () => completedCard?.click())
+
+    expect(openSession).toHaveBeenCalledWith(project.id, 'finished', 'user')
+
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        revision: 2,
+        unreadCount: 0,
+        items: [{ ...completedItem, readAt: now }]
+      })
+    })
+
+    expect(
+      container.querySelector('[aria-label="Open session Finished analysis, completed"]')
+    ).toBeNull()
+    nowSpy.mockRestore()
+  })
+
+  it('labels recent sessions with their Project name instead of repeating the session title', async () => {
+    const recentSession: ChatSession = {
+      ...session('recent', 'Live analysis', 'idle', 600_000),
+      messages: [
+        {
+          id: 'recent-prompt',
+          role: 'user',
+          content: 'Live analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 600_000,
+          updatedAt: 600_000
+        }
+      ]
+    }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [recentSession]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const recentRow = container.querySelector<HTMLElement>('[aria-label="Recent sessions"] button')
+    expect(recentRow?.textContent).toContain(project.name)
+    expect(recentRow?.textContent?.match(/Live analysis/g)).toHaveLength(1)
   })
 })

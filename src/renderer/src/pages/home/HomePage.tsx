@@ -4,6 +4,7 @@
  */
 import {
   Archive,
+  Check,
   CircleAlert,
   Clock,
   GalleryVerticalEnd,
@@ -22,6 +23,7 @@ import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import type { ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -50,7 +52,13 @@ type ProjectSummary = {
   lastActivityAt: number
 }
 
-type HomeSessionActivity = 'running' | 'needs-you'
+type HomeSessionActivity = 'running' | 'needs-you' | 'completed'
+
+type HomeSessionUpdate = {
+  session: ChatSession
+  activity: HomeSessionActivity
+  activityTimestamp: number
+}
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
 
@@ -65,13 +73,6 @@ type HomePageProps = {
 const getRequiredEnvironmentFailures = (
   environment: EnvironmentCheckResult | undefined
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
-
-// Returns the first user prompt as a one-line preview for a session row.
-const getSessionPreview = (session: ChatSession): string =>
-  session.messages
-    .find((message) => message.role === 'user')
-    ?.content.replace(/\s+/g, ' ')
-    .trim() ?? ''
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
   if (session.status === 'running') return 'running'
@@ -115,6 +116,7 @@ const HomePage = ({
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
+  const notificationItems = useNotificationInboxStore((state) => state.items)
   const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
@@ -158,26 +160,57 @@ const HomePage = ({
     [activeProjectIds, sessions]
   )
 
-  const activeSessions = useMemo(
-    () =>
-      persistedSessions
-        .filter((session) => getHomeSessionActivity(session) !== undefined)
-        .sort((left, right) => {
-          const leftActivity = getHomeSessionActivity(left)
-          const rightActivity = getHomeSessionActivity(right)
-          if (leftActivity !== rightActivity) return leftActivity === 'needs-you' ? -1 : 1
-          return right.updatedAt - left.updatedAt
-        }),
-    [persistedSessions]
-  )
+  const unreadCompletedAtBySession = useMemo(() => {
+    const completedAtBySession = new Map<string, number>()
+
+    for (const item of notificationItems) {
+      if (item.kind !== 'task.completed' || item.readAt !== undefined || !item.sessionId) continue
+      completedAtBySession.set(
+        item.sessionId,
+        Math.max(completedAtBySession.get(item.sessionId) ?? 0, item.createdAt)
+      )
+    }
+
+    return completedAtBySession
+  }, [notificationItems])
+
+  const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
+    const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
+      const activity = getHomeSessionActivity(session)
+
+      if (activity) {
+        return [
+          {
+            session,
+            activity,
+            activityTimestamp:
+              activity === 'needs-you'
+                ? session.updatedAt
+                : (session.activeRun?.startedAt ?? session.updatedAt)
+          }
+        ]
+      }
+
+      const completedAt = unreadCompletedAtBySession.get(session.id)
+      return session.status === 'idle' && completedAt !== undefined
+        ? [{ session, activity: 'completed', activityTimestamp: completedAt }]
+        : []
+    })
+
+    const activityOrder: HomeSessionActivity[] = ['needs-you', 'running', 'completed']
+    return updates.sort(
+      (left, right) =>
+        activityOrder.indexOf(left.activity) - activityOrder.indexOf(right.activity) ||
+        right.activityTimestamp - left.activityTimestamp
+    )
+  }, [persistedSessions, unreadCompletedAtBySession])
+
   const activeSessionCounts = useMemo(
     () => ({
-      running: activeSessions.filter((session) => getHomeSessionActivity(session) === 'running')
-        .length,
-      needsYou: activeSessions.filter((session) => getHomeSessionActivity(session) === 'needs-you')
-        .length
+      running: sessionUpdates.filter(({ activity }) => activity === 'running').length,
+      needsYou: sessionUpdates.filter(({ activity }) => activity === 'needs-you').length
     }),
-    [activeSessions]
+    [sessionUpdates]
   )
   const projectNames = useMemo(
     () => new Map(activeProjects.map((project) => [project.id, project.name])),
@@ -391,7 +424,8 @@ const HomePage = ({
               >
                 Open Science
               </a>
-              {hasCompleteSessionCatalog && activeSessions.length > 0 ? (
+              {hasCompleteSessionCatalog &&
+              (activeSessionCounts.needsYou > 0 || activeSessionCounts.running > 0) ? (
                 <div className="flex items-center gap-1.5 text-xs font-medium">
                   {activeSessionCounts.needsYou > 0 ? (
                     <span className="text-session-waiting">
@@ -468,15 +502,13 @@ const HomePage = ({
           </div>
         </header>
 
-        {activeSessions.length > 0 ? (
-          <section className="mt-8 sm:mt-10" aria-label="Active sessions">
+        {sessionUpdates.length > 0 ? (
+          <section className="mt-8 sm:mt-10" aria-label="Session updates">
             <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto p-1">
-              {activeSessions.map((session) => {
-                const activity = getHomeSessionActivity(session)
+              {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
                 const needsYou = activity === 'needs-you'
-                const activityTimestamp = needsYou
-                  ? session.updatedAt
-                  : (session.activeRun?.startedAt ?? session.updatedAt)
+                const completed = activity === 'completed'
+                const relativeActivityTime = formatRelativeTime(activityTimestamp)
 
                 return (
                   <button
@@ -484,7 +516,7 @@ const HomePage = ({
                     type="button"
                     className="group flex min-h-36 w-full min-w-0 shrink-0 snap-start flex-col rounded-2xl border border-border-200/70 bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none md:w-[calc(50%_-_0.375rem)]"
                     onClick={() => openSession(session.projectId, session.id, 'user')}
-                    aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : 'running'}`}
+                    aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
                   >
                     <span className="min-w-0 max-w-full truncate text-base font-semibold text-text-000">
                       {session.title}
@@ -498,20 +530,30 @@ const HomePage = ({
                           'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
                           needsYou
                             ? 'bg-session-waiting/10 text-session-waiting'
-                            : 'bg-session-running/10 text-session-running'
+                            : completed
+                              ? 'bg-success-000/10 text-success-000'
+                              : 'bg-session-running/10 text-session-running'
                         )}
                       >
-                        <span
-                          className={cn(
-                            'size-1.5 rounded-full motion-safe:animate-pulse',
-                            needsYou ? 'bg-session-waiting' : 'bg-session-running'
-                          )}
-                          aria-hidden="true"
-                        />
-                        {needsYou ? 'Needs you' : 'Running'}
+                        {completed ? (
+                          <Check className="size-3" strokeWidth={2} aria-hidden="true" />
+                        ) : (
+                          <span
+                            className={cn(
+                              'size-1.5 rounded-full motion-safe:animate-pulse',
+                              needsYou ? 'bg-session-waiting' : 'bg-session-running'
+                            )}
+                            aria-hidden="true"
+                          />
+                        )}
+                        {needsYou ? 'Needs you' : completed ? 'Completed' : 'Running'}
                       </span>
                       <span className="shrink-0 text-xs text-text-100">
-                        {needsYou ? 'waiting' : 'running'} {formatRelativeTime(activityTimestamp)}
+                        {completed
+                          ? relativeActivityTime === 'now'
+                            ? 'just now'
+                            : relativeActivityTime
+                          : `${needsYou ? 'waiting' : 'running'} ${relativeActivityTime}`}
                       </span>
                     </span>
                   </button>
@@ -524,7 +566,7 @@ const HomePage = ({
         <div
           className={cn(
             'grid grid-cols-1 gap-7 sm:gap-8 lg:grid-cols-2',
-            activeSessions.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
+            sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
           )}
         >
           <section className="min-w-0" aria-label="Projects">
@@ -674,37 +716,33 @@ const HomePage = ({
               </div>
             ) : (
               <div className={listCardClassName}>
-                {recentSessions.map((session) => {
-                  const preview = getSessionPreview(session)
-
-                  return (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className={cn(rowClassName, 'cursor-pointer items-start')}
-                      onClick={() => openSession(session.projectId, session.id, 'user')}
-                      title={session.title}
+                {recentSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className={cn(rowClassName, 'cursor-pointer items-start')}
+                    onClick={() => openSession(session.projectId, session.id, 'user')}
+                    title={session.title}
+                  >
+                    <span
+                      className="mt-1 inline-flex size-3 shrink-0 items-center justify-center"
+                      aria-hidden="true"
                     >
-                      <span
-                        className="mt-1 inline-flex size-3 shrink-0 items-center justify-center"
-                        aria-hidden="true"
-                      >
-                        <span className="size-[7px] rounded-full border border-text-100" />
+                      <span className="size-[7px] rounded-full border border-text-100" />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-sm font-medium text-text-000">
+                        {session.title}
                       </span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate text-sm font-medium text-text-000">
-                          {session.title}
-                        </span>
-                        {preview ? (
-                          <span className="truncate text-xs text-text-100">{preview}</span>
-                        ) : null}
+                      <span className="truncate text-xs text-text-100">
+                        {projectNames.get(session.projectId) ?? 'Unknown project'}
                       </span>
-                      <span className="shrink-0 text-xs text-text-300">
-                        {formatRelativeTime(session.updatedAt)}
-                      </span>
-                    </button>
-                  )
-                })}
+                    </span>
+                    <span className="shrink-0 text-xs text-text-300">
+                      {formatRelativeTime(session.updatedAt)}
+                    </span>
+                  </button>
+                ))}
               </div>
             )}
           </section>

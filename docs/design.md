@@ -541,14 +541,19 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - List title: `text-[17px] leading-6 font-medium`.
 - Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
   `running` from `waiting on you` rather than presenting one ambiguous total.
-- Active sessions: when any non-archived Session is `running`, `waiting-permission`, or
-  `waiting-plan-approval`, show a single-row horizontal card scroller above the Project/Recent
-  columns. Cards occupy one column on compact screens and half the row on desktop. Waiting Sessions
-  come first, every card opens its Session, and cards contain only the Session title, Project name,
-  state, and state-relative time.
+- Session updates: show a single-row horizontal card scroller above the Project/Recent columns for
+  every non-archived Session that is `running`, `waiting-permission`, `waiting-plan-approval`, or has
+  an unread `task.completed` notification while idle. Cards occupy one column on compact screens and
+  half the row on desktop. Waiting Sessions come first, then running Sessions, then completed
+  Sessions. Every card opens its Session and contains only the Session title, Project name, state,
+  and state-relative time. Opening a completed Session marks its task outcome read, so that card no
+  longer appears when the user returns Home.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
-  `waiting-plan-approval` map to `Needs you`. Use the existing `session-running` and
-  `session-waiting` tokens. Only status dots pulse, and they remain static under reduced motion.
+  `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
+  existing `session-running`, `session-waiting`, and `success-000` tokens. Only live status dots
+  pulse, and they remain static under reduced motion; Completed uses a static check.
+- Recent sessions: the secondary line is always the owning Project name, never a prompt preview or a
+  repeat of the Session title.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 
