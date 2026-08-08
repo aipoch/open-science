@@ -86,18 +86,21 @@ gate('python_loop.py', () => {
     }
   }, 60_000)
 
-  it('captures a matplotlib figure as a content-addressed PNG', async () => {
+  it('captures a saved matplotlib figure exactly once as a content-addressed PNG', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-'))
+    const savedPath = join(figuresDir, 'saved.png')
     const { child, send } = startLoop(pyBin as string, {
       MPLBACKEND: 'Agg',
       OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
     })
     try {
       const r = await send(
-        'import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt; plt.plot([1,2,3])'
+        'import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt; ' +
+          `plt.plot([1,2,3]); plt.savefig(${JSON.stringify(savedPath)})`
       )
       expect(r.error).toBeNull()
-      expect(r.figures.length).toBeGreaterThan(0)
+      expect(existsSync(savedPath)).toBe(true)
+      expect(r.figures).toHaveLength(1)
       const fig = r.figures[0]
       expect(existsSync(fig.path)).toBe(true)
       const bytes = readFileSync(fig.path)

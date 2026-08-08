@@ -762,6 +762,29 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it('does not replay a file-device plot opened by an earlier request', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-cross-request-device-'))
+    const savedPath = join(figuresDir, 'cross-request.tiff')
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const opened = await send(
+        `grDevices::tiff(${JSON.stringify(savedPath)}); ` +
+          'external_device <- grDevices::dev.cur(); plot(1:3)'
+      )
+      expect(opened.error).toBeNull()
+      expect(opened.figures).toEqual([])
+
+      const closed = await send('plot(4:6); grDevices::dev.off(external_device)')
+      expect(closed.error).toBeNull()
+      expect(closed.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('captures a TIFF file-device plot as notebook PNG output', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-tiff-device-'))
     const { child, send } = startLoop(rscriptBin(), {

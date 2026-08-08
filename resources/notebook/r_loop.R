@@ -644,11 +644,18 @@ run <- base::local({
   kernel_dev_off <- grDevices::dev.off
   kernel_plot_new <- graphics::plot.new
   capture_state <- new.env(parent = emptyenv())
+  external_device_owners <- new.env(parent = emptyenv())
+  request_state <- new.env(parent = emptyenv())
+  request_state$sequence <- 0L
 
-  reset_capture_state <- function(dev_id = NA_integer_, initial_usr = NULL) {
+  reset_capture_state <- function(
+      dev_id = NA_integer_,
+      initial_usr = NULL,
+      request_id = NA_integer_) {
     capture_state$active <- !is.na(dev_id)
     capture_state$dev_id <- dev_id
     capture_state$initial_usr <- initial_usr
+    capture_state$request_id <- request_id
     capture_state$page_seen <- FALSE
     capture_state$recorded_plot_seen <- FALSE
     capture_state$graphics_state_seen <- FALSE
@@ -840,6 +847,30 @@ run <- base::local({
       identical(as.integer(unname(which)), as.integer(unname(capture_state$dev_id)))
   }
 
+  external_device_key <- function(which) {
+    if (length(which) != 1L || is.na(which)) {
+      return(NA_character_)
+    }
+    as.character(as.integer(unname(which)))
+  }
+
+  external_device_owned_by_current_request <- function(which) {
+    key <- external_device_key(which)
+    !is.na(key) &&
+      exists(key, envir = external_device_owners, inherits = FALSE) &&
+      identical(
+        get(key, envir = external_device_owners, inherits = FALSE),
+        capture_state$request_id
+      )
+  }
+
+  forget_external_device <- function(which) {
+    key <- external_device_key(which)
+    if (!is.na(key) && exists(key, envir = external_device_owners, inherits = FALSE)) {
+      rm(list = key, envir = external_device_owners)
+    }
+  }
+
   mark_capture_page <- function() {
     if (isTRUE(capture_state$active) &&
         !isTRUE(capture_state$closed) &&
@@ -867,12 +898,14 @@ run <- base::local({
         !capture_device_is_open(capture_state$dev_id)) {
       capture_state$closed <- TRUE
     }
+    forget_external_device(which)
   }
 
   record_external_plot <- function(which) {
     if (!isTRUE(capture_state$active) ||
         isTRUE(capture_state$closed) ||
         capture_state_device_matches(which) ||
+        !external_device_owned_by_current_request(which) ||
         !capture_device_is_open(capture_state$dev_id) ||
         !capture_device_is_open(which)) {
       return(NULL)
@@ -905,11 +938,15 @@ run <- base::local({
     invisible(NULL)
   }
 
-  enable_external_recording <- function() {
+  register_external_device <- function() {
     current_dev <- grDevices::dev.cur()
     if (isTRUE(capture_state$active) &&
         !isTRUE(capture_state$closed) &&
         !capture_state_device_matches(current_dev)) {
+      key <- external_device_key(current_dev)
+      if (!is.na(key)) {
+        assign(key, capture_state$request_id, envir = external_device_owners)
+      }
       suppressWarnings(try(grDevices::dev.control(displaylist = "enable"), silent = TRUE))
     }
   }
@@ -982,14 +1019,14 @@ run <- base::local({
 
     make_file_device_wrapper <- function(original) {
       wrapper_env <- base::list2env(
-        base::list(enable_recording = enable_external_recording, original = original),
+        base::list(register_device = register_external_device, original = original),
         parent = globalenv()
       )
       lockEnvironment(wrapper_env, bindings = TRUE)
       eval(
         quote(function(...) {
           result <- base::withVisible(original(...))
-          enable_recording()
+          register_device()
           if (result$visible) result$value else base::invisible(result$value)
         }),
         envir = wrapper_env
@@ -1009,7 +1046,9 @@ run <- base::local({
   install_capture_wrappers()
 
   function(req) {
-    reset_capture_state()
+    request_state$sequence <- request_state$sequence + 1L
+    request_id <- request_state$sequence
+    reset_capture_state(request_id = request_id)
     page_dir <- if (nzchar(kernel_figures_dir)) create_capture_page_dir() else tempdir()
     pattern <- file.path(page_dir, "page-%03d.png")
     dev_id <- NA_integer_
@@ -1024,7 +1063,7 @@ run <- base::local({
       dev_id <- grDevices::dev.cur()
       grDevices::dev.control(displaylist = "enable")
       capture_initial_usr <- capture_device_usr(dev_id)
-      reset_capture_state(dev_id, capture_initial_usr)
+      reset_capture_state(dev_id, capture_initial_usr, request_id)
       on.exit(reset_capture_state(), add = TRUE)
     }
     mark_recorded_plot <- function() {
