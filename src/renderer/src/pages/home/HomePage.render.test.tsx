@@ -3,10 +3,15 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  type ChatSession,
+  useSessionStore
+} from '@/stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { HomePage } from './HomePage'
 
@@ -15,6 +20,34 @@ vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 
 let container: HTMLDivElement
 let root: Root
+
+const project: Project = {
+  id: 'project-1',
+  name: 'Research project',
+  description: '',
+  isExample: false,
+  createdAt: 1,
+  updatedAt: 1
+}
+
+const session = (
+  id: string,
+  title: string,
+  status: ChatSession['status'],
+  updatedAt: number
+): ChatSession => ({
+  id,
+  projectId: project.id,
+  title,
+  cwd: '/workspace/project-1',
+  status,
+  messages: [],
+  ...(status === 'running'
+    ? { activeRun: { promptMessageId: `${id}-prompt`, startedAt: updatedAt } }
+    : {}),
+  createdAt: updatedAt,
+  updatedAt
+})
 
 const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheckResult => ({
   checkedAt: 1,
@@ -47,7 +80,11 @@ describe('HomePage environment repair notice', () => {
   it('consumes a global-search request and opens the New Project dialog', async () => {
     useNavigationStore.setState({ pendingProjectCreation: true })
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
 
     expect(document.body.textContent).toContain('Group related sessions under a project.')
     expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
@@ -72,7 +109,11 @@ describe('HomePage environment repair notice', () => {
       ])
     })
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
 
     expect(container.querySelector('[aria-label="Open environment repair"]')).toBeNull()
   })
@@ -91,7 +132,11 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
 
     const repairButton = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open environment repair"]'
@@ -124,7 +169,11 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -146,7 +195,11 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -168,7 +221,11 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
@@ -190,11 +247,86 @@ describe('HomePage environment repair notice', () => {
       openSettingsToPanel
     } as never)
 
-    await act(async () => root.render(<HomePage canDeleteProjects hasCompleteSessionCatalog />))
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Open environment repair"]')?.click()
     )
 
     expect(openSettingsToPanel).toHaveBeenCalledWith('agent')
+  })
+})
+
+describe('HomePage activity overview', () => {
+  it('opens global search from the header and uses the selected Projects icon', async () => {
+    const onOpenGlobalSearch = vi.fn()
+
+    await act(async () =>
+      root.render(
+        <HomePage
+          canDeleteProjects
+          hasCompleteSessionCatalog
+          onOpenGlobalSearch={onOpenGlobalSearch}
+        />
+      )
+    )
+
+    expect(container.querySelector('.lucide-gallery-vertical-end')).not.toBeNull()
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Search"]')?.click()
+    )
+
+    expect(onOpenGlobalSearch).toHaveBeenCalledOnce()
+  })
+
+  it('prioritizes needs-you cards and shows separate per-project activity counts', async () => {
+    const now = 600_000
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const openSession = vi.fn()
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        session('running', 'Running analysis', 'running', now - 5 * 60_000),
+        session('permission', 'Permission request', 'waiting-permission', now - 3 * 60_000),
+        session('plan', 'Plan review', 'waiting-plan-approval', now - 2 * 60_000),
+        session('idle', 'Finished work', 'idle', now - 60_000)
+      ]
+    })
+    useNavigationStore.setState({ openSession } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const activeSection = container.querySelector<HTMLElement>('[aria-label="Active sessions"]')
+    const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    expect([...cards].map((card) => card.getAttribute('aria-label'))).toEqual([
+      'Open session Plan review, needs you',
+      'Open session Permission request, needs you',
+      'Open session Running analysis, running'
+    ])
+    expect(activeSection?.textContent).toContain('waiting 2m')
+    expect(activeSection?.textContent).toContain('waiting 3m')
+    expect(activeSection?.textContent).toContain('running 5m')
+    expect(container.textContent).toContain('2 waiting on you')
+    expect(container.textContent).toContain('1 running')
+    expect(container.querySelector('[aria-label="2 waiting on you"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 running"]')).not.toBeNull()
+
+    await act(async () => cards[0]?.click())
+
+    expect(openSession).toHaveBeenCalledWith(project.id, 'plan', 'user')
+    nowSpy.mockRestore()
   })
 })

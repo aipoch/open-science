@@ -243,6 +243,11 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  html,
+  body {
+    overflow-x: clip;
+  }
+
   button,
   a,
   input,

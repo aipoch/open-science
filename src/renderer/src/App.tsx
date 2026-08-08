@@ -541,6 +541,7 @@ const App = (): React.JSX.Element | null => {
         <HomePage
           canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
           hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+          onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
         />
       ) : (
         <WorkspacePage

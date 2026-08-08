@@ -1,10 +1,16 @@
+/* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
+ * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
+ * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
+ */
 import {
   Archive,
   CircleAlert,
   Clock,
+  GalleryVerticalEnd,
   MoreVertical,
   Pencil,
   Plus,
+  Search,
   Settings,
   Trash2
 } from 'lucide-react'
@@ -38,14 +44,19 @@ const RECENT_SESSION_LIMIT = 5
 type ProjectSummary = {
   project: Project
   sessionCount: number
+  runningCount: number
+  needsYouCount: number
   lastActivityAt: number
 }
+
+type HomeSessionActivity = 'running' | 'needs-you'
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
 
 type HomePageProps = {
   canDeleteProjects: boolean
   hasCompleteSessionCatalog: boolean
+  onOpenGlobalSearch: () => void
 }
 
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
@@ -60,6 +71,14 @@ const getSessionPreview = (session: ChatSession): string =>
     .find((message) => message.role === 'user')
     ?.content.replace(/\s+/g, ' ')
     .trim() ?? ''
+
+const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
+  if (session.status === 'running') return 'running'
+  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+    return 'needs-you'
+  }
+  return undefined
+}
 
 const sectionHeadingClassName =
   'mb-3 flex items-center gap-2 text-[17px] font-medium leading-6 text-text-000'
@@ -84,7 +103,8 @@ const menuDangerItemClassName =
 // Landing screen: pick a project or jump back into a recent session.
 const HomePage = ({
   canDeleteProjects,
-  hasCompleteSessionCatalog
+  hasCompleteSessionCatalog,
+  onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
@@ -136,7 +156,33 @@ const HomePage = ({
     [activeProjectIds, sessions]
   )
 
-  // Per-project session counts and last activity, ordered by most recent activity.
+  const activeSessions = useMemo(
+    () =>
+      persistedSessions
+        .filter((session) => getHomeSessionActivity(session) !== undefined)
+        .sort((left, right) => {
+          const leftActivity = getHomeSessionActivity(left)
+          const rightActivity = getHomeSessionActivity(right)
+          if (leftActivity !== rightActivity) return leftActivity === 'needs-you' ? -1 : 1
+          return right.updatedAt - left.updatedAt
+        }),
+    [persistedSessions]
+  )
+  const activeSessionCounts = useMemo(
+    () => ({
+      running: activeSessions.filter((session) => getHomeSessionActivity(session) === 'running')
+        .length,
+      needsYou: activeSessions.filter((session) => getHomeSessionActivity(session) === 'needs-you')
+        .length
+    }),
+    [activeSessions]
+  )
+  const projectNames = useMemo(
+    () => new Map(activeProjects.map((project) => [project.id, project.name])),
+    [activeProjects]
+  )
+
+  // Per-project session and activity counts, ordered by most recent activity.
   const projectSummaries = useMemo<ProjectSummary[]>(() => {
     const summaries = activeProjects.map((project) => {
       const projectSessions = persistedSessions.filter(
@@ -147,7 +193,17 @@ const HomePage = ({
         project.updatedAt
       )
 
-      return { project, sessionCount: projectSessions.length, lastActivityAt }
+      return {
+        project,
+        sessionCount: projectSessions.length,
+        runningCount: projectSessions.filter(
+          (session) => getHomeSessionActivity(session) === 'running'
+        ).length,
+        needsYouCount: projectSessions.filter(
+          (session) => getHomeSessionActivity(session) === 'needs-you'
+        ).length,
+        lastActivityAt
+      }
     })
 
     return summaries.sort((left, right) => right.lastActivityAt - left.lastActivityAt)
@@ -323,15 +379,36 @@ const HomePage = ({
     <main className="min-h-svh bg-bg-10 text-text-000">
       <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
         <header className="flex items-start justify-between gap-3">
-          <div>
-            <a
-              href={APP.links.website}
-              target="_blank"
-              rel="noreferrer"
-              className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
-            >
-              Open Science
-            </a>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <a
+                href={APP.links.website}
+                target="_blank"
+                rel="noreferrer"
+                className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 transition-colors duration-150 ease-out hover:text-text-100"
+              >
+                Open Science
+              </a>
+              {hasCompleteSessionCatalog && activeSessions.length > 0 ? (
+                <div className="flex items-center gap-1.5 text-xs font-medium">
+                  {activeSessionCounts.needsYou > 0 ? (
+                    <span className="text-session-waiting">
+                      {activeSessionCounts.needsYou} waiting on you
+                    </span>
+                  ) : null}
+                  {activeSessionCounts.needsYou > 0 && activeSessionCounts.running > 0 ? (
+                    <span className="text-text-300" aria-hidden="true">
+                      ·
+                    </span>
+                  ) : null}
+                  {activeSessionCounts.running > 0 ? (
+                    <span className="text-session-running">
+                      {activeSessionCounts.running} running
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
@@ -356,6 +433,16 @@ const HomePage = ({
             <span className="hidden sm:inline-flex">
               <GitHubStarBadge />
             </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-9 rounded-lg text-text-300"
+              onClick={onOpenGlobalSearch}
+              aria-label="Search"
+              title="Search (Cmd/Ctrl+K)"
+            >
+              <Search className="size-4" strokeWidth={2} aria-hidden="true" />
+            </Button>
             <ThemePreferenceMenu />
             <NotificationBell />
             <button
@@ -379,10 +466,72 @@ const HomePage = ({
           </div>
         </header>
 
-        <div className="mt-8 grid grid-cols-1 gap-7 sm:mt-10 sm:gap-8 lg:grid-cols-2">
+        {activeSessions.length > 0 ? (
+          <section className="mt-8 sm:mt-10" aria-label="Active sessions">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {activeSessions.map((session) => {
+                const activity = getHomeSessionActivity(session)
+                const needsYou = activity === 'needs-you'
+                const activityTimestamp = needsYou
+                  ? session.updatedAt
+                  : (session.activeRun?.startedAt ?? session.updatedAt)
+
+                return (
+                  <button
+                    key={session.id}
+                    type="button"
+                    className="group flex min-h-36 min-w-0 flex-col rounded-2xl border border-border-200/70 bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                    onClick={() => openSession(session.projectId, session.id, 'user')}
+                    aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : 'running'}`}
+                  >
+                    <span className="min-w-0 max-w-full truncate text-base font-semibold text-text-000">
+                      {session.title}
+                    </span>
+                    <span className="mt-1 truncate text-xs text-text-100">
+                      {projectNames.get(session.projectId) ?? 'Unknown project'}
+                    </span>
+                    <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                          needsYou
+                            ? 'bg-session-waiting/10 text-session-waiting'
+                            : 'bg-session-running/10 text-session-running'
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'size-1.5 rounded-full motion-safe:animate-pulse',
+                            needsYou ? 'bg-session-waiting' : 'bg-session-running'
+                          )}
+                          aria-hidden="true"
+                        />
+                        {needsYou ? 'Needs you' : 'Running'}
+                      </span>
+                      <span className="shrink-0 text-xs text-text-100">
+                        {needsYou ? 'waiting' : 'running'} {formatRelativeTime(activityTimestamp)}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        <div
+          className={cn(
+            'grid grid-cols-1 gap-7 sm:gap-8 lg:grid-cols-2',
+            activeSessions.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
+          )}
+        >
           <section className="min-w-0" aria-label="Projects">
             <h2 className={sectionHeadingClassName}>
-              <Archive className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
+              <GalleryVerticalEnd
+                className="size-4 text-text-100"
+                strokeWidth={2}
+                aria-hidden="true"
+              />
               Projects
             </h2>
             {archiveProjectError ? (
@@ -406,80 +555,108 @@ const HomePage = ({
               </div>
             ) : (
               <div className={listCardClassName}>
-                {projectSummaries.map(({ project, sessionCount, lastActivityAt }) => (
-                  <div
-                    key={project.id}
-                    className={rowClassName}
-                    title={project.description || project.name}
-                  >
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-                      onClick={() => openProject(project.id, 'user')}
+                {projectSummaries.map(
+                  ({ project, sessionCount, runningCount, needsYouCount, lastActivityAt }) => (
+                    <div
+                      key={project.id}
+                      className={rowClassName}
+                      title={project.description || project.name}
                     >
-                      <span className="truncate font-semibold text-text-000">{project.name}</span>
-                      {project.isExample ? (
-                        <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
-                          Example
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                        onClick={() => openProject(project.id, 'user')}
+                      >
+                        <span className="min-w-0 truncate font-semibold text-text-000">
+                          {project.name}
                         </span>
-                      ) : null}
-                    </button>
-                    <span className="shrink-0 text-xs text-text-100">
-                      {hasCompleteSessionCatalog
-                        ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
-                        : 'Session count unavailable'}
-                    </span>
-                    <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
-                      {formatRelativeTime(lastActivityAt)}
-                    </span>
-                    <DropdownMenu.Root>
-                      <DropdownMenu.Trigger asChild>
-                        <button
-                          type="button"
-                          className={rowActionClassName}
-                          aria-label={`Open actions for ${project.name}`}
-                        >
-                          <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        </button>
-                      </DropdownMenu.Trigger>
-                      <DropdownMenu.Portal>
-                        <DropdownMenu.Content
-                          aria-label="Project actions"
-                          className={menuContentClassName}
-                          align="end"
-                          sideOffset={6}
-                        >
-                          <DropdownMenu.Item
-                            className={menuItemClassName}
-                            onSelect={() => openEditDialog(project)}
+                        {project.isExample ? (
+                          <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
+                            Example
+                          </span>
+                        ) : null}
+                        {hasCompleteSessionCatalog && needsYouCount > 0 ? (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
+                            aria-label={`${needsYouCount} waiting on you`}
                           >
-                            <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Rename…
-                          </DropdownMenu.Item>
-                          <DropdownMenu.Item
-                            className={menuItemClassName}
-                            disabled={
-                              !canArchiveProject(project) || archivingProjectIds.has(project.id)
-                            }
-                            onSelect={() => archiveProject(project)}
+                            <span
+                              className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
+                              aria-hidden="true"
+                            />
+                            <span aria-hidden="true">{needsYouCount}</span>
+                          </span>
+                        ) : null}
+                        {hasCompleteSessionCatalog && runningCount > 0 ? (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
+                            aria-label={`${runningCount} running`}
                           >
-                            <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
-                          </DropdownMenu.Item>
-                          <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                          <DropdownMenu.Item
-                            className={menuDangerItemClassName}
-                            disabled={!canDeleteProjects}
-                            onSelect={() => openDeleteDialog(project)}
+                            <span
+                              className="size-1.5 rounded-full bg-session-running motion-safe:animate-pulse"
+                              aria-hidden="true"
+                            />
+                            <span aria-hidden="true">{runningCount}</span>
+                          </span>
+                        ) : null}
+                      </button>
+                      <span className="hidden shrink-0 text-xs text-text-100 sm:inline">
+                        {hasCompleteSessionCatalog
+                          ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
+                          : 'Session count unavailable'}
+                      </span>
+                      <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
+                        {formatRelativeTime(lastActivityAt)}
+                      </span>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className={rowActionClassName}
+                            aria-label={`Open actions for ${project.name}`}
                           >
-                            <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Delete
-                          </DropdownMenu.Item>
-                        </DropdownMenu.Content>
-                      </DropdownMenu.Portal>
-                    </DropdownMenu.Root>
-                  </div>
-                ))}
+                            <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            aria-label="Project actions"
+                            className={menuContentClassName}
+                            align="end"
+                            sideOffset={6}
+                          >
+                            <DropdownMenu.Item
+                              className={menuItemClassName}
+                              onSelect={() => openEditDialog(project)}
+                            >
+                              <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
+                              Rename…
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className={menuItemClassName}
+                              disabled={
+                                !canArchiveProject(project) || archivingProjectIds.has(project.id)
+                              }
+                              onSelect={() => archiveProject(project)}
+                            >
+                              <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                              {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
+                            <DropdownMenu.Item
+                              className={menuDangerItemClassName}
+                              disabled={!canDeleteProjects}
+                              onSelect={() => openDeleteDialog(project)}
+                            >
+                              <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                              Delete
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                    </div>
+                  )
+                )}
               </div>
             )}
           </section>

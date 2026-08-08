@@ -66,3 +66,22 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.
   await expectStableScreenshot(page, 'settings-general.png', 0.004)
 })
+
+test('keeps home actions and content inside compact viewports', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+
+  for (const width of [320, 375, 414, 768]) {
+    await page.setViewportSize({ width, height: 800 })
+
+    await expect(page.getByRole('button', { name: 'Search' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+        )
+      )
+      .toBe(true)
+  }
+})

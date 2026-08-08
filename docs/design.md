@@ -534,9 +534,20 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Container: `mx-auto max-w-[1080px] px-8 py-7 pb-16`.
 - Header: `flex items-center justify-between`.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
+- Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
+  `Cmd/Ctrl+K` and does not maintain a second search state.
 - Account menu: `Button variant="ghost" size="icon"`, `size-9 rounded-lg`.
 - Main create button: `Button variant="outline" size="sm"` or `Button size="sm"`; the compact button is `h-8 px-3 text-xs rounded-md`.
 - List title: `text-[17px] leading-6 font-medium`.
+- Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
+  `running` from `waiting on you` rather than presenting one ambiguous total.
+- Active sessions: when any non-archived Session is `running`, `waiting-permission`, or
+  `waiting-plan-approval`, show a responsive card deck above the Project/Recent columns. Waiting
+  Sessions come first, every card opens its Session, and cards contain only the Session title, Project
+  name, state, and state-relative time.
+- Session activity labels: `running` maps to `Running`; `waiting-permission` and
+  `waiting-plan-approval` map to `Needs you`. Use the existing `session-running` and
+  `session-waiting` tokens. Only status dots pulse, and they remain static under reduced motion.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 
