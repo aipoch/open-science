@@ -9,6 +9,7 @@ import type { AcpCreateSessionResponse, AcpStateSnapshot } from '../../../../sha
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
+import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-event-owner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -96,6 +97,7 @@ describe('workspace Agent Runtime hook contract', () => {
 
   beforeEach(() => {
     resetDeferredArtifactEventsForTests()
+    resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     useSettingsStore.setState(createInitialSettingsState())
     runtimeMock.current = createRuntime(createSnapshot())

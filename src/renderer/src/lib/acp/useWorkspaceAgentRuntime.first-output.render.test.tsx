@@ -8,6 +8,7 @@ import type { AcpStateSnapshot } from '../../../../shared/acp'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 import { getAgentLoadingPhase } from '../../pages/workspace/agent-loading-message'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
+import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-event-owner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -67,6 +68,7 @@ describe('workspace Agent first-output runtime sync', () => {
 
   beforeEach(() => {
     resetDeferredArtifactEventsForTests()
+    resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',

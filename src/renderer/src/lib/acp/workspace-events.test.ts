@@ -18,13 +18,16 @@ import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
-  syncWorkspaceAgentFirstOutputState,
-  syncWorkspacePermissionState,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
   resetDeferredArtifactEventsForTests
 } from './workspace-events'
+import {
+  resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceAgentFirstOutputState,
+  syncWorkspacePermissionState
+} from './workspace-runtime-event-owner'
 
 // Creates a runtime event with stable defaults for store adapter tests.
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
@@ -68,6 +71,7 @@ describe('workspace runtime events', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     resetDeferredArtifactEventsForTests()
+    resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.getState().appendUserMessage({

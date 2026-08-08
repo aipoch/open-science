@@ -26,13 +26,18 @@
       "fallbackCapability": "renderer_view"
     },
     "workspace_runtime": {
-      "ownerPaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
+      "ownerPaths": [
+        "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts",
+        "src/renderer/src/lib/acp/workspace-events.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts"
+      ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
       "consumerModules": ["workspace_page"],
       "testFiles": {
         "owner": [
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
-          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx"
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
         "contract": [
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"

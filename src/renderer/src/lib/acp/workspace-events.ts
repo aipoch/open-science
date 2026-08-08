@@ -1,8 +1,4 @@
-import type {
-  AcpRuntimeEvent,
-  AcpPermissionRequest,
-  AcpTurnTokenUsage
-} from '../../../../shared/acp'
+import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../../../shared/acp'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
@@ -37,12 +33,6 @@ import {
   isRuntimeChatMessageEvent
 } from './chat-events'
 
-// Remembers which sessions were marked as waiting during the previous permission sync.
-const pendingPermissionSessionIds = new Set<string>()
-// Tracks runtime prompt-ownership entry edges. A first visible chunk clears the store flag without
-// removing this id, so repeated snapshots for the same prompt cannot re-arm the indicator.
-const firstOutputWaitingSessionIds = new Set<string>()
-
 // Sessions whose next triggerAutoReview call should be skipped exactly once.
 // Used to suppress the re-review that would otherwise be triggered by the [Auditor] correction turn:
 // the main process broadcasts reviewer:suppress-next-auto-review before sending the correction prompt;
@@ -76,7 +66,6 @@ const AUTO_REVIEW_ARTIFACT_SETTLE_DELAY_MS = 100
 const resetDeferredArtifactEventsForTests = (): void => {
   deferredArtifactEventsBySession.clear()
   pendingArtifactTurnUsageBySession.clear()
-  firstOutputWaitingSessionIds.clear()
   for (const timer of scheduledAutoReviewsBySession.values()) clearTimeout(timer)
   scheduledAutoReviewsBySession.clear()
   autoReviewsSuppressedForQuit = false
@@ -745,60 +734,9 @@ const applyWorkspaceRuntimeEvent = async (
   return false
 }
 
-// Keeps store permission state aligned with the runtime's current pending request set.
-const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void => {
-  const nextSessionIds = new Set(requests.map((request) => request.sessionId))
-  const store = useSessionStore.getState()
-
-  // New pending sessions enter the waiting-permission status.
-  for (const sessionId of nextSessionIds) {
-    if (!pendingPermissionSessionIds.has(sessionId)) {
-      store.setPermissionPending(sessionId)
-    }
-  }
-
-  // Sessions with no pending request return to their prior run-derived status.
-  for (const sessionId of pendingPermissionSessionIds) {
-    if (!nextSessionIds.has(sessionId)) {
-      store.clearPermissionPending(sessionId)
-    }
-  }
-
-  pendingPermissionSessionIds.clear()
-
-  // Remember the current set for the next sync pass.
-  for (const sessionId of nextSessionIds) {
-    pendingPermissionSessionIds.add(sessionId)
-  }
-}
-
-// Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
-// ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
-const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
-  const nextSessionIds = new Set(sessionIds)
-  const store = useSessionStore.getState()
-  const workspaceSessionIds = new Set(store.sessions.map((session) => session.id))
-
-  for (const sessionId of nextSessionIds) {
-    if (!workspaceSessionIds.has(sessionId) || firstOutputWaitingSessionIds.has(sessionId)) continue
-    store.setAgentPromptInFlight(sessionId, true)
-    store.setAwaitingFirstAgentOutput(sessionId, true)
-    firstOutputWaitingSessionIds.add(sessionId)
-  }
-
-  for (const sessionId of firstOutputWaitingSessionIds) {
-    if (nextSessionIds.has(sessionId)) continue
-    store.setAgentPromptInFlight(sessionId, false)
-    store.setAwaitingFirstAgentOutput(sessionId, false)
-    firstOutputWaitingSessionIds.delete(sessionId)
-  }
-}
-
 export {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
-  syncWorkspaceAgentFirstOutputState,
-  syncWorkspacePermissionState,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
