@@ -8,6 +8,7 @@ import {
   CircleAlert,
   Clock,
   GalleryVerticalEnd,
+  LoaderCircle,
   MoreVertical,
   Plus,
   Search,
@@ -533,12 +534,15 @@ const HomePage = ({
                       >
                         {completed ? (
                           <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                        ) : (
+                        ) : needsYou ? (
                           <span
-                            className={cn(
-                              'size-1.5 rounded-full motion-safe:animate-pulse',
-                              needsYou ? 'bg-session-waiting' : 'bg-session-running'
-                            )}
+                            className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <LoaderCircle
+                            className="size-3.5 animate-spin motion-reduce:animate-none"
+                            strokeWidth={2}
                             aria-hidden="true"
                           />
                         )}
@@ -632,8 +636,9 @@ const HomePage = ({
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
                             aria-label={`${runningCount} running`}
                           >
-                            <span
-                              className="size-1.5 rounded-full bg-session-running motion-safe:animate-pulse"
+                            <LoaderCircle
+                              className="size-3 animate-spin motion-reduce:animate-none"
+                              strokeWidth={2}
                               aria-hidden="true"
                             />
                             <span aria-hidden="true">{runningCount}</span>

@@ -398,7 +398,20 @@ describe('HomePage activity overview', () => {
     expect(container.textContent).toContain('2 waiting on you')
     expect(container.textContent).toContain('1 running')
     expect(container.querySelector('[aria-label="2 waiting on you"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="1 running"]')).not.toBeNull()
+    const runningCard = container.querySelector<HTMLElement>(
+      '[aria-label="Open session Running analysis, running"]'
+    )
+    const runningBadge = Array.from(runningCard?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent?.trim() === 'Running'
+    )
+    const runningProjectCount = container.querySelector<HTMLElement>('[aria-label="1 running"]')
+    expect(runningBadge?.classList.contains('bg-session-running/10')).toBe(true)
+    expect(runningBadge?.classList.contains('text-session-running')).toBe(true)
+    expect(runningBadge?.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
+    expect(
+      runningBadge?.querySelector('svg')?.classList.contains('motion-reduce:animate-none')
+    ).toBe(true)
+    expect(runningProjectCount?.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
 
     await act(async () => cards[0]?.click())
 
@@ -493,8 +506,13 @@ describe('HomePage activity overview', () => {
     const completedCard = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open session Finished analysis, completed"]'
     )
+    const completedBadge = Array.from(completedCard?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent?.trim() === 'Completed'
+    )
     expect(completedCard?.textContent).toContain('Completed')
     expect(completedCard?.textContent).toContain('just now')
+    expect(completedBadge?.classList.contains('text-success-000')).toBe(true)
+    expect(completedBadge?.querySelector('svg')?.classList.contains('animate-spin')).toBe(false)
 
     await act(async () => completedCard?.click())
 

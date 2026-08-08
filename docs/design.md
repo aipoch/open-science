@@ -557,9 +557,10 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   task outcome read, so that card no longer appears when the user returns Home.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
   `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
-  existing `session-running`, `session-waiting`, and `success-000` tokens. Only live status dots
-  pulse, and they remain static under reduced motion; Completed uses a static green check in both
-  the Session update card and message center.
+  existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue
+  in both themes; Running uses a rotating loader in Session update cards and Project counts, with a
+  static loader under reduced motion. Needs you keeps its amber pulse, while Completed uses a static
+  green check in both the Session update card and message center.
 - Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
   additional border, so its built-in hairline ring matches the New project button instead of
   stacking into a heavier outline.
