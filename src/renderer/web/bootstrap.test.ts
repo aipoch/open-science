@@ -124,6 +124,20 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
+  it('signals stores to refresh whenever the event socket opens', async () => {
+    const listener = vi.fn()
+    window.addEventListener('open-science:web-events-open', listener)
+    await loadBootstrap()
+
+    FakeWebSocket.instances[0].emit('open')
+    FakeWebSocket.instances[0].emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    FakeWebSocket.instances[1].emit('open')
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    window.removeEventListener('open-science:web-events-open', listener)
+  })
+
   it('keeps existing event subscriptions active after reconnecting', async () => {
     const api = await loadBootstrap()
     const listener = vi.fn()

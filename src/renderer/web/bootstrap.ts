@@ -195,6 +195,7 @@ const connectEvents = (): void => {
   )
   socket.addEventListener('open', () => {
     eventReconnectAttempt = 0
+    window.dispatchEvent(new Event('open-science:web-events-open'))
   })
   socket.addEventListener('message', (event) => {
     const message = webRpcEventSchema.parse(JSON.parse(String(event.data), reviveBinary))

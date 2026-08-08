@@ -179,12 +179,16 @@ export class NotificationInboxDbRepository {
     })
   }
 
-  expirePendingAuthorizations(settledAt: number): Promise<NotificationRepositoryState> {
+  expireTransientPendingAuthorizations(settledAt: number): Promise<NotificationRepositoryState> {
     return this.enqueue(async () => {
       const client = await this.getClient()
       return client.$transaction(async (transaction) => {
         const result = await transaction.notificationInboxItem.updateMany({
-          where: { kind: 'authorization.required', actionState: 'pending' },
+          where: {
+            kind: 'authorization.required',
+            actionState: 'pending',
+            source: { not: 'session-plan' }
+          },
           data: { actionState: 'expired', settledAt: new Date(settledAt) }
         })
         return stateFor(transaction, result.count > 0)

@@ -66,9 +66,14 @@ export const useNotificationInboxStore = create<NotificationInboxStore>((set, ge
   listen: () => {
     const api = window.api?.notifications
     if (!api?.onChanged || !api.getSnapshot) return () => undefined
-    const remove = api.onChanged(() => void get().refresh())
+    const refresh = (): void => void get().refresh()
+    const remove = api.onChanged(refresh)
+    window.addEventListener('open-science:web-events-open', refresh)
     void get().refresh()
-    return remove
+    return () => {
+      remove()
+      window.removeEventListener('open-science:web-events-open', refresh)
+    }
   }
 }))
 

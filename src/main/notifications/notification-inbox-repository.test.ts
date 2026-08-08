@@ -101,7 +101,7 @@ describe('NotificationInboxDbRepository', () => {
     expect((await repository.snapshot()).items[0]).not.toHaveProperty('readAt')
   })
 
-  it('expires only pending authorizations during startup restore', async () => {
+  it('expires only transient pending authorizations during startup restore', async () => {
     const repository = await createRepository()
     for (const [originId, actionState] of [
       ['stale', 'pending'],
@@ -118,12 +118,23 @@ describe('NotificationInboxDbRepository', () => {
         actionState
       })
     }
+    await repository.record({
+      id: 'approval-plan',
+      dedupeKey: 'authorization:session-plan:plan-1',
+      kind: 'authorization.required',
+      source: 'session-plan',
+      sessionId: 'session-1',
+      originId: 'plan-1',
+      title: 'Plan approval needed',
+      summary: 'A plan needs approval.',
+      actionState: 'pending'
+    })
     await record(repository, 'task')
 
-    await repository.expirePendingAuthorizations(2250)
+    await repository.expireTransientPendingAuthorizations(2250)
 
     const snapshot = await repository.snapshot()
-    expect(snapshot.unreadCount).toBe(3)
+    expect(snapshot.unreadCount).toBe(4)
     expect(snapshot.items.find((item) => item.originId === 'stale')).toMatchObject({
       actionState: 'expired',
       settledAt: 2250
@@ -131,6 +142,12 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.originId === 'settled')).toMatchObject({
       actionState: 'resolved'
     })
+    expect(snapshot.items.find((item) => item.originId === 'plan-1')).toMatchObject({
+      actionState: 'pending'
+    })
+    expect(snapshot.items.find((item) => item.originId === 'plan-1')).not.toHaveProperty(
+      'settledAt'
+    )
     expect(snapshot.items.find((item) => item.originId === 'task')).not.toHaveProperty(
       'actionState'
     )

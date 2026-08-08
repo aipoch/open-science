@@ -24,4 +24,38 @@ describe('notification inbox store', () => {
       error: undefined
     })
   })
+
+  it('refreshes after the Web event socket opens and removes the listener on cleanup', async () => {
+    const getSnapshot = vi.fn(async () => ({
+      revision: 2,
+      unreadCount: 1,
+      latestSequence: 3,
+      items: []
+    }))
+    const removeChanged = vi.fn()
+    const webWindow = Object.assign(new EventTarget(), {
+      api: {
+        notifications: {
+          getSnapshot,
+          onChanged: vi.fn(() => removeChanged)
+        }
+      }
+    })
+    vi.stubGlobal('window', webWindow)
+
+    const cleanup = useNotificationInboxStore.getState().listen()
+    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+    getSnapshot.mockClear()
+
+    webWindow.dispatchEvent(new Event('open-science:web-events-open'))
+    await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledOnce())
+
+    cleanup()
+    getSnapshot.mockClear()
+    webWindow.dispatchEvent(new Event('open-science:web-events-open'))
+    await Promise.resolve()
+
+    expect(getSnapshot).not.toHaveBeenCalled()
+    expect(removeChanged).toHaveBeenCalledOnce()
+  })
 })

@@ -141,7 +141,7 @@ export const createNotificationInboxController = (
     try {
       const restoredAt = now()
       await dependencies.repository.migrateLegacyUnread(createId, restoredAt)
-      await dependencies.repository.expirePendingAuthorizations(restoredAt)
+      await dependencies.repository.expireTransientPendingAuthorizations(restoredAt)
       const snapshot = await dependencies.repository.snapshot(1)
       unreadCount = snapshot.unreadCount
       latestSequence = snapshot.latestSequence
