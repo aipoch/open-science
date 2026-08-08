@@ -209,7 +209,10 @@
       "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
       "consumerModules": [],
       "testFiles": {
-        "owner": ["src/main/session-persistence/coordinator.test.ts"],
+        "owner": [
+          "src/main/session-persistence/coordinator.architecture.test.ts",
+          "src/main/session-persistence/coordinator.test.ts"
+        ],
         "contract": [
           "src/shared/session-persistence.test.ts",
           "src/main/session-persistence/coordinator-contract.test.ts"
