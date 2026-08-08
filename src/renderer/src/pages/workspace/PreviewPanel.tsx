@@ -110,9 +110,16 @@ const PreviewTab = ({
       id={getPreviewTabId(tab.id)}
       aria-controls={getPreviewPanelId(tab.id)}
       aria-selected={isActive}
+      aria-keyshortcuts="Delete Backspace"
       tabIndex={isActive ? 0 : -1}
       className="flex min-w-0 flex-1 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-      onClick={() => onActivate(tab.id)}
+      onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
+          onClose(tab.id)
+          return
+        }
+        onActivate(tab.id)
+      }}
       onKeyDown={onKeyDown}
       title={tab.title}
     >
@@ -128,18 +135,17 @@ const PreviewTab = ({
       ) : (
         <span className="min-w-0 truncate">{tab.title}</span>
       )}
-    </button>
-    <button
-      type="button"
-      tabIndex={-1}
-      className={cn(
-        'shrink-0 rounded-sm p-0.5 outline-none hover:bg-bg-000/60 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50',
-        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-      )}
-      onClick={() => onClose(tab.id)}
-      aria-label={`Close preview of ${tab.title}`}
-    >
-      <X className="size-3.5" aria-hidden="true" />
+      <span
+        data-preview-close={tab.title}
+        aria-hidden="true"
+        title={`Close preview of ${tab.title}`}
+        className={cn(
+          'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+      >
+        <X className="size-3.5" />
+      </span>
     </button>
   </div>
 )

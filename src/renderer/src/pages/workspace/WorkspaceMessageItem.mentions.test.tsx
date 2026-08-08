@@ -249,7 +249,7 @@ describe('WorkspaceMessageItem file names', () => {
     const button = container.querySelector(`[aria-label="Preview generated file ${name}"]`)
     expectSplitFileName(button, 'lon', 't', '.csv')
     expect(button?.querySelector('div[class*="px-1.5"]')).not.toBeNull()
-    expect(button?.querySelector('span.text-text-300')?.className).toContain('ml-1')
+    expect(button?.querySelector('span.text-text-000')?.className).toContain('ml-1')
   })
 })
 

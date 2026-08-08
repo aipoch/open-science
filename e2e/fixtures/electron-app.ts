@@ -98,6 +98,7 @@ type ElectronApp = {
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   requestMainWindowClose: () => Promise<void>
   restart: () => Promise<Page>
+  writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
 const launchEnvironment = (
@@ -401,6 +402,15 @@ class ElectronAppHarness implements ElectronApp {
     await this.close()
     await this.launch()
     return this.page
+  }
+
+  async writeCorruptSessionFile(projectId: string): Promise<void> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
+      throw new Error(`Invalid E2E project id: ${projectId}`)
+    }
+    const projectSessionsRoot = join(this.roots.storageRoot, 'sessions', projectId)
+    await mkdir(projectSessionsRoot, { recursive: true })
+    await writeFile(join(projectSessionsRoot, 'corrupt-e2e-session.json'), '{invalid json', 'utf8')
   }
 
   async dispose(): Promise<void> {

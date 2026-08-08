@@ -40,12 +40,18 @@ const sendPrompt = async (
   reply: string,
   timeout = 30_000
 ): Promise<void> => {
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
   const expectedReply = page.getByText(reply, { exact: false })
   const fixtureFailure = page.getByText(/^E2E fixture failure:/)
-  await expect(expectedReply.or(fixtureFailure)).toBeVisible({ timeout })
-  if (await fixtureFailure.isVisible()) throw new Error(await fixtureFailure.innerText())
+  const existingReplyCount = await expectedReply.count()
+  const existingFailureCount = await fixtureFailure.count()
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(
+    expectedReply.nth(existingReplyCount).or(fixtureFailure.nth(existingFailureCount))
+  ).toBeVisible({ timeout })
+  if ((await fixtureFailure.count()) > existingFailureCount) {
+    throw new Error(await fixtureFailure.last().innerText())
+  }
 }
 
 const openRecentSession = async (page: Page, prompt: string): Promise<void> => {

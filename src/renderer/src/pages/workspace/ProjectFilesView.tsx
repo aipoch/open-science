@@ -116,7 +116,7 @@ const FilePageFooter = ({
     return (
       <div
         data-testid="project-files-end"
-        className="px-4 py-2 text-center text-[11px] text-text-300"
+        className="px-4 py-2 text-center text-[11px] text-text-000"
       >
         No more
       </div>
@@ -417,7 +417,7 @@ const ProjectFilesViewContent = ({
           <div className="flex shrink-0 items-center gap-1.5">
             {/* Local mode has no search row, so its file count stays in the header. */}
             {isLocalMode ? (
-              <div className="text-[11px] tabular-nums text-text-300">
+              <div className="text-[11px] tabular-nums text-text-000">
                 {formatFileCount(localEntryCount ?? 0)}
               </div>
             ) : (
@@ -522,7 +522,7 @@ const ProjectFilesViewContent = ({
               </TooltipProvider>
             ) : null}
           </div>
-          <div className="shrink-0 text-[11px] tabular-nums text-text-300">
+          <div className="shrink-0 text-[11px] tabular-nums text-text-000">
             {formatFileCount(visibleFileCount)}
           </div>
         </div>

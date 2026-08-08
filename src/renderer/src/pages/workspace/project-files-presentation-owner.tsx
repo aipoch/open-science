@@ -226,7 +226,7 @@ const FileTile = ({
             className="text-[11px] leading-5 text-text-000"
           />
           {sizeLabel || relativeTimeLabel ? (
-            <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-3 text-text-300">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0 text-[10px] leading-3 text-text-000">
               {sizeLabel ? <span className="shrink-0">{sizeLabel}</span> : null}
               {sizeLabel && relativeTimeLabel ? (
                 <span className="shrink-0" aria-hidden="true">

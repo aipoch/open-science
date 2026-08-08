@@ -237,7 +237,7 @@ describe('PreviewPanel', () => {
     expect(tabExtension?.textContent).toBe('.csv')
     expect(tabExtension?.className).toContain('shrink-0')
     expect(container.querySelector('[role="tabpanel"]')).not.toBeNull()
-    expect(tabBar?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
+    expect(tabBar?.querySelector(`[data-preview-close="${name}"]`)).not.toBeNull()
   })
 
   it('opens and closes a large file preview without removing the workbench tab', async () => {
@@ -444,7 +444,7 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 
-  it('keeps tab close controls out of the tab order and supports Delete on the tab', async () => {
+  it('keeps pointer close affordances non-focusable and supports Delete on the tab', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(
       createFileItem({
@@ -457,10 +457,15 @@ describe('PreviewPanel', () => {
     )
     await renderPanel()
 
-    const closeButtons = container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Open previews"] [aria-label^="Close preview of "]'
+    const closeAffordances = container.querySelectorAll<HTMLElement>(
+      '[aria-label="Open previews"] [data-preview-close]'
     )
-    expect(Array.from(closeButtons).every((button) => button.tabIndex === -1)).toBe(true)
+    expect(Array.from(closeAffordances).every((element) => element.tabIndex === -1)).toBe(true)
+    expect(
+      Array.from(closeAffordances).every(
+        (element) => element.tagName === 'SPAN' && element.getAttribute('aria-hidden') === 'true'
+      )
+    ).toBe(true)
 
     const firstTab = container.querySelector<HTMLButtonElement>('[role="tab"]')!
     firstTab.focus()
@@ -513,7 +518,7 @@ describe('PreviewPanel', () => {
       'tool:notebook'
     )
     expect(container.querySelector('[aria-label^="Download "]')).toBeNull()
-    expect(container.querySelector('[aria-label="Close preview of Tool preview"]')).not.toBeNull()
+    expect(container.querySelector('[data-preview-close="Tool preview"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="preview-card"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-card-header"]')).toBeNull()
     const toolTab = container.querySelector<HTMLElement>('[role="tab"]')
@@ -651,8 +656,8 @@ describe('PreviewPanel', () => {
     )
     await renderPanel()
 
-    const closeInactiveTab = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Open previews"] [aria-label="Close preview of file-2.pdf"]'
+    const closeInactiveTab = container.querySelector<HTMLElement>(
+      '[aria-label="Open previews"] [data-preview-close="file-2.pdf"]'
     )
     await act(async () => {
       closeInactiveTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -679,9 +684,7 @@ describe('PreviewPanel', () => {
 
     await renderPanel()
 
-    const closeButton = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Close preview of file-1.png"]'
-    )
+    const closeButton = container.querySelector<HTMLElement>('[data-preview-close="file-1.png"]')
     await act(async () => {
       closeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
