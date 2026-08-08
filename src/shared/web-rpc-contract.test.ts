@@ -162,5 +162,15 @@ describe('Web RPC contract', () => {
         error: { code: 'invalid_request', message: 'Invalid request.' }
       }).success
     ).toBe(true)
+    expect(
+      webRpcResponseSchema.safeParse({
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        ok: false,
+        error: {
+          code: 'invalid-command-arguments',
+          message: 'Invalid project request.'
+        }
+      }).success
+    ).toBe(true)
   })
 })

@@ -10,6 +10,8 @@ import { gzip } from 'node:zlib'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
+import { toApplicationCommandErrorEnvelope } from '../../shared/application-command-contract'
+import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
   ClientLeaseRegistry,
   createTaskCallerContext,
@@ -154,7 +156,7 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
 const webRpcError = (
   response: ServerResponse,
   status: number,
-  code: 'invalid_request' | 'method_not_found' | 'handler_error',
+  code: WebRpcErrorCode,
   message: string
 ): void => {
   json(response, status, {
@@ -613,12 +615,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             webRpcError(response, 401, 'invalid_request', error.message)
             return
           }
-          webRpcError(
-            response,
-            500,
-            'handler_error',
-            error instanceof Error ? error.message : String(error)
-          )
+          const publicError = toApplicationCommandErrorEnvelope(error)
+          webRpcError(response, 500, publicError.code, publicError.message)
         }
         return
       }

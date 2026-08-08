@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
@@ -160,6 +161,25 @@ describe('startWebHttpServer', () => {
       })
     )
     expect(unusedFallbackInvoke).not.toHaveBeenCalled()
+
+    directInvoke.mockRejectedValueOnce(
+      new ApplicationCommandError('invalid-command-arguments', 'Invalid project request.')
+    )
+    const invalidResponse = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'direct-client'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+    expect(invalidResponse.status).toBe(500)
+    expect(await invalidResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: false,
+      error: { code: 'invalid-command-arguments', message: 'Invalid project request.' }
+    })
 
     const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
     firstSocket.close()

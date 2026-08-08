@@ -49,17 +49,12 @@ const dependencyBlock = compact(
 )
 
 describe('production application command wiring', () => {
-  it('injects each stateful owner into both legacy Electron and command composition', () => {
+  it('injects each stateful owner into its Electron adapter and command composition', () => {
     const sharedOwners = [
       [
         'managedPreviewOwners',
         'installManagedPreviewElectronAdapter(previewResources, undefined, managedPreviewOwners)',
         'managedPreview: managedPreviewOwners'
-      ],
-      [
-        'projectHandlers',
-        'projectDeletionCoordinator, projectHandlers )',
-        'projects: projectHandlers'
       ],
       [
         'projectFilesHandlers',
@@ -115,6 +110,13 @@ describe('production application command wiring', () => {
         compositionUse
       )
     }
+
+    expect(dependencyBlock).toContain('projects: projectHandlers')
+    expect(compact(ipcSource)).toContain(
+      "declareElectronAdapter('application-projects', () => registerApplicationCommandElectronAdapter(applicationCommandComposition.electron) )"
+    )
+    expect(ipcSource).not.toContain('registerProjectIpcHandlers')
+    expect(legacyAdapterBlock).toContain('registerPreviewStateIpcHandlers(previewStateRepository)')
 
     expect(compact(ipcSource)).toContain(
       'electronAdapters: { beforeCompute: beforeComputeAdapters, compute: computeIpcModule,'

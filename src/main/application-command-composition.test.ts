@@ -21,6 +21,7 @@ vi.mock('./application-command-router', async (importOriginal) => {
 })
 
 import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
+import type { Project } from '../shared/projects'
 import {
   createApplicationCommandComposition,
   type ApplicationCommandCompositionDependencies
@@ -34,6 +35,14 @@ import {
 import { createCallerContext } from './caller-context'
 
 const EMPTY_OWNER = Object.freeze({})
+const project = (id: string): Project => ({
+  id,
+  name: 'Project',
+  description: '',
+  isExample: false,
+  createdAt: 1,
+  updatedAt: 1
+})
 
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
@@ -165,6 +174,19 @@ const invocation = (
 }
 
 describe('application command composition', () => {
+  it('joins the six runtime-validated Project contracts into the Electron view', () => {
+    const composition = createApplicationCommandComposition(dependencies())
+
+    expect(composition.electron.commandNames()).toEqual([
+      'projects:create',
+      'projects:delete',
+      'projects:get',
+      'projects:list',
+      'projects:update',
+      'projects:update-archive'
+    ])
+  })
+
   it('certifies the complete group inventory behind the local Web view', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
@@ -173,7 +195,7 @@ describe('application command composition', () => {
   })
 
   it('partitions remote Web dispatch from fail-closed pre-dispatch rejections', async () => {
-    const listProjects = vi.fn().mockResolvedValue([{ id: 'project-1' }])
+    const listProjects = vi.fn().mockResolvedValue([project('project-1')])
     const onDiagnostic = vi.fn()
     const composition = createApplicationCommandComposition(
       {
@@ -193,7 +215,7 @@ describe('application command composition', () => {
     expect(onDiagnostic).not.toHaveBeenCalled()
     await expect(
       composition.remoteWeb.invoke('projects:list', invocation('remote'))
-    ).resolves.toEqual([{ id: 'project-1' }])
+    ).resolves.toEqual([project('project-1')])
     expect(listProjects).toHaveBeenCalledOnce()
   })
 
@@ -219,7 +241,7 @@ describe('application command composition', () => {
     )
     expect(composition).not.toHaveProperty('registrar')
     expect(composition).not.toHaveProperty('dispatcher')
-    expect(composition).not.toHaveProperty('electron')
+    expect(composition.electron.commandNames()).toHaveLength(6)
     expect(composition).not.toHaveProperty('cli')
     expect(composition).not.toHaveProperty('localRpc')
     expect(composition).not.toHaveProperty('specialist')
@@ -454,18 +476,18 @@ describe('application command composition', () => {
   it('routes different narrow views through one shared command owner', async () => {
     const listProjects = vi
       .fn()
-      .mockResolvedValueOnce([{ id: 'from-local-web' }])
-      .mockResolvedValueOnce([{ id: 'from-task' }])
+      .mockResolvedValueOnce([project('from-local-web')])
+      .mockResolvedValueOnce([project('from-task')])
     const composition = createApplicationCommandComposition({
       ...dependencies(),
       dataContent: { projects: { list: listProjects } } as never
     })
 
     await expect(composition.localWeb.invoke('projects:list', invocation())).resolves.toEqual([
-      { id: 'from-local-web' }
+      project('from-local-web')
     ])
     await expect(composition.task.invoke('projects:list', invocation())).resolves.toEqual([
-      { id: 'from-task' }
+      project('from-task')
     ])
     expect(listProjects).toHaveBeenCalledTimes(2)
   })

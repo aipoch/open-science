@@ -36,12 +36,13 @@ const RUNTIME_INTERPRETER = 'runtime-interpreter-path-object'
 const NATIVE_FILE_UPLOAD = 'native-file-upload-request'
 const SESSION_SAVE = 'session-save-optional-argument'
 const SESSION_SAVE_JSON = 'session-save-json-undefined'
+const RUNTIME_VALIDATED = 'runtime-validated'
 
 // prettier-ignore
 type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof DORMANT_EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
 
 // prettier-ignore
-type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec]
+type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec, applicationCommand?: typeof RUNTIME_VALIDATED]
 
 // prettier-ignore
 const CLOSE_PANE_LIFECYCLE = { activateChannel: 'shortcut:close-active-pane-ready', activate: 'after-subscribe', deactivateChannel: 'shortcut:close-active-pane-unready', deactivate: 'after-unsubscribe' } as const
@@ -56,7 +57,7 @@ const surface = <Value>(
 
 const expandEntry = (
   publicRoot: string,
-  [member, channel, profile = WEB, electronCodec, webCodec]: ContractEntry
+  [member, channel, profile = WEB, electronCodec, webCodec, applicationCommand]: ContractEntry
 ): RendererContractSeed => {
   const isWebRequest = profile === WEB || profile === LOCAL
   const isDormantEvent = profile === DORMANT_EVENT || profile === CLOSE_PANE_EVENT
@@ -132,6 +133,7 @@ const expandEntry = (
       isWebRequest || profile === DELEGATED_NATIVE ? 'caller-context' : 'none',
       profile === WEB || profile === DELEGATED_NATIVE ? 'caller-context' : 'none'
     ),
+    applicationCommand,
     lifecycleDispatch:
       profile === CLOSE_PANE_EVENT
         ? CLOSE_PANE_LIFECYCLE
@@ -160,7 +162,8 @@ const group = (
     entries.map((entry) => expandEntry(publicRoot, entry))
   )
 
-// Compact tuple manifest: [member, channel, surface profile?, Electron codec?, Web codec?].
+// Compact tuple manifest:
+// [member, channel, surface profile?, Electron codec?, Web codec?, Application command?].
 // prettier-ignore
 export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('acp', 'acp', [
@@ -252,8 +255,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['listFiles', 'project-files:list-files'], ['repairIndex', 'project-files:repair-index'], ['searchArtifacts', 'project-files:search-artifacts'],
   ]),
   group('projects', 'projects', [
-    ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create'],
-    ['delete', 'projects:delete'], ['get', 'projects:get'], ['list', 'projects:list'], ['updateArchive', 'projects:update-archive'], ['update', 'projects:update'],
+    ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['get', 'projects:get', WEB, undefined, undefined, RUNTIME_VALIDATED], ['list', 'projects:list', WEB, undefined, undefined, RUNTIME_VALIDATED], ['updateArchive', 'projects:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'projects:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
   group('remote-access', 'remoteAccess', [
     ['onChanged', 'remote-access:changed', EVENT], ['approve', 'remote-access:approve'], ['detect', 'remote-access:detect'],
@@ -378,3 +381,16 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
 ])
 
 export const RENDERER_CONTRACT_CATALOG = composeRendererContractCatalog(RENDERER_CONTRACT_GROUPS)
+
+export const ELECTRON_APPLICATION_COMMAND_CHANNELS: readonly string[] = Object.freeze(
+  RENDERER_CONTRACT_CATALOG.flatMap(
+    ({ applicationCommand, channel, dispatchPolicy, kind, surfaceInstallation }) =>
+      applicationCommand === 'runtime-validated' &&
+      channel !== null &&
+      kind === 'method' &&
+      surfaceInstallation.electron === 'preload' &&
+      dispatchPolicy.electron === 'electron-ipc-request'
+        ? [channel]
+        : []
+  ).sort()
+)

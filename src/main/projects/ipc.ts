@@ -8,13 +8,10 @@ import type {
 } from '../../shared/preview-state'
 import type {
   CreateProjectRequest,
-  DeleteProjectRequest,
   Project,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
-import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
-import { broadcastLifecycleEvent } from '../lifecycle-broadcast'
 import type { ProjectDeletionCoordinator } from './deletion-coordinator'
 import { PreviewStateRepository } from './preview-repository'
 import { getProjectDbClient } from './prisma-client'
@@ -85,35 +82,7 @@ const createProjectHandlers = (
   }
 })
 
-// Registers the renderer-callable project + per-project preview-state commands.
-const registerProjectIpcHandlers = (
-  repository: ProjectRepository,
-  previewRepository: PreviewStateRepository,
-  deletionCoordinator: ProjectDeleteHandler,
-  handlers: ProjectHandlers = createProjectHandlers(repository, deletionCoordinator)
-): void => {
-  ipcMainHandle('projects:list', () => handlers.list())
-  ipcMainHandle('projects:get', (_event, id: string) => handlers.get(id))
-  ipcMainHandle('projects:create', async (_event, request: CreateProjectRequest) => {
-    const project = await handlers.create(request)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectCreated, project)
-    return project
-  })
-  ipcMainHandle('projects:update', async (_event, request: UpdateProjectRequest) => {
-    const project = await handlers.update(request)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
-    return project
-  })
-  ipcMainHandle('projects:update-archive', async (_event, request: UpdateProjectArchiveRequest) => {
-    const project = await handlers.updateArchive(request)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectUpdated, project)
-    return project
-  })
-  ipcMainHandle('projects:delete', async (_event, request: DeleteProjectRequest) => {
-    await handlers.delete(request.id)
-    broadcastLifecycleEvent(LIFECYCLE_CHANNELS.projectDeleted, { projectId: request.id })
-  })
-
+const registerPreviewStateIpcHandlers = (previewRepository: PreviewStateRepository): void => {
   ipcMainHandle(
     'preview:load',
     (_event, request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null> =>
@@ -131,6 +100,6 @@ export {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
   createProjectHandlers,
-  registerProjectIpcHandlers
+  registerPreviewStateIpcHandlers
 }
 export type { ProjectHandlers }

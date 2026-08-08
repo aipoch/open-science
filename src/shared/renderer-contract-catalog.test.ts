@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
-import { RENDERER_CONTRACT_CATALOG, RENDERER_CONTRACT_GROUPS } from './renderer-contract-catalog'
+import {
+  ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  RENDERER_CONTRACT_CATALOG,
+  RENDERER_CONTRACT_GROUPS
+} from './renderer-contract-catalog'
 import { projectRendererContractMaps } from './renderer-contract'
 
 const paths = (
@@ -202,5 +206,24 @@ describe('renderer contract catalog', () => {
       deactivateChannel: 'shortcut:window-find-unready',
       deactivate: 'on-dispose'
     })
+  })
+
+  it('marks only the runtime-validated Project command slice', () => {
+    expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'projects.create',
+      'projects.delete',
+      'projects.get',
+      'projects.list',
+      'projects.update',
+      'projects.updateArchive'
+    ])
+    expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'projects:create',
+      'projects:delete',
+      'projects:get',
+      'projects:list',
+      'projects:update',
+      'projects:update-archive'
+    ])
   })
 })

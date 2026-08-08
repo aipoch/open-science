@@ -14,6 +14,7 @@ export type RendererEventDeliverability =
 
 export type RendererAuthorityFlow = 'electron-sender' | 'caller-context' | 'none'
 export type RendererMapProjection = 'invoke' | 'event' | 'none'
+export type RendererApplicationCommand = 'runtime-validated'
 
 // prettier-ignore
 export type RendererLifecycleDispatch = Readonly<{ activateChannel: string; activate: 'after-subscribe' | 'on-call'; deactivateChannel: string; deactivate: 'after-unsubscribe' | 'on-dispose' }>
@@ -38,6 +39,7 @@ export type RendererContractSeed = Readonly<{
   dispatchPolicy: RendererSurfaceProfile<RendererDispatchPolicy>
   eventDeliverability: RendererSurfaceProfile<RendererEventDeliverability>
   authorityFlow: RendererSurfaceProfile<RendererAuthorityFlow>
+  applicationCommand?: RendererApplicationCommand
   lifecycleDispatch?: RendererLifecycleDispatch
   mapProjection: RendererMapProjection
 }>

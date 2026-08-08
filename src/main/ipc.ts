@@ -26,6 +26,7 @@ import {
   type ApplicationCommandComposition,
   type ApplicationCommandCompositionDependencies
 } from './application-command-composition'
+import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
@@ -126,7 +127,7 @@ import {
   createDefaultPreviewStateRepository,
   createDefaultProjectRepository,
   createProjectHandlers,
-  registerProjectIpcHandlers
+  registerPreviewStateIpcHandlers
 } from './projects/ipc'
 import { createReviewerCommandOwner, registerReviewerIpcHandlers } from './reviewer/ipc'
 import {
@@ -1779,13 +1780,8 @@ const createApplicationModules = async (
   )
   // Backs the "This computer" browser; shares localFsService with the managed-preview resolver.
   declareElectronAdapter('local-fs', () => registerLocalFsIpcHandlers(localFsService))
-  declareElectronAdapter('projects', () =>
-    registerProjectIpcHandlers(
-      projectRepository,
-      previewStateRepository,
-      projectDeletionCoordinator,
-      projectHandlers
-    )
+  declareElectronAdapter('preview-state', () =>
+    registerPreviewStateIpcHandlers(previewStateRepository)
   )
   declareElectronAdapter('lifecycle', () => registerLifecycleIpcHandlers())
   // Compute IPC handlers are registered earlier (before the notebook RPC server) so computeService
@@ -1928,6 +1924,9 @@ const createApplicationModules = async (
         dispose: () => composition.dispose()
       }
     }
+  )
+  declareElectronAdapter('application-projects', () =>
+    registerApplicationCommandElectronAdapter(applicationCommandComposition.electron)
   )
 
   return {

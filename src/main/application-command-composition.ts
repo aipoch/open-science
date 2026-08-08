@@ -1,4 +1,8 @@
-import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
+import { ApplicationCommandError } from '../shared/application-command-contract'
+import {
+  ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  RENDERER_CONTRACT_CATALOG
+} from '../shared/renderer-contract-catalog'
 import {
   acpApplicationCommands,
   registerAcpCommands,
@@ -95,6 +99,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 type ApplicationCommandComposition = Readonly<{
+  electron: ApplicationCommandByNameDispatcher
   localWeb: ApplicationCommandByNameDispatcher
   remoteWeb: RemoteWebApplicationCommandDispatcher
   task: ApplicationCommandByNameDispatcher
@@ -108,6 +113,7 @@ const LOCAL_WEB_COMMAND_COUNT = 233
 const REMOTE_WEB_COMMAND_COUNT = 171
 const REMOTE_REJECTED_COMMAND_COUNT = 62
 const TASK_COMMAND_COUNT = 7
+const VALIDATED_ELECTRON_COMMAND_COUNT = 6
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'sessions:export-conversation',
@@ -193,6 +199,7 @@ const createRemoteAccessSlot = (): Readonly<{
 
 const certifyInventory = (): Readonly<{
   commands: ReadonlyMap<string, AnyApplicationCommand>
+  electronNames: readonly string[]
   localWebNames: readonly string[]
   remoteWebNames: readonly string[]
   remoteRejectedNames: readonly string[]
@@ -216,11 +223,13 @@ const certifyInventory = (): Readonly<{
   }
 
   const localWebNames = collectCatalogCommands(({ localWeb }) => localWeb === 'web-rpc')
+  const electronNames = ELECTRON_APPLICATION_COMMAND_CHANNELS
   const remoteWebNames = collectCatalogCommands(({ remoteWeb }) => remoteWeb === 'web-rpc')
   const remoteRejectedNames = collectCatalogCommands(
     ({ localWeb, remoteWeb }) => localWeb === 'web-rpc' && remoteWeb === 'rejecting-stub'
   )
   const expectedCounts = [
+    [electronNames, VALIDATED_ELECTRON_COMMAND_COUNT, 'validated Electron commands'],
     [localWebNames, LOCAL_WEB_COMMAND_COUNT, 'local Web commands'],
     [remoteWebNames, REMOTE_WEB_COMMAND_COUNT, 'remote Web commands'],
     [remoteRejectedNames, REMOTE_REJECTED_COMMAND_COUNT, 'remote Web rejections'],
@@ -232,6 +241,11 @@ const certifyInventory = (): Readonly<{
     if (new Set(names).size !== names.length) failInventory(`${label} contains duplicate names`)
     for (const name of names) {
       if (!commands.has(name)) failInventory(`${label} contains unknown command ${name}`)
+    }
+  }
+  for (const name of electronNames) {
+    if (!commands.get(name)?.contract) {
+      failInventory(`validated Electron command has no runtime codec: ${name}`)
     }
   }
 
@@ -247,7 +261,13 @@ const certifyInventory = (): Readonly<{
     failInventory('remote dispatch and rejection inventories do not partition local Web')
   }
 
-  return Object.freeze({ commands, localWebNames, remoteWebNames, remoteRejectedNames })
+  return Object.freeze({
+    commands,
+    electronNames,
+    localWebNames,
+    remoteWebNames,
+    remoteRejectedNames
+  })
 }
 
 const createApplicationCommandComposition = (
@@ -322,12 +342,18 @@ const createApplicationCommandComposition = (
       invoke: (commandName, invocation): Promise<unknown> => {
         if (rejected.has(commandName)) {
           return Promise.reject(
-            new Error(`Application command is rejected before dispatch: ${commandName}`)
+            new ApplicationCommandError(
+              'command-unavailable',
+              `Application command is rejected before dispatch: ${commandName}`
+            )
           )
         }
         if (!allowed.has(commandName)) {
           return Promise.reject(
-            new Error(`Application command is unavailable in this view: ${commandName}`)
+            new ApplicationCommandError(
+              'command-unavailable',
+              `Application command is unavailable in this view: ${commandName}`
+            )
           )
         }
         return router.dispatcher.invoke(certified.commands.get(commandName)!, invocation)
@@ -335,6 +361,7 @@ const createApplicationCommandComposition = (
     })
   }
 
+  const electron = view(certified.electronNames)
   const localWeb = view(certified.localWebNames)
   const remoteDispatcher = view(certified.remoteWebNames, certified.remoteRejectedNames)
   const remoteWeb = Object.freeze({
@@ -344,6 +371,7 @@ const createApplicationCommandComposition = (
   const task = view(TASK_COMMAND_NAMES)
 
   return Object.freeze({
+    electron,
     localWeb,
     remoteWeb,
     task,

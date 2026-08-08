@@ -10,7 +10,10 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { RENDERER_CONTRACT_GROUPS } from '../shared/renderer-contract-catalog'
+import {
+  ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  RENDERER_CONTRACT_GROUPS
+} from '../shared/renderer-contract-catalog'
 
 const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock, removeListenerMock } =
   vi.hoisted(() => ({
@@ -167,7 +170,9 @@ const collectFunctionPaths = (value: unknown, prefix = ''): string[] => {
 beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
-  invokeMock.mockResolvedValue(undefined)
+  invokeMock.mockImplementation(async (channel: string) =>
+    validatedApplicationCommandChannels.has(channel) ? { ok: true, result: undefined } : undefined
+  )
 
   await import('./index')
 
@@ -205,6 +210,7 @@ const coreContractGroups = RENDERER_CONTRACT_GROUPS.filter(
   ({ capability }) => !runtimeContractCapabilities.has(capability)
 )
 const coreContracts = coreContractGroups.flatMap(({ contracts }) => contracts)
+const validatedApplicationCommandChannels = new Set(ELECTRON_APPLICATION_COMMAND_CHANNELS)
 
 const getApiCallable = (publicPath: string): ((...args: unknown[]) => unknown) => {
   const callable = publicPath
