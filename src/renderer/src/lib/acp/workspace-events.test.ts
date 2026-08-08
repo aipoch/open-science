@@ -2041,6 +2041,53 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('waits for the foreground project preview slice before auto-opening a molecule', async () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default-project' })
+    const finalizedArtifact = createArtifactFile({
+      id: 'artifact-version-activating',
+      artifactId: 'artifact-lineage-activating',
+      versionId: 'artifact-version-activating',
+      versionNumber: 1,
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      name: 'activating.mol'
+    })
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-activating', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-activating',
+        kind: 'artifact',
+        runId: 'run-activating',
+        artifactSessionId: 'artifact-session-activating',
+        artifactClaimId: 'claim-activating',
+        artifacts: [createArtifactFile({ name: 'activating.mol' })]
+      }),
+      {
+        finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact]),
+        saveSession: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    usePreviewWorkbenchStore.getState().activateProject('default-project')
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'artifact-lineage-activating',
+      panelState: 'open',
+      activeProjectId: 'default-project',
+      items: [
+        expect.objectContaining({
+          id: 'artifact-lineage-activating',
+          selectedVersionId: 'artifact-version-activating',
+          format: 'molecule'
+        })
+      ]
+    })
+  })
+
   it('does not auto-open a generated molecule artifact while Home is visible', async () => {
     const finalizedArtifact = createArtifactFile({
       id: 'artifact-version-home',
