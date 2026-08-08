@@ -146,6 +146,35 @@ describe('NotebookRunOutputs', () => {
     expect(figures[1]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
   })
 
+  it('does not add a mutable saved-file preview when the run already captured a figure', () => {
+    const run = makeRun({
+      outputs: [{ type: 'display', data: { 'image/png': 'SElTVE9SSUNBTA==' } }],
+      workingFiles: [
+        {
+          path: '/workspace/sin.tiff',
+          relativePath: 'sin.tiff',
+          kind: 'other',
+          size: 100,
+          mtimeMs: 1,
+          createdByRunId: 'r1'
+        }
+      ]
+    })
+
+    expect(resolveNotebookRunFigures(run)).toEqual([
+      expect.objectContaining({
+        source: 'captured',
+        mimeType: 'image/png',
+        payload: 'SElTVE9SSUNBTA=='
+      })
+    ])
+
+    act(() => root.render(<NotebookRunOutputs run={run} />))
+
+    expect(container.querySelectorAll('[data-testid="notebook-figure-output"]')).toHaveLength(1)
+    expect(container.querySelector('[data-testid="notebook-output-tiff"]')).toBeNull()
+  })
+
   it('falls back to every saved image when the kernel has no captured figure', () => {
     const figures = resolveNotebookRunFigures(
       makeRun({
@@ -202,7 +231,7 @@ describe('NotebookRunOutputs', () => {
     ])
   })
 
-  it('preserves every captured occurrence and saved images while deduplicating saved paths', () => {
+  it('preserves every captured occurrence without adding mutable saved-file previews', () => {
     const figures = resolveNotebookRunFigures(
       makeRun({
         outputs: [
@@ -228,8 +257,7 @@ describe('NotebookRunOutputs', () => {
 
     expect(figures).toEqual([
       expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
-      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
-      expect.objectContaining({ source: 'working-file', path: '/workspace/plot.png' })
+      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' })
     ])
   })
 

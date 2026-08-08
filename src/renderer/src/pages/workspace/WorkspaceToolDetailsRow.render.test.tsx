@@ -260,10 +260,11 @@ describe('WorkspaceToolDetailsRow', () => {
     )
 
     expect(figure).not.toBeNull()
-    expect(figures).toHaveLength(2)
+    expect(figures).toHaveLength(1)
     expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
     expect(figure?.firstElementChild?.className).toContain('justify-start')
     expect(textOutput?.contains(figure)).toBe(false)
-    expect(container.textContent).toContain('2 figures · Saved: plot.png')
+    expect(container.textContent).toContain('1 figure · Saved: plot.png')
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
   })
 })

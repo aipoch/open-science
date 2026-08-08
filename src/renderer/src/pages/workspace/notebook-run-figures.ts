@@ -62,11 +62,10 @@ const resolveWorkingFileFigures = (run: NotebookRunRecord): WorkingFileNotebookF
     ]
   })
 
-// Captured figures and saved files are distinct run outputs, so preserve both. Every captured
-// occurrence remains visible even when two plots happen to have identical bytes. Saved files only
-// deduplicate repeated paths because those entries point to the same final file. Do not guess that a
-// saved file is equivalent to a captured figure: proving that would require pulling saved image
-// bytes into transcript state. The renderer keeps both sources UI-only instead.
+// Captured figures are immutable run output, while working files remain mutable paths that later
+// runs can overwrite. Prefer every captured occurrence so historical runs cannot gain an extra
+// preview of the latest file bytes. Saved files remain a fallback for kernels that captured no
+// figure (for example, save-only plotting calls), with duplicate paths collapsed to one preview.
 const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] => {
   const captured: CapturedNotebookFigure[] = []
 
@@ -86,7 +85,7 @@ const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] 
     })
   })
 
-  return [...captured, ...resolveWorkingFileFigures(run)]
+  return captured.length > 0 ? captured : resolveWorkingFileFigures(run)
 }
 
 const formatNotebookRunFigureMeta = (run: NotebookRunRecord): string | undefined => {
