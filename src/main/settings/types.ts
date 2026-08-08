@@ -178,6 +178,10 @@ export type StoredSettings = {
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
+  // OS-encrypted GitHub token used only for GitHub Skill discovery/import requests. The mask is
+  // display-only; plaintext never reaches settings.json or a renderer snapshot.
+  githubTokenRef?: string
+  githubTokenMask?: string
   connectors?: StoredConnectors
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror

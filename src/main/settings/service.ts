@@ -19,6 +19,7 @@ import type {
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
+  GitHubTokenStatus,
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
   InstallClaudeRequest,
@@ -94,6 +95,7 @@ import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SkillExportArchive } from '../skills/export'
+import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
@@ -132,6 +134,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
+  // GitHub request implementation, injectable so credential tests never hit the network.
+  githubFetch?: FetchLike
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
@@ -190,7 +194,8 @@ class SettingsService {
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
-      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
+      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot),
+      githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
     this.runtimeManager = new AgentRuntimeManager({
@@ -574,6 +579,18 @@ class SettingsService {
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
     return this.skills.importSkill(request)
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    return this.skills.getGitHubTokenStatus()
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    return this.skills.saveGitHubToken(token)
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    return this.skills.removeGitHubToken()
   }
 
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list. The

@@ -862,6 +862,16 @@ export type ImportSkillRequest = {
   url: string
 }
 
+// Renderer-safe GitHub credential state. Main never returns the plaintext token.
+export type GitHubTokenStatus = {
+  configured: boolean
+  mask?: string
+}
+
+export type SaveGitHubTokenRequest = {
+  token: string
+}
+
 // Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes). When
 // `replaceId` is set, the bundle overwrites that already-imported skill in place instead of being
 // imported as a new (possibly suffixed) skill.

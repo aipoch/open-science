@@ -2,10 +2,20 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 
+vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (plaintext: string) => Buffer.from(`cipher:${plaintext}`, 'utf8'),
+    decryptString: (ciphertext: Buffer) => ciphertext.toString('utf8').replace(/^cipher:/, '')
+  }
+}))
+
 import { SkillRegistry } from '../skills/registry'
+import type { FetchLike } from '../skills/github-import'
+import type { UserSkillRepository } from '../skills/user-skill-repository'
 import { SettingsRepository } from './repository'
 import { SkillCatalogModule } from './skill-catalog'
 
@@ -44,6 +54,94 @@ const createCatalog = async (): Promise<SkillCatalogModule> => {
 }
 
 describe('SkillCatalogModule', () => {
+  it('verifies before replacing a saved token and keeps the old token on failure', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-github-token-'))
+    roots.push(storageRoot)
+    const repository = new SettingsRepository(storageRoot)
+    const oldRef = `plain:${Buffer.from('old-token').toString('base64')}`
+    await repository.setGitHubToken(oldRef, 'old…oken')
+    const requests: Array<Record<string, string> | undefined> = []
+    const githubFetch: FetchLike = async (_url, init) => {
+      requests.push(init?.headers)
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+    const catalog = new SkillCatalogModule({ repository, storageRoot, githubFetch })
+
+    await expect(catalog.saveGitHubToken('new-token')).rejects.toThrow('GitHub rejected this token')
+
+    expect(requests[0]?.Authorization).toBe('Bearer new-token')
+    expect(await repository.getSettings()).toMatchObject({
+      githubTokenRef: oldRef,
+      githubTokenMask: 'old…oken'
+    })
+  })
+
+  it('encrypts a verified token and uses it for import, preview, scan, and search', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-github-token-'))
+    roots.push(storageRoot)
+    const repository = new SettingsRepository(storageRoot)
+    const requests: Array<{ url: string; headers?: Record<string, string> }> = []
+    const githubFetch: FetchLike = async (url, init) => {
+      requests.push({ url, headers: init?.headers })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (url.includes('/search/repositories') ? { items: [] } : {}),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+    const userSkills = {
+      list: async () => [],
+      importFromGitHub: async (_url: string, fetcher: FetchLike) => {
+        await fetcher('https://api.github.com/repos/acme/skills')
+        return { status: 'imported' as const, id: 'imported-demo' }
+      },
+      previewGitHubSkill: async (_url: string, fetcher: FetchLike) => {
+        await fetcher('https://raw.githubusercontent.com/acme/skills/main/SKILL.md')
+        return {
+          name: 'Demo',
+          description: 'Demo skill',
+          metadata: {},
+          body: '# Demo',
+          files: ['SKILL.md']
+        }
+      },
+      scanRepo: async (_repo: string, fetcher: FetchLike) => {
+        await fetcher('https://api.github.com/repos/acme/skills/git/trees/main')
+        return []
+      }
+    } as unknown as UserSkillRepository
+    const catalog = new SkillCatalogModule({
+      repository,
+      storageRoot,
+      githubFetch,
+      userSkills,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry
+    })
+
+    const tokenStatus = await catalog.saveGitHubToken('github_pat_verified')
+    expect(tokenStatus).toMatchObject({ configured: true })
+    expect(tokenStatus.mask).not.toContain('github_pat_verified')
+    const stored = await repository.getSettings()
+    expect(stored.githubTokenRef).toMatch(/^enc:/)
+    expect(stored.githubTokenRef).not.toContain('github_pat_verified')
+
+    await catalog.importSkill({ url: 'https://github.com/acme/skills/tree/main/demo' })
+    await catalog.previewGitHubSkill({ url: 'https://github.com/acme/skills/tree/main/demo' })
+    await catalog.scanRepoSkills({ repo: 'acme/skills' })
+    await catalog.scanRepoSkills({ repo: 'presentation skills' })
+
+    expect(requests).toHaveLength(5)
+    expect(
+      requests.every((request) => request.headers?.Authorization === 'Bearer github_pat_verified')
+    ).toBe(true)
+  })
+
   it('exposes the stable compatibility identity for builtin Specialist dependencies', async () => {
     const catalog = await createCatalog()
 

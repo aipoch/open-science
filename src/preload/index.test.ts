@@ -411,6 +411,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.exportCustomServerTemplate',
       'settings.exportSkill',
       'settings.getConnectorDetail',
+      'settings.getGitHubTokenStatus',
       'settings.getPackageMirror',
       'settings.getPreflight',
       'settings.getSettings',
@@ -446,10 +447,12 @@ describe('preload bridge — public surface inventory', () => {
       'settings.previewSkillZip',
       'settings.refreshProviderModels',
       'settings.removeCustomServer',
+      'settings.removeGitHubToken',
       'settings.replayConnectorApproval',
       'settings.replayPendingSkillImportApprovals',
       'settings.respondConnectorApproval',
       'settings.respondSkillImportApproval',
+      'settings.saveGitHubToken',
       'settings.scanRepoSkills',
       'settings.selectCustomServerTemplate',
       'settings.setActiveProvider',
@@ -559,10 +562,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 182 owned methods through their cataloged Electron channels', async () => {
+  it('routes all 185 owned methods through their cataloged Electron channels', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(183)
+    expect(runtimeContracts).toHaveLength(186)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

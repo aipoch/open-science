@@ -67,11 +67,20 @@ const readIsolatedClaudeToken = (token: unknown): string => {
   return token
 }
 
+const readGitHubToken = (request: unknown): string => {
+  const token = readField(request, 'token')
+  if (typeof token !== 'string' || token.trim().length === 0 || token.length > 1024) {
+    throw new Error('GitHub token must be a non-empty string no longer than 1024 characters.')
+  }
+  return token.trim()
+}
+
 export {
   readAppIconVariant,
   readClosePreference,
   readConversationSkillImportEnabled,
   readDefaultPermissionProfile,
+  readGitHubToken,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
   readReasoningEffort

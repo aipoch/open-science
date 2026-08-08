@@ -47,6 +47,40 @@ export type FetchLike = (
 
 const GITHUB_HEADERS = { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' }
 
+const TRUSTED_GITHUB_TOKEN_HOSTS = new Set(['api.github.com', 'raw.githubusercontent.com'])
+
+// Adds a token only for exact HTTPS GitHub hosts used by this module. GitHub-controlled download
+// metadata can never redirect the credential to an arbitrary host.
+const createAuthenticatedGitHubFetch = (fetchImpl: FetchLike, token?: string): FetchLike => {
+  const trimmed = token?.trim()
+  if (!trimmed) return fetchImpl
+
+  return (url, init) => {
+    let trusted = false
+    try {
+      const parsed = new URL(url)
+      trusted = parsed.protocol === 'https:' && TRUSTED_GITHUB_TOKEN_HOSTS.has(parsed.hostname)
+    } catch {
+      trusted = false
+    }
+
+    return fetchImpl(url, {
+      ...init,
+      headers: {
+        ...(init?.headers ?? {}),
+        ...(trusted ? { Authorization: `Bearer ${trimmed}` } : {})
+      }
+    })
+  }
+}
+
+const githubRequestError = (status: number, context = 'GitHub API request'): Error =>
+  status === 403 || status === 429
+    ? new Error(
+        'GitHub request was rate-limited. Configure or update the GitHub token on this page, then try again.'
+      )
+    : new Error(`${context} failed (${status}).`)
+
 // Reads a download body into a Buffer, stopping as soon as the running total crosses `limit` (so an
 // oversized/endless body is never drained). Prefers the streaming reader; falls back to arrayBuffer()
 // when no stream is exposed, still enforcing the cap on the buffered result. Peak memory is bounded by
@@ -153,7 +187,7 @@ const fetchSkillPreview = async (
 
     const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
     if (!response.ok) {
-      throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
+      throw githubRequestError(response.status, `GitHub API request for ${path || 'repo root'}`)
     }
 
     const payload = (await response.json()) as ContentsEntry | ContentsEntry[]
@@ -175,7 +209,7 @@ const fetchSkillPreview = async (
 
       if (relativePath.toLowerCase() !== 'skill.md' || !entry.download_url) continue
       const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
-      if (!raw.ok) throw new Error(`Failed to download ${entry.path} (${raw.status})`)
+      if (!raw.ok) throw githubRequestError(raw.status, `Download of ${entry.path}`)
 
       const previewTooLarge = (): never => {
         throw new Error(
@@ -227,7 +261,7 @@ const fetchSkillFiles = async (
 
     const response = await request(contentsUrl(location, path), { headers: GITHUB_HEADERS })
     if (!response.ok) {
-      throw new Error(`GitHub API request failed (${response.status}) for ${path || 'repo root'}`)
+      throw githubRequestError(response.status, `GitHub API request for ${path || 'repo root'}`)
     }
 
     const payload = (await response.json()) as ContentsEntry | ContentsEntry[]
@@ -243,7 +277,7 @@ const fetchSkillFiles = async (
         }
         const raw = await request(entry.download_url, { headers: { 'User-Agent': 'open-science' } })
         if (!raw.ok) {
-          throw new Error(`Failed to download ${entry.path} (${raw.status})`)
+          throw githubRequestError(raw.status, `Download of ${entry.path}`)
         }
 
         // The most this file may add: the smaller of the per-file cap and what remains of the total
@@ -327,11 +361,9 @@ const searchGitHubSkillRepositories = async (
     { headers: GITHUB_HEADERS }
   )
   if (response.status === 403 || response.status === 429) {
-    throw new Error(
-      'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
-    )
+    throw githubRequestError(response.status)
   }
-  if (!response.ok) throw new Error(`GitHub API request failed (${response.status}).`)
+  if (!response.ok) throw githubRequestError(response.status)
 
   let payload: unknown
   try {
@@ -380,7 +412,7 @@ const scanRepoForSkills = async (
     const meta = await fetchImpl(`https://api.github.com/repos/${repo.owner}/${repo.repo}`, {
       headers: GITHUB_HEADERS
     })
-    if (!meta.ok) throw new Error(`GitHub API request failed (${meta.status}).`)
+    if (!meta.ok) throw githubRequestError(meta.status)
     ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
   }
 
@@ -388,7 +420,7 @@ const scanRepoForSkills = async (
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`,
     { headers: GITHUB_HEADERS }
   )
-  if (!commitResponse.ok) throw new Error(`GitHub API request failed (${commitResponse.status}).`)
+  if (!commitResponse.ok) throw githubRequestError(commitResponse.status)
   const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
   if (!commitSha) throw new Error('GitHub did not return a commit SHA for that ref.')
 
@@ -396,7 +428,7 @@ const scanRepoForSkills = async (
     `https://api.github.com/repos/${repo.owner}/${repo.repo}/git/trees/${encodeURIComponent(commitSha)}?recursive=1`,
     { headers: GITHUB_HEADERS }
   )
-  if (!treeResponse.ok) throw new Error(`GitHub API request failed (${treeResponse.status}).`)
+  if (!treeResponse.ok) throw githubRequestError(treeResponse.status)
 
   const tree = (await treeResponse.json()) as {
     tree?: { path: string; type: string }[]
@@ -429,6 +461,7 @@ const scanRepoForSkills = async (
 export {
   parseGitHubSkillUrl,
   parseGitHubRepo,
+  createAuthenticatedGitHubFetch,
   searchGitHubSkillRepositories,
   fetchSkillPreview,
   fetchSkillFiles,

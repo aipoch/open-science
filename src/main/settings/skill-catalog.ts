@@ -15,6 +15,7 @@ import type {
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   ImportSkillZipRequest,
+  GitHubTokenStatus,
   PreviewGitHubSkillRequest,
   PreviewAgentHomeSkillRequest,
   PreviewSkillZipRequest,
@@ -31,9 +32,11 @@ import type {
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
+  createAuthenticatedGitHubFetch,
   parseGitHubRepo,
   parseGitHubSkillUrl,
-  searchGitHubSkillRepositories
+  searchGitHubSkillRepositories,
+  type FetchLike
 } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
@@ -48,6 +51,7 @@ import {
 } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
+import { encryptKey, maskKey, tryDecryptKey } from './crypto'
 
 type SkillCatalogEntry = {
   name: string
@@ -78,6 +82,7 @@ type SkillCatalogModuleOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
+  githubFetch?: FetchLike
 }
 
 // Owns the installed Skill catalog and its filesystem rules. SettingsService remains a compatibility
@@ -85,10 +90,52 @@ type SkillCatalogModuleOptions = {
 class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
+  private readonly githubFetch: FetchLike
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(options.storageRoot)
+    this.githubFetch = options.githubFetch ?? netFetch
+  }
+
+  private async authenticatedGitHubFetch(): Promise<FetchLike> {
+    const settings = await this.options.repository.getSettings()
+    return createAuthenticatedGitHubFetch(this.githubFetch, tryDecryptKey(settings.githubTokenRef))
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    const settings = await this.options.repository.getSettings()
+    const configured = Boolean(settings.githubTokenRef && tryDecryptKey(settings.githubTokenRef))
+    return {
+      configured,
+      ...(configured && settings.githubTokenMask ? { mask: settings.githubTokenMask } : {})
+    }
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    const trimmed = token.trim()
+    const response = await createAuthenticatedGitHubFetch(this.githubFetch, trimmed)(
+      'https://api.github.com/rate_limit',
+      { headers: { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' } }
+    )
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('GitHub rejected this token. Check that it is valid and try again.')
+      }
+      if (response.status === 403 || response.status === 429) {
+        throw new Error('GitHub token verification was rate-limited. Wait a moment and try again.')
+      }
+      throw new Error(`GitHub token verification failed (${response.status}). Try again.`)
+    }
+
+    await this.options.repository.setGitHubToken(encryptKey(trimmed), maskKey(trimmed))
+    return this.getGitHubTokenStatus()
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    await this.options.repository.setGitHubToken(undefined, undefined)
+    return { configured: false }
   }
 
   private async catalog(): Promise<BundledSkill[]> {
@@ -279,7 +326,10 @@ class SkillCatalogModule {
   }
 
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
+    const outcome = await this.userSkills.importFromGitHub(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -327,7 +377,10 @@ class SkillCatalogModule {
   async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
-    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
+    const preview = await this.userSkills.previewGitHubSkill(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     const suffix = location.path ? `/${location.path}` : ''
     const revision = location.ref ? `@${location.ref}` : ''
     return {
@@ -338,11 +391,16 @@ class SkillCatalogModule {
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     if (parseGitHubRepo(request.repo)) {
-      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+      return {
+        skills: await this.userSkills.scanRepo(request.repo, await this.authenticatedGitHubFetch())
+      }
     }
     return {
       skills: [],
-      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+      repositories: await searchGitHubSkillRepositories(
+        request.repo,
+        await this.authenticatedGitHubFetch()
+      )
     }
   }
 

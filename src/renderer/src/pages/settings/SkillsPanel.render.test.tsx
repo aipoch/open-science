@@ -39,6 +39,13 @@ const seedSkills = [
 ]
 
 beforeEach(() => {
+  ;(window as unknown as { api: unknown }).api = {
+    settings: {
+      getGitHubTokenStatus: vi.fn().mockResolvedValue({ configured: false }),
+      saveGitHubToken: vi.fn(),
+      removeGitHubToken: vi.fn()
+    }
+  }
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     skills: seedSkills,

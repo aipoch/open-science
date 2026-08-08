@@ -981,6 +981,23 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
   })
 
+  it('persists and clears only the encrypted GitHub token reference and display mask', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setGitHubToken('enc:ciphertext', 'gith…oken')
+    expect(await repository.getSettings()).toMatchObject({
+      githubTokenRef: 'enc:ciphertext',
+      githubTokenMask: 'gith…oken'
+    })
+
+    await repository.setGitHubToken(undefined, undefined)
+    expect((await repository.getSettings()).githubTokenRef).toBeUndefined()
+    expect((await repository.getSettings()).githubTokenMask).toBeUndefined()
+    expect(
+      sanitizeSettings({ githubTokenRef: 42, githubTokenMask: false }).githubTokenRef
+    ).toBeUndefined()
+  })
+
   it('drops non-string / duplicate disabledSkillIds on read', async () => {
     const root = await createStorageRoot()
 

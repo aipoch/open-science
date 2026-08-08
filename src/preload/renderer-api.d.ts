@@ -211,6 +211,8 @@ import type {
   ExportSkillRequest,
   ExportSkillResult,
   ImportSkillRequest,
+  GitHubTokenStatus,
+  SaveGitHubTokenRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
@@ -433,6 +435,9 @@ export interface OpenScienceAPI {
     getPackageMirror(): Promise<PackageMirror>
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
+    getGitHubTokenStatus(): Promise<GitHubTokenStatus>
+    saveGitHubToken(request: SaveGitHubTokenRequest): Promise<GitHubTokenStatus>
+    removeGitHubToken(): Promise<GitHubTokenStatus>
     getSkillDetail(id: string): Promise<SkillDetailView>
     exportSkill(request: ExportSkillRequest): Promise<ExportSkillResult>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>

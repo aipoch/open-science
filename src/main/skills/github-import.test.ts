@@ -8,6 +8,7 @@ import {
   fetchSkillFiles,
   searchGitHubSkillRepositories,
   scanRepoForSkills,
+  createAuthenticatedGitHubFetch,
   type FetchLike
 } from './github-import'
 
@@ -15,6 +16,45 @@ import {
 // configured limits instead of hard-coded numbers.
 const OVER_FILE = SKILL_IMPORT_LIMITS.maxFileBytes + 1
 const AT_FILE = SKILL_IMPORT_LIMITS.maxFileBytes
+
+describe('createAuthenticatedGitHubFetch', () => {
+  it('adds the token only to exact trusted HTTPS GitHub hosts', async () => {
+    const requests: Array<{ url: string; headers?: Record<string, string> }> = []
+    const fetcher: FetchLike = async (url, init) => {
+      requests.push({ url, headers: init?.headers })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+    const authenticated = createAuthenticatedGitHubFetch(fetcher, ' github_pat_secret ')
+
+    await authenticated('https://api.github.com/rate_limit', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+    await authenticated('https://raw.githubusercontent.com/acme/repo/main/SKILL.md')
+    await authenticated('https://api.github.com.evil.example/collect')
+    await authenticated('http://api.github.com/collect')
+
+    expect(requests).toEqual([
+      {
+        url: 'https://api.github.com/rate_limit',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: 'Bearer github_pat_secret'
+        }
+      },
+      {
+        url: 'https://raw.githubusercontent.com/acme/repo/main/SKILL.md',
+        headers: { Authorization: 'Bearer github_pat_secret' }
+      },
+      { url: 'https://api.github.com.evil.example/collect', headers: {} },
+      { url: 'http://api.github.com/collect', headers: {} }
+    ])
+  })
+})
 
 describe('parseGitHubSkillUrl', () => {
   it('parses tree URLs into owner/repo/ref/path', () => {
@@ -733,7 +773,7 @@ describe('searchGitHubSkillRepositories', () => {
       })
 
       await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
-        'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+        'GitHub request was rate-limited. Configure or update the GitHub token on this page, then try again.'
       )
     }
   )

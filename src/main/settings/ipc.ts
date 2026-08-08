@@ -13,6 +13,7 @@ import {
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
+  type SaveGitHubTokenRequest,
   type PreviewAgentHomeSkillRequest,
   type PreviewGitHubSkillRequest,
   type PreviewSkillZipRequest,
@@ -57,6 +58,7 @@ import {
   readAppIconVariant,
   readClosePreference,
   readDefaultPermissionProfile,
+  readGitHubToken,
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
@@ -227,6 +229,11 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
+  ipcMainHandle('settings:get-github-token-status', () => service.getGitHubTokenStatus())
+  ipcMainHandle('settings:save-github-token', (_event, request: SaveGitHubTokenRequest) =>
+    service.saveGitHubToken(readGitHubToken(request))
+  )
+  ipcMainHandle('settings:remove-github-token', () => service.removeGitHubToken())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
   ipcMainHandle('settings:export-skill', async (event, request: ExportSkillRequest) => {
     if (!skillExportFiles) throw new Error('Skill export is unavailable')

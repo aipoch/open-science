@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { GitHubTokenControl } from './GitHubTokenControl'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportViewProps = {
@@ -163,10 +164,15 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
-      <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
-      </p>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
+          <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
+            Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
+          </p>
+        </div>
+        <GitHubTokenControl />
+      </div>
 
       <div className="mt-4">
         <label

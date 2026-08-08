@@ -502,6 +502,12 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     settings.disabledSkillIds = disabledSkillIds
   }
 
+  const githubTokenRef = asString(value.githubTokenRef)
+  const githubTokenMask = asString(value.githubTokenMask)
+
+  if (githubTokenRef) settings.githubTokenRef = githubTokenRef
+  if (githubTokenMask) settings.githubTokenMask = githubTokenMask
+
   const connectors = sanitizeConnectors(value.connectors)
 
   if (connectors) settings.connectors = connectors
@@ -1205,6 +1211,17 @@ class SettingsRepository {
       connectors.contactEmail = contactEmail || undefined
       connectors.ncbiApiKeyRef = apiKeyRef || undefined
     })
+  }
+
+  async setGitHubToken(
+    tokenRef: string | undefined,
+    tokenMask: string | undefined
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) => ({
+      ...settings,
+      githubTokenRef: tokenRef || undefined,
+      githubTokenMask: tokenMask || undefined
+    }))
   }
 
   // Appends a fully-formed custom MCP server record.

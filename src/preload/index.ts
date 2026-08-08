@@ -15,6 +15,7 @@ import type {
   ExportSkillRequest,
   ImportAgentHomeSkillsRequest,
   ImportSkillRequest,
+  SaveGitHubTokenRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipRequest,
   InstallCodexRequest,
@@ -218,6 +219,10 @@ const api: OpenScienceAPI = {
     setPackageMirror: (request) =>
       electronRendererContracts.invoke('settings.setPackageMirror', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
+    getGitHubTokenStatus: () => electronRendererContracts.invoke('settings.getGitHubTokenStatus'),
+    saveGitHubToken: (request: SaveGitHubTokenRequest) =>
+      electronRendererContracts.invoke('settings.saveGitHubToken', request),
+    removeGitHubToken: () => electronRendererContracts.invoke('settings.removeGitHubToken'),
     getSkillDetail: (id: string) => electronRendererContracts.invoke('settings.getSkillDetail', id),
     exportSkill: (request: ExportSkillRequest) =>
       electronRendererContracts.invoke('settings.exportSkill', request),
