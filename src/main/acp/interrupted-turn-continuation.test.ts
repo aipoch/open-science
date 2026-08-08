@@ -103,6 +103,50 @@ describe('continueInterruptedTurn', () => {
     expect(startContinuation.mock.calls[0][0]).not.toHaveProperty('historyPreamble')
   })
 
+  it('carries the original task and media when native resume did not retain the provider prompt', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Compare the two microscopy images', {
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            sessionId: 'session-1',
+            name: 'cells.png',
+            originalName: 'cells.png',
+            mimeType: 'image/png',
+            size: 42
+          }
+        ]
+      })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: () => snapshot(),
+          getLatestUserPrompt: () => undefined,
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    expect(startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Compare the two microscopy images'),
+        attachments: [
+          expect.objectContaining({
+            id: 'upload-1',
+            path: 'upload-version:project-1/session-1/upload-version-1'
+          })
+        ],
+        suppressUserMessage: true
+      })
+    )
+  })
+
   it.each([
     ['Claude Code', 'claude-code', 'claude-code'],
     ['OpenCode', 'opencode', 'opencode'],
@@ -157,6 +201,7 @@ describe('continueInterruptedTurn', () => {
       expect(request.historyPreamble).toContain('Collect baseline evidence')
       expect(request.historyPreamble).toContain('Compare the cohorts')
       expect(request.historyPreamble).toContain('I loaded both cohort tables')
+      expect(request.text).not.toContain('Compare the cohorts')
     }
   )
 

@@ -6,9 +6,18 @@ import type {
 import { getActiveConversationContext } from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { toRuntimeUploadedAttachment } from '../../shared/uploads'
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
+
+const buildContinuationPrompt = (
+  prompt: PersistedChatSession['messages'][number],
+  contextReset: boolean
+): string =>
+  contextReset
+    ? INTERRUPTED_TURN_CONTINUATION_PROMPT
+    : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
 
 type InterruptedTurnContinuationRuntime = {
   getSnapshot(): AcpStateSnapshot
@@ -133,10 +142,16 @@ const buildContinuationRequest = (
           contextReset.supportsImageInput
         )
       : undefined
+  const attachments = contextReset
+    ? undefined
+    : livePrompt?.attachments?.length
+      ? livePrompt.attachments
+      : prompt.uploads?.map((upload) => toRuntimeUploadedAttachment(upload, session.projectId))
+  const retainedPromptImages = contextReset ? undefined : prompt.images
 
   return {
     sessionId: request.sessionId,
-    text: INTERRUPTED_TURN_CONTINUATION_PROMPT,
+    text: buildContinuationPrompt(prompt, Boolean(contextReset)),
     suppressUserMessage: true,
     provenanceContext,
     ...(prompt.turnIntent === 'plan-first' || livePrompt?.turnIntent === 'plan-first'
@@ -152,9 +167,14 @@ const buildContinuationRequest = (
       : referencedArtifacts?.length
         ? { referencedArtifacts }
         : {}),
+    ...(attachments?.length ? { attachments } : {}),
     ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),
     ...(replay?.historyAttachments.length ? { historyAttachments: replay.historyAttachments } : {}),
-    ...(replay?.historyImages.length ? { historyImages: replay.historyImages } : {}),
+    ...(replay?.historyImages.length
+      ? { historyImages: replay.historyImages }
+      : retainedPromptImages?.length
+        ? { historyImages: retainedPromptImages }
+        : {}),
     ...(contextReset ? { contextReset: true } : {})
   }
 }
