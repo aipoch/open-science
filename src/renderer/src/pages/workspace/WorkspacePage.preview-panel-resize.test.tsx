@@ -587,6 +587,30 @@ describe('WorkspacePage preview panel resize sync', () => {
     ).toBe('true')
   })
 
+  it('closes the mobile navigation drawer from Escape and the overlay', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    const openNavigation = async (): Promise<void> => {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="navigation-toggle"]')?.click()
+      })
+      expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('true')
+    }
+
+    await openNavigation()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+
+    await openNavigation()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Close navigation"]')?.click()
+    })
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+  })
+
   it('keeps an explicit open request when expand animation emits a near-zero resize', async () => {
     await renderPage()
 

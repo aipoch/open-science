@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const workspacePagePath = resolve(__dirname, 'WorkspacePage.tsx')
+const workspacePanelLayoutPath = resolve(__dirname, 'workspace-panel-layout.tsx')
 const workspaceSidebarPath = resolve(__dirname, 'WorkspaceSidebar.tsx')
 const conversationPanelPath = resolve(__dirname, 'ConversationPanel.tsx')
 const permissionApprovalControlsPath = resolve(__dirname, 'PermissionApprovalControls.tsx')
@@ -32,16 +33,27 @@ describe('workspace page component boundaries', () => {
   // Guards the page-level extraction without relying on Vitest alias resolution.
   it('keeps workspace regions in page-private component files', () => {
     const workspacePageSource = readFileSync(workspacePagePath, 'utf8')
+    const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
 
     for (const fileName of componentFileNames) {
       const componentName = fileName.replace('.tsx', '')
       const componentSource = readFileSync(resolve(__dirname, fileName), 'utf8')
+      const ownerSource =
+        componentName === 'PreviewPanel' ? workspacePanelLayoutSource : workspacePageSource
 
       expect(componentSource).toContain(`const ${componentName}`)
       expect(componentSource).toContain(`export { ${componentName} }`)
-      expect(workspacePageSource).toContain(`import { ${componentName} } from './${componentName}'`)
-      expect(workspacePageSource).toContain(`<${componentName}`)
+      expect(ownerSource).toContain(`import { ${componentName} } from './${componentName}'`)
+      expect(ownerSource).toContain(`<${componentName}`)
     }
+
+    expect(workspacePageSource).toContain(
+      "import { WorkspacePanelLayout } from './workspace-panel-layout'"
+    )
+    expect(workspacePageSource).toContain('<WorkspacePanelLayout')
+    expect(workspacePanelLayoutSource).toContain('const WorkspacePanelLayout')
+    expect(workspacePanelLayoutSource).toContain('export { WorkspacePanelLayout }')
+    expect(workspacePageSource).not.toContain("from './PreviewPanel'")
   })
 
   it('keeps project file presentation behind its private owner module', () => {

@@ -77,7 +77,10 @@
       "fallbackCapability": "renderer_view"
     },
     "workspace_page": {
-      "ownerPaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
+      "ownerPaths": [
+        "src/renderer/src/pages/workspace/WorkspacePage.tsx",
+        "src/renderer/src/pages/workspace/workspace-panel-layout.tsx"
+      ],
       "interfacePaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
       "consumerModules": [],
       "testFiles": {
@@ -85,7 +88,8 @@
           "src/renderer/src/pages/workspace/WorkspacePage.draft-preservation.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
-          "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx"
+          "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-components.test.tsx"
         ],
         "contract": [],
         "consumer": []

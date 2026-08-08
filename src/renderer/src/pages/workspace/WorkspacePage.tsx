@@ -1,15 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { animate } from 'motion'
-import { PanelLeft, PanelRight } from 'lucide-react'
-import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
-import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   pendingWorkspaceElicitations,
@@ -64,10 +59,8 @@ import {
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
-import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
-import { PreviewPanel } from './PreviewPanel'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -75,6 +68,7 @@ import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
+import { WorkspacePanelLayout } from './workspace-panel-layout'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -109,270 +103,6 @@ const compareHandoffEventOrder = (
 // New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
 
-const PANEL_COLLAPSED_SIZE = 0
-const PANEL_COLLAPSED_SIZE_CSS = `${PANEL_COLLAPSED_SIZE}%`
-const PANEL_COLLAPSED_THRESHOLD = 0.1
-
-const SIDEBAR_PANEL_DEFAULT_SIZE = 16
-const SIDEBAR_PANEL_DEFAULT_SIZE_CSS = `${SIDEBAR_PANEL_DEFAULT_SIZE}%`
-const SIDEBAR_PANEL_MIN_OPEN_SIZE = 16
-const SIDEBAR_PANEL_MIN_OPEN_SIZE_CSS = `${SIDEBAR_PANEL_MIN_OPEN_SIZE}%`
-const SIDEBAR_PANEL_ANIMATING_MIN_SIZE = PANEL_COLLAPSED_SIZE_CSS
-const SIDEBAR_TOGGLE_RIGHT_INSET = 38
-
-const PREVIEW_PANEL_DEFAULT_SIZE = 40
-const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
-const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
-const PREVIEW_PANEL_MIN_OPEN_SIZE_CSS = `${PREVIEW_PANEL_MIN_OPEN_SIZE}%`
-const PREVIEW_PANEL_ANIMATING_MIN_SIZE = PANEL_COLLAPSED_SIZE_CSS
-const previewPanelAnimation = {
-  duration: 0.22,
-  ease: [0.22, 1, 0.36, 1] as [number, number, number, number]
-}
-
-const prefersReducedMotion = (): boolean =>
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
-
-type ResizablePanelState = 'open' | 'collapsed'
-type PanelAnimationDirection = 'opening' | 'closing'
-
-type AnimatedResizablePanelOptions = {
-  panelState: ResizablePanelState
-  defaultOpenSize: number
-  minOpenSize: number
-  collapsedSize: number
-  collapsedThreshold: number
-  requestVersion?: number
-  onPanelStateChange: (state: ResizablePanelState) => void
-  onPixelWidthChange?: (width: number) => void
-  collapseFocusTargetRef: React.RefObject<HTMLButtonElement | null>
-}
-
-// Shares the imperative animation lifecycle while each panel keeps ownership of its business state.
-const useAnimatedResizablePanel = ({
-  panelState,
-  defaultOpenSize,
-  minOpenSize,
-  collapsedSize,
-  collapsedThreshold,
-  requestVersion = 0,
-  onPanelStateChange,
-  onPixelWidthChange,
-  collapseFocusTargetRef
-}: AnimatedResizablePanelOptions): {
-  panelRef: React.RefObject<PanelImperativeHandle | null>
-  separatorRef: React.RefObject<HTMLDivElement | null>
-  isAnimationMinSizeRelaxed: boolean
-  syncPanelResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
-} => {
-  const panelRef = useRef<PanelImperativeHandle | null>(null)
-  const separatorRef = useRef<HTMLDivElement | null>(null)
-  const animationRef = useRef<{ stop: () => void } | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const animationDirectionRef = useRef<PanelAnimationDirection | null>(null)
-  const lastOpenSizeRef = useRef(defaultOpenSize)
-  const hasSyncedInitialSizeRef = useRef(false)
-  const [isAnimationMinSizeRelaxed, setIsAnimationMinSizeRelaxed] = useState(false)
-
-  const animatePanelSize = useCallback(
-    (
-      targetSize: number,
-      direction: PanelAnimationDirection,
-      options?: { animate?: boolean }
-    ): void => {
-      const panel = panelRef.current
-      if (!panel) return
-
-      animationRef.current?.stop()
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = null
-      }
-
-      const resizePanel = (size: number): boolean => {
-        const currentPanel = panelRef.current
-
-        // Ignore motion callbacks that outlive the panel handle they were created for.
-        if (currentPanel !== panel) return false
-
-        currentPanel.resize(`${Number(size.toFixed(3))}%`)
-        return true
-      }
-
-      const startFromSize = (currentSize: number): void => {
-        if (
-          options?.animate === false ||
-          Math.abs(currentSize - targetSize) <= collapsedThreshold ||
-          prefersReducedMotion()
-        ) {
-          resizePanel(targetSize)
-          if (direction === 'opening') lastOpenSizeRef.current = targetSize
-          animationDirectionRef.current = null
-          animationRef.current = null
-          setIsAnimationMinSizeRelaxed(false)
-          return
-        }
-
-        animationDirectionRef.current = direction
-        setIsAnimationMinSizeRelaxed(true)
-        animationFrameRef.current = window.requestAnimationFrame(() => {
-          animationFrameRef.current = null
-          const nextPanel = panelRef.current
-          if (!nextPanel) return
-
-          const nextCurrentSize = nextPanel.getSize().asPercentage
-          animationRef.current = animate(nextCurrentSize, targetSize, {
-            ...previewPanelAnimation,
-            onUpdate: resizePanel,
-            onComplete: () => {
-              const didResize = resizePanel(targetSize)
-              if (didResize && direction === 'opening') lastOpenSizeRef.current = targetSize
-              animationDirectionRef.current = null
-              animationRef.current = null
-              setIsAnimationMinSizeRelaxed(false)
-            }
-          })
-        })
-      }
-
-      try {
-        startFromSize(panel.getSize().asPercentage)
-      } catch {
-        // react-resizable-panels can briefly expose the handle before its layout is registered.
-        // Retry once on the next frame instead of dropping the requested restored state.
-        animationFrameRef.current = window.requestAnimationFrame(() => {
-          animationFrameRef.current = null
-          const nextPanel = panelRef.current
-          if (nextPanel !== panel) return
-
-          try {
-            startFromSize(nextPanel.getSize().asPercentage)
-          } catch {
-            // A detached/unregistered panel will be synchronized by the next state/layout pass.
-          }
-        })
-      }
-    },
-    [collapsedThreshold]
-  )
-
-  const syncPanelResize = useCallback(
-    (panelSize: PanelSize, previousPanelSize: PanelSize | undefined): void => {
-      onPixelWidthChange?.(panelSize.inPixels)
-
-      const isNearCollapsedSize = panelSize.asPercentage <= collapsedThreshold
-      const animationDirection = animationDirectionRef.current
-      const isOpeningAnimationResize =
-        animationDirection === 'opening' &&
-        (previousPanelSize === undefined ||
-          panelSize.asPercentage >= previousPanelSize.asPercentage)
-      const isClosingAnimationResize =
-        animationDirection === 'closing' &&
-        (previousPanelSize === undefined ||
-          panelSize.asPercentage <= previousPanelSize.asPercentage)
-
-      // Ignore same-direction intermediate sizes, but allow an opposite drag to interrupt animation.
-      if (isNearCollapsedSize && isOpeningAnimationResize) return
-      if (!isNearCollapsedSize && isClosingAnimationResize) return
-
-      if (!isNearCollapsedSize && animationDirection === null) {
-        lastOpenSizeRef.current = panelSize.asPercentage
-      }
-
-      // A keyboard collapse must not leave focus on the separator that is about to be hidden.
-      if (isNearCollapsedSize && document.activeElement === separatorRef.current) {
-        collapseFocusTargetRef.current?.focus()
-      }
-
-      onPanelStateChange(isNearCollapsedSize ? 'collapsed' : 'open')
-    },
-    [collapseFocusTargetRef, collapsedThreshold, onPanelStateChange, onPixelWidthChange]
-  )
-
-  // The first layout pass synchronizes restored state without introducing an entrance animation.
-  useLayoutEffect(() => {
-    const shouldAnimate = hasSyncedInitialSizeRef.current
-    hasSyncedInitialSizeRef.current = true
-
-    if (panelState === 'collapsed') {
-      animatePanelSize(collapsedSize, 'closing', { animate: shouldAnimate })
-      return
-    }
-
-    const targetSize = Math.max(lastOpenSizeRef.current, minOpenSize)
-    animatePanelSize(targetSize, 'opening', { animate: shouldAnimate })
-  }, [animatePanelSize, collapsedSize, minOpenSize, panelState, requestVersion])
-
-  useEffect(
-    () => () => {
-      animationRef.current?.stop()
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current)
-      }
-    },
-    []
-  )
-
-  return { panelRef, separatorRef, isAnimationMinSizeRelaxed, syncPanelResize }
-}
-
-// Mirrors the right preview toggle while staying outside the collapsible sidebar panel.
-const SidebarPanelToggleButton = ({
-  buttonRef,
-  isCollapsed,
-  left,
-  onToggle
-}: {
-  buttonRef: React.RefObject<HTMLButtonElement | null>
-  isCollapsed: boolean
-  left: string
-  onToggle: () => void
-}): React.JSX.Element => (
-  <button
-    ref={buttonRef}
-    type="button"
-    data-testid="workspace-sidebar-toggle"
-    className="absolute top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-transparent text-action-panel-toggle shadow-none hover:bg-surface-control-hover"
-    style={{ left }}
-    aria-label={isCollapsed ? 'Expand sidebar panel' : 'Collapse sidebar panel'}
-    aria-expanded={!isCollapsed}
-    aria-controls="left-panel"
-    title={isCollapsed ? 'Expand sidebar panel' : 'Collapse sidebar panel'}
-    onClick={onToggle}
-  >
-    <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-  </button>
-)
-
-// The preview toggle lives outside the collapsible panel so it remains clickable at 0% width.
-const PreviewPanelToggleButton = ({
-  buttonRef,
-  isCollapsed,
-  onToggle
-}: {
-  buttonRef: React.RefObject<HTMLButtonElement | null>
-  isCollapsed: boolean
-  onToggle: () => void
-}): React.JSX.Element => (
-  <button
-    ref={buttonRef}
-    type="button"
-    data-testid="workspace-preview-toggle"
-    className={`absolute right-2 top-0 z-40 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg ${
-      isCollapsed
-        ? 'bg-transparent shadow-none text-action-panel-toggle hover:bg-surface-control-hover'
-        : 'bg-primary/20 shadow-card backdrop-blur text-action-panel-toggle'
-    }`}
-    aria-label={isCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
-    aria-expanded={!isCollapsed}
-    aria-controls="right-panel"
-    title={isCollapsed ? 'Expand preview panel' : 'Collapse preview panel'}
-    onClick={onToggle}
-  >
-    <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
-  </button>
-)
-
 // Provides stable names for pasted images, which often arrive without a useful filename.
 const getUploadFilename = (file: File, index: number): string => {
   const fileName = file.name.trim()
@@ -386,33 +116,6 @@ const WorkspacePage = ({
   isSessionPersistenceReady,
   canDeleteConversations
 }: WorkspacePageProps): React.JSX.Element => {
-  const [sidebarPanelState, setSidebarPanelState] = useState<'open' | 'collapsed'>('open')
-  const sidebarToggleRef = useRef<HTMLButtonElement | null>(null)
-  const previewToggleRef = useRef<HTMLButtonElement | null>(null)
-  const syncSidebarTogglePosition = useCallback((panelWidth: number): void => {
-    const toggle = sidebarToggleRef.current
-    if (!toggle) return
-
-    toggle.style.left = `${Math.max(0, panelWidth - SIDEBAR_TOGGLE_RIGHT_INSET)}px`
-  }, [])
-  const {
-    panelRef: sidebarPanelRef,
-    separatorRef: sidebarSeparatorRef,
-    isAnimationMinSizeRelaxed: isSidebarPanelAnimationMinSizeRelaxed,
-    syncPanelResize: syncSidebarPanelResize
-  } = useAnimatedResizablePanel({
-    panelState: sidebarPanelState,
-    defaultOpenSize: SIDEBAR_PANEL_DEFAULT_SIZE,
-    minOpenSize: SIDEBAR_PANEL_MIN_OPEN_SIZE,
-    collapsedSize: PANEL_COLLAPSED_SIZE,
-    collapsedThreshold: PANEL_COLLAPSED_THRESHOLD,
-    onPanelStateChange: setSidebarPanelState,
-    onPixelWidthChange: syncSidebarTogglePosition,
-    collapseFocusTargetRef: sidebarToggleRef
-  })
-  const isMobile = useMediaQuery('(max-width: 767px)')
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
@@ -470,13 +173,10 @@ const WorkspacePage = ({
         : [],
     [activeProject?.archivedAt, allSessions, scopedProjectId]
   )
-  const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
-  const [initialPreviewPanelDefaultSize] = useState(() =>
-    previewPanelState === 'collapsed' ? PANEL_COLLAPSED_SIZE_CSS : PREVIEW_PANEL_DEFAULT_SIZE_CSS
-  )
-  const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
+  const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
@@ -485,21 +185,6 @@ const WorkspacePage = ({
   )
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
-  const {
-    panelRef: previewPanelRef,
-    separatorRef: previewSeparatorRef,
-    isAnimationMinSizeRelaxed: isPreviewPanelAnimationMinSizeRelaxed,
-    syncPanelResize: syncPreviewPanelResize
-  } = useAnimatedResizablePanel({
-    panelState: previewPanelState,
-    defaultOpenSize: PREVIEW_PANEL_DEFAULT_SIZE,
-    minOpenSize: PREVIEW_PANEL_MIN_OPEN_SIZE,
-    collapsedSize: PANEL_COLLAPSED_SIZE,
-    collapsedThreshold: PANEL_COLLAPSED_THRESHOLD,
-    requestVersion: previewOpenRequestVersion,
-    onPanelStateChange: syncPreviewPanelState,
-    collapseFocusTargetRef: previewToggleRef
-  })
   const {
     actionError,
     pendingPermissions,
@@ -1182,16 +867,6 @@ const WorkspacePage = ({
     }
   }, [loadSkills])
 
-  // Escape closes the mobile navigation drawer without touching the active session or draft.
-  useEffect(() => {
-    if (!isMobile || !isMobileSidebarOpen) return
-
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setIsMobileSidebarOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [isMobile, isMobileSidebarOpen])
   // Save the outgoing draft and load the incoming one whenever the selected session changes, covering
   // every selection path (session list, new conversation, project switch, deletes) in one place.
   useEffect(() => {
@@ -2328,22 +2003,48 @@ const WorkspacePage = ({
       .catch(() => undefined)
   }, [activeSessionId, applyHandoffLifecycleEvent])
 
-  const toggleSidebarPanel = (): void => {
-    setSidebarPanelState((state) => (state === 'collapsed' ? 'open' : 'collapsed'))
-  }
-
   return (
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
-      <div className="relative flex h-full">
-        {isMobileSidebarOpen ? (
-          <button
-            type="button"
-            className="fixed inset-0 z-[65] bg-black/45 md:hidden"
-            aria-label="Close navigation"
-            onClick={() => setIsMobileSidebarOpen(false)}
+      <WorkspacePanelLayout
+        hasPreviewItems={previewItems.length > 0}
+        preview={{
+          state: previewPanelState,
+          openRequestVersion: previewOpenRequestVersion,
+          toggle: togglePreviewPanel,
+          syncState: syncPreviewPanelState
+        }}
+        desktopSidebar={
+          <WorkspaceSidebar
+            projectName={activeProject?.name ?? 'Project'}
+            sessions={sessions}
+            activeSessionId={selectedSessionId}
+            canCreateConversation={isSessionPersistenceReady}
+            canMutateConversations={isSessionPersistenceReady}
+            canDeleteConversations={canDeleteConversations}
+            onGoHome={() => goHome('user')}
+            onNewConversation={openNewConversation}
+            isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
+            onOpenFiles={openFilesPreview}
+            onOpenSession={openSessionWithoutExportError}
+            onRenameSession={openRenameDialog}
+            canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
+            onDownloadArtifacts={setSessionToDownloadArtifacts}
+            onViewNotebook={setSessionToViewNotebook}
+            onExportSession={
+              typeof window.api.sessions?.exportConversation === 'function'
+                ? exportConversation
+                : undefined
+            }
+            onTogglePin={(session) => {
+              if (isSessionPersistenceReady) togglePinned(session.id)
+            }}
+            canArchiveSession={canArchiveSession}
+            onArchiveSession={archiveSession}
+            onDeleteSession={openDeleteDialog}
+            onOpenSettings={openSettings}
           />
-        ) : null}
-        {isMobile ? (
+        }
+        renderMobileSidebar={({ isOpen, close }) => (
           <WorkspaceSidebar
             projectName={activeProject?.name ?? 'Project'}
             sessions={sessions}
@@ -2352,132 +2053,70 @@ const WorkspacePage = ({
             canMutateConversations={isSessionPersistenceReady}
             canDeleteConversations={canDeleteConversations}
             onGoHome={() => {
-              setIsMobileSidebarOpen(false)
+              close()
               goHome('user')
             }}
             onNewConversation={() => {
-              setIsMobileSidebarOpen(false)
+              close()
               openNewConversation()
             }}
             isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
             onOpenFiles={() => {
-              setIsMobileSidebarOpen(false)
+              close()
               openFilesPreview()
             }}
             onOpenSession={(sessionId) => {
-              setIsMobileSidebarOpen(false)
+              close()
               openSessionWithoutExportError(sessionId)
             }}
             onRenameSession={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               openRenameDialog(session)
             }}
             canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
             onDownloadArtifacts={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               setSessionToDownloadArtifacts(session)
             }}
             onViewNotebook={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               setSessionToViewNotebook(session)
             }}
             onExportSession={
               typeof window.api.sessions?.exportConversation === 'function'
                 ? (session, format) => {
-                    setIsMobileSidebarOpen(false)
+                    close()
                     exportConversation(session, format)
                   }
                 : undefined
             }
             onTogglePin={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               if (isSessionPersistenceReady) togglePinned(session.id)
             }}
             canArchiveSession={canArchiveSession}
             onArchiveSession={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               archiveSession(session)
             }}
             onDeleteSession={(session) => {
-              setIsMobileSidebarOpen(false)
+              close()
               openDeleteDialog(session)
             }}
             onOpenSettings={() => {
-              setIsMobileSidebarOpen(false)
+              close()
               openSettings()
             }}
             mobileMode
-            isMobileOpen={isMobileSidebarOpen}
-            onMobileClose={() => setIsMobileSidebarOpen(false)}
+            isMobileOpen={isOpen}
+            onMobileClose={close}
           />
-        ) : null}
-        {/* Cancel the workspace's vertical and trailing padding so panel dividers meet the app edges. */}
-        <ResizablePanelGroup
-          orientation="horizontal"
-          className={
-            isMobile ? 'min-w-0 flex-1' : '-my-[10px] -mr-[10px] h-[calc(100%+20px)] min-w-0 flex-1'
-          }
-        >
-          {!isMobile ? (
-            <>
-              <ResizablePanel
-                id="left-panel"
-                panelRef={sidebarPanelRef}
-                defaultSize={SIDEBAR_PANEL_DEFAULT_SIZE_CSS}
-                minSize={
-                  isSidebarPanelAnimationMinSizeRelaxed
-                    ? SIDEBAR_PANEL_ANIMATING_MIN_SIZE
-                    : SIDEBAR_PANEL_MIN_OPEN_SIZE_CSS
-                }
-                collapsible
-                collapsedSize="0%"
-                onResize={(panelSize, _panelId, previousPanelSize) =>
-                  syncSidebarPanelResize(panelSize, previousPanelSize)
-                }
-              >
-                <WorkspaceSidebar
-                  projectName={activeProject?.name ?? 'Project'}
-                  sessions={sessions}
-                  activeSessionId={selectedSessionId}
-                  canCreateConversation={isSessionPersistenceReady}
-                  canMutateConversations={isSessionPersistenceReady}
-                  canDeleteConversations={canDeleteConversations}
-                  onGoHome={() => goHome('user')}
-                  onNewConversation={openNewConversation}
-                  isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
-                  onOpenFiles={openFilesPreview}
-                  onOpenSession={openSessionWithoutExportError}
-                  onRenameSession={openRenameDialog}
-                  canDownloadArtifacts={typeof window.api?.saveSessionArtifacts === 'function'}
-                  onDownloadArtifacts={setSessionToDownloadArtifacts}
-                  onViewNotebook={setSessionToViewNotebook}
-                  onExportSession={
-                    typeof window.api.sessions?.exportConversation === 'function'
-                      ? exportConversation
-                      : undefined
-                  }
-                  onTogglePin={(session) => {
-                    if (isSessionPersistenceReady) togglePinned(session.id)
-                  }}
-                  canArchiveSession={canArchiveSession}
-                  onArchiveSession={archiveSession}
-                  onDeleteSession={openDeleteDialog}
-                  onOpenSettings={openSettings}
-                />
-              </ResizablePanel>
-
-              <ResizableHandle
-                elementRef={sidebarSeparatorRef}
-                aria-label="Resize left panel"
-                disabled={sidebarPanelState === 'collapsed'}
-                aria-hidden={sidebarPanelState === 'collapsed'}
-                className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-200 ease-out ${
-                  sidebarPanelState === 'collapsed' ? 'opacity-0' : 'opacity-100'
-                }`}
-              />
-            </>
-          ) : null}
-
+        )}
+        renderConversation={({
+          isPreviewPanelCollapsed,
+          togglePreviewPanel: togglePreviewPanelFromLayout,
+          openMobileSidebar
+        }) => (
           <ConversationPanel
             activeSession={activeSession}
             draftDoc={draftDoc}
@@ -2485,7 +2124,7 @@ const WorkspacePage = ({
             canEditDraft={canEditDraft}
             canResumeSession={isSessionPersistenceReady}
             actionError={visibleActionError}
-            isPreviewPanelCollapsed={previewPanelState === 'collapsed'}
+            isPreviewPanelCollapsed={isPreviewPanelCollapsed}
             attachments={attachments}
             attachmentTransfers={attachmentTransfers}
             isUploadingAttachments={isUploadingAttachments}
@@ -2516,8 +2155,8 @@ const WorkspacePage = ({
             onCancelRun={cancelActiveRun}
             onResumeSession={resumeActiveSession}
             onOpenNotebook={openNotebookPreview}
-            onTogglePreviewPanel={togglePreviewPanel}
-            onOpenSidebar={() => setIsMobileSidebarOpen(true)}
+            onTogglePreviewPanel={togglePreviewPanelFromLayout}
+            onOpenSidebar={openMobileSidebar}
             onRespondToPermission={respondToVisiblePermission}
             onRespondToElicitation={respondToElicitation}
             onPermissionProfileChange={changePermissionProfile}
@@ -2623,55 +2262,8 @@ const WorkspacePage = ({
                 : handleNewConversationSpecialistChange
             }
           />
-
-          {!isMobile ? (
-            <>
-              <ResizableHandle
-                elementRef={previewSeparatorRef}
-                aria-label="Resize right panel"
-                disabled={previewPanelState === 'collapsed'}
-                aria-hidden={previewPanelState === 'collapsed'}
-                className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-200 ease-out ${
-                  previewPanelState === 'collapsed' ? 'opacity-0' : 'opacity-100'
-                }`}
-              />
-
-              <PreviewPanel
-                panelRef={previewPanelRef}
-                defaultSize={initialPreviewPanelDefaultSize}
-                minSize={
-                  isPreviewPanelAnimationMinSizeRelaxed
-                    ? PREVIEW_PANEL_ANIMATING_MIN_SIZE
-                    : PREVIEW_PANEL_MIN_OPEN_SIZE_CSS
-                }
-                onResize={syncPreviewPanelResize}
-              />
-            </>
-          ) : null}
-        </ResizablePanelGroup>
-        {!isMobile && previewItems.length > 0 ? (
-          <PreviewPanelToggleButton
-            buttonRef={previewToggleRef}
-            isCollapsed={previewPanelState === 'collapsed'}
-            onToggle={togglePreviewPanel}
-          />
-        ) : null}
-        {!isMobile ? (
-          <SidebarPanelToggleButton
-            buttonRef={sidebarToggleRef}
-            isCollapsed={sidebarPanelState === 'collapsed'}
-            left={`calc(${SIDEBAR_PANEL_DEFAULT_SIZE_CSS} - ${SIDEBAR_TOGGLE_RIGHT_INSET}px)`}
-            onToggle={toggleSidebarPanel}
-          />
-        ) : null}
-      </div>
-
-      {isMobile ? (
-        <MobilePreviewSheet
-          open={previewPanelState === 'open'}
-          onClose={() => syncPreviewPanelState('collapsed')}
-        />
-      ) : null}
+        )}
+      />
 
       <RenameSessionDialog
         session={sessionToRename}
