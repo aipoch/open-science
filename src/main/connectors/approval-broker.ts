@@ -24,7 +24,7 @@ type ApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
-  onSettled?: (id: string, state: 'resolved' | 'expired') => void
+  onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired') => void
 }
 
 // Bridges the main-process connector gate to the renderer approval card: it holds a connector call
@@ -58,10 +58,14 @@ export class ApprovalBroker {
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).
   respond(id: string, decision: ApprovalDecision): void {
-    this.settle(id, decision, 'resolved')
+    this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
   }
 
-  private settle(id: string, decision: ApprovalDecision, state: 'resolved' | 'expired'): void {
+  private settle(
+    id: string,
+    decision: ApprovalDecision,
+    state: 'resolved' | 'rejected' | 'expired'
+  ): void {
     const entry = this.pending.get(id)
     if (!entry) return
     this.clearTimer(entry.timer)

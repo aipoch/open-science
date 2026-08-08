@@ -28,7 +28,7 @@ type ComputeApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
-  onSettled?: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
+  onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired' | 'cancelled') => void
   permissionGrants?: ComputePermissionGrantAdapter
   // Optional: check whether a project-scope grant exists for (projectId, operation, providerId).
   // Return true → skip the approval card with 'project' decision.
@@ -208,7 +208,7 @@ export class ComputeApprovalBroker {
 
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored.
   respond(id: string, decision: ComputeApprovalDecision): void {
-    this.settle(id, decision, 'resolved')
+    this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
   }
 
   // Host deletion begins by advancing its generation and denying every approval card that was
@@ -256,7 +256,7 @@ export class ComputeApprovalBroker {
   private settle(
     id: string,
     decision: ComputeApprovalDecision,
-    state: 'resolved' | 'expired' | 'cancelled'
+    state: 'resolved' | 'rejected' | 'expired' | 'cancelled'
   ): void {
     const entry = this.pending.get(id)
     if (!entry) return

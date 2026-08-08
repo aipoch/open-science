@@ -42,6 +42,7 @@ const actionLabel = (item: NotificationInboxItem): string | undefined => {
   if (item.actionState === 'pending') return 'Needs approval'
   if (item.actionState === 'expired') return 'Expired'
   if (item.actionState === 'cancelled') return 'Cancelled'
+  if (item.actionState === 'rejected') return 'Rejected'
   if (item.actionState === 'resolved') return 'Resolved'
   return undefined
 }

@@ -73,6 +73,21 @@ describe('NotificationBell', () => {
     ).toBe(true)
   })
 
+  it('distinguishes a rejected approval from a resolved one', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item ? [{ ...item, actionState: 'rejected' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain('Rejected')
+    expect(document.body.textContent).not.toContain('Resolved')
+  })
+
   it('keeps opening passive and marks messages only through explicit actions', async () => {
     const markRead = vi.fn(async () => undefined)
     const markAllRead = vi.fn(async () => undefined)

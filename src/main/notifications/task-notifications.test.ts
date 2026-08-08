@@ -335,6 +335,7 @@ describe('TaskNotificationService', () => {
       expect.objectContaining({
         dedupeKey: 'authorization:agent-tool:req-1',
         kind: 'authorization.required',
+        summary: 'A tool request needs your approval.',
         actionState: 'pending'
       })
     )
@@ -342,12 +343,17 @@ describe('TaskNotificationService', () => {
       2,
       expect.objectContaining({
         dedupeKey: 'authorization:session-plan:plan-version-1',
-        source: 'session-plan'
+        source: 'session-plan',
+        summary: 'A plan needs your approval.'
       })
     )
     expect(inbox.record).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ dedupeKey: 'task:event-1', kind: 'task.completed' })
+      expect.objectContaining({
+        dedupeKey: 'task:event-1',
+        kind: 'task.completed',
+        summary: 'A task completed.'
+      })
     )
     expect(show).not.toHaveBeenCalled()
   })
@@ -555,20 +561,41 @@ describe('TaskNotificationService', () => {
   })
 
   it.each([
-    ['clean completion', stopEvent('end_turn'), 'task.completed'],
-    ['abnormal stop', stopEvent('max_tokens'), 'task.needs-attention'],
-    ['task failure', errorEvent('Rate limit reached'), 'task.failed']
-  ])('records a message-center item for a tracked %s', async (_label, event, kind) => {
-    const record = vi.fn(async () => undefined)
-    const { service } = createService({
-      inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
-    })
+    ['clean completion', stopEvent('end_turn'), 'task.completed', 'A task completed.'],
+    [
+      'abnormal stop',
+      stopEvent('max_tokens'),
+      'task.needs-attention',
+      'A task needs attention. Open the conversation for details.'
+    ],
+    [
+      'task failure',
+      errorEvent('Rate limit reached'),
+      'task.failed',
+      'A task failed. Open the conversation for details.'
+    ]
+  ])(
+    'records a fixed, non-sensitive message-center summary for a tracked %s',
+    async (_label, event, kind, summary) => {
+      const record = vi.fn(async () => undefined)
+      const { service } = createService({
+        inbox: { record, settleAuthorization: vi.fn(async () => undefined) }
+      })
 
-    service.trackPrompt({ sessionId: 'session-1', text: 'Plot the curve' })
-    await service.handleRuntimeEvent(event)
+      service.trackPrompt({ sessionId: 'session-1', text: 'secret prompt text' })
+      await service.handleRuntimeEvent(event)
 
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ kind, sessionId: 'session-1' }))
-  })
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({ kind, sessionId: 'session-1', summary })
+      )
+      expect(record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ summary: expect.stringContaining('secret prompt text') })
+      )
+      expect(record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ summary: expect.stringContaining('Rate limit reached') })
+      )
+    }
+  )
 
   it.each([
     ['abnormal stop', stopEvent('max_tokens')],

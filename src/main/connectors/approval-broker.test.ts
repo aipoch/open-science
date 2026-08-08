@@ -133,7 +133,7 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('global')
   })
 
-  it('reports response and timeout settlement states to durable notification adapters', async () => {
+  it('reports allowed, denied, and timeout settlement states to durable notification adapters', async () => {
     const timer = makeTimer()
     const onSettled = vi.fn()
     let sequence = 0
@@ -148,11 +148,15 @@ describe('ApprovalBroker', () => {
     const responded = broker.request({ connector: 'x', method: 'one', argsPreview: '{}' })
     broker.respond('id-1', 'once')
     await responded
-    const expired = broker.request({ connector: 'x', method: 'two', argsPreview: '{}' })
+    const denied = broker.request({ connector: 'x', method: 'two', argsPreview: '{}' })
+    broker.respond('id-2', 'deny')
+    await denied
+    const expired = broker.request({ connector: 'x', method: 'three', argsPreview: '{}' })
     timer.fire()
     await expired
 
     expect(onSettled).toHaveBeenNthCalledWith(1, 'id-1', 'resolved')
-    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'expired')
+    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'rejected')
+    expect(onSettled).toHaveBeenNthCalledWith(3, 'id-3', 'expired')
   })
 })

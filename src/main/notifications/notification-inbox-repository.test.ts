@@ -78,7 +78,7 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.originId === 'after')?.readAt).toBeUndefined()
   })
 
-  it('settles an approval without silently acknowledging its unread message', async () => {
+  it('persists a rejected approval without silently acknowledging its unread message', async () => {
     const repository = await createRepository()
     await repository.record({
       id: 'approval-1',
@@ -91,11 +91,11 @@ describe('NotificationInboxDbRepository', () => {
       actionState: 'pending'
     })
 
-    await repository.settle('authorization:connector:request-1', 'resolved', 2000)
+    await repository.settle('authorization:connector:request-1', 'rejected', 2000)
 
     await expect(repository.snapshot()).resolves.toMatchObject({
       unreadCount: 1,
-      items: [{ actionState: 'resolved', settledAt: 2000 }]
+      items: [{ actionState: 'rejected', settledAt: 2000 }]
     })
     expect((await repository.snapshot()).items[0]).not.toHaveProperty('readAt')
   })

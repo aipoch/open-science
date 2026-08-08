@@ -22,7 +22,7 @@ export type NotificationKind =
 export type NotificationSource =
   'agent-tool' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
 
-export type NotificationActionState = 'pending' | 'resolved' | 'expired' | 'cancelled'
+export type NotificationActionState = 'pending' | 'resolved' | 'rejected' | 'expired' | 'cancelled'
 
 export type NotificationInboxItem = Readonly<{
   id: string

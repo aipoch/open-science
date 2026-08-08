@@ -3,6 +3,7 @@ import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
 import type {
   NotificationActionState,
+  NotificationKind,
   NotificationSource,
   OpenSessionFromNotificationRequest
 } from '../../shared/notifications'
@@ -109,6 +110,23 @@ const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
   refusal: (taskName) =>
     taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
 }
+
+// Inbox rows cross surface and process boundaries and outlive the originating request. Keep their
+// presentation text fixed so prompts, provider errors, connector arguments, and approval payloads
+// remain confined to the transient native notification and the live approval UI.
+const TASK_INBOX_SUMMARY = {
+  'task.completed': 'A task completed.',
+  'task.needs-attention': 'A task needs attention. Open the conversation for details.',
+  'task.failed': 'A task failed. Open the conversation for details.'
+} as const satisfies Record<Exclude<NotificationKind, 'authorization.required'>, string>
+
+const AUTHORIZATION_INBOX_SUMMARY = {
+  'agent-tool': 'A tool request needs your approval.',
+  connector: 'A connector request needs your approval.',
+  compute: 'A compute request needs your approval.',
+  'skill-import': 'A Skill import needs your approval.',
+  'session-plan': 'A plan needs your approval.'
+} as const satisfies Record<NotificationSource, string>
 
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
@@ -385,7 +403,7 @@ export class TaskNotificationService {
       sessionId,
       originId: event.id,
       title: notification.title,
-      summary: notification.body,
+      summary: TASK_INBOX_SUMMARY[kind],
       createdAt: event.timestamp
     })
 
@@ -409,7 +427,7 @@ export class TaskNotificationService {
       sessionId: request.sessionId,
       originId: request.requestId,
       title: notification.title,
-      summary: notification.body,
+      summary: AUTHORIZATION_INBOX_SUMMARY['agent-tool'],
       actionState: 'pending'
     })
     await this.deliver(notification, request.sessionId)
@@ -440,7 +458,7 @@ export class TaskNotificationService {
           ...(sessionId ? { sessionId } : {}),
           originId: request.id,
           title: notification.title,
-          summary: notification.body,
+          summary: AUTHORIZATION_INBOX_SUMMARY.connector,
           actionState: 'pending'
         })
       : Promise.resolve()
@@ -469,7 +487,7 @@ export class TaskNotificationService {
       ...(sessionId ? { sessionId } : {}),
       originId: request.id,
       title: notification.title,
-      summary: notification.body,
+      summary: AUTHORIZATION_INBOX_SUMMARY.compute,
       actionState: 'pending'
     })
     await this.deliver(notification, sessionId)
@@ -496,7 +514,7 @@ export class TaskNotificationService {
       sessionId: request.sessionId,
       originId: request.id,
       title: notification.title,
-      summary: notification.body,
+      summary: AUTHORIZATION_INBOX_SUMMARY['skill-import'],
       actionState: 'pending'
     })
     await this.deliver(notification, request.sessionId)
@@ -529,7 +547,7 @@ export class TaskNotificationService {
       sessionId: request.sessionId,
       originId: request.artifactVersionId,
       title: notification.title,
-      summary: notification.body,
+      summary: AUTHORIZATION_INBOX_SUMMARY['session-plan'],
       actionState: 'pending'
     })
     await this.deliver(notification, request.sessionId)

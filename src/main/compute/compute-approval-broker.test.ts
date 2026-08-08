@@ -68,7 +68,7 @@ describe('ComputeApprovalBroker', () => {
     await expect(decision).resolves.toBe('once')
   })
 
-  it('reports resolved and expired request lifecycles', async () => {
+  it('reports resolved, rejected, and expired request lifecycles', async () => {
     const timer = makeTimer()
     const onSettled = vi.fn()
     let sequence = 0
@@ -83,12 +83,16 @@ describe('ComputeApprovalBroker', () => {
     const responded = broker.request(makeRequest())
     broker.respond('id-1', 'once')
     await responded
+    const denied = broker.request(makeRequest())
+    broker.respond('id-2', 'deny')
+    await denied
     const expired = broker.request(makeRequest())
     timer.fire()
     await expired
 
     expect(onSettled).toHaveBeenNthCalledWith(1, 'id-1', 'resolved')
-    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'expired')
+    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'rejected')
+    expect(onSettled).toHaveBeenNthCalledWith(3, 'id-3', 'expired')
   })
 
   it('resolves with deny when user denies', async () => {
