@@ -48,11 +48,11 @@ test('renames a project through the home actions and keeps the change after rela
 
   await page.getByRole('button', { name: 'All projects' }).click()
   await openProjectActions(page, PROJECT_NAME)
-  await page.getByRole('menuitem', { name: 'Rename…' }).click()
+  await page.getByRole('menuitem', { name: 'Settings' }).click()
 
-  const dialog = page.getByRole('dialog', { name: 'Edit project' })
+  const dialog = page.getByRole('dialog', { name: 'Project Settings' })
   await dialog.getByLabel('Name').fill(renamedProject)
-  await dialog.getByRole('button', { name: 'Save changes' }).click()
+  await dialog.getByRole('button', { name: 'Save' }).click()
 
   const projects = page.getByRole('region', { name: 'Projects' })
   await expect(projects.getByRole('button', { name: renamedProject, exact: true })).toBeVisible()
