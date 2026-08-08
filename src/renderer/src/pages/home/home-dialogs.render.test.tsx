@@ -112,6 +112,12 @@ describe('home dialogs shared chrome', () => {
     })
 
     expectSettingsDialogChrome(tree, 'w-[min(460px,calc(100vw-2rem))]', onCancel)
+    expect(getTextContent(tree)).toContain(
+      'Shown in the project list for your reference — not included in the agent’s prompt.'
+    )
+    const descriptionField = collectElements(tree).find((element) => element.type === 'textarea')
+    expect(descriptionField?.props['aria-describedby']).toBe('project-form-description-help')
+    expect(descriptionField?.props.placeholder).toBe('Describe what this project is about…')
   })
 
   it('renders the delete project confirmation with settings dialog chrome and primary cancel affordances', async () => {

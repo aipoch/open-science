@@ -15,6 +15,7 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import { HomePage } from './HomePage'
 
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
@@ -296,6 +297,40 @@ describe('HomePage environment repair notice', () => {
 })
 
 describe('HomePage activity overview', () => {
+  it('matches the shared session menu and opens Project Settings', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    openRadixMenu(
+      container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Research project"]')
+    )
+
+    const menu = document.body.querySelector<HTMLElement>('[aria-label="Project actions"]')
+    const items = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+    expect(menu?.className).toContain('text-popover-foreground')
+    expect(menu?.className).toContain('w-max')
+    expect(menu?.className).toContain('min-w-0')
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Settings', 'Archive', 'Delete'])
+
+    const settingsItem = items.find((item) => item.textContent?.trim() === 'Settings')
+    clickRadixMenuItem(settingsItem)
+    await act(async () => Promise.resolve())
+
+    expect(document.body.textContent).toContain('Project Settings')
+    expect(document.body.textContent).toContain('Update this project’s name and description.')
+    expect(document.body.textContent).toContain('Save')
+    expect(document.body.textContent).not.toContain('Save changes')
+  })
+
   it('opens global search from the header and uses the selected Projects icon', async () => {
     const onOpenGlobalSearch = vi.fn()
 
@@ -348,6 +383,7 @@ describe('HomePage activity overview', () => {
     const scroller = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
     expect(scroller?.classList.contains('overflow-x-auto')).toBe(true)
+    expect(scroller?.classList.contains('-mx-2')).toBe(true)
     expect(scroller?.classList.contains('scroll-px-2')).toBe(true)
     expect(scroller?.classList.contains('px-2')).toBe(true)
     expect(cards[0]?.classList.contains('shrink-0')).toBe(true)

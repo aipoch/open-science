@@ -541,15 +541,20 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - List title: `text-[17px] leading-6 font-medium`.
 - Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
   `running` from `waiting on you` rather than presenting one ambiguous total.
+- Project actions: use the shared Session dropdown styling and size the surface to its content so
+  inline padding stays balanced. The first action is `Settings`, opening `Project Settings` for Name
+  and Description; its edit action is labelled `Save`.
+- Project description: explain that the optional description is shown in the Project list for the
+  user's reference and is not included in the agent prompt.
 - Session updates: show a single-row horizontal card scroller above the Project/Recent columns for
   every non-archived Session that is `running`, `waiting-permission`, `waiting-plan-approval`, or has
   an unread `task.completed` notification while idle. Cards occupy one column on compact screens and
   half the row on desktop. Waiting Sessions come first, then running Sessions, then completed
-  Sessions. The track keeps a small inline inset and matching scroll snap padding so the first and
-  last card outlines and shadows remain visible at either scroll edge. Every card opens its Session
-  and contains only the Session title, Project name, state, and state-relative time. Opening a
-  completed Session marks its task outcome read, so that card no longer appears when the user
-  returns Home.
+  Sessions. The track extends beyond the content grid by the same amount as its inline and scroll
+  snap padding, keeping the cards aligned with the columns while the first and last outlines and
+  shadows remain visible at either scroll edge. Every card opens its Session and contains only the
+  Session title, Project name, state, and state-relative time. Opening a completed Session marks its
+  task outcome read, so that card no longer appears when the user returns Home.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
   `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. Only live status dots

@@ -9,19 +9,24 @@ import {
   Clock,
   GalleryVerticalEnd,
   MoreVertical,
-  Pencil,
   Plus,
   Search,
   Settings,
   Trash2
 } from 'lucide-react'
-import { DropdownMenu } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
 
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import type { ChatSession } from '@/stores/session-store'
@@ -92,15 +97,6 @@ const rowClassName =
 
 const rowActionClassName =
   'shrink-0 rounded p-0.5 text-text-300 opacity-100 transition-[opacity,color,background-color] duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100'
-
-const menuContentClassName =
-  'z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu'
-
-const menuItemClassName =
-  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000'
-
-const menuDangerItemClassName =
-  'flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-danger-000 transition-colors duration-150 ease-out outline-none data-[highlighted]:bg-danger-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50'
 
 // Landing screen: pick a project or jump back into a recent session.
 const HomePage = ({
@@ -403,12 +399,12 @@ const HomePage = ({
       })
   }
 
-  const formTitle = formState?.mode === 'edit' ? 'Edit project' : 'New project'
+  const formTitle = formState?.mode === 'edit' ? 'Project Settings' : 'New project'
   const formDescription =
     formState?.mode === 'edit'
-      ? 'Rename this project or update its description.'
+      ? 'Update this project’s name and description.'
       : 'Group related sessions under a project. You can rename it later.'
-  const formSubmitLabel = formState?.mode === 'edit' ? 'Save changes' : 'Create project'
+  const formSubmitLabel = formState?.mode === 'edit' ? 'Save' : 'Create project'
 
   return (
     <main className="min-h-svh bg-bg-10 text-text-000">
@@ -504,7 +500,7 @@ const HomePage = ({
 
         {sessionUpdates.length > 0 ? (
           <section className="mt-8 sm:mt-10" aria-label="Session updates">
-            <div className="flex snap-x snap-mandatory scroll-px-2 gap-3 overflow-x-auto px-2 py-1">
+            <div className="-mx-2 flex snap-x snap-mandatory scroll-px-2 gap-3 overflow-x-auto px-2 py-1">
               {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
                 const needsYou = activity === 'needs-you'
                 const completed = activity === 'completed'
@@ -652,8 +648,8 @@ const HomePage = ({
                       <span className="hidden w-8 shrink-0 text-right text-xs text-text-300 sm:inline">
                         {formatRelativeTime(lastActivityAt)}
                       </span>
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             className={rowActionClassName}
@@ -661,43 +657,41 @@ const HomePage = ({
                           >
                             <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            aria-label="Project actions"
-                            className={menuContentClassName}
-                            align="end"
-                            sideOffset={6}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          aria-label="Project actions"
+                          className="w-max min-w-0"
+                          align="end"
+                          sideOffset={6}
+                        >
+                          <DropdownMenuItem
+                            className="gap-2"
+                            onSelect={() => openEditDialog(project)}
                           >
-                            <DropdownMenu.Item
-                              className={menuItemClassName}
-                              onSelect={() => openEditDialog(project)}
-                            >
-                              <Pencil className="size-4" strokeWidth={2} aria-hidden="true" />
-                              Rename…
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Item
-                              className={menuItemClassName}
-                              disabled={
-                                !canArchiveProject(project) || archivingProjectIds.has(project.id)
-                              }
-                              onSelect={() => archiveProject(project)}
-                            >
-                              <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                              {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
-                            </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="mx-1 my-1 h-px bg-border-300" />
-                            <DropdownMenu.Item
-                              className={menuDangerItemClassName}
-                              disabled={!canDeleteProjects}
-                              onSelect={() => openDeleteDialog(project)}
-                            >
-                              <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                              Delete
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
+                            <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                            Settings
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2"
+                            disabled={
+                              !canArchiveProject(project) || archivingProjectIds.has(project.id)
+                            }
+                            onSelect={() => archiveProject(project)}
+                          >
+                            <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
+                            disabled={!canDeleteProjects}
+                            onSelect={() => openDeleteDialog(project)}
+                          >
+                            <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )
                 )}

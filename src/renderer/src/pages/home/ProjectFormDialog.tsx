@@ -107,13 +107,20 @@ const ProjectFormDialog = ({
                   className="text-xs font-medium text-muted-foreground"
                   htmlFor="project-form-description"
                 >
-                  Description <span className="text-muted-foreground">(optional)</span>
+                  Description
                 </label>
+                <p
+                  id="project-form-description-help"
+                  className="text-xs leading-relaxed text-muted-foreground"
+                >
+                  Shown in the project list for your reference — not included in the agent’s prompt.
+                </p>
                 <textarea
                   id="project-form-description"
+                  aria-describedby="project-form-description-help"
                   value={descriptionDraft}
                   onChange={(event) => onDescriptionChange(event.target.value)}
-                  placeholder="What is this project about?"
+                  placeholder="Describe what this project is about…"
                   rows={3}
                   className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
                 />
