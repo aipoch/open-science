@@ -167,7 +167,7 @@ export type PersistedActiveRun = {
 
 export type PersistedSessionResumeRecovery = {
   kind: 'resume-required'
-  cause: 'app-restart' | 'connection-lost'
+  cause: 'app-restart' | 'cancelled' | 'connection-lost'
   // References a user Message on the active Branch. Optional for interrupted control operations
   // such as compaction, where there is no prompt to annotate.
   promptMessageId?: string
@@ -306,6 +306,7 @@ export type SaveSessionOptions = {
 
 // Restored interrupted sessions carry this error verbatim; the renderer keys its resume banner off it.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
+export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
 
 const MESSAGE_ROLES = new Set<PersistedMessageRole>(['user', 'agent'])
 const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>(['claude-code', 'opencode', 'codex'])
@@ -1482,7 +1483,13 @@ const sanitizeSessionResumeRecovery = (
   recovery: unknown
 ): PersistedSessionResumeRecovery | undefined => {
   if (!isRecord(recovery) || recovery.kind !== 'resume-required') return undefined
-  if (recovery.cause !== 'app-restart' && recovery.cause !== 'connection-lost') return undefined
+  if (
+    recovery.cause !== 'app-restart' &&
+    recovery.cause !== 'cancelled' &&
+    recovery.cause !== 'connection-lost'
+  ) {
+    return undefined
+  }
   const promptMessageId = asString(recovery.promptMessageId)
   return {
     kind: 'resume-required',

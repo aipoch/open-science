@@ -481,6 +481,44 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
+  it('does not present an interrupted tool turn as completed before its final activity', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'error',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', interrupted: true, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'I will search PubMed now.',
+            responseToMessageId: 'prompt-1',
+            completedAt: 1710000007000,
+            sortIndex: 2
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            status: 'failed',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3,
+            createdAt: 1710000008000,
+            updatedAt: 1710000008000
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('This turn was interrupted.')
+    expect(html).not.toContain('Completed ')
+    expect(html).not.toContain('data-slot="assistant-message-footer"')
+  })
+
   it('keeps a user clarification before its streamed mixed Chinese Markdown response', async () => {
     const html = await renderScroller(
       createSession({

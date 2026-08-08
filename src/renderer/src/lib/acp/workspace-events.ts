@@ -9,7 +9,10 @@ import {
   type FinalizeRunArtifactsRequest
 } from '../../../../shared/artifacts'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import {
+  INTERRUPTED_TURN_ERROR,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
@@ -537,10 +540,21 @@ const applyWorkspaceRuntimeEvent = async (
 
   if (event.kind === 'stop' && event.sessionId) {
     activityGroupToolCallIdsBySession.delete(event.sessionId)
-    const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
     const terminalPromptMessageId =
       event.promptMessageId ?? activeSession?.activeRun?.promptMessageId
+    if (event.text === 'cancelled') {
+      deferredArtifactEventsBySession.delete(event.sessionId)
+      pendingArtifactTurnUsageBySession.delete(event.sessionId)
+      store.interruptRun(
+        event.sessionId,
+        'cancelled',
+        INTERRUPTED_TURN_ERROR,
+        terminalPromptMessageId
+      )
+      return true
+    }
+    const deferredArtifacts = deferredArtifactEventsBySession.get(event.sessionId)
     let deferredAttachmentError: unknown
     let deferredAttachmentFailed = false
 

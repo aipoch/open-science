@@ -430,6 +430,15 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [activeSession, handoffEvents]
   )
+  const interruptedPromptMessageId =
+    activeSession?.resumeRecovery?.promptMessageId ??
+    (activeSession?.activeRun &&
+    activeSession.messages.some(
+      (message) =>
+        message.id === activeSession.activeRun?.promptMessageId && message.interrupted === true
+    )
+      ? activeSession.activeRun.promptMessageId
+      : undefined)
   // Assistant text can be split into several messages around tool calls. All fragments share the
   // prompt they respond to, but only the last visible fragment in that turn owns whole-turn metadata.
   // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
@@ -445,6 +454,9 @@ const WorkspaceMessageScrollerImpl = ({
         footerIds.add(item.message.id)
         continue
       }
+      // The interrupted user marker owns this turn's terminal state until Resume produces a new
+      // terminal response; partial assistant fragments must not claim completion or failure.
+      if (promptMessageId === interruptedPromptMessageId) continue
 
       const previousFooterId = footerIdByPromptMessageId.get(promptMessageId)
       if (previousFooterId) footerIds.delete(previousFooterId)
@@ -453,7 +465,7 @@ const WorkspaceMessageScrollerImpl = ({
     }
 
     return footerIds
-  }, [conversationItems])
+  }, [conversationItems, interruptedPromptMessageId])
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []

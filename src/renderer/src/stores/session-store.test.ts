@@ -2550,6 +2550,32 @@ describe('session store', () => {
       ).toMatchObject({ interrupted: true })
     })
 
+    it('interruptRun preserves a cancelled prompt for Resume', () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Read the files',
+        cwd: '/workspace/project'
+      })
+      const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+      useSessionStore
+        .getState()
+        .interruptRun(
+          'transport-session-1',
+          'cancelled',
+          'This turn was interrupted. Resume to continue.'
+        )
+
+      const session = useSessionStore.getState().sessions[0]
+      expect(session.resumeRecovery).toEqual({
+        kind: 'resume-required',
+        cause: 'cancelled',
+        promptMessageId
+      })
+      expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+      expect(toPersistedSession(session).resumeRecovery).toEqual(session.resumeRecovery)
+    })
+
     it('markDisconnected preserves a specific reason in the Resume banner', () => {
       useSessionStore.getState().appendUserMessage({
         sessionId: 'transport-session-1',
@@ -2704,6 +2730,7 @@ describe('session store public contract', () => {
         'finishCompaction',
         'finishRun',
         'hydrateSessions',
+        'interruptRun',
         'markDisconnected',
         'markResumed',
         'markSpecialistSwitchResetRequired',

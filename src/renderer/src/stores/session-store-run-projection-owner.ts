@@ -2,6 +2,7 @@ import type { StoreApi } from 'zustand'
 
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { AcpTurnTokenUsage } from '../../../shared/acp'
+import type { PersistedSessionResumeRecovery } from '../../../shared/session-persistence'
 import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import {
   canStartActivityGroup,
@@ -31,7 +32,8 @@ import {
   projectCompactionFinished,
   projectCompactionStarted,
   projectFailedRun,
-  projectFinishedRun
+  projectFinishedRun,
+  projectInterruptedRun
 } from './session-store-run-terminal-helpers'
 import type { ChatSession, SessionStoreData } from './session-store-persistence-owner'
 
@@ -47,6 +49,12 @@ export type SessionRunProjectionActions = {
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
   finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage, promptMessageId?: string) => void
+  interruptRun: (
+    sessionId: string,
+    cause: PersistedSessionResumeRecovery['cause'],
+    error: string,
+    promptMessageId?: string
+  ) => void
   failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
   setAgentStatus: (sessionId: string, text: string) => void
   beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
@@ -205,6 +213,14 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
           projectFinishedRun(session, turnUsage, promptMessageId)
+        )
+      }))
+    },
+
+    interruptRun: (sessionId, cause, error, promptMessageId) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectInterruptedRun(session, cause, error, promptMessageId)
         )
       }))
     },

@@ -977,6 +977,42 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
+  it('preserves a cancelled turn as resumable state', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Cancelled session',
+      cwd: '/workspace',
+      status: 'error',
+      interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'cancelled',
+        promptMessageId: 'prompt-1'
+      },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Continue the analysis',
+          status: 'complete',
+          interrupted: true,
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 5
+    })
+
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
   it('restores explicit full and cutoff history replay scopes', () => {
     const base = {
       id: 'session-1',

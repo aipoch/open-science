@@ -16,7 +16,7 @@ import {
   createSessionRunProjectionOwner,
   type SessionRunProjectionActions
 } from './session-store-run-projection-owner'
-import { projectDisconnectedSession } from './session-store-run-terminal-helpers'
+import { projectInterruptedRun } from './session-store-run-terminal-helpers'
 import {
   createInitialSessionState,
   createSessionPersistenceOwner,
@@ -256,7 +256,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       : 'Connection lost — Resume to reconnect and continue.'
     set((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId ? projectDisconnectedSession(session, error) : session
+        session.id === sessionId
+          ? projectInterruptedRun(session, 'connection-lost', error)
+          : session
       )
     }))
   },

@@ -276,6 +276,63 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
+  it('retains a cancelled prompt as an interrupted turn instead of completing it', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'I will search PubMed now.'
+      })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-2',
+        kind: 'stop',
+        text: 'cancelled',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.resumeRecovery).toMatchObject({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId
+    })
+    expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+    expect(session.messages[1]).toMatchObject({
+      content: 'I will search PubMed now.',
+      status: 'error'
+    })
+    expect(session.messages[1].completedAt).toBeUndefined()
+  })
+
+  it('binds a cancelled app continuation to its originating prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-1',
+        kind: 'stop',
+        text: 'cancelled',
+        promptMessageId
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.resumeRecovery).toMatchObject({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId
+    })
+    expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+  })
+
   it('reattaches a post-stop app continuation and its activity and usage to the originating turn', async () => {
     const originMessageId = useSessionStore.getState().sessions[0].messages[0].id
     useSessionStore.getState().finishRun('transport-session-1')

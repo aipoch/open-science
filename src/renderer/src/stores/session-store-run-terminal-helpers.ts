@@ -2,7 +2,8 @@ import type { AcpTurnTokenUsage } from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
 import type {
   PersistedActivityGroup,
-  PersistedChatSession
+  PersistedChatSession,
+  PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
 import { synchronizeSessionGraph } from './session-store-message-graph-owner'
 import {
@@ -274,9 +275,13 @@ export const projectCompactionFailed = (session: ChatSession, error: string): Ch
       }
     : session
 
-export const projectDisconnectedSession = (session: ChatSession, error: string): ChatSession => {
+export const projectInterruptedRun = (
+  session: ChatSession,
+  recoveryCause: PersistedSessionResumeRecovery['cause'],
+  error: string,
+  promptMessageId = session.activeRun?.promptMessageId
+): ChatSession => {
   const now = Date.now()
-  const promptMessageId = session.activeRun?.promptMessageId
   const messages = failStreamingMessages(session.messages, now).map((message) =>
     message.id === promptMessageId && message.role === 'user'
       ? { ...message, interrupted: true as const, updatedAt: now }
@@ -286,7 +291,7 @@ export const projectDisconnectedSession = (session: ChatSession, error: string):
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
   const resumeRecovery = {
     kind: 'resume-required' as const,
-    cause: 'connection-lost' as const,
+    cause: recoveryCause,
     ...(promptMessageId ? { promptMessageId } : {})
   }
   let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
