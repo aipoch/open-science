@@ -89,6 +89,22 @@ describe('createNotificationInboxController', () => {
     expect(db.snapshot).toHaveBeenCalledWith(1)
   })
 
+  it('reports restore failures without aborting application startup', async () => {
+    const error = new Error('temporary inbox failure')
+    const db = repository({ migrateLegacyUnread: vi.fn().mockRejectedValue(error) } as never)
+    const onError = vi.fn()
+    const inbox = createNotificationInboxController({
+      headless: true,
+      repository: db,
+      onChanged: vi.fn(),
+      onError
+    })
+
+    await expect(inbox.restore()).resolves.toBeUndefined()
+
+    expect(onError).toHaveBeenCalledWith(error)
+  })
+
   it('records a focused visible task as read and leaves background tasks unread', async () => {
     const record = vi
       .fn()

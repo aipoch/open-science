@@ -148,7 +148,6 @@ export const createNotificationInboxController = (
       refreshBadge()
     } catch (error) {
       reportError(error)
-      throw error
     }
   }
 
