@@ -762,6 +762,34 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it('captures one figure when the same plot is saved as PDF and TIFF', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-multi-format-'))
+    const pdfPath = join(figuresDir, 'same-plot.pdf')
+    const tiffPath = join(figuresDir, 'same-plot.tiff')
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send(
+        [
+          `grDevices::pdf(${JSON.stringify(pdfPath)})`,
+          'plot(1:3)',
+          'grDevices::dev.off()',
+          `grDevices::tiff(${JSON.stringify(tiffPath)})`,
+          'plot(1:3)',
+          'grDevices::dev.off()'
+        ].join('; ')
+      )
+      expect(r.error).toBeNull()
+      expect(existsSync(pdfPath)).toBe(true)
+      expect(existsSync(tiffPath)).toBe(true)
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('does not replay a file-device plot opened by an earlier request', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-cross-request-device-'))
     const savedPath = join(figuresDir, 'cross-request.tiff')

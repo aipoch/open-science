@@ -660,6 +660,8 @@ run <- base::local({
     capture_state$recorded_plot_seen <- FALSE
     capture_state$graphics_state_seen <- FALSE
     capture_state$closed <- FALSE
+    capture_state$external_device_capture_keys <- character()
+    capture_state$external_capture_keys <- character()
   }
 
   reset_capture_state()
@@ -864,6 +866,28 @@ run <- base::local({
       )
   }
 
+  file_device_capture_key <- function(args) {
+    path <- args[["filename", exact = TRUE]]
+    if (is.null(path)) path <- args[["file", exact = TRUE]]
+    if (is.null(path) && length(args) > 0L) path <- args[[1L]]
+    if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+      return(NA_character_)
+    }
+    normalized_path <- file.path(
+      normalizePath(dirname(path), winslash = "/", mustWork = FALSE),
+      basename(path)
+    )
+    tools::file_path_sans_ext(normalized_path)
+  }
+
+  registered_external_capture_key <- function(which) {
+    key <- external_device_key(which)
+    if (is.na(key) || is.null(capture_state$external_device_capture_keys[[key]])) {
+      return(NA_character_)
+    }
+    capture_state$external_device_capture_keys[[key]]
+  }
+
   forget_external_device <- function(which) {
     key <- external_device_key(which)
     if (!is.na(key) && exists(key, envir = external_device_owners, inherits = FALSE)) {
@@ -910,6 +934,10 @@ run <- base::local({
         !capture_device_is_open(which)) {
       return(NULL)
     }
+    capture_key <- registered_external_capture_key(which)
+    if (!is.na(capture_key) && capture_key %in% capture_state$external_capture_keys) {
+      return(NULL)
+    }
     current_dev <- grDevices::dev.cur()
     if (!identical(current_dev, which)) {
       suppressWarnings(try(grDevices::dev.set(which), silent = TRUE))
@@ -918,7 +946,16 @@ run <- base::local({
     if (!identical(current_dev, which) && capture_device_is_open(current_dev)) {
       suppressWarnings(try(grDevices::dev.set(current_dev), silent = TRUE))
     }
-    if (inherits(recorded, "try-error")) NULL else recorded
+    if (inherits(recorded, "try-error") || length(recorded) < 1L || is.null(recorded[[1L]])) {
+      return(NULL)
+    }
+    if (!is.na(capture_key)) {
+      capture_state$external_capture_keys <- c(
+        capture_state$external_capture_keys,
+        capture_key
+      )
+    }
+    recorded
   }
 
   replay_external_plot <- function(recorded) {
@@ -938,7 +975,7 @@ run <- base::local({
     invisible(NULL)
   }
 
-  register_external_device <- function() {
+  register_external_device <- function(args) {
     current_dev <- grDevices::dev.cur()
     if (isTRUE(capture_state$active) &&
         !isTRUE(capture_state$closed) &&
@@ -946,6 +983,7 @@ run <- base::local({
       key <- external_device_key(current_dev)
       if (!is.na(key)) {
         assign(key, capture_state$request_id, envir = external_device_owners)
+        capture_state$external_device_capture_keys[[key]] <- file_device_capture_key(args)
       }
       suppressWarnings(try(grDevices::dev.control(displaylist = "enable"), silent = TRUE))
     }
@@ -1026,7 +1064,7 @@ run <- base::local({
       eval(
         quote(function(...) {
           result <- base::withVisible(original(...))
-          register_device()
+          register_device(base::list(...))
           if (result$visible) result$value else base::invisible(result$value)
         }),
         envir = wrapper_env
