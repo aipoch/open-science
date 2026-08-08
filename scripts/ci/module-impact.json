@@ -79,16 +79,28 @@
     "workspace_page": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/WorkspacePage.tsx",
-        "src/renderer/src/pages/workspace/workspace-panel-layout.tsx"
+        "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
+        "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
+        "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
+        "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
+        "src/renderer/src/pages/workspace/composer/composer-history.ts"
       ],
       "interfacePaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
       "consumerModules": [],
       "testFiles": {
         "owner": [
           "src/renderer/src/pages/workspace/WorkspacePage.draft-preservation.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.customize-prefill.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.edit-message.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.image-staging.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.pending-switch.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
           "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
+          "src/renderer/src/pages/workspace/composer-attachment-intake.test.ts",
+          "src/renderer/src/pages/workspace/composer-upload-transfer.test.ts",
+          "src/renderer/src/pages/workspace/composer/composer-history.test.ts",
           "src/renderer/src/pages/workspace/workspace-components.test.tsx"
         ],
         "contract": [],
