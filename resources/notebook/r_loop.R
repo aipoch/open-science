@@ -869,6 +869,51 @@ run <- base::local({
     }
   }
 
+  record_external_plot <- function(which) {
+    if (!isTRUE(capture_state$active) ||
+        isTRUE(capture_state$closed) ||
+        capture_state_device_matches(which) ||
+        !capture_device_is_open(capture_state$dev_id) ||
+        !capture_device_is_open(which)) {
+      return(NULL)
+    }
+    current_dev <- grDevices::dev.cur()
+    if (!identical(current_dev, which)) {
+      suppressWarnings(try(grDevices::dev.set(which), silent = TRUE))
+    }
+    recorded <- suppressWarnings(try(grDevices::recordPlot(), silent = TRUE))
+    if (!identical(current_dev, which) && capture_device_is_open(current_dev)) {
+      suppressWarnings(try(grDevices::dev.set(current_dev), silent = TRUE))
+    }
+    if (inherits(recorded, "try-error")) NULL else recorded
+  }
+
+  replay_external_plot <- function(recorded) {
+    if (is.null(recorded) ||
+        isTRUE(capture_state$closed) ||
+        !capture_device_is_open(capture_state$dev_id)) {
+      return(invisible(NULL))
+    }
+    current_dev <- grDevices::dev.cur()
+    if (!identical(current_dev, capture_state$dev_id)) {
+      suppressWarnings(try(grDevices::dev.set(capture_state$dev_id), silent = TRUE))
+    }
+    suppressWarnings(try(grDevices::replayPlot(recorded), silent = TRUE))
+    if (!identical(current_dev, capture_state$dev_id) && capture_device_is_open(current_dev)) {
+      suppressWarnings(try(grDevices::dev.set(current_dev), silent = TRUE))
+    }
+    invisible(NULL)
+  }
+
+  enable_external_recording <- function() {
+    current_dev <- grDevices::dev.cur()
+    if (isTRUE(capture_state$active) &&
+        !isTRUE(capture_state$closed) &&
+        !capture_state_device_matches(current_dev)) {
+      suppressWarnings(try(grDevices::dev.control(displaylist = "enable"), silent = TRUE))
+    }
+  }
+
   install_capture_binding_wrapper <- function(package, name, make_wrapper) {
     envs <- list(asNamespace(package))
     package_env <- suppressWarnings(try(as.environment(paste0("package:", package)), silent = TRUE))
@@ -915,6 +960,8 @@ run <- base::local({
         base::list(
           after_close = mark_capture_after_dev_off,
           before_close = mark_capture_before_dev_off,
+          record_external = record_external_plot,
+          replay_external = replay_external_plot,
           original = original
         ),
         parent = globalenv()
@@ -922,9 +969,27 @@ run <- base::local({
       lockEnvironment(wrapper_env, bindings = TRUE)
       eval(
         quote(function(which = grDevices::dev.cur()) {
+          recorded <- record_external(which)
           before_close(which)
           result <- base::withVisible(original(which))
           after_close(which)
+          replay_external(recorded)
+          if (result$visible) result$value else base::invisible(result$value)
+        }),
+        envir = wrapper_env
+      )
+    }
+
+    make_file_device_wrapper <- function(original) {
+      wrapper_env <- base::list2env(
+        base::list(enable_recording = enable_external_recording, original = original),
+        parent = globalenv()
+      )
+      lockEnvironment(wrapper_env, bindings = TRUE)
+      eval(
+        quote(function(...) {
+          result <- base::withVisible(original(...))
+          enable_recording()
           if (result$visible) result$value else base::invisible(result$value)
         }),
         envir = wrapper_env
@@ -936,6 +1001,9 @@ run <- base::local({
       install_capture_binding_wrapper("grid", "grid.newpage", make_page_wrapper)
     }
     install_capture_binding_wrapper("grDevices", "dev.off", make_dev_off_wrapper)
+    for (name in c("bmp", "jpeg", "png", "tiff", "pdf", "postscript", "svg", "cairo_pdf", "cairo_ps")) {
+      install_capture_binding_wrapper("grDevices", name, make_file_device_wrapper)
+    }
   }
 
   install_capture_wrappers()

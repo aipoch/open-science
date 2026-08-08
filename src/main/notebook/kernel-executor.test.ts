@@ -846,7 +846,7 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       unavailable: /lattice unavailable|png unavailable/u,
       verifySignature: (bytes: Buffer) => expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG')
     }
-  ])('records $name as a saved-only working file', async (savedCase) => {
+  ])('records $name as a working file and captured PNG', async (savedCase) => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-saved-image-'))
     const request = baseRequest(cwdDir)
     await mkdir(request.dataRoot, { recursive: true })
@@ -867,7 +867,11 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
       if (savedCase.unavailable?.test(result.traceback)) return
 
       expect(result.status).toBe('completed')
-      expect(result.outputs.some((output) => output.type === 'display')).toBe(false)
+      expect(
+        result.outputs.filter(
+          (output) => output.type === 'display' && typeof output.data['image/png'] === 'string'
+        )
+      ).toHaveLength(1)
       expect(result.workingFiles).toEqual([
         expect.objectContaining({
           path: savedPath,
@@ -881,7 +885,7 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     }
   })
 
-  it('records every saved image when one R run mixes base, ggplot2, grid, and lattice', async () => {
+  it('records and captures every saved image when one R run mixes graphics systems', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-mixed-saved-images-'))
     const request = baseRequest(cwdDir)
     await mkdir(request.dataRoot, { recursive: true })
@@ -925,7 +929,11 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
 
       const workingFiles = result.workingFiles ?? []
       expect(result.status).toBe('completed')
-      expect(result.outputs.some((output) => output.type === 'display')).toBe(false)
+      expect(
+        result.outputs.filter(
+          (output) => output.type === 'display' && typeof output.data['image/png'] === 'string'
+        )
+      ).toHaveLength(4)
       expect(workingFiles).toHaveLength(4)
       expect(workingFiles.map((file) => file.path)).toEqual(
         expect.arrayContaining(Object.values(paths))
