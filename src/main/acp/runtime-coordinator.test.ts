@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type {
+  AcpPermissionRequest,
+  AcpPermissionResponse,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
@@ -122,7 +127,13 @@ const createFakeRuntime = (options: {
   const requestProviderReconnect = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
   const applyModelChange = vi.fn(async () => true)
-  const respondToPermission = vi.fn(() => snapshot)
+  const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
+    options.callbacks.onPermissionSettled?.(
+      response.requestId,
+      response.cancelled ? 'cancelled' : 'resolved'
+    )
+    return snapshot
+  })
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -2160,6 +2171,7 @@ describe('AcpRuntimeCoordinator', () => {
   it('namespaces events and routes permission responses to their owning runtime', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const forwardedEvents: AcpRuntimeEvent[] = []
+    const settleAuthorization = vi.fn()
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
         const fake = createFakeRuntime({
@@ -2170,7 +2182,11 @@ describe('AcpRuntimeCoordinator', () => {
         created.push(fake)
         return fake.runtime
       },
-      { onEvent: (event) => forwardedEvents.push(event) }
+      {
+        onEvent: (event) => forwardedEvents.push(event),
+        onPermissionSettled: (requestId, state) =>
+          settleAuthorization('agent-tool', requestId, state)
+      }
     )
 
     await coordinator.createSession()
@@ -2207,13 +2223,18 @@ describe('AcpRuntimeCoordinator', () => {
     }
     created[0].emitPermission(permission)
     expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
-    coordinator.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await coordinator.respondToPermission({ requestId: permission.requestId, cancelled: true })
 
     expect(created[0].respondToPermission).toHaveBeenCalledWith({
       requestId: 'permission-1',
       cancelled: true
     })
     expect(created[1].respondToPermission).not.toHaveBeenCalled()
+    expect(settleAuthorization).toHaveBeenCalledWith(
+      'agent-tool',
+      permission.requestId,
+      'cancelled'
+    )
   })
 
   it('does not reuse persisted event namespaces across coordinator lifetimes', async () => {

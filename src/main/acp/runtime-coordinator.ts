@@ -1034,6 +1034,9 @@ class AcpRuntimeCoordinator {
           this.permissionRuntimes.set(request.requestId, runtime)
           this.callbacks.onPermissionRequest?.(request)
         },
+        onPermissionSettled: (requestId, state) => {
+          this.callbacks.onPermissionSettled?.(requestId, state)
+        },
         onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
           const attempt = this.takePendingPromptStart(sessionId, runtime, promptAttemptId)
           this.activePromptCounts.set(sessionId, (this.activePromptCounts.get(sessionId) ?? 0) + 1)
