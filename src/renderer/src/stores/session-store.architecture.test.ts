@@ -508,6 +508,7 @@ const importsFrom = (path: string, source = readSource(path)): readonly ImportRe
 
 const importBoundaryViolations = (path: string, source = readSource(path)): readonly string[] => {
   const sourceTarget = modulePath(path)
+  const relativePath = normalizePathSeparators(relative(rendererRoot, path))
   const violations: string[] = []
   for (const reference of importsFrom(path, source)) {
     if (
@@ -515,7 +516,7 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
       !reference.literal &&
       sessionModuleTargets.has(sourceTarget)
     ) {
-      violations.push(`${relative(rendererRoot, path)} uses unresolved ${reference.kind}`)
+      violations.push(`${relativePath} uses unresolved ${reference.kind}`)
       continue
     }
     if (
@@ -523,7 +524,7 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
       privateOwnerTargets.has(reference.target) &&
       !sessionModuleTargets.has(sourceTarget)
     ) {
-      violations.push(`${relative(rendererRoot, path)} imports a private Session Store owner`)
+      violations.push(`${relativePath} imports a private Session Store owner`)
     }
     if (
       sourceTarget !== publicStoreTarget &&
@@ -532,7 +533,7 @@ const importBoundaryViolations = (path: string, source = readSource(path)): read
         !reference.names ||
         reference.names.some((name) => !publicBindings.has(name)))
     ) {
-      violations.push(`${relative(rendererRoot, path)} bypasses the public Session Store surface`)
+      violations.push(`${relativePath} bypasses the public Session Store surface`)
     }
   }
   return violations
