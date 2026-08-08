@@ -504,7 +504,7 @@ const HomePage = ({
 
         {sessionUpdates.length > 0 ? (
           <section className="mt-8 sm:mt-10" aria-label="Session updates">
-            <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto p-1">
+            <div className="flex snap-x snap-mandatory scroll-px-2 gap-3 overflow-x-auto px-2 py-1">
               {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
                 const needsYou = activity === 'needs-you'
                 const completed = activity === 'completed'

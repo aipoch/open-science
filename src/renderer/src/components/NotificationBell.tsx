@@ -345,6 +345,7 @@ const NotificationBell = ({
                             className={cn(
                               'mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-bg-300 text-text-100',
                               item.kind === 'authorization.required' && 'text-session-waiting',
+                              item.kind === 'task.completed' && 'text-success-000',
                               item.kind === 'task.failed' && 'text-danger-000'
                             )}
                           >

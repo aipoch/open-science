@@ -348,6 +348,8 @@ describe('HomePage activity overview', () => {
     const scroller = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
     expect(scroller?.classList.contains('overflow-x-auto')).toBe(true)
+    expect(scroller?.classList.contains('scroll-px-2')).toBe(true)
+    expect(scroller?.classList.contains('px-2')).toBe(true)
     expect(cards[0]?.classList.contains('shrink-0')).toBe(true)
     expect([...cards].map((card) => card.getAttribute('aria-label'))).toEqual([
       'Open session Plan review, needs you',

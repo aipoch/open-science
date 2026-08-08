@@ -82,6 +82,30 @@ describe('NotificationBell', () => {
     ).toBe(true)
   })
 
+  it('uses the success color for completed task icons', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.completed',
+              title: 'Task completed',
+              actionState: undefined
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const icon = document.body.querySelector('.lucide-circle-check')
+    expect(icon?.parentElement?.classList.contains('text-success-000')).toBe(true)
+  })
+
   it('distinguishes a rejected approval from a resolved one', async () => {
     const item = useNotificationInboxStore.getState().items[0]
     useNotificationInboxStore.setState({
