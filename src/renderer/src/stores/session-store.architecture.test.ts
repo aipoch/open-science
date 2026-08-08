@@ -964,6 +964,7 @@ describe('Session Store architecture', () => {
       'setAgentStatus',
       'setAwaitingFirstAgentOutput',
       'setElicitationDraftAnswers',
+      'setElicitationPending',
       'upsertToolActivity'
     ])
   })

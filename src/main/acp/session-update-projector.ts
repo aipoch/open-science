@@ -20,6 +20,29 @@ const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
 const AGENT_USER_CHOICE_TOOL = 'open-science-notebook/ask_user_question'
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isCodexAppOwnedUserChoiceTool = (
+  notification: Readonly<SessionNotification>,
+  event: Readonly<AcpRuntimeEvent>,
+  routing: AcpSessionUpdateRouting
+): boolean => {
+  if (routing.framework !== 'codex' || event.kind !== 'tool' || !isRecord(event.rawInput)) {
+    return false
+  }
+  const meta = (notification.update as SessionNotification['update'] & { _meta?: unknown })._meta
+  if (!isRecord(meta) || meta.is_mcp_tool_call !== true) return false
+
+  const server = event.rawInput.server
+  const tool = event.rawInput.tool
+  if (typeof server !== 'string' || typeof tool !== 'string') return false
+  return (
+    resolveCanonicalMcpToolIdentity(`mcp.${server}.${tool}`, routing.mcpServerNames) ===
+    AGENT_USER_CHOICE_TOOL
+  )
+}
+
 type AcpSessionUpdateRouting = Readonly<{
   framework?: AgentFrameworkId
   appSessionId?: string
@@ -121,6 +144,7 @@ const toolObservation = (
 // event retention, aggregates, and ContextUsageTracker remain the actual state writers.
 class AcpSessionUpdateProjector {
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
+  private readonly appOwnedUserChoiceToolCallIds = new Map<string, Set<string>>()
 
   constructor(private readonly options: AcpSessionUpdateProjectorOptions) {}
 
@@ -130,10 +154,12 @@ class AcpSessionUpdateProjector {
 
   clearGeneration(): void {
     this.codexSkillActivity.setSkillsRoot(undefined)
+    this.appOwnedUserChoiceToolCallIds.clear()
   }
 
   clearSession(sessionId: string): void {
     this.codexSkillActivity.clearSession(sessionId)
+    this.appOwnedUserChoiceToolCallIds.delete(sessionId)
   }
 
   dispose(): void {
@@ -222,12 +248,28 @@ class AcpSessionUpdateProjector {
       return Object.freeze(effects)
     }
 
-    const appOwnedUserChoiceTool =
+    let appOwnedUserChoiceTool =
       event.kind === 'tool' &&
-      [event.providerToolName, event.title].some(
+      ([event.providerToolName, event.title].some(
         (name) =>
           resolveCanonicalMcpToolIdentity(name, routing.mcpServerNames) === AGENT_USER_CHOICE_TOOL
-      )
+      ) ||
+        isCodexAppOwnedUserChoiceTool(routed, event, routing))
+    if (event.kind === 'tool' && event.toolCallId) {
+      const trackedToolCallIds = this.appOwnedUserChoiceToolCallIds.get(routed.sessionId)
+      appOwnedUserChoiceTool ||= trackedToolCallIds?.has(event.toolCallId) === true
+      if (appOwnedUserChoiceTool) {
+        const nextToolCallIds = trackedToolCallIds ?? new Set<string>()
+        nextToolCallIds.add(event.toolCallId)
+        this.appOwnedUserChoiceToolCallIds.set(routed.sessionId, nextToolCallIds)
+        if (event.status === 'completed' || event.status === 'failed') {
+          nextToolCallIds.delete(event.toolCallId)
+          if (nextToolCallIds.size === 0) {
+            this.appOwnedUserChoiceToolCallIds.delete(routed.sessionId)
+          }
+        }
+      }
+    }
 
     if (routing.visible) {
       if (!routing.reconnectPending) {

@@ -92,6 +92,7 @@ type SessionPersistenceDeletionOwnerOptions = {
 
 const ARCHIVE_BLOCKING_SESSION_STATUSES = new Set<PersistedSessionStatus>([
   'running',
+  'waiting-for-user',
   'waiting-permission',
   'waiting-plan-approval'
 ])

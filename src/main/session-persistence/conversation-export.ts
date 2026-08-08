@@ -110,6 +110,7 @@ const createConversationExportService = (
       if (
         deps.isSessionActive(request.projectId, request.sessionId) ||
         session.status === 'running' ||
+        session.status === 'waiting-for-user' ||
         session.status === 'waiting-permission'
       ) {
         throw new Error('Wait for the conversation to finish before exporting it.')

@@ -1087,6 +1087,43 @@ describe('normalizeSessionFile with activities', () => {
     })
   })
 
+  it('restores waiting-for-user only with a durable pending question', () => {
+    const durableQuestion = createSessionWithActivity({
+      id: 'activity-1',
+      kind: 'tool',
+      title: 'Waiting for an answer',
+      status: 'in_progress',
+      sortIndex: 1,
+      eventIds: [],
+      elicitation: {
+        message: 'Choose one',
+        fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      },
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(
+      normalizeSessionFile(
+        createSessionFile({
+          ...(durableQuestion as PersistedChatSession),
+          status: 'waiting-for-user'
+        })
+      )?.status
+    ).toBe('waiting-for-user')
+    expect(
+      normalizeSessionFile(
+        createSessionFile({
+          ...(createSessionWithActivity(undefined) as PersistedChatSession),
+          activities: undefined,
+          status: 'waiting-for-user'
+        })
+      )?.status
+    ).toBe('idle')
+  })
+
   it('still cancels a non-durable pending protocol elicitation on restore', () => {
     const activities = getRestoredActivities(
       createSessionWithActivity({

@@ -36,6 +36,8 @@ import {
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   syncWorkspaceContextUsage,
+  syncWorkspaceElicitationState,
+  syncWorkspaceInteractionState,
   syncWorkspacePermissionState
 } from './workspace-runtime-event-owner'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
@@ -175,7 +177,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   useEffect(() => {
     syncWorkspacePermissionState(runtime.state.pendingPermissions)
-  }, [runtime.state.pendingPermissions])
+    syncWorkspaceElicitationState(runtime.state.pendingElicitations ?? [])
+  }, [runtime.state.pendingElicitations, runtime.state.pendingPermissions])
 
   useEffect(() => {
     syncWorkspaceContextUsage(runtime.state.sessionIds, runtime.state.contextUsageBySession)
@@ -349,6 +352,7 @@ export {
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage,
+  syncWorkspaceInteractionState,
   useWorkspaceAgentRuntime
 }
 export type { WorkspaceAgentRuntime }

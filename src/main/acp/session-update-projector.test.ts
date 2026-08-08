@@ -263,6 +263,138 @@ describe('AcpSessionUpdateProjector', () => {
     }
   )
 
+  it('keeps a sparse Codex app-owned user-choice MCP call out of the visible activity timeline', () => {
+    const projector = createProjector()
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          kind: 'execute',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'ask_user_question',
+            arguments: { questions: [] }
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-choice-tool',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+    )
+
+    expect(effects.map((effect) => effect.kind)).toEqual(['context-observation', 'context-refresh'])
+  })
+
+  it('keeps generic Codex follow-up updates hidden for a recognized user-choice call', () => {
+    const projector = createProjector()
+    const routing = {
+      framework: 'codex' as const,
+      eventId: 'event-choice-tool',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: ['open-science-notebook']
+    }
+
+    projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: { server: 'open-science-notebook', tool: 'ask_user_question' },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      routing
+    )
+    const followUp = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'choice-tool-1',
+          title: 'Tool activity',
+          status: 'completed'
+        }
+      },
+      { ...routing, eventId: 'event-choice-tool-completed' }
+    )
+    const reusedId = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          title: 'Ordinary tool',
+          status: 'pending'
+        }
+      },
+      { ...routing, eventId: 'event-ordinary-tool' }
+    )
+
+    expect(followUp.map((effect) => effect.kind)).toEqual([
+      'context-observation',
+      'context-refresh'
+    ])
+    expect(reusedId.map((effect) => effect.kind)).toContain('visible-event')
+  })
+
+  it.each([
+    ['missing Codex MCP marker', undefined, 'open-science-notebook', 'ask_user_question'],
+    [
+      'unconfigured MCP server',
+      { is_mcp_tool_call: true },
+      'external-notebook',
+      'ask_user_question'
+    ],
+    [
+      'ordinary app MCP tool',
+      { is_mcp_tool_call: true },
+      'open-science-notebook',
+      'notebook_execute'
+    ]
+  ] as const)('keeps sparse Codex tool activity visible for %s', (_name, meta, server, tool) => {
+    const projector = createProjector()
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-1',
+          kind: 'execute',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: { server, tool, arguments: {} },
+          ...(meta ? { _meta: meta } : {})
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-tool',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+    )
+
+    expect(effects.map((effect) => effect.kind)).toEqual([
+      'context-observation',
+      'context-refresh',
+      'visible-event'
+    ])
+  })
+
   it('suppresses only the unscoped Codex compaction warning', () => {
     const projector = createProjector()
     const warning =

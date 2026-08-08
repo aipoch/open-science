@@ -114,6 +114,7 @@ const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => 
     composer.view.transfers.length === 0 &&
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
     activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-for-user' &&
     activeSession?.status !== 'waiting-permission' &&
     !hasRuntimeInteraction(options) &&
     !activeSession?.fixLoopActive &&
@@ -129,6 +130,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     options.isPersistenceReady &&
     composer.view.transfers.length === 0 &&
     activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-for-user' &&
     activeSession?.status !== 'waiting-permission' &&
     !hasRuntimeInteraction(options) &&
     !options.isReviewing &&

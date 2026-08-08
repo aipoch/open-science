@@ -151,7 +151,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   setPermissionPending: (sessionId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId
+        session.id === sessionId && session.status !== 'waiting-permission'
           ? {
               ...session,
               status: 'waiting-permission',
@@ -166,10 +166,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   clearPermissionPending: (sessionId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId
+        session.id === sessionId && session.status === 'waiting-permission'
           ? {
               ...session,
-              status: session.activeRun ? 'running' : 'idle',
+              status: session.activeRun || session.agentPromptInFlight ? 'running' : 'idle',
               updatedAt: Date.now()
             }
           : session

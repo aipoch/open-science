@@ -9,6 +9,7 @@ import {
   resolveHistoryReplayTarget,
   type HistoryReplayDescriptor
 } from './history-preamble'
+import { syncWorkspaceInteractionState } from './useWorkspaceAgentRuntime'
 import { acquireWorkspacePromptPreparation } from './workspace-prompt-preparation-lock'
 
 type WorkspaceElicitationRuntime = Pick<
@@ -47,6 +48,7 @@ const assertElicitationRevisionIdle = (
 ): void => {
   if (
     session.status === 'running' ||
+    session.status === 'waiting-for-user' ||
     session.status === 'waiting-permission' ||
     session.activeRun ||
     runtime.state.promptInFlightSessionIds.includes(session.id)
@@ -244,7 +246,9 @@ const reviseWorkspaceElicitation = async (
     if (!useSessionStore.getState().reviseSessionFromElicitation(session.id, activity.id)) {
       throw new Error('The conversation could not rewind to this question.')
     }
-    await runtime.respondToElicitation(responseToSend)
+    const snapshot = await runtime.respondToElicitation(responseToSend)
+    syncWorkspaceInteractionState(snapshot)
+    useSessionStore.getState().setElicitationPending(restoredRequest.sessionId, false)
   } catch (error) {
     if (rollbackProjection) {
       restoreElicitationRevisionProjection(rollbackProjection)
@@ -349,7 +353,13 @@ const respondToWorkspaceElicitation = async (
     }
   }
 
-  await runtime.respondToElicitation(responseToSend)
+  const snapshot = await runtime.respondToElicitation(responseToSend)
+  syncWorkspaceInteractionState(snapshot)
+  const sessionId =
+    response.request?.sessionId ??
+    runtime.state.pendingElicitations?.find((request) => request.requestId === response.requestId)
+      ?.sessionId
+  if (sessionId) useSessionStore.getState().setElicitationPending(sessionId, false)
   if (session && historyReplayRequired) {
     useSessionStore.getState().setElicitationHistoryReplayRequest(session.id)
   }

@@ -265,6 +265,22 @@ describe('WorkspacePage send gate while compacting', () => {
     }
   )
 
+  it('blocks overlapping actions while the Session is waiting for a user answer', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-for-user' })],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('start another request'))
+    })
+
+    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangeAgentControls).toBe(false)
+  })
+
   it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'waiting-plan-approval' })],

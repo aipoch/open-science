@@ -95,7 +95,10 @@ const getCurrentPromptMessageId = (session: ChatSession): string | undefined =>
 const ownsForegroundPrompt = (session: ChatSession): boolean =>
   Boolean(
     session.agentPromptInFlight ||
-    (session.activeRun && (session.status === 'running' || session.status === 'waiting-permission'))
+    (session.activeRun &&
+      (session.status === 'running' ||
+        session.status === 'waiting-for-user' ||
+        session.status === 'waiting-permission'))
   )
 
 // Only a newly accepted terminal transition for the current foreground prompt opens a new silent gap.

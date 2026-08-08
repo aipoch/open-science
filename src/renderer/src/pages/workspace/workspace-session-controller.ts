@@ -184,7 +184,9 @@ const useWorkspaceSessionController = ({
   const activeHasPendingSwitch = Boolean(
     activeSession &&
     activeHasPending &&
-    (activeSession.status === 'running' || activeSession.status === 'waiting-permission')
+    (activeSession.status === 'running' ||
+      activeSession.status === 'waiting-for-user' ||
+      activeSession.status === 'waiting-permission')
   )
 
   const setBarrier = useCallback((sessionId: string, inFlight: boolean): void => {
@@ -215,6 +217,7 @@ const useWorkspaceSessionController = ({
     !promptInFlightSessionIds.includes(session.id) &&
     !sendPreparationInFlightSessionIds.includes(session.id) &&
     session.status !== 'running' &&
+    session.status !== 'waiting-for-user' &&
     session.status !== 'waiting-permission' &&
     session.status !== 'waiting-plan-approval' &&
     !hasUnfinishedTransfers(session.id)
@@ -297,7 +300,9 @@ const useWorkspaceSessionController = ({
     const sessionId = activeSession.id
     if (barrierInFlightRef.current.has(sessionId)) return
     const running =
-      activeSession.status === 'running' || activeSession.status === 'waiting-permission'
+      activeSession.status === 'running' ||
+      activeSession.status === 'waiting-for-user' ||
+      activeSession.status === 'waiting-permission'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
     } else {

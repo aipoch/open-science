@@ -127,6 +127,18 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it('blocks submit and revision while waiting for a user answer', () => {
+    const input = options({ activeSession: session({ status: 'waiting-for-user' }) })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+  })
+
   it('orders Specialist preparation before draft clear and runtime submit', async () => {
     const order: string[] = []
     const input = options()

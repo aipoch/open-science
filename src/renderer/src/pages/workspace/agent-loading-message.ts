@@ -23,6 +23,7 @@ const findLatest = <T extends TimelinePosition>(items: T[]): T | undefined =>
 // transcript, while tool activity and the silent gaps around it use their own indicator phases.
 const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
   if (!session) return 'hidden'
+  if (session.status === 'waiting-for-user') return 'hidden'
 
   const hasLocalRun =
     Boolean(session.activeRun) &&

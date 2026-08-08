@@ -372,12 +372,17 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(deleteItem?.props.disabled).toBe(false)
   })
 
-  it('disables conversation export for running, waiting-permission, or empty sessions', async () => {
+  it('disables conversation export for active, waiting, or empty sessions', async () => {
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
     const tree = WorkspaceSidebar({
       projectName: 'Example project',
       sessions: [
         createSession({ id: 'running', status: 'running', messages: [createMessage()] }),
+        createSession({
+          id: 'waiting-user',
+          status: 'waiting-for-user',
+          messages: [createMessage()]
+        }),
         createSession({
           id: 'waiting',
           status: 'waiting-permission',
@@ -410,11 +415,12 @@ describe('WorkspaceSidebar accessible render', () => {
         typeof element.props.disabled === 'boolean'
     )
 
-    expect(exportTriggers).toHaveLength(4)
+    expect(exportTriggers).toHaveLength(5)
     expect(exportTriggers[0]?.props.disabled).toBe(true)
     expect(exportTriggers[1]?.props.disabled).toBe(true)
     expect(exportTriggers[2]?.props.disabled).toBe(true)
-    expect(exportTriggers[3]?.props.disabled).toBe(false)
+    expect(exportTriggers[3]?.props.disabled).toBe(true)
+    expect(exportTriggers[4]?.props.disabled).toBe(false)
   })
 
   it('hides conversation export when the runtime does not expose that capability', async () => {

@@ -426,6 +426,7 @@ const sendWorkspaceMessage = async (
       runtime.state.promptInFlightSessionIds.includes(sessionId) ||
       (session?.compacting && !input.allowCompactionRecovery) ||
       session?.status === 'running' ||
+      session?.status === 'waiting-for-user' ||
       session?.status === 'waiting-permission'
     ) {
       return undefined

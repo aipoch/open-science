@@ -192,7 +192,10 @@ export const projectAgentMessageChunk = (
       shouldCommit: true,
       session: {
         ...session,
-        status: session.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+        status:
+          session.status === 'waiting-for-user' || session.status === 'waiting-permission'
+            ? session.status
+            : 'running',
         awaitingFirstAgentOutput: hasVisibleOutput ? undefined : session.awaitingFirstAgentOutput,
         messages: session.messages.map((message) =>
           message.id === existingMessage.id
@@ -233,7 +236,10 @@ export const projectAgentMessageChunk = (
     shouldCommit: true,
     session: {
       ...session,
-      status: session.status === 'waiting-permission' ? 'waiting-permission' : 'running',
+      status:
+        session.status === 'waiting-for-user' || session.status === 'waiting-permission'
+          ? session.status
+          : 'running',
       awaitingFirstAgentOutput: hasVisibleOutput ? undefined : session.awaitingFirstAgentOutput,
       messages: [...session.messages, agentMessage],
       updatedAt: now

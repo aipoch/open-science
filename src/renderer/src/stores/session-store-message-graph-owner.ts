@@ -45,7 +45,6 @@ let messageSequence = 0
 let pendingSessionSequence = 0
 let timelineSequence = 0
 let conversationBranchSequence = 0
-
 export const createMessageId = (): string => {
   messageSequence += 1
   return `message-${Date.now()}-${messageSequence}`
@@ -617,6 +616,7 @@ export const createSessionMessageGraphOwner = <
               !session.conversationGraph ||
               session.activeRun ||
               session.status === 'running' ||
+              session.status === 'waiting-for-user' ||
               session.status === 'waiting-permission' ||
               session.fixLoopActive ||
               session.compacting ||

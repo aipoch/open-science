@@ -39,6 +39,7 @@ import {
   projectCompactionFailed,
   projectCompactionFinished,
   projectCompactionStarted,
+  projectElicitationPending,
   projectFailedRun,
   projectFinishedRun,
   projectInterruptedRun
@@ -51,6 +52,7 @@ export type SessionRunProjectionActions = {
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
   setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
+  setElicitationPending: (sessionId: string, pending: boolean) => void
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
@@ -152,6 +154,14 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
           projectAgentPromptInFlight(session, inFlight)
+        )
+      }))
+    },
+
+    setElicitationPending: (sessionId, pending) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectElicitationPending(session, pending)
         )
       }))
     },

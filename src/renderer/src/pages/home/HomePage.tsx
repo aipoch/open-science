@@ -81,7 +81,11 @@ const getRequiredEnvironmentFailures = (
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
   if (session.status === 'running') return 'running'
-  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+  if (
+    session.status === 'waiting-for-user' ||
+    session.status === 'waiting-permission' ||
+    session.status === 'waiting-plan-approval'
+  ) {
     return 'needs-you'
   }
   return undefined
@@ -302,6 +306,7 @@ const HomePage = ({
       (session) =>
         session.projectId === project.id &&
         (session.status === 'running' ||
+          session.status === 'waiting-for-user' ||
           session.status === 'waiting-permission' ||
           session.status === 'waiting-plan-approval')
     )

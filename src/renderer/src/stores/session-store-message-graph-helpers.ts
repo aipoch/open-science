@@ -376,6 +376,7 @@ export const copySnapshotActivityGroup = (
 export const canBranchInNewSession = (session: ChatSession): boolean =>
   !session.activeRun &&
   session.status !== 'running' &&
+  session.status !== 'waiting-for-user' &&
   session.status !== 'waiting-permission' &&
   !session.fixLoopActive &&
   !session.compacting &&

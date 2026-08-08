@@ -26,6 +26,7 @@ import {
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
 import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
+import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-event-owner'
 import {
   cancelWorkspaceRun,
   compactWorkspaceSession,
@@ -619,6 +620,7 @@ describe('workspace session deletion', () => {
 
 describe('workspace durable elicitation', () => {
   beforeEach(() => {
+    resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-choice-1',
@@ -633,6 +635,44 @@ describe('workspace durable elicitation', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('returns to running as soon as an answer starts the hidden continuation', async () => {
+    useSessionStore.getState().setElicitationPending('session-choice-1', true)
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+      }
+    }
+    const continued = {
+      ...createSnapshot(['session-choice-1']),
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1'],
+      pendingElicitations: []
+    }
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(continued)
+      },
+      response
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true
+    })
   })
 
   it('reattaches a restored session before submitting its durable answer', async () => {

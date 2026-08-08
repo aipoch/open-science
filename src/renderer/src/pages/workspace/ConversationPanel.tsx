@@ -1155,6 +1155,7 @@ const ConversationPanel = ({
                         <ComposerModelPicker />
 
                         {activeSession?.status === 'running' ||
+                        activeSession?.status === 'waiting-for-user' ||
                         activeSession?.status === 'waiting-permission' ||
                         activeSession?.compacting ||
                         activeSession?.fixLoopActive ? (

@@ -2,13 +2,16 @@ import type {
   AcpConnectionStatus,
   AcpContextUsage,
   AcpPermissionRequest,
-  AcpRuntimeEvent
+  AcpRuntimeEvent,
+  AcpStateSnapshot,
+  PendingElicitationRequest
 } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 
 // Snapshot projections retain only transition edges; durable chat facts remain in Session Store.
 const pendingPermissionSessionIds = new Set<string>()
+const pendingElicitationSessionIds = new Set<string>()
 const firstOutputWaitingSessionIds = new Set<string>()
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
@@ -227,7 +230,7 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
   const store = useSessionStore.getState()
 
   for (const sessionId of nextSessionIds) {
-    if (!pendingPermissionSessionIds.has(sessionId)) store.setPermissionPending(sessionId)
+    store.setPermissionPending(sessionId)
   }
 
   for (const sessionId of pendingPermissionSessionIds) {
@@ -238,8 +241,37 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
   for (const sessionId of nextSessionIds) pendingPermissionSessionIds.add(sessionId)
 }
 
+// Keeps Session status aligned with app-owned questions independently of Agent execution state.
+const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): void => {
+  const nextSessionIds = new Set(requests.map((request) => request.sessionId))
+  const store = useSessionStore.getState()
+
+  for (const sessionId of nextSessionIds) {
+    store.setElicitationPending(sessionId, true)
+  }
+
+  for (const sessionId of pendingElicitationSessionIds) {
+    if (!nextSessionIds.has(sessionId)) store.setElicitationPending(sessionId, false)
+  }
+
+  pendingElicitationSessionIds.clear()
+  for (const sessionId of nextSessionIds) pendingElicitationSessionIds.add(sessionId)
+}
+
+const syncWorkspaceInteractionState = (
+  snapshot: Pick<
+    AcpStateSnapshot,
+    'agentPromptInFlightSessionIds' | 'pendingElicitations' | 'pendingPermissions'
+  >
+): void => {
+  syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
+  syncWorkspacePermissionState(snapshot.pendingPermissions)
+  syncWorkspaceElicitationState(snapshot.pendingElicitations ?? [])
+}
+
 const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   pendingPermissionSessionIds.clear()
+  pendingElicitationSessionIds.clear()
   firstOutputWaitingSessionIds.clear()
 }
 
@@ -314,5 +346,7 @@ export {
   resetWorkspaceRuntimeEventOwnerForTests,
   syncWorkspaceAgentFirstOutputState,
   syncWorkspaceContextUsage,
+  syncWorkspaceElicitationState,
+  syncWorkspaceInteractionState,
   syncWorkspacePermissionState
 }

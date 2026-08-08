@@ -85,7 +85,11 @@ const hasKnownPrompt = (session: ChatSession, promptMessageId: string | undefine
     : Boolean(session.activeRun)
 
 const getToolActivitySessionStatus = (session: ChatSession): SessionStatus => {
-  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+  if (
+    session.status === 'waiting-for-user' ||
+    session.status === 'waiting-permission' ||
+    session.status === 'waiting-plan-approval'
+  ) {
     return session.status
   }
   return session.activeRun ? 'running' : session.status

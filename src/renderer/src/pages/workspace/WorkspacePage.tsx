@@ -450,6 +450,7 @@ const WorkspacePage = ({
   const canChangeAgentControls =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
+    activeSession?.status !== 'waiting-for-user' &&
     activeSession?.status !== 'waiting-permission' &&
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting
