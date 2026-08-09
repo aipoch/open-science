@@ -216,6 +216,15 @@ export const buildDatasetAttachmentNotice = (input: { name: string; size: number
     'Do not load the whole file into the conversation. Inspect its schema and a small sample first, then use the notebook or a streaming/query tool to compute over the full dataset.]'
   ].join('\n')
 
+// Provider file inputs accept only a narrow media set, and ACP agents translate resource links
+// differently. Keep every remaining binary format provider-neutral while still giving the agent a
+// trusted local path it can inspect with an appropriate tool.
+export const buildLocalFileAttachmentNotice = (input: { name: string; size: number }): string =>
+  [
+    `[Attached file "${input.name}" (${formatBytes(input.size)}) is available on disk via the local file reference below.`,
+    'Use appropriate local tooling to inspect only the content needed for this task; do not send the binary file directly to the model.]'
+  ].join('\n')
+
 export const buildDeferredMediaNotice = (input: {
   name: string
   size: number

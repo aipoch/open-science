@@ -4467,6 +4467,85 @@ describe('ACP runtime session management', () => {
     expect(JSON.stringify(prompt)).not.toContain('SENTINEL_PAST_PREVIEW_WINDOW')
   })
 
+  it('does not send DOCX attachments as unsupported provider file parts', async () => {
+    const root = await createTemporaryRoot()
+    const uploadRepository = new UploadRepository(root)
+    const [document, historyPending] = await stageUploadFixtures(uploadRepository, {
+      files: [
+        {
+          name: 'report.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          content: Buffer.from('document-bytes').toString('base64')
+        },
+        {
+          name: 'history-report.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          content: Buffer.from('history-document-bytes').toString('base64')
+        }
+      ]
+    })
+    const [historyDocument] = await uploadRepository.finalizePendingSessionUploads(
+      'source-session',
+      [historyPending]
+    )
+    const process = new FakeAgentProcess()
+    const receivedPrompts: ContentBlock[][] = []
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: ({ prompt }) => {
+        receivedPrompts.push(prompt)
+        const unsupportedDocument = prompt.find(
+          (block) =>
+            block.type === 'resource_link' &&
+            block.mimeType ===
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+        if (unsupportedDocument) {
+          throw new Error(
+            "'file part media typeapplication/vnd.openxmlformats-officedocument.wordprocessingml.document' functionality not supported"
+          )
+        }
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      uploads: { repository: uploadRepository }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+
+    await expect(
+      runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'summarize this document',
+        attachments: [document]
+      })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    await expect(
+      runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'summarize the earlier document',
+        historyAttachments: [historyDocument]
+      })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    expect(receivedPrompts).toHaveLength(2)
+    for (const prompt of receivedPrompts) {
+      expect(prompt.some((block) => block.type === 'resource_link')).toBe(false)
+      const descriptor = prompt.find(
+        (block) => block.type === 'text' && block.text.includes('<attached_local_file>')
+      )
+      expect(descriptor).toMatchObject({ type: 'text' })
+      if (descriptor?.type !== 'text') throw new Error('Expected a local file text descriptor.')
+      expect(descriptor.text).toContain(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      )
+      expect(descriptor.text).toContain('do not send the binary file directly to the model')
+    }
+  })
+
   it('adopts a fresh agent session under the same app id on a context reset', async () => {
     const root = await createTemporaryRoot()
     const connectorCall = vi.fn(async () => ({ ok: true }))
@@ -5749,14 +5828,14 @@ describe('ACP runtime session management', () => {
       data: createPngBytes('runtime referenced image').toString('base64'),
       uri: expect.stringContaining('chart.png')
     })
-    // Referenced binary artifact -> resource link.
-    expect(receivedPrompts[0][3]).toMatchObject({
-      type: 'resource_link',
-      name: 'data.bin',
-      title: 'data.bin',
-      mimeType: 'application/octet-stream',
-      uri: expect.stringContaining('data.bin')
-    })
+    // Referenced binary artifact -> provider-neutral local file descriptor.
+    expect(receivedPrompts[0][3]).toMatchObject({ type: 'text' })
+    const binaryDescriptor = receivedPrompts[0][3]
+    if (binaryDescriptor.type !== 'text') throw new Error('Expected a local file text descriptor.')
+    expect(binaryDescriptor.text).toContain('data.bin')
+    expect(binaryDescriptor.text).toContain('application/octet-stream')
+    expect(binaryDescriptor.text).toContain('<attached_local_file>')
+    expect(binaryDescriptor.text).toContain('do not send the binary file directly to the model')
     // Artifact-backed Skill package -> provider-safe ordinary archive reference, never the
     // current-session import wrapper.
     expect(receivedPrompts[0][4]).toMatchObject({
