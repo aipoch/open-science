@@ -216,7 +216,9 @@
       "ownerPaths": [
         "src/main/skills/user-skill-repository.ts",
         "src/main/skills/user-skill-store.ts",
+        "src/main/skills/agent-home-skill-owner.ts",
         "src/main/skills/skill-bundle-import-owner.ts",
+        "src/main/skills/user-skill-import-contracts.ts",
         "src/main/skills/skill-mutation-owner.ts",
         "src/main/skills/skill-package-transaction-owner.ts"
       ],

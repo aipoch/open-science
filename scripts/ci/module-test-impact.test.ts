@@ -68,22 +68,19 @@ describe('module test impact commands', () => {
       ])
     )
 
-    for (const path of [
-      'src/main/skills/user-skill-repository.ts',
-      'src/main/skills/user-skill-store.ts',
-      'src/main/skills/skill-bundle-import-owner.ts',
-      'src/main/skills/skill-mutation-owner.ts',
-      'src/main/skills/skill-package-transaction-owner.ts'
-    ]) {
-      const affected = createAffectedTestPlan(
-        [
-          {
-            path,
-            status: path.endsWith('skill-bundle-import-owner.ts') ? 'added' : 'modified'
-          }
-        ],
-        { status: 'current', testFiles: [] }
-      )
+    for (const { path, status } of [
+      { path: 'src/main/skills/user-skill-repository.ts', status: 'modified' },
+      { path: 'src/main/skills/user-skill-store.ts', status: 'modified' },
+      { path: 'src/main/skills/agent-home-skill-owner.ts', status: 'added' },
+      { path: 'src/main/skills/skill-bundle-import-owner.ts', status: 'modified' },
+      { path: 'src/main/skills/user-skill-import-contracts.ts', status: 'added' },
+      { path: 'src/main/skills/skill-mutation-owner.ts', status: 'modified' },
+      { path: 'src/main/skills/skill-package-transaction-owner.ts', status: 'modified' }
+    ] as const) {
+      const affected = createAffectedTestPlan([{ path, status }], {
+        status: 'current',
+        testFiles: []
+      })
       expect([...affected.modules].sort()).toEqual([
         'settings_service_facade',
         'user_skills_repository',

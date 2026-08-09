@@ -25,17 +25,8 @@ import {
   SOURCE_MANIFEST,
   type SkillPackageTransactionOwner
 } from './skill-package-transaction-owner'
+import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import { UserSkillStore, parseUserSkillId, toSlug } from './user-skill-store'
-
-export type ImportOutcome = { status: 'imported' | 'unchanged' | 'updated'; id: string }
-
-export type ParsedSkillPreview = {
-  name: string
-  description: string
-  metadata: Record<string, string>
-  body: string
-  files: string[]
-}
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }

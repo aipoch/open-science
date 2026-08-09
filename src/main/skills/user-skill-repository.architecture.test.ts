@@ -32,7 +32,9 @@ const projectRoot = resolve(__dirname, '../../..')
 const skillsRoot = resolve(projectRoot, 'src/main/skills')
 const repositoryPath = resolve(skillsRoot, 'user-skill-repository.ts')
 const storePath = resolve(skillsRoot, 'user-skill-store.ts')
+const agentHomeOwnerPath = resolve(skillsRoot, 'agent-home-skill-owner.ts')
 const bundleOwnerPath = resolve(skillsRoot, 'skill-bundle-import-owner.ts')
+const importContractsPath = resolve(skillsRoot, 'user-skill-import-contracts.ts')
 const mutationOwnerPath = resolve(skillsRoot, 'skill-mutation-owner.ts')
 const transactionOwnerPath = resolve(skillsRoot, 'skill-package-transaction-owner.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
@@ -185,6 +187,10 @@ describe('User Skill repository architecture', () => {
     expect(rawLineCount(readSource(bundleOwnerPath))).toBeLessThanOrEqual(660)
   })
 
+  it('keeps the Agent Home import owner within the production file budget', () => {
+    expect(rawLineCount(readSource(agentHomeOwnerPath))).toBeLessThanOrEqual(660)
+  })
+
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
@@ -227,11 +233,19 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/specialist-package-adapter.ts'
     ])
     expect(importersOf(storePath)).toEqual([
+      'src/main/skills/agent-home-skill-owner.ts',
       'src/main/skills/skill-bundle-import-owner.ts',
       'src/main/skills/user-skill-repository.ts'
     ])
+    expect(importersOf(agentHomeOwnerPath)).toEqual(['src/main/skills/user-skill-repository.ts'])
     expect(importersOf(bundleOwnerPath)).toEqual(['src/main/skills/user-skill-repository.ts'])
+    expect(importersOf(importContractsPath)).toEqual([
+      'src/main/skills/agent-home-skill-owner.ts',
+      'src/main/skills/skill-bundle-import-owner.ts',
+      'src/main/skills/user-skill-repository.ts'
+    ])
     expect(importersOf(transactionOwnerPath)).toEqual([
+      'src/main/skills/agent-home-skill-owner.ts',
       'src/main/skills/skill-bundle-import-owner.ts',
       'src/main/skills/user-skill-repository.ts',
       'src/main/skills/user-skill-store.ts'
@@ -247,6 +261,13 @@ describe('User Skill repository architecture', () => {
     expect(readSource(repositoryPath)).toContain(
       'new SkillBundleImportOwner(this.store, this.transactions)'
     )
+    expect(readSource(repositoryPath)).toContain(
+      'new AgentHomeSkillOwner(this.store, this.transactions)'
+    )
+    expect(readSource(repositoryPath)).not.toContain('inspectAgentHomeSkill')
+    expect(readSource(repositoryPath)).toContain(
+      'this.agentHomeSkills.validatePublishedSkillPackage(staging)'
+    )
   })
 
   it('declares complete ownership and downstream test impact', () => {
@@ -255,7 +276,9 @@ describe('User Skill repository architecture', () => {
       ownerPaths: [
         'src/main/skills/user-skill-repository.ts',
         'src/main/skills/user-skill-store.ts',
+        'src/main/skills/agent-home-skill-owner.ts',
         'src/main/skills/skill-bundle-import-owner.ts',
+        'src/main/skills/user-skill-import-contracts.ts',
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-package-transaction-owner.ts'
       ],
