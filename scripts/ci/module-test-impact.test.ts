@@ -71,6 +71,7 @@ describe('module test impact commands', () => {
     for (const path of [
       'src/main/skills/user-skill-repository.ts',
       'src/main/skills/user-skill-store.ts',
+      'src/main/skills/skill-bundle-import-owner.ts',
       'src/main/skills/skill-mutation-owner.ts',
       'src/main/skills/skill-package-transaction-owner.ts'
     ]) {
@@ -78,7 +79,7 @@ describe('module test impact commands', () => {
         [
           {
             path,
-            status: path.endsWith('skill-package-transaction-owner.ts') ? 'added' : 'modified'
+            status: path.endsWith('skill-bundle-import-owner.ts') ? 'added' : 'modified'
           }
         ],
         { status: 'current', testFiles: [] }

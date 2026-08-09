@@ -32,6 +32,7 @@ const projectRoot = resolve(__dirname, '../../..')
 const skillsRoot = resolve(projectRoot, 'src/main/skills')
 const repositoryPath = resolve(skillsRoot, 'user-skill-repository.ts')
 const storePath = resolve(skillsRoot, 'user-skill-store.ts')
+const bundleOwnerPath = resolve(skillsRoot, 'skill-bundle-import-owner.ts')
 const mutationOwnerPath = resolve(skillsRoot, 'skill-mutation-owner.ts')
 const transactionOwnerPath = resolve(skillsRoot, 'skill-package-transaction-owner.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
@@ -180,6 +181,10 @@ describe('User Skill repository architecture', () => {
     expect(rawLineCount(readSource(storePath))).toBeLessThanOrEqual(660)
   })
 
+  it('keeps the GitHub and ZIP import owner within the production file budget', () => {
+    expect(rawLineCount(readSource(bundleOwnerPath))).toBeLessThanOrEqual(660)
+  })
+
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
@@ -221,8 +226,13 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/skill-package-transaction-owner.ts',
       'src/main/skills/specialist-package-adapter.ts'
     ])
-    expect(importersOf(storePath)).toEqual(['src/main/skills/user-skill-repository.ts'])
+    expect(importersOf(storePath)).toEqual([
+      'src/main/skills/skill-bundle-import-owner.ts',
+      'src/main/skills/user-skill-repository.ts'
+    ])
+    expect(importersOf(bundleOwnerPath)).toEqual(['src/main/skills/user-skill-repository.ts'])
     expect(importersOf(transactionOwnerPath)).toEqual([
+      'src/main/skills/skill-bundle-import-owner.ts',
       'src/main/skills/user-skill-repository.ts',
       'src/main/skills/user-skill-store.ts'
     ])
@@ -234,6 +244,9 @@ describe('User Skill repository architecture', () => {
     expect(readSource(repositoryPath)).toContain(
       'new UserSkillStore(storageRoot, this.transactions)'
     )
+    expect(readSource(repositoryPath)).toContain(
+      'new SkillBundleImportOwner(this.store, this.transactions)'
+    )
   })
 
   it('declares complete ownership and downstream test impact', () => {
@@ -242,6 +255,7 @@ describe('User Skill repository architecture', () => {
       ownerPaths: [
         'src/main/skills/user-skill-repository.ts',
         'src/main/skills/user-skill-store.ts',
+        'src/main/skills/skill-bundle-import-owner.ts',
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-package-transaction-owner.ts'
       ],
