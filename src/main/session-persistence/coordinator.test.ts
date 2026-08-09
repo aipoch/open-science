@@ -261,6 +261,48 @@ describe('SessionPersistenceCoordinator', () => {
     }
   )
 
+  it('loads an isolated durable Session snapshot for permission replay', async () => {
+    const durable = createSession({
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Run the command',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const loaded = await coordinator.loadSessionForPermissionReplay('project-1', 'session-1')
+    loaded.messages[0].content = 'mutated snapshot'
+
+    expect(durable.messages[0].content).toBe('Run the command')
+  })
+
+  it.each(['missing', 'unreadable'] as const)(
+    'refuses permission replay when the durable Session is %s',
+    async (status) => {
+      const repository = createSessionRepository({
+        loadSessionWithDiagnostics: vi.fn(async () => ({ status }))
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+      await expect(
+        coordinator.loadSessionForPermissionReplay('project-1', 'session-1')
+      ).rejects.toThrow(`Cannot build permission replay for a ${status} Session.`)
+    }
+  )
+
   it('persists blocked Plan feedback as a standard user Message without changing Plan authority', async () => {
     let durable = createSession({
       status: 'waiting-plan-approval',

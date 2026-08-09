@@ -27,7 +27,6 @@ import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
-  buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
   resolveSessionHistoryReplayDescriptor,
   type HistoryReplayDescriptor
@@ -133,8 +132,15 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     JSON.stringify(
       state.sessions.flatMap((session) => {
         const permission = session.runtimeContext?.permission
-        return session.status === 'waiting-permission' && permission?.state === 'pending'
-          ? [[session.id, session.runtimeContext?.revision, permission.request.requestId]]
+        return permission?.state === 'pending'
+          ? [
+              [
+                session.id,
+                session.runtimeContext?.revision,
+                permission.request.requestId,
+                session.status
+              ]
+            ]
           : []
       })
     )
@@ -180,13 +186,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     },
     [agentFrameworks, providers]
   )
-  const getSessionSupportsImageInput = useCallback(
-    (session: ChatSession): boolean =>
-      providers.find(
-        (candidate) => session.agentBackendId === `${session.agentFrameworkId}:${candidate.id}`
-      )?.supportsImageInput ?? false,
-    [providers]
-  )
   const [lifecycleOwner] = useState(createWorkspaceRuntimeSessionLifecycleOwner)
   const pendingPermissions = useMemo(
     () => pendingWorkspacePermissions(restoredPermissionSessions, runtime.state.pendingPermissions),
@@ -216,7 +215,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           .filter((request) => request.durable)
           .map((request) => request.sessionId),
         ...restoredPermissionSessions
-          .filter((session) => session.runtimeContext?.permission?.state === 'pending')
+          .filter(
+            (session) =>
+              (session.status === 'waiting-permission' || session.status === 'error') &&
+              session.runtimeContext?.permission?.state === 'pending'
+          )
           .map((session) => session.id)
       ])
     ).sort()
@@ -366,7 +369,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
             .getState()
             .sessions.find((candidate) => candidate.id === request.sessionId)
           if (!session) throw new Error(`Session not found: ${request.sessionId}`)
-          let contextReset = false
           if (!runtime.state.sessionIds.includes(request.sessionId)) {
             const cwd = session.cwd || runtime.state.cwd
             if (!cwd) throw new Error('Choose a workspace folder before resuming this Session.')
@@ -396,32 +398,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
             // until the restored decision is accepted so a retryable response failure cannot make
             // the card disappear from the renderer projection.
             useSessionStore.getState().setPermissionPending(session.id)
-            contextReset = resumed?.contextReset === true
             session = useSessionStore
               .getState()
               .sessions.find((candidate) => candidate.id === request.sessionId)
             if (!session) throw new Error(`Session not found: ${request.sessionId}`)
           }
-          const replay = contextReset
-            ? buildWorkspaceHistoryReplay(
-                session.messages,
-                getSessionHistoryReplayDescriptor(session.id),
-                session.projectId,
-                getSessionSupportsImageInput(session)
-              )
-            : undefined
           restored = {
             sessionId: session.id,
-            projectId: session.projectId,
-            ...(replay
-              ? {
-                  historyReplay: {
-                    historyPreamble: replay.historyPreamble,
-                    historyAttachments: replay.historyAttachments,
-                    historyImages: replay.historyImages
-                  }
-                }
-              : {})
+            projectId: session.projectId
           }
         }
         await runtime.respondToPermission(requestId, optionId, restored)
@@ -438,7 +422,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         }
       }
     },
-    [getSessionHistoryReplayDescriptor, getSessionSupportsImageInput, pendingPermissions, runtime]
+    [pendingPermissions, runtime]
   )
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>

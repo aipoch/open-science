@@ -186,6 +186,19 @@ class SessionPersistenceCoordinator {
     )
   }
 
+  loadSessionForPermissionReplay(
+    projectId: string,
+    sessionId: string
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(async () => {
+      const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+      if (loaded.status !== 'found') {
+        throw new Error(`Cannot build permission replay for a ${loaded.status} Session.`)
+      }
+      return structuredClone(loaded.session)
+    })
+  }
+
   // Binds unread cleanup to authoritative Session mutations. Reconciliation is called only with a
   // complete live Session catalog, while commit runs only after deletion succeeds.
   setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void {

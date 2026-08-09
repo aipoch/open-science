@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { SessionRuntimeContext } from '../../shared/session-persistence'
+import type { PersistedChatSession, SessionRuntimeContext } from '../../shared/session-persistence'
 import type { DurablePermissionWaitCandidate } from './permission-broker'
 import { AcpPermissionWaitOwner, type PermissionWaitSessions } from './permission-wait-owner'
 
@@ -40,11 +40,32 @@ const createSessions = (
     }
     return structuredClone(context)
   })
+  const session: PersistedChatSession = {
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Permission wait',
+    cwd: '/workspace',
+    status: 'waiting-permission',
+    messages: [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Run npm test',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 1
+  }
   return {
     sessions: {
       readSessionRuntimeContext: vi.fn(async () => structuredClone(context)),
       patchSessionRuntimeContext: patches,
-      containsMessageOnActiveBranch: vi.fn(async () => containsMessage)
+      containsMessageOnActiveBranch: vi.fn(async () => containsMessage),
+      loadSessionForPermissionReplay: vi.fn(async () => structuredClone(session))
     },
     context: () => context,
     patches

@@ -63,6 +63,7 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
+import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
@@ -162,7 +163,10 @@ type AcpRuntimeOptions = {
   permissionWait?: {
     sessions: Pick<
       SessionPersistenceCoordinator,
-      'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'containsMessageOnActiveBranch'
+      | 'readSessionRuntimeContext'
+      | 'patchSessionRuntimeContext'
+      | 'containsMessageOnActiveBranch'
+      | 'loadSessionForPermissionReplay'
     >
   }
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
@@ -330,6 +334,7 @@ class AcpRuntime {
   private readonly appContinuations: AcpAppContinuationOwner
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private durablePermissionContinuations?: Map<string, { projectId: string; requestId: string }>
+  private restoredPermissionContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   private readonly turnSkills: AcpTurnSkillOwner
@@ -600,7 +605,17 @@ class AcpRuntime {
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.providerSessionResumer.resume(request))
+    return this.withOperationLease(async () => {
+      this.restoredPermissionContextResetSessionIds?.delete(request.sessionId)
+      const resumed = await this.providerSessionResumer.resume(request)
+      if (resumed.contextReset) {
+        const contextResetSessionIds =
+          this.restoredPermissionContextResetSessionIds ?? new Set<string>()
+        this.restoredPermissionContextResetSessionIds = contextResetSessionIds
+        contextResetSessionIds.add(request.sessionId)
+      }
+      return resumed
+    })
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -1098,6 +1113,15 @@ class AcpRuntime {
       projectId,
       restored.sessionId
     )
+    const historyReplay = this.restoredPermissionContextResetSessionIds?.has(restored.sessionId)
+      ? await this.permissionWaitOwner.buildRestoredContinuationReplay(
+          projectId,
+          restored.sessionId,
+          decision.permission,
+          this.restoredPermissionHistoryReplayDescriptor(),
+          this.backendGeneration.current.context.supportsImageInput
+        )
+      : undefined
     const durablePermissionContinuations =
       this.durablePermissionContinuations ??
       new Map<string, { projectId: string; requestId: string }>()
@@ -1144,14 +1168,14 @@ class AcpRuntime {
         provenanceContext: {
           promptMessageId: decision.permission.originatingPromptMessageId
         },
-        ...(restored.historyReplay?.historyPreamble
-          ? { historyPreamble: restored.historyReplay.historyPreamble }
+        ...(historyReplay?.historyPreamble
+          ? { historyPreamble: historyReplay.historyPreamble }
           : {}),
-        ...(restored.historyReplay?.historyAttachments?.length
-          ? { historyAttachments: restored.historyReplay.historyAttachments }
+        ...(historyReplay?.historyAttachments.length
+          ? { historyAttachments: historyReplay.historyAttachments }
           : {}),
-        ...(restored.historyReplay?.historyImages?.length
-          ? { historyImages: restored.historyReplay.historyImages }
+        ...(historyReplay?.historyImages.length
+          ? { historyImages: historyReplay.historyImages }
           : {})
       }
     })
@@ -1395,6 +1419,7 @@ class AcpRuntime {
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)
       if (completed && durablePermission) {
+        this.restoredPermissionContextResetSessionIds?.delete(sessionId)
         try {
           await this.permissionWaitOwner.clearAfterContinuation(
             durablePermission.projectId,
@@ -1575,6 +1600,23 @@ class AcpRuntime {
     this.elicitationOwner.cancelForSession(sessionId)
     this.appContinuations.delete(sessionId)
     this.durablePermissionContinuations?.delete(sessionId)
+    this.restoredPermissionContextResetSessionIds?.delete(sessionId)
+  }
+
+  private restoredPermissionHistoryReplayDescriptor(): HistoryReplayDescriptor {
+    const backend = this.backendGeneration.current
+    const target =
+      backend.framework.id === 'opencode'
+        ? 'opencode'
+        : backend.framework.id === 'codex'
+          ? backend.modelRoute === 'codex-bridge'
+            ? 'codex-bridge'
+            : 'codex-response'
+          : 'claude-code'
+    return {
+      target,
+      ...(backend.context.window ? { contextWindow: backend.context.window } : {})
+    }
   }
 
   private processEventDisposition(

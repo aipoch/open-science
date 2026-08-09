@@ -649,11 +649,6 @@ export type AcpPermissionResponse = {
   restored?: {
     sessionId: string
     projectId: string
-    historyReplay?: {
-      historyPreamble?: AcpPromptRequest['historyPreamble']
-      historyAttachments?: AcpPromptRequest['historyAttachments']
-      historyImages?: AcpPromptRequest['historyImages']
-    }
   }
 }
 

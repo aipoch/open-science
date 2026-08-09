@@ -421,4 +421,54 @@ describe('workspace Agent Runtime hook contract', () => {
       projectId: 'project-1'
     })
   })
+
+  it('refreshes a re-armed restored permission card after an asynchronous continuation failure', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    const request = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        activeRun: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtimeMock.current = runtime
+    await render()
+
+    await act(async () => {
+      await latest.respondToPermission('permission-restored', 'allow-once')
+    })
+    expect(latest.pendingPermissions).toEqual([])
+
+    act(() => useSessionStore.getState().failRun('session-1', 'Continuation failed'))
+    await act(async () => Promise.resolve())
+
+    // Re-projecting the durable pending authority moves the Session back to its actionable wait.
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
+    expect(latest.pendingPermissions).toEqual([request])
+  })
 })
