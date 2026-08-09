@@ -21,7 +21,6 @@ import {
   type ResolvedReasoningEffort
 } from '../../shared/reasoning-effort'
 import {
-  DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
   type AgentModelCatalogEntry,
   type AgentModelChangeTarget,
@@ -79,23 +78,20 @@ import { ensureCodexAuthHome } from './codex-auth'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import type { StoredSettings } from './types'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
+import {
+  BackendSelectionOwner,
+  type AgentBackendSelection,
+  type BackendSelectionResolution,
+  type ExplicitAgentBackendTarget
+} from './backend-selection-owner'
 
-export type AgentBackendSelection = Readonly<{
-  frameworkId: AgentFrameworkId
-}>
+export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
   forceCodexNativeResponsesCompatibility?: boolean
 }
-
-export type ExplicitAgentBackendTarget = Readonly<{
-  frameworkId: AgentFrameworkId
-  providerId: string
-  model: Readonly<{ kind: 'required'; id: string }> | Readonly<{ kind: 'provider-default' }>
-  reasoningEffort: ReasoningEffort
-}>
 
 export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
@@ -290,7 +286,7 @@ export class AgentBackendResolver {
   private readonly connectors: AgentBackendConnectorPort
   private readonly storageRoot: string
   private readonly userClaudeDir: string
-  private readonly readFrameworkOverride: () => string | undefined
+  private readonly selection: BackendSelectionOwner
   private readonly createResponsesBridge: (target: ResponsesBridgeTarget) => ResponsesBridgePort
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
@@ -318,8 +314,13 @@ export class AgentBackendResolver {
     this.connectors = options.connectors
     this.storageRoot = options.storageRoot
     this.userClaudeDir = options.userClaudeDir
-    this.readFrameworkOverride =
-      options.readFrameworkOverride ?? (() => process.env.OPEN_SCIENCE_AGENT_FRAMEWORK)
+    this.selection = new BackendSelectionOwner({
+      readSettings: this.readSettings,
+      readFrameworkOverride:
+        options.readFrameworkOverride ?? (() => process.env.OPEN_SCIENCE_AGENT_FRAMEWORK),
+      resolveRuntimeReasoningEffortProfile: (provider, model) =>
+        this.providers.resolveRuntimeReasoningEffortProfile(provider, model)
+    })
     this.createResponsesBridge =
       options.createResponsesBridge ?? ((target) => new ResponsesBridge(target))
     this.createNativeResponsesProxy =
@@ -354,32 +355,18 @@ export class AgentBackendResolver {
   async resolveActiveBackend(
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
-    const settings = await this.readSettings()
-    const frameworkId = this.resolveConfiguredFrameworkId(settings)
-    return this.resolveBackendFromSettings(
-      settings,
-      frameworkId,
-      settings.activeProviderId,
-      { kind: 'configured', requestedModel: settings.activeModel },
-      settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-      context
-    )
+    return this.resolveBackendSelection(await this.selection.resolveActiveSelection(), context)
   }
 
   async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
-    const settings = await this.readSettings()
-    const frameworkId = this.resolveConfiguredFrameworkId(settings)
+    const selection = await this.selection.resolveActiveModelChangeSelection()
+    if (!selection) return undefined
+    const { settings, frameworkId, providerId, modelSelection, reasoningEffort } = selection
     const framework = getAgentFramework(frameworkId)
-    const storedProvider = settings.activeProviderId
-      ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
-      : undefined
+    const storedProvider = settings.providers.find((provider) => provider.id === providerId)
     if (!storedProvider) return undefined
 
-    const target = this.providers.resolveRuntimeTarget(
-      storedProvider,
-      { kind: 'configured', requestedModel: settings.activeModel },
-      framework
-    )
+    const target = this.providers.resolveRuntimeTarget(storedProvider, modelSelection, framework)
     if (!target.frameworkCompatible || (frameworkId === 'codex' && !target.modelBridgeSupported)) {
       return undefined
     }
@@ -417,10 +404,7 @@ export class AgentBackendResolver {
       sessionModelRequired:
         frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type),
       supportsImageInput: target.provider.supportsImageInput === true,
-      reasoningEffort: resolvedModelEffort(
-        settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-        target
-      ),
+      reasoningEffort: resolvedModelEffort(reasoningEffort, target),
       ...(hasClaudeProviderTransport
         ? { anthropicBridgeTargetId: claudeBridgeTargetId(target.providerId, model) }
         : {}),
@@ -449,77 +433,43 @@ export class AgentBackendResolver {
   }
 
   async captureConfiguredSelection(): Promise<AgentBackendSelection> {
-    const settings = await this.readSettings()
-    return { frameworkId: this.resolveConfiguredFrameworkId(settings) }
+    return this.selection.captureConfiguredSelection()
   }
 
   async captureExplicitTarget(): Promise<ExplicitAgentBackendTarget> {
-    const settings = await this.readSettings()
-    if (!settings.activeProviderId) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
-    return Object.freeze({
-      frameworkId: this.resolveConfiguredFrameworkId(settings),
-      providerId: settings.activeProviderId,
-      model: settings.activeModel
-        ? Object.freeze({ kind: 'required' as const, id: settings.activeModel })
-        : Object.freeze({ kind: 'provider-default' as const }),
-      reasoningEffort: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT
-    })
+    return this.selection.captureExplicitTarget()
   }
 
   async resolveSelection(
     selection: AgentBackendSelection,
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
-    const settings = await this.readSettings()
-    return this.resolveBackendFromSettings(
-      settings,
-      selection.frameworkId,
-      settings.activeProviderId,
-      { kind: 'configured', requestedModel: settings.activeModel },
-      settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
-      context
-    )
+    return this.resolveBackendSelection(await this.selection.resolveSelection(selection), context)
   }
 
   async resolveExplicitTarget(
     target: ExplicitAgentBackendTarget,
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
-    const settings = await this.readSettings()
-    const modelSelection: RuntimeProviderModelSelection =
-      target.model.kind === 'required'
-        ? { kind: 'required', model: target.model.id }
-        : { kind: 'provider-default' }
-    return this.resolveBackendFromSettings(
-      settings,
-      target.frameworkId,
-      target.providerId,
-      modelSelection,
-      target.reasoningEffort,
-      context
-    )
+    return this.resolveBackendSelection(await this.selection.resolveExplicitTarget(target), context)
   }
 
   async resolveActiveReasoningEffort(intent: ReasoningEffort): Promise<ResolvedReasoningEffort> {
-    const settings = await this.readSettings()
-    if (intent === DEFAULT_REASONING_EFFORT) return DEFAULT_REASONING_EFFORT
-    const activeProvider = settings.activeProviderId
-      ? settings.providers.find((candidate) => candidate.id === settings.activeProviderId)
-      : undefined
-    if (!activeProvider) return DEFAULT_REASONING_EFFORT
-
-    const profile = this.providers.resolveRuntimeReasoningEffortProfile(
-      activeProvider,
-      settings.activeModel
-    )
-    return resolveReasoningEffortValue(intent, profile)
+    return this.selection.resolveActiveReasoningEffort(intent)
   }
 
-  private resolveConfiguredFrameworkId(settings: StoredSettings): AgentFrameworkId {
-    const forced = this.readFrameworkOverride()
-    return forced === 'opencode' || forced === 'claude-code' || forced === 'codex'
-      ? forced
-      : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+  private resolveBackendSelection(
+    selection: BackendSelectionResolution,
+    context: AgentBackendResolutionContext
+  ): Promise<ResolvedAgentBackend> {
+    return this.resolveBackendFromSettings(
+      selection.settings,
+      selection.frameworkId,
+      selection.providerId,
+      selection.modelSelection,
+      selection.reasoningEffort,
+      context
+    )
   }
 
   private resolveConfiguredProviderTarget(
