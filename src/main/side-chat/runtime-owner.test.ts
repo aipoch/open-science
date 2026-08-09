@@ -642,6 +642,66 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(owner.list().chats).toEqual([])
   })
 
+  it('invalidates every Side chat in a deleted Project and rejects concurrent starts', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-project-deleted-'))
+    const persistence = createPersistence()
+    const captureTarget = vi.fn()
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget,
+      resolveTarget: vi.fn(),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn()
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-deleted',
+        parentSessionId: 'parent-deleted',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-project-deleted',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: '',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      },
+      {
+        projectId: 'project-kept',
+        parentSessionId: 'parent-kept',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-project-kept',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: '',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await owner.invalidateProject('project-deleted')
+
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
+    expect(persistence.clear).not.toHaveBeenCalled()
+    await expect(
+      owner.start({
+        parentSessionId: 'another-parent',
+        projectId: 'project-deleted',
+        text: 'Too late'
+      })
+    ).rejects.toThrow('parent Project is unavailable')
+    expect(captureTarget).not.toHaveBeenCalled()
+  })
+
   it('publishes a terminal lifecycle event and keeps a disconnected runtime dormant', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-disconnected-'))
     let runtimeOptions: AcpRuntimeOptions | undefined

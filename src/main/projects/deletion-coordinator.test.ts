@@ -74,6 +74,33 @@ describe('ProjectDeletionCoordinator', () => {
     )
   })
 
+  it('awaits runtime invalidation before starting whole-project deletion', async () => {
+    const projects = createProjects()
+    const sessions = createSessions()
+    const invalidated = createDeferred<void>()
+    const beforeProjectDelete = vi.fn(() => invalidated.promise)
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      undefined,
+      { beforeProjectDelete }
+    )
+
+    const deletion = coordinator.deleteProject('project-1')
+    await vi.waitFor(() => expect(beforeProjectDelete).toHaveBeenCalledWith('project-1'))
+    expect(projects.createDeletionIntent).not.toHaveBeenCalled()
+    expect(sessions.deleteProjectSessions).not.toHaveBeenCalled()
+
+    invalidated.resolve(undefined)
+    await deletion
+
+    expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-1')
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+  })
+
   it('retains the Project and deletion intent when grant pruning fails, then resumes idempotently', async () => {
     let projectExists = true
     let intentExists = false

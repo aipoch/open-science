@@ -40,6 +40,10 @@ type ProjectPermissionGrantDeletion = {
   finalizeOwnerDeletion?(owner: { kind: 'project'; projectId: string }): Promise<void>
 }
 
+type ProjectDeletionLifecycle = {
+  beforeProjectDelete(projectId: string): Promise<void>
+}
+
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
@@ -53,7 +57,8 @@ class ProjectDeletionCoordinator {
     private readonly preview: PreviewDeletion,
     private readonly reviews?: ProjectReviewDeletion,
     private readonly provenance?: ProjectProvenanceDeletion,
-    private readonly permissionGrants?: ProjectPermissionGrantDeletion
+    private readonly permissionGrants?: ProjectPermissionGrantDeletion,
+    private readonly lifecycle?: ProjectDeletionLifecycle
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
@@ -110,6 +115,7 @@ class ProjectDeletionCoordinator {
     const project = await this.projects.get(projectId)
     if (!project) return
 
+    await this.lifecycle?.beforeProjectDelete(projectId)
     await this.projects.createDeletionIntent(projectId)
     try {
       await this.sessions.deleteProjectSessions(projectId)
@@ -239,5 +245,6 @@ export type {
   ProjectReviewDeletion,
   ProjectProvenanceDeletion,
   ProjectPermissionGrantDeletion,
+  ProjectDeletionLifecycle,
   ProjectSessionDeletion
 }

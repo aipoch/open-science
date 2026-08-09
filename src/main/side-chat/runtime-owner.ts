@@ -271,6 +271,7 @@ class SideChatRuntimeOwner {
   private readonly closingByParent = new Map<string, Promise<void>>()
   private readonly closeRequestedParents = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
+  private readonly invalidatedProjects = new Set<string>()
   private readonly pausedParents = new Set<string>()
   private revision = 0
   private shuttingDown = false
@@ -349,6 +350,9 @@ class SideChatRuntimeOwner {
     if (this.shuttingDown) throw new Error('Side chat is shutting down.')
     if (this.invalidatedParents.has(request.parentSessionId)) {
       throw new Error('The parent Session is unavailable.')
+    }
+    if (this.invalidatedProjects.has(request.projectId)) {
+      throw new Error('The parent Project is unavailable.')
     }
     if (
       this.activeByParent.has(request.parentSessionId) ||
@@ -637,6 +641,21 @@ class SideChatRuntimeOwner {
         }
       })
     )
+  }
+
+  async invalidateProject(projectId: string): Promise<void> {
+    this.invalidatedProjects.add(projectId)
+    const parentSessionIds = new Set<string>()
+    for (const starting of this.startingByParent.values()) {
+      if (starting.projectId === projectId) parentSessionIds.add(starting.parentSessionId)
+    }
+    for (const active of this.activeByParent.values()) {
+      if (active.projectId === projectId) parentSessionIds.add(active.parentSessionId)
+    }
+    for (const dormant of this.dormantByParent.values()) {
+      if (dormant.projectId === projectId) parentSessionIds.add(dormant.parentSessionId)
+    }
+    await this.invalidateParents([...parentSessionIds])
   }
 
   async shutdown(): Promise<void> {

@@ -564,7 +564,11 @@ const createApplicationModules = async (
     previewStateRepository,
     reviewRepository,
     artifactProvenanceRepository,
-    permissionGrantRegistry
+    permissionGrantRegistry,
+    {
+      beforeProjectDelete: (projectId) =>
+        sideChatOwnerRef.current?.invalidateProject(projectId) ?? Promise.resolve()
+    }
   )
   const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
     detectActiveSessions({
