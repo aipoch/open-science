@@ -19,7 +19,8 @@ type PermissionWaitSessions = Pick<
   | 'patchSessionRuntimeContext'
   | 'containsMessageOnActiveBranch'
   | 'loadSessionForPermissionReplay'
->
+> &
+  Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
 
 type RestoredPermissionDecision = Readonly<{
   permission: SessionPermissionRuntimeContext
@@ -123,6 +124,28 @@ class AcpPermissionWaitOwner {
         if (!permission) return undefined
         if (permission.request.requestId !== requestId) {
           throw new Error('A different permission request now owns this Session.')
+        }
+        return undefined
+      },
+      'idle'
+    )
+  }
+
+  async cancelPendingSession(sessionId: string): Promise<boolean> {
+    if (!this.sessions?.sessionProjectId) return false
+    const projectId = await this.sessions.sessionProjectId(sessionId)
+    if (!projectId) return false
+    return this.patch(
+      projectId,
+      sessionId,
+      (context) => {
+        const permission = context.permission
+        if (
+          !permission ||
+          permission.state !== 'pending' ||
+          permission.request.sessionId !== sessionId
+        ) {
+          return permission
         }
         return undefined
       },
@@ -278,12 +301,12 @@ class AcpPermissionWaitOwner {
     sessionId: string,
     update: (context: SessionRuntimeContext) => SessionPermissionRuntimeContext | undefined,
     sessionStatus: 'waiting-permission' | 'running' | 'idle'
-  ): Promise<void> {
-    if (!this.sessions) return
+  ): Promise<boolean> {
+    if (!this.sessions) return false
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
       const permission = update(context)
-      if (permission === context.permission) return
+      if (permission === context.permission) return false
       try {
         await this.sessions.patchSessionRuntimeContext({
           projectId,
@@ -296,11 +319,12 @@ class AcpPermissionWaitOwner {
           const session = await this.sessions.loadSessionForPermissionReplay(projectId, sessionId)
           await this.publishSessionUpdated(session)
         }
-        return
+        return true
       } catch (error) {
         if (!isRevisionConflict(error) || attempt === 2) throw error
       }
     }
+    return false
   }
 }
 

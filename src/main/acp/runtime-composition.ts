@@ -88,6 +88,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
     | 'loadSessionForPermissionReplay'
+    | 'sessionProjectId'
   >
 }
 

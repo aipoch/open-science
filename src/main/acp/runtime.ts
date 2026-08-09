@@ -171,7 +171,8 @@ type AcpRuntimeOptions = {
       | 'patchSessionRuntimeContext'
       | 'containsMessageOnActiveBranch'
       | 'loadSessionForPermissionReplay'
-    >
+    > &
+      Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
@@ -999,6 +1000,34 @@ class AcpRuntime {
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)
       this.emitState()
       return this.getSnapshot()
+    }
+
+    if (!interactionInFlight && !durablePermission) {
+      try {
+        if (await this.permissionWaitOwner.cancelPendingSession(request.sessionId)) {
+          this.restoredPermissionContextResetSessionIds?.delete(request.sessionId)
+          this.permissionContext.clearRestoredDecision(request.sessionId)
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId: request.sessionId,
+            title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+            text: 'cancelled'
+          })
+          this.emitState()
+          return this.getSnapshot()
+        }
+      } catch (error) {
+        this.pushEvent({
+          kind: 'permission',
+          level: 'error',
+          sessionId: request.sessionId,
+          title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+          text: errorMessage(error)
+        })
+        this.emitState()
+        return this.getSnapshot()
+      }
     }
 
     let cancellationAccepted = false

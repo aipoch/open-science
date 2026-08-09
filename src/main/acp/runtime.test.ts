@@ -1596,6 +1596,59 @@ describe('ACP runtime provider prompt acceptance', () => {
 })
 
 describe('ACP runtime restored permission continuation', () => {
+  it('cancels restored pending authority without a live ACP interaction', async () => {
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        request: {
+          requestId: 'permission-restored',
+          sessionId: 'restored-session',
+          toolCallId: 'tool-restored',
+          title: 'Run npm test',
+          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+        },
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: 'a'.repeat(64),
+        createdAt: 1
+      }
+    }
+    const patchSessionRuntimeContext = vi.fn(async (command) => {
+      runtimeContext = {
+        ...runtimeContext,
+        ...command.patch,
+        revision: runtimeContext.revision + 1
+      }
+      return structuredClone(runtimeContext)
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext,
+          containsMessageOnActiveBranch: vi.fn(async () => true),
+          loadSessionForPermissionReplay: vi.fn(),
+          sessionProjectId: vi.fn(async () => 'project-1')
+        }
+      }
+    })
+
+    await runtime.cancelPrompt({ sessionId: 'restored-session' })
+
+    expect(runtimeContext.permission).toBeUndefined()
+    expect(patchSessionRuntimeContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'restored-session',
+        patch: { permission: undefined },
+        sessionStatus: 'idle'
+      })
+    )
+  })
+
   it.each([
     ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
     ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],

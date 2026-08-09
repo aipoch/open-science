@@ -106,7 +106,34 @@ const seedHomeActivitySessions = async (page: Page, cwd: string): Promise<void> 
           title: 'Review a long session result on iPhone',
           cwd: sessionCwd,
           status: 'waiting-permission',
-          messages: [],
+          messages: [
+            {
+              id: 'mobile-needs-you-prompt',
+              role: 'user',
+              content: 'Run the mobile verification.',
+              status: 'complete',
+              eventIds: [],
+              createdAt: now - 2_000,
+              updatedAt: now - 2_000
+            }
+          ],
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            permission: {
+              state: 'pending',
+              request: {
+                requestId: 'mobile-needs-you-permission',
+                sessionId: 'mobile-needs-you-session',
+                toolCallId: 'mobile-needs-you-tool',
+                title: 'Run mobile verification',
+                options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+              },
+              originatingPromptMessageId: 'mobile-needs-you-prompt',
+              fingerprint: 'a'.repeat(64),
+              createdAt: now - 1_000
+            }
+          },
           createdAt: now - 2_000,
           updatedAt: now - 1_000
         },
