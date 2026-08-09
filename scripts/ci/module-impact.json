@@ -124,6 +124,7 @@
     "reviewer_orchestrator": {
       "ownerPaths": [
         "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/review-assessment-owner.ts",
         "src/main/reviewer/reviewer-session-driver.ts"
       ],
       "interfacePaths": [
@@ -134,6 +135,7 @@
       "consumerModules": ["workspace_runtime", "workspace_page", "artifact_provenance"],
       "testFiles": {
         "owner": [
+          "src/main/reviewer/review-assessment-owner.test.ts",
           "src/main/reviewer/orchestrator.test.ts",
           "src/main/reviewer/orchestrator-drive.test.ts",
           "src/main/reviewer/log-capture.test.ts",
