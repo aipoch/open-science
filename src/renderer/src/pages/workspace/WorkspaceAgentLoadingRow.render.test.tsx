@@ -14,14 +14,25 @@ let root: Root
 
 // A running session whose turn started `startedAgoMs` ago, optionally with a latest agent status line.
 const seedRunningSession = (startedAgoMs: number, agentStatus?: string): void => {
+  const startedAt = Date.now() - startedAgoMs
   const session: ChatSession = {
     id: 's1',
     projectId: 'p1',
     title: 's1',
     cwd: '/workspace',
     status: 'running',
-    messages: [],
-    activeRun: { promptMessageId: 'm1', startedAt: Date.now() - startedAgoMs },
+    messages: [
+      {
+        id: 'm1',
+        role: 'user',
+        content: 'Prompt',
+        status: 'complete',
+        eventIds: [],
+        createdAt: startedAt,
+        updatedAt: startedAt
+      }
+    ],
+    activeRun: { promptMessageId: 'm1', startedAt },
     agentStatus,
     createdAt: 0,
     updatedAt: 0
@@ -45,11 +56,11 @@ afterEach(() => {
 })
 
 describe('WorkspaceAgentLoadingRow', () => {
-  it('starts elapsed time when the indicator mounts', () => {
+  it('starts elapsed time from the Session timeline', () => {
     seedRunningSession(5000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
-    expect(container.textContent).toContain('0:00')
+    expect(container.textContent).toContain('0:05')
     expect(container.textContent).toContain('Thinking')
     const indicator = container.querySelector('[data-testid="open-science-thinking-indicator"]')
     expect(indicator).not.toBeNull()
@@ -71,18 +82,11 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(statusRow?.classList.contains('text-text-300')).toBe(false)
   })
 
-  it('adds a "taking longer than usual" hint after the indicator stays visible', () => {
+  it('shows the slow hint when the Session has already been thinking long enough', () => {
     seedRunningSession(45_000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
-    expect(container.textContent).toContain('0:00')
-    expect(container.textContent).not.toContain('taking longer than usual')
-
-    act(() => {
-      vi.advanceTimersByTime(21_000)
-    })
-
-    expect(container.textContent).toContain('0:21')
+    expect(container.textContent).toContain('0:45')
     expect(container.textContent).toContain('taking longer than usual')
   })
 
@@ -90,41 +94,39 @@ describe('WorkspaceAgentLoadingRow', () => {
     seedRunningSession(5000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
-    expect(container.textContent).toContain('0:00')
+    expect(container.textContent).toContain('0:05')
 
     // The row ticks once a second; advancing the clock should move the label forward.
     act(() => {
       vi.advanceTimersByTime(3000)
     })
 
-    expect(container.textContent).toContain('0:03')
-    expect(container.textContent).not.toContain('0:00')
+    expect(container.textContent).toContain('0:08')
+    expect(container.textContent).not.toContain('0:05')
   })
 
   it('crosses into the "taking longer than usual" hint as time passes the threshold', () => {
-    // The active turn age does not count toward this mount's slow-hint threshold.
     seedRunningSession(18_000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
 
-    expect(container.textContent).toContain('0:00')
+    expect(container.textContent).toContain('0:18')
     expect(container.textContent).not.toContain('taking longer than usual')
 
-    // Advance past 20s: the label keeps ticking and the slow hint appears.
     act(() => {
-      vi.advanceTimersByTime(21_000)
+      vi.advanceTimersByTime(3000)
     })
 
     expect(container.textContent).toContain('0:21')
     expect(container.textContent).toContain('taking longer than usual')
   })
 
-  it('resets elapsed time after the indicator unmounts and mounts again', () => {
+  it('keeps elapsed time after navigating away and returning', () => {
     seedRunningSession(45_000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
     act(() => {
       vi.advanceTimersByTime(8000)
     })
-    expect(container.textContent).toContain('0:08')
+    expect(container.textContent).toContain('0:53')
 
     act(() => root.render(null))
     act(() => {
@@ -132,8 +134,39 @@ describe('WorkspaceAgentLoadingRow', () => {
       root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />)
     })
 
-    expect(container.textContent).toContain('0:00')
-    expect(container.textContent).not.toContain('0:13')
+    expect(container.textContent).toContain('0:58')
+    expect(container.textContent).not.toContain('0:00')
+  })
+
+  it('keeps an independent elapsed time when switching Sessions', () => {
+    seedRunningSession(5000)
+    const firstSession = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({
+      sessions: [
+        firstSession,
+        {
+          ...firstSession,
+          id: 's2',
+          title: 's2',
+          activeRun: { promptMessageId: 'm1', startedAt: Date.now() - 10_000 }
+        }
+      ]
+    })
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
+
+    expect(container.textContent).toContain('0:05')
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+      root.render(<AgentLoadingIndicator sessionId="s2" phase="thinking" />)
+    })
+    expect(container.textContent).toContain('0:12')
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+      root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />)
+    })
+    expect(container.textContent).toContain('0:09')
   })
 
   it('surfaces the latest agent status line when present', () => {
@@ -176,17 +209,44 @@ describe('WorkspaceAgentLoadingRow', () => {
     act(() => {
       vi.advanceTimersByTime(8000)
     })
-    expect(container.textContent).toContain('0:08')
+    expect(container.textContent).toContain('0:53')
 
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="interacting-with-tools" />))
-    expect(container.textContent).not.toContain('0:08')
+    expect(container.textContent).not.toContain('0:53')
 
     act(() => {
       vi.advanceTimersByTime(5000)
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 's1'
+            ? {
+                ...session,
+                activities: [
+                  {
+                    id: 'tool-1',
+                    kind: 'tool',
+                    title: 'Read files',
+                    status: 'completed',
+                    eventIds: ['tool-event-1'],
+                    sortIndex: 2,
+                    promptMessageId: 'm1',
+                    createdAt: Date.now() - 1000,
+                    updatedAt: Date.now()
+                  }
+                ]
+              }
+            : session
+        )
+      }))
       root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />)
     })
 
     expect(container.textContent).toContain('0:00')
-    expect(container.textContent).not.toContain('0:13')
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+
+    expect(container.textContent).toContain('0:03')
   })
 })

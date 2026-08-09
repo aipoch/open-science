@@ -4,7 +4,7 @@ import { OpenScienceThinkingIndicator } from '@/components/OpenScienceThinkingIn
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { useSessionStore } from '@/stores/session-store'
-import type { AgentLoadingPhase } from './agent-loading-message'
+import { getAgentThinkingStartedAt, type AgentLoadingPhase } from './agent-loading-message'
 
 type WorkspaceAgentLoadingRowProps = {
   sessionId: string
@@ -27,13 +27,11 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-// Thinking owns only silent model waits. Keeping its timer in this phase-specific child resets the
-// elapsed time whenever tool interaction ends and Thinking mounts again.
 const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX.Element => {
-  const status = useSessionStore(
-    (state) => state.sessions.find((session) => session.id === sessionId)?.agentStatus
+  const session = useSessionStore((state) =>
+    state.sessions.find((candidate) => candidate.id === sessionId)
   )
-  const [startedAt] = useState(() => Date.now())
+  const [mountedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
 
   // Tick once a second so the elapsed label stays live while the turn runs.
@@ -43,7 +41,7 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
     return () => clearInterval(timer)
   }, [])
 
-  const elapsedMs = now - startedAt
+  const elapsedMs = now - (getAgentThinkingStartedAt(session) ?? mountedAt)
   const slow = elapsedMs >= SLOW_HINT_AFTER_MS
 
   return (
@@ -56,9 +54,9 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
         </span>
         {slow ? <span aria-hidden="true">· taking longer than usual</span> : null}
       </div>
-      {status ? (
-        <span className="truncate text-[11px] text-text-000/70" title={status}>
-          {status}
+      {session?.agentStatus ? (
+        <span className="truncate text-[11px] text-text-000/70" title={session.agentStatus}>
+          {session.agentStatus}
         </span>
       ) : null}
     </>
