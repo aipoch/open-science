@@ -749,6 +749,10 @@ describe('project prisma client (integration)', () => {
     const renamed = await repository.update({ id: created.id, name: 'Renamed' })
     expect(renamed.name).toBe('Renamed')
 
+    const pinned = await repository.update({ id: created.id, pinned: true })
+    expect(pinned.pinned).toBe(true)
+    expect(pinned.updatedAt).toBe(renamed.updatedAt)
+
     // Any project is deletable — there is no protected default.
     await repository.delete(created.id)
     expect(await repository.get(created.id)).toBeNull()
