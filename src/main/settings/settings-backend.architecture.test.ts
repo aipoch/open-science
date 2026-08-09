@@ -455,6 +455,7 @@ describe('Settings backend ownership architecture', () => {
     ).toEqual(['acquire'])
     expect(publicOperationsOf(settingsPaths.responsesBridge, 'ResponsesBridge')).toEqual([
       'close',
+      'registerHostMessageSession',
       'registerReviewerSession',
       'registerToolLessSession',
       'selectSkills',
@@ -462,6 +463,7 @@ describe('Settings backend ownership architecture', () => {
       'setReasoningEffort',
       'setTarget',
       'start',
+      'unregisterHostMessageSession',
       'unregisterReviewerSession',
       'unregisterToolLessSession'
     ])
@@ -535,7 +537,8 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.backendResolver)).toEqual([
       'src/main/acp/artifact-code-reconstruction-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
-      'src/main/settings/service.ts'
+      'src/main/settings/service.ts',
+      'src/main/side-chat/runtime-owner.ts'
     ])
     expect(importersOf(settingsPaths.backendRoutePlanner)).toEqual([
       'src/main/settings/backend-resolver.ts',
