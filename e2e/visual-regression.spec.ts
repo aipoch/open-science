@@ -197,7 +197,7 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
     const updates = page.getByRole('region', { name: 'Session updates' })
     const cardGrid = updates.locator(':scope > div')
     const cards = updates.getByRole('button')
-    const availableWidth = await page.evaluate(() => document.documentElement.clientWidth)
+    const availableWidth = await page.getByRole('main').evaluate((element) => element.clientWidth)
     const expectedInset = width < 768 ? 16 : 32
     const expectedCardWidth =
       width < 768
