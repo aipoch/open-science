@@ -177,6 +177,41 @@ describe('ArchiveCoordinator', () => {
     await expect(archive).resolves.toMatchObject({ archivedAt: 50 })
   })
 
+  it('rejects a Session archive while its runtime activity is still busy', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(
+        async (_request: unknown, isRuntimeBusy: () => boolean): Promise<typeof session> => {
+          if (isRuntimeBusy()) throw new Error('Finish or stop this session before archiving.')
+          return session
+        }
+      ),
+      sessionProjectId: vi.fn()
+    }
+    const runtime = {
+      isSessionBusy: vi.fn().mockReturnValue(true),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, runtime)
+
+    await expect(
+      coordinator.updateSessionArchive({
+        projectId: project.id,
+        sessionId: session.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+
+    expect(runtime.isSessionBusy).toHaveBeenCalledWith(project.id, session.id)
+  })
+
   it('rejects a project archive while a fresh live session is running', async () => {
     const projects = {
       get: vi.fn().mockResolvedValue(project),

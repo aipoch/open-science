@@ -581,6 +581,7 @@ const createApplicationModules = async (
     sessionPersistenceCoordinator,
     {
       isSessionBusy: (projectId, sessionId) =>
+        sideChatOwnerRef.current?.hasForParent(sessionId) === true ||
         detectArchiveBlockingSessions().some(
           (session) => session.projectId === projectId && session.sessionId === sessionId
         ),
