@@ -20,6 +20,10 @@ import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, AVATAR_ICONS } from './specialist-icons'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SettingsIconAction } from './SettingsLayout'
+import {
+  getSettingsSearchKeyShortcuts,
+  useSettingsSearchShortcut
+} from './settings-search-shortcut'
 
 type SpecialistEditorProps = {
   onCancel: () => void
@@ -153,6 +157,8 @@ const SpecialistEditor = ({
   const [connectorPopoverOpen, setConnectorPopoverOpen] = useState(false)
   const skillDropdownRef = useRef<HTMLDivElement>(null)
   const connectorDropdownRef = useRef<HTMLDivElement>(null)
+  useSettingsSearchShortcut(skillSearchRef, skillPopoverOpen)
+  useSettingsSearchShortcut(connectorSearchRef, connectorPopoverOpen)
   const skillTriggerRef = useRef<HTMLButtonElement>(null)
   const connectorTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -870,6 +876,8 @@ const SpecialistEditor = ({
                           <input
                             ref={skillSearchRef}
                             type="search"
+                            aria-label="Search skills to add"
+                            aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
                             placeholder="Search skills…"
                             value={skillSearchQuery}
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
@@ -922,6 +930,8 @@ const SpecialistEditor = ({
                           <input
                             ref={connectorSearchRef}
                             type="search"
+                            aria-label="Search connectors to add"
+                            aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
                             placeholder="Search connectors…"
                             value={connectorSearchQuery}
                             onChange={(e) => setConnectorSearchQuery(e.target.value)}

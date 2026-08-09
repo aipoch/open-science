@@ -155,11 +155,18 @@ export const ArtifactMentionPopup = ({
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
-      } else if (event.key === 'Enter') {
+      } else if (
+        event.key === 'Enter' ||
+        (event.key === 'Tab' &&
+          !event.shiftKey &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey)
+      ) {
         // The popup owns Enter for its entire mounted lifetime. In particular, do not let the editor
         // submit a raw @query while the asynchronous Project Files page is still loading.
-        event.preventDefault()
         const active = matches[safeIndex]
+        if (event.key === 'Enter' || active) event.preventDefault()
         if (active) {
           onSelect(toPicked(active))
         }
@@ -284,7 +291,7 @@ export const ArtifactMentionPopup = ({
           <span className="text-text-300">↑↓</span> navigate
         </span>
         <span>
-          <span className="text-text-300">Enter</span> select
+          <span className="text-text-300">Enter / Tab</span> select
         </span>
         <span>
           <span className="text-text-300">Esc</span> close

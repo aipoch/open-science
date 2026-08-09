@@ -1,13 +1,4 @@
-import {
-  ChevronDown,
-  Download,
-  FileUp,
-  FolderInput,
-  Pencil,
-  Plus,
-  Search,
-  Trash2
-} from 'lucide-react'
+import { ChevronDown, Download, FileUp, FolderInput, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -18,7 +9,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillDetailView } from './SkillDetailView'
@@ -27,6 +17,7 @@ import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
 import { SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsSearchInput } from './SettingsSearchInput'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
@@ -210,20 +201,12 @@ const SkillsPanel = ({
             <SelectItem value="personal">Personal</SelectItem>
           </SelectContent>
         </Select>
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            aria-label="Search skills"
-            placeholder="Search skills…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="pl-8"
-          />
-        </div>
+        <SettingsSearchInput
+          aria-label="Search skills"
+          placeholder="Search skills…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">

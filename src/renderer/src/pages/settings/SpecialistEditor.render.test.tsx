@@ -302,6 +302,49 @@ describe('SpecialistEditor', () => {
     )
   })
 
+  it('focuses the open capability search with Cmd/Ctrl+K', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={vi.fn()} />)
+    })
+    await act(async () => {
+      fireEvent.click(document.body.querySelector<HTMLElement>('[aria-label="Full access"]')!)
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === '＋ Add a skill'
+        )!
+      )
+    })
+
+    const search = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Search skills to add"]'
+    )
+    expect(search).not.toBeNull()
+    search?.blur()
+    const shortcutEvent = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true
+    })
+    await act(async () => window.dispatchEvent(shortcutEvent))
+
+    expect(shortcutEvent.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(search)
+    expect(search?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
+  })
+
   it('shows a field-level error instead of submitting a duplicate name', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     await act(async () => {

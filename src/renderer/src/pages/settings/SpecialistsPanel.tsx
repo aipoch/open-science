@@ -11,7 +11,6 @@ import {
   MessagesSquare,
   Pencil,
   Plus,
-  Search,
   Trash2,
   Upload
 } from 'lucide-react'
@@ -31,7 +30,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { specialistDiagnosticCopy } from '@/lib/specialist-diagnostics'
 import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
@@ -48,6 +46,7 @@ import type {
   SpecialistDeleteResult
 } from '../../../../shared/specialist-package'
 import { SpecialistEditor } from './SpecialistEditor'
+import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAvatar } from './specialist-avatar'
 
 // Sub-view for the Specialists panel (parallels SkillsView).
@@ -1039,20 +1038,12 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             )
           })}
         </div>
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            aria-label="Search specialists"
-            placeholder="Search specialists…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="pl-8"
-          />
-        </div>
+        <SettingsSearchInput
+          aria-label="Search specialists"
+          placeholder="Search specialists…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">
