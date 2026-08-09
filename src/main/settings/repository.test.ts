@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sanitizeSettings } from './document-codec'
+import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredProvider } from './types'
 
@@ -661,6 +662,28 @@ describe('settings repository', () => {
 
     const settings = await repository.getSettings()
     expect(settings.providers.map((item) => item.id).sort()).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('preserves concurrent mutations from Settings and legacy Compute callers', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const settings = new SettingsRepository(store)
+    const legacyCompute = new SettingsRepository(store)
+
+    await Promise.all([
+      settings.upsertProvider(provider({ id: 'p-settings' })),
+      legacyCompute.addComputeGrant({
+        projectId: 'project-1',
+        operation: 'submit_job',
+        providerId: 'ssh:cluster'
+      })
+    ])
+
+    await expect(settings.getSettings()).resolves.toMatchObject({
+      providers: [expect.objectContaining({ id: 'p-settings' })],
+      computeGrants: [
+        { projectId: 'project-1', operation: 'submit_job', providerId: 'ssh:cluster' }
+      ]
+    })
   })
 
   it('stamps onboardingCompletedAt once and is idempotent', async () => {

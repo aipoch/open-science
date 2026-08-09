@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
@@ -23,7 +21,6 @@ import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-
 import type { CloseActionPreference } from '../../shared/window-controls'
 import { customConnectorSlug } from '../../shared/custom-connector'
 import {
-  createEmptySettings,
   type StoredComputeGrant,
   type StoredConnectors,
   type StoredCodexInfo,
@@ -33,32 +30,20 @@ import {
 } from './types'
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
+import { SettingsDocumentStore } from './document-store'
 
-const SETTINGS_FILE = 'settings.json'
-
-// Owns durable reads/writes of the single settings.json document. Writes are serialized through a
-// queue and made atomic (temp + rename); an unreadable file falls back to empty settings so the app
-// still boots into onboarding. All secret handling lives above this layer (crypto.ts / service.ts);
-// the repository only persists whatever records it is given.
+// Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
+// secret handling remains above this layer in crypto.ts and service.ts.
 class SettingsRepository {
-  private saveQueue: Promise<void> = Promise.resolve()
-  private writeSequence = 0
+  private readonly store: SettingsDocumentStore
 
-  constructor(private readonly storageDir: string) {}
-
-  private get settingsPath(): string {
-    return join(this.storageDir, SETTINGS_FILE)
+  constructor(storage: string | SettingsDocumentStore) {
+    this.store = typeof storage === 'string' ? new SettingsDocumentStore(storage) : storage
   }
 
   // Reads and sanitizes the settings document, returning empty settings when nothing is stored yet.
   async getSettings(): Promise<StoredSettings> {
-    try {
-      const raw = await readFile(this.settingsPath, 'utf8')
-
-      return sanitizeSettings(JSON.parse(raw) as unknown)
-    } catch {
-      return createEmptySettings()
-    }
+    return this.store.read()
   }
 
   // Inserts or replaces a provider by id, then returns the persisted document. An existing provider is
@@ -653,33 +638,7 @@ class SettingsRepository {
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
   private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
-    const run = this.saveQueue.then(async () => {
-      const current = await this.getSettings()
-      const next = update(current)
-
-      await this.writeSettings(next)
-
-      return next
-    })
-
-    // Keep the queue chained even when a write rejects so later mutations still run.
-    this.saveQueue = run.then(
-      () => undefined,
-      () => undefined
-    )
-
-    return run
-  }
-
-  // Writes through a unique temp file, then atomically replaces settings.json.
-  private async writeSettings(settings: StoredSettings): Promise<void> {
-    await mkdir(this.storageDir, { recursive: true })
-
-    this.writeSequence += 1
-    const temporaryPath = `${this.settingsPath}.${Date.now()}-${this.writeSequence}.tmp`
-
-    await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
-    await rename(temporaryPath, this.settingsPath)
+    return this.store.mutate(update)
   }
 }
 

@@ -353,15 +353,20 @@ describe('Compute service architecture', () => {
       'src/main/compute/compute-host-profile-owner.ts',
       'src/main/compute/compute-job-workflow-owner.ts',
       'src/main/compute/compute-remote-operation-owner.ts',
+      'src/main/compute/permission-grant-adapter.ts',
       'src/main/compute/compute-service.ts'
     ])
-    expect(computeService.interfacePaths).toEqual(['src/main/compute/compute-service.ts'])
+    expect(computeService.interfacePaths).toEqual([
+      'src/main/compute/compute-service.ts',
+      'src/main/compute/ipc.ts'
+    ])
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
         'src/main/compute/compute-host-profile-owner.test.ts',
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',
+        'src/main/compute/permission-grant-adapter.test.ts',
         'src/main/compute/compute-service.test.ts'
       ])
     )

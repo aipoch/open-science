@@ -161,7 +161,8 @@ import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './set
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
 import { LocalFsService } from './local-fs/service'
 import { getAppClaudeConfigDir } from './settings/provider-env'
-import { createDefaultSettingsService } from './settings/service'
+import { SettingsService } from './settings/service'
+import { SettingsRepository } from './settings/repository'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createSettingsWorkflows } from './settings/workflows'
@@ -336,8 +337,9 @@ const createApplicationModules = async (
     createApplicationEventModule
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
+  const settingsRepository = new SettingsRepository(resolveStorageRoot())
   const settingsService = await modules.add(undefined, () => ({
-    capability: createDefaultSettingsService()
+    capability: new SettingsService({ repository: settingsRepository })
   }))
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
@@ -960,7 +962,8 @@ const createApplicationModules = async (
     computeArtifactResolver,
     undefined,
     taskNotifications,
-    permissionGrantRegistry
+    permissionGrantRegistry,
+    settingsRepository
   )
   surfaceAdapters = beforeAcpAdapters
   const {

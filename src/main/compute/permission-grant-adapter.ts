@@ -5,10 +5,19 @@ import {
   type PermissionGrantRegistry
 } from '../permission-grants/registry'
 
-type LegacyComputeGrantRepository = {
-  listComputeGrants(): Promise<Array<{ projectId: string; operation: string; providerId: string }>>
+type LegacyComputeGrant = { projectId: string; operation: string; providerId: string }
+
+type LegacyComputeGrantPort = {
+  listComputeGrants(): Promise<LegacyComputeGrant[]>
   clearComputeGrants(): Promise<void>
+  hasComputeGrant(grant: LegacyComputeGrant): Promise<boolean>
+  addComputeGrant(grant: LegacyComputeGrant): Promise<unknown>
 }
+
+type LegacyComputeGrantMigrationPort = Pick<
+  LegacyComputeGrantPort,
+  'listComputeGrants' | 'clearComputeGrants'
+>
 
 type ComputeGrantContext = {
   projectId: string
@@ -54,7 +63,7 @@ const computeScope = (
 
 const createComputePermissionGrantAdapter = (
   registry: PermissionGrantRegistry,
-  legacy?: LegacyComputeGrantRepository
+  legacy?: LegacyComputeGrantMigrationPort
 ): ComputePermissionGrantAdapter => {
   let migration: Promise<void> | undefined
   const migrateLegacy = (): Promise<void> => {
@@ -131,4 +140,4 @@ const createComputePermissionGrantAdapter = (
 }
 
 export { createComputePermissionGrantAdapter }
-export type { ComputeGrantContext, ComputePermissionGrantAdapter, LegacyComputeGrantRepository }
+export type { ComputeGrantContext, ComputePermissionGrantAdapter, LegacyComputeGrantPort }

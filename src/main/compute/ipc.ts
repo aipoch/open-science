@@ -32,8 +32,8 @@ import { encodeRemoteFsError } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
-import { SettingsRepository } from '../settings/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { broadcastToRenderers } from '../renderer-broadcast'
@@ -52,7 +52,10 @@ import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enab
 import { getJobHarvestDir } from './harvest-engine'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import { createComputePermissionGrantAdapter } from './permission-grant-adapter'
+import {
+  createComputePermissionGrantAdapter,
+  type LegacyComputeGrantPort
+} from './permission-grant-adapter'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
 
 // IPC channel names for the renderer job feed (Phase 3d, issue 05).
@@ -198,7 +201,7 @@ const createComputeHandlers = (
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
-  settingsRepository?: SettingsRepository,
+  legacyComputeGrants?: LegacyComputeGrantPort,
   jobRepository?: ComputeJobRepository,
   onJobUpdated?: (job: ComputeJob) => void,
   artifactResolver?: ArtifactResolver,
@@ -211,7 +214,7 @@ const createComputeHandlers = (
   syncComputeSkillDocument?: () => Promise<void>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
-    ? createComputePermissionGrantAdapter(permissionGrantRegistry, settingsRepository)
+    ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
     : undefined
   if (permissionGrants) {
     void permissionGrants
@@ -241,14 +244,14 @@ const createComputeHandlers = (
       onSettled: taskNotifications
         ? (id, state) => void taskNotifications.settleAuthorization('compute', id, state)
         : undefined,
-      // Isolated legacy callers retain their old hooks. Production uses only the Registry adapter.
+      // Isolated/no-Registry callers retain the former settings-backed Project grant behavior.
       checkProjectGrant:
-        settingsRepository && !permissionGrantRegistry
-          ? (grant) => settingsRepository.hasComputeGrant(grant)
+        legacyComputeGrants && !permissionGrantRegistry
+          ? (grant) => legacyComputeGrants.hasComputeGrant(grant)
           : undefined,
       saveProjectGrant:
-        settingsRepository && !permissionGrantRegistry
-          ? (grant) => settingsRepository.addComputeGrant(grant).then(() => undefined)
+        legacyComputeGrants && !permissionGrantRegistry
+          ? (grant) => legacyComputeGrants.addComputeGrant(grant).then(() => undefined)
           : undefined,
       isProviderCurrent: async ({ providerId, ownerId }) => {
         const current = await repository.get(providerId)
@@ -482,14 +485,13 @@ const createComputeIpcModule = (
     TaskNotificationService,
     'handleComputeApproval' | 'settleAuthorization'
   >,
-  permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantRegistry?: PermissionGrantRegistry,
+  legacyComputeGrants?: LegacyComputeGrantPort
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
-
-  // Read the legacy settings repository only for lazy one-way Project grant import. New remembered
-  // approvals are written exclusively through the SQLite PermissionGrant Registry.
-  const settingsRepo = new SettingsRepository(storageRoot)
+  const effectiveLegacyComputeGrants =
+    legacyComputeGrants ?? createSettingsComputeGrantPort(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
   const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot)
@@ -499,7 +501,7 @@ const createComputeIpcModule = (
     undefined,
     injectedService,
     undefined,
-    settingsRepo,
+    effectiveLegacyComputeGrants,
     jobRepository,
     onJobUpdated,
     artifactResolver,

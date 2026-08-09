@@ -40,6 +40,8 @@ const settingsPaths = {
   repository: resolve(settingsRoot, 'repository.ts'),
   recordCodec: resolve(settingsRoot, 'record-codec.ts'),
   documentCodec: resolve(settingsRoot, 'document-codec.ts'),
+  documentStore: resolve(settingsRoot, 'document-store.ts'),
+  computeGrantPort: resolve(settingsRoot, 'compute-grant-port.ts'),
   providerAccounts: resolve(settingsRoot, 'provider-accounts.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   backendSelection: resolve(settingsRoot, 'backend-selection-owner.ts'),
@@ -213,23 +215,6 @@ const publicOperationsOf = (path: string, className: string): string[] => {
     .sort()
 }
 
-const privatePropertiesOf = (path: string, className: string): string[] => {
-  const sourceFile = sourceFileFor(path)
-  const declaration = sourceFile.statements.find(
-    (statement) => isClassDeclaration(statement) && statement.name?.text === className
-  )
-  if (!declaration || !isClassDeclaration(declaration)) throw new Error(`${className} not found`)
-
-  return declaration.members
-    .flatMap((member) => {
-      const isPrivate =
-        isPropertyDeclaration(member) &&
-        getModifiers(member)?.some((modifier) => modifier.kind === SyntaxKind.PrivateKeyword)
-      return isPrivate && isIdentifier(member.name) ? [member.name.text] : []
-    })
-    .sort()
-}
-
 const typePropertyNames = (path: string, typeName: string): string[] => {
   const sourceFile = sourceFileFor(path)
   const declaration = sourceFile.statements.find(
@@ -268,9 +253,11 @@ const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
   it('holds the current facade ceilings until their owner cutovers', () => {
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(700)
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.documentStore))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.computeGrantPort))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1357)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
@@ -284,6 +271,9 @@ describe('Settings backend ownership architecture', () => {
       'value:sanitizeCustomMcpServer',
       'value:sanitizePackageMirror',
       'value:sanitizeSettings'
+    ])
+    expect(exportInventoryFrom(settingsPaths.computeGrantPort)).toEqual([
+      'value:createSettingsComputeGrantPort'
     ])
     expect(exportInventoryFrom(settingsPaths.providerAccounts)).toEqual([
       'type:ProviderAccountsModuleOptions',
@@ -468,8 +458,9 @@ describe('Settings backend ownership architecture', () => {
 
   it('locks the current production importer graph at the public seams', () => {
     expect(importersOf(settingsPaths.repository)).toEqual([
-      'src/main/compute/ipc.ts',
+      'src/main/ipc.ts',
       'src/main/settings/agent-runtime-manager.ts',
+      'src/main/settings/compute-grant-port.ts',
       'src/main/settings/connector-settings.ts',
       'src/main/settings/notebook-runtime-settings.ts',
       'src/main/settings/preferences.ts',
@@ -482,7 +473,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/document-codec.ts',
       'src/main/settings/repository.ts'
     ])
-    expect(importersOf(settingsPaths.documentCodec)).toEqual(['src/main/settings/repository.ts'])
+    expect(importersOf(settingsPaths.documentCodec)).toEqual([
+      'src/main/settings/document-store.ts',
+      'src/main/settings/repository.ts'
+    ])
+    expect(importersOf(settingsPaths.documentStore)).toEqual(['src/main/settings/repository.ts'])
+    expect(importersOf(settingsPaths.computeGrantPort)).toEqual(['src/main/compute/ipc.ts'])
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/backend-resolver.ts',
@@ -574,24 +570,21 @@ describe('Settings backend ownership architecture', () => {
     )
   })
 
-  it('characterizes the same-root, independently queued repository composition before D3', () => {
+  it('locks one production Settings arbitration owner and the narrow Compute legacy port', () => {
     expect(constructorSitesFor(settingsPaths.repository, 'SettingsRepository')).toEqual([
-      'src/main/compute/ipc.ts',
+      'src/main/ipc.ts',
+      'src/main/settings/compute-grant-port.ts',
       'src/main/settings/service.ts'
     ])
-    expect(privatePropertiesOf(settingsPaths.repository, 'SettingsRepository')).toEqual(
-      expect.arrayContaining(['saveQueue', 'writeSequence'])
-    )
-    expect(readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))).toContain(
-      'const storageRoot = resolveStorageRoot()'
-    )
-    expect(readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))).toContain(
-      'new SettingsRepository(storageRoot)'
-    )
-    expect(readSource(settingsPaths.service)).toContain(
-      'this.storageRoot = options.storageRoot ?? resolveStorageRoot()'
-    )
-    expect(readSource(settingsPaths.service)).toContain('new SettingsRepository(this.storageRoot)')
+    const computeIpc = readSource(resolve(projectRoot, 'src/main/compute/ipc.ts'))
+    expect(computeIpc).not.toContain("from '../settings/repository'")
+    expect(computeIpc).toContain('legacyComputeGrants?: LegacyComputeGrantPort')
+    expect(computeIpc).toContain('legacyComputeGrants && !permissionGrantRegistry')
+    expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
+    expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
+    const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
+    expect(mainIpc).toContain('new SettingsService({ repository: settingsRepository })')
+    expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 
   it('locks dependency-aware impact owners and cross-surface evidence', () => {
@@ -599,7 +592,9 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
       'src/main/settings/record-codec.ts',
-      'src/main/settings/document-codec.ts'
+      'src/main/settings/document-codec.ts',
+      'src/main/settings/document-store.ts',
+      'src/main/settings/compute-grant-port.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',

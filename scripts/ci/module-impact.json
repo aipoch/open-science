@@ -176,9 +176,10 @@
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-workflow-owner.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
+        "src/main/compute/permission-grant-adapter.ts",
         "src/main/compute/compute-service.ts"
       ],
-      "interfacePaths": ["src/main/compute/compute-service.ts"],
+      "interfacePaths": ["src/main/compute/compute-service.ts", "src/main/compute/ipc.ts"],
       "consumerModules": [],
       "testFiles": {
         "owner": [
@@ -186,6 +187,7 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
+          "src/main/compute/permission-grant-adapter.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
           "src/main/compute/concurrency-integration.test.ts"
@@ -214,7 +216,9 @@
       "ownerPaths": [
         "src/main/settings/repository.ts",
         "src/main/settings/record-codec.ts",
-        "src/main/settings/document-codec.ts"
+        "src/main/settings/document-codec.ts",
+        "src/main/settings/document-store.ts",
+        "src/main/settings/compute-grant-port.ts"
       ],
       "interfacePaths": ["src/main/settings/repository.ts"],
       "consumerModules": [
@@ -225,6 +229,7 @@
       "testFiles": {
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/document-store.test.ts",
           "src/main/settings/document-codec.test.ts",
           "src/main/settings/record-codec.test.ts",
           "src/main/settings/repository.test.ts",
@@ -237,6 +242,7 @@
         "consumer": [
           "src/main/settings/service.test.ts",
           "src/main/compute/ipc.test.ts",
+          "src/main/compute/permission-grant-adapter.test.ts",
           "src/main/settings/agent-runtime-manager.test.ts",
           "src/main/settings/connector-settings.test.ts",
           "src/main/settings/notebook-runtime-settings.test.ts",
