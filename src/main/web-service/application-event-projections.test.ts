@@ -73,6 +73,34 @@ describe('application event projections', () => {
     }
   })
 
+  it('projects Reviewer events to Web while keeping them out of public Task', () => {
+    const events: ApplicationEvent[] = [
+      { channel: 'reviewer:updated', payload: { review: {} as never } },
+      {
+        channel: 'reviewer:suppress-next-auto-review',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      },
+      {
+        channel: 'reviewer:fix-loop-start',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      },
+      {
+        channel: 'reviewer:fix-loop-end',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      }
+    ]
+
+    for (const event of events) {
+      expect(projectWebRendererEvent(event)).toEqual({
+        protocolVersion: 1,
+        channel: event.channel,
+        payload: event.payload
+      })
+      expect(projectPublicTaskEvent(event)).toBeUndefined()
+      expect(projectTaskRuntimeEvent(event)).toBeUndefined()
+    }
+  })
+
   it('keeps public Task events to the existing two-channel allowlist', () => {
     const permission: ApplicationEvent<'acp:permission-request'> = {
       channel: 'acp:permission-request',

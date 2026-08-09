@@ -121,6 +121,48 @@
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
     },
+    "reviewer_orchestrator": {
+      "ownerPaths": ["src/main/reviewer/orchestrator.ts"],
+      "interfacePaths": [
+        "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/ipc.ts",
+        "src/shared/reviewer.ts"
+      ],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/reviewer/orchestrator.test.ts",
+          "src/main/reviewer/orchestrator-drive.test.ts",
+          "src/main/reviewer/log-capture.test.ts",
+          "src/main/reviewer/orchestrator-prompt.test.ts",
+          "src/main/reviewer/orchestrator-prompt-prefix.test.ts",
+          "src/main/reviewer/orchestrator.start-contract.test.ts",
+          "src/main/reviewer/fix-loop.test.ts",
+          "src/main/reviewer/correction.test.ts"
+        ],
+        "contract": [
+          "src/main/reviewer/ipc.test.ts",
+          "src/main/reviewer/lifecycle.test.ts",
+          "src/main/reviewer/mcp-server.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/main/host-application-commands.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/web-service/application-event-projections.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/renderer/src/lib/acp/workspace-events.test.ts",
+          "src/renderer/src/stores/review-store.test.ts",
+          "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
     "compute_service": {
       "ownerPaths": [
         "src/main/compute/compute-host-profile-owner.ts",

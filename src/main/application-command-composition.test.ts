@@ -219,6 +219,18 @@ describe('application command composition', () => {
     expect(listProjects).toHaveBeenCalledOnce()
   })
 
+  it('keeps Reviewer commands on local and remote Web but out of Task', () => {
+    const composition = createApplicationCommandComposition(dependencies())
+    const reviewerCommands = ['reviewer:abort-fix-loop', 'reviewer:get-for-session', 'reviewer:run']
+
+    expect(composition.localWeb.commandNames()).toEqual(expect.arrayContaining(reviewerCommands))
+    expect(composition.remoteWeb.commandNames()).toEqual(expect.arrayContaining(reviewerCommands))
+    for (const command of reviewerCommands) {
+      expect(composition.remoteWeb.rejectedCommandNames()).not.toContain(command)
+    }
+    expect(composition.task.commandNames()).not.toEqual(expect.arrayContaining(reviewerCommands))
+  })
+
   it('exposes only the seven Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 

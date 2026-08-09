@@ -647,6 +647,7 @@ describe('task CLI', () => {
       'compute',
       'notebook',
       'notebook-env',
+      'reviewer',
       'runtime'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
