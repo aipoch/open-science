@@ -59,6 +59,9 @@ export default defineConfig({
     // shared CI runner, so a fast fully-mocked test can still be CPU-starved past 5s and time out
     // spuriously. 15s absorbs that contention without masking a genuine hang (real work is far slower).
     testTimeout: 15000,
+    // Schema-backed hooks can exceed Vitest's 10s default on loaded runners. Keep a safe repository
+    // default while allowing slower platform workflows to raise it explicitly from the CLI.
+    hookTimeout: 30000,
     coverage: {
       provider: 'v8',
       // text for the CI log, lcov for upload/tooling, html for local inspection.
