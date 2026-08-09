@@ -18,6 +18,7 @@ const makeFixture = async (): Promise<{
   service: HostSkillsService
   root: string
   userSkills: UserSkillRepository
+  catalog: HostSkillsCatalog
   approveDelete: ReturnType<typeof vi.fn>
   reload: ReturnType<typeof vi.fn>
 }> => {
@@ -53,6 +54,7 @@ const makeFixture = async (): Promise<{
   return {
     root,
     userSkills,
+    catalog,
     approveDelete,
     reload,
     service: new HostSkillsService({
@@ -171,6 +173,57 @@ describe('HostSkillsService', () => {
         params: { name: 'bad', path: 'SKILL.md', old_string: 'same', content: 'new' }
       })
     ).rejects.toThrow('exactly once')
+  })
+
+  it('serializes publish and delete across the complete draft mutation', async () => {
+    const { service, catalog } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'concurrent',
+        path: 'SKILL.md',
+        content: '---\nname: concurrent\ndescription: Concurrent draft.\n---\nBody.\n'
+      }
+    })
+
+    const publishDirectory = catalog.publishPersonalDirectory
+    let releasePublish!: () => void
+    let publishStarted!: () => void
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      publishStarted = resolve
+    })
+    catalog.publishPersonalDirectory = async (...args) => {
+      publishStarted()
+      await publishGate
+      return publishDirectory(...args)
+    }
+
+    const publishing = service.dispatch({ op: 'publish', params: { name: 'concurrent' } })
+    await started
+    let deleteSettled = false
+    const deleting = service.dispatch({ op: 'delete', params: { name: 'draft-concurrent' } })
+    void deleting.then(
+      () => {
+        deleteSettled = true
+      },
+      () => {
+        deleteSettled = true
+      }
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const deleteWaitedForPublish = !deleteSettled
+    releasePublish()
+    const results = await Promise.allSettled([publishing, deleting])
+
+    expect(deleteWaitedForPublish).toBe(true)
+    expect(results[0]).toMatchObject({ status: 'fulfilled' })
+    expect(results[1]).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: expect.stringContaining('Unknown draft') })
+    })
   })
 
   it('rejects extra SKILL.md frontmatter fields before publish', async () => {

@@ -91,9 +91,19 @@ class HostSkillsCallError extends Error {
 // authority for installed Skills and Specialist deletion guards.
 export class HostSkillsService {
   private readonly draftsRoot: string
+  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: HostSkillsServiceOptions) {
     this.draftsRoot = join(options.storageRoot, 'skills', 'drafts')
+  }
+
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation)
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 
   async dispatch(request: unknown, context: TrustedCallingSession = {}): Promise<unknown> {
@@ -113,9 +123,9 @@ export class HostSkillsService {
     try {
       if (op === 'list') return await this.list()
       if (op === 'read') return await this.read(params)
-      if (op === 'edit') return await this.edit(params)
-      if (op === 'publish') return await this.publish(params)
-      if (op === 'delete') return await this.delete(params, context)
+      if (op === 'edit') return await this.mutate(() => this.edit(params))
+      if (op === 'publish') return await this.mutate(() => this.publish(params))
+      if (op === 'delete') return await this.mutate(() => this.delete(params, context))
       throw new Error('Unknown operation')
     } catch (error) {
       throw new HostSkillsCallError(op ?? 'unknown', error)
