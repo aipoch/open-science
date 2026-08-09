@@ -22,6 +22,7 @@ import {
 } from './runtime-paths'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
 import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
@@ -86,6 +87,7 @@ type NotebookPackageOperationsOptions = {
     'inspectPackages' | 'markPackageMutationDirty' | 'refreshAfterPackageMutation'
   >
   installPackages: (request: InstallRequest, deps?: Partial<InstallDeps>) => Promise<InstallResult>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   createEnvironmentCaptureTarget: (
     language: NotebookLanguage,
     environmentName: string,
@@ -121,6 +123,7 @@ class NotebookPackageOperations {
       environmentOperations: options.environmentOperations,
       environmentStateTracker: options.environmentStateTracker,
       installPackages: options.installPackages,
+      micromambaRunner: options.micromambaRunner,
       recheckRepair: (target) => this.admission.recheckRepair(target),
       runtimeRepair: options.runtimeRepair,
       blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {

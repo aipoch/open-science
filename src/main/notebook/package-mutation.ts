@@ -18,6 +18,7 @@ import type { InstallDeps, InstallResult } from './package-manager'
 import { readProcessStartToken } from './operation-recovery'
 import { isChildUnconfirmedError } from './provisioner-runtime'
 import type { NotebookRuntimeRepairOwner } from './runtime-repair'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 
 const REPAIR_QUARANTINE_FAILED = 'REPAIR_QUARANTINE_FAILED'
 
@@ -44,6 +45,7 @@ type NotebookPackageMutationOwnerOptions = {
     request: NotebookPackageAdmittedTarget['request'],
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   recheckRepair: (
     target: NotebookPackageAdmittedTarget
   ) => Extract<NotebookPackageAdmission, { status: 'refused' }> | undefined
@@ -108,6 +110,7 @@ class NotebookPackageMutationOwner {
         try {
           try {
             installResult = await this.options.installPackages(request, {
+              micromambaRunner: this.options.micromambaRunner,
               storageRoot: this.options.storageRoot,
               condaChannel: mirror.condaChannel,
               pypiIndex: mirror.pypiIndex,

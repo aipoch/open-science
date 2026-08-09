@@ -132,7 +132,6 @@
         "src/main/notebook/mcp-server.ts",
         "src/main/notebook/micromamba-cache-recovery.ts",
         "src/main/notebook/micromamba-cache.ts",
-        "src/main/notebook/micromamba-runner.ts",
         "src/main/notebook/micromamba.ts",
         "src/main/notebook/package-listing.ts",
         "src/main/notebook/provisioner-runtime.ts",

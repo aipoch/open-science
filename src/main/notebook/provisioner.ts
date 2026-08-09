@@ -50,7 +50,7 @@ import {
   createProductionMicromambaRunner,
   type MicromambaRunner,
   type MicromambaRunnerDeps
-} from './micromamba-runner'
+} from './windows-micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
 import {
   isChildUnconfirmedError,

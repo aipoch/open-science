@@ -17,6 +17,7 @@ import {
   resolveMicromamba,
   type MicromambaSpawnEnvDeps
 } from './micromamba'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import {
   DEFAULT_MAX_CACHE_RELATIVE_PATH,
   micromambaCacheLockKey,
@@ -100,6 +101,9 @@ export type InstallSpawn = (
 export type InstallDeps = {
   spawn: InstallSpawn
   micromamba?: string
+  // Production injects the one process-wide prepared runner. The explicit string remains the
+  // narrow test/override seam and wins when supplied.
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   storageRoot?: string
   condaChannel?: string
   pypiIndex?: string
@@ -544,6 +548,13 @@ const DEFAULT_ADDITIVE_SPEC = /^[A-Za-z0-9][A-Za-z0-9._-]*(==[A-Za-z0-9][A-Za-z0
 const firstNonAdditiveSpec = (packages: string[]): string | undefined =>
   packages.find((pkg) => !DEFAULT_ADDITIVE_SPEC.test(pkg.trim()))
 
+const resolveInstallMicromamba = (
+  deps: Partial<InstallDeps>
+): string | undefined | Promise<string> => {
+  if (deps.micromamba !== undefined) return deps.micromamba
+  return deps.micromambaRunner ? deps.micromambaRunner.resolve() : resolveMicromamba()
+}
+
 // Installs packages into the global default environments from the trusted main process (spec §3.1/§8).
 // The kernel never installs; this is the only install entry point. Python picks up a newly-installed
 // package on its next import (sys.path rescan), so needsRestart stays false there. R is different: a
@@ -813,7 +824,11 @@ export async function installPackages(
       }
     }
 
-    const mm = deps.micromamba ?? resolveMicromamba()
+    const resolvedMicromamba = resolveInstallMicromamba(deps)
+    const mm =
+      typeof resolvedMicromamba === 'string' || resolvedMicromamba === undefined
+        ? resolvedMicromamba
+        : await resolvedMicromamba
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     const readIdentity = deps.readCondaPackageIdentity ?? readCondaPackageIdentity
     // A Python binding may legitimately target default-r when that prefix also exposes Python. Only
@@ -906,7 +921,11 @@ export async function installPackages(
 
   // language === 'r': prefer conda, fall back to CRAN install.packages into the env R library.
   // Conda naming is shared with R uninstall via rCondaNames (r-<pkg> / bioconductor-<pkg>).
-  const mm = deps.micromamba ?? resolveMicromamba()
+  const resolvedMicromamba = resolveInstallMicromamba(deps)
+  const mm =
+    typeof resolvedMicromamba === 'string' || resolvedMicromamba === undefined
+      ? resolvedMicromamba
+      : await resolvedMicromamba
   if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
 
   const condaPkgs = rCondaNames(req.packages)
@@ -1143,7 +1162,11 @@ async function uninstallPackages(
       }
     }
 
-    const mm = deps.micromamba ?? resolveMicromamba()
+    const resolvedMicromamba = resolveInstallMicromamba(deps)
+    const mm =
+      typeof resolvedMicromamba === 'string' || resolvedMicromamba === undefined
+        ? resolvedMicromamba
+        : await resolvedMicromamba
     if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
     if (req.packages.some((pkg) => condaMatchSpecName(pkg) === 'r-base')) {
       return {
@@ -1216,7 +1239,11 @@ async function uninstallPackages(
   // inconsistent), and fall back to remove.packages() only when micromamba reports the package isn't
   // conda-managed (a CRAN-only install.packages() result). Both paths are env-scoped and return
   // needsRestart:true, since a live R session holds a removed package's namespace/DLL.
-  const mm = deps.micromamba ?? resolveMicromamba()
+  const resolvedMicromamba = resolveInstallMicromamba(deps)
+  const mm =
+    typeof resolvedMicromamba === 'string' || resolvedMicromamba === undefined
+      ? resolvedMicromamba
+      : await resolvedMicromamba
   if (!mm) return { ok: false, needsRestart: false, log: '', error: 'micromamba not found.' }
 
   const condaPkgs = rCondaNames(req.packages)

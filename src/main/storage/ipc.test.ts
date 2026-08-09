@@ -472,6 +472,25 @@ describe('storage IPC handlers', () => {
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
 
+  it('uses the shared prepared runner when exporting runtime locks for migration', async () => {
+    initDataRoot(dataRoot)
+    const runner = {
+      initialPath: '/resources/micromamba.exe',
+      resolve: vi.fn().mockResolvedValue('/local-tools/micromamba-compat.exe')
+    }
+    const exportLocks = vi.fn().mockResolvedValue([])
+    const deps = fakeDeps({ micromambaRunner: runner, exportRuntimeLocks: exportLocks })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({ ok: true })
+
+    expect(runner.resolve).toHaveBeenCalledOnce()
+    expect(exportLocks).toHaveBeenCalledWith(dataRoot, target, {
+      mm: '/local-tools/micromamba-compat.exe',
+      capture: expect.any(Function)
+    })
+  })
+
   it('correlates production copy and commit diagnostics without logging the marker token', async () => {
     initDataRoot(dataRoot)
     const logger = fakeDiagnosticLogger()

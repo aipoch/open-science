@@ -71,6 +71,7 @@ import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import {
   type NotebookSessionAggregate,
   type NotebookSessionExecutionRequest,
@@ -175,6 +176,7 @@ type NotebookRuntimeServiceOptions = {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   // Structured main-process diagnostics for package operations and interpreter probes. Injectable so
   // tests assert logging without initializing the rotating file sink.
   logger?: RuntimeDiagnosticLogger
@@ -429,6 +431,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      micromambaRunner: options.micromambaRunner,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({

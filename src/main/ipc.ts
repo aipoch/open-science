@@ -1,4 +1,4 @@
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { customConnectorSlug } from '../shared/custom-connector'
@@ -116,6 +116,7 @@ import { NotebookLocalRpcServer } from './notebook/local-rpc-server'
 import { NotebookInputRegistry } from './notebook/input-registry'
 import { effectiveMirrorAsync } from './notebook/mirror-probe'
 import { createProductionProvisioner, type RuntimeProvisioner } from './notebook/provisioner'
+import { createProductionMicromambaRunner } from './notebook/windows-micromamba-runner'
 import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
@@ -607,6 +608,13 @@ const createApplicationModules = async (
     }
   }
   let backendTeardownOwnedByCoordinator = false
+  const provisioningRoot = runtimeRoot(resolveDataRoot())
+  // One runner owns Windows integrity/preflight/fallback state for every production micromamba
+  // consumer in this main-process generation. Each consumer receives only its narrow resolve seam.
+  const micromambaRunner = createProductionMicromambaRunner({
+    home: dirname(dirname(provisioningRoot)),
+    resourcesPath: process.resourcesPath
+  })
   const notebookRuntimeSettings: Pick<NotebookRuntimeSettings, 'getSnapshot'> = {
     getSnapshot: async (language) => {
       const [runtimeSelection, runtimeEnablement, manualInterpreters, packageMirror] =
@@ -633,6 +641,7 @@ const createApplicationModules = async (
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
       notebookRuntimeSettings,
+      micromambaRunner,
       locale: app.getLocale(),
       appVersion: app.getVersion(),
       events: applicationEvents,
@@ -1550,6 +1559,7 @@ const createApplicationModules = async (
   const runtimeSelectionWorkflows = createRuntimeSelectionWorkflows({
     settingsService,
     runtimeRoot: () => getRuntimeRoot(resolveDataRoot()),
+    micromambaRunner,
     // WS10: revoke a disabled runtime from any live session bound to it (mark binding unavailable).
     onRuntimeDisabled: (language, envId, force) =>
       notebookService.revokeRuntime(language, envId, { force }),
@@ -1610,7 +1620,6 @@ const createApplicationModules = async (
   // lives) and start the env readiness gate. The conda channel comes from the effective package mirror
   // (configured override, else the region default from locale). Runtime packs use the official CDN base
   // with OPEN_SCIENCE_ENV_CDN_BASE available for private/self-hosted deployments.
-  const provisioningRoot = runtimeRoot(resolveDataRoot())
   // Build the provisioner separately from registering the IPC surface: if construction fails (e.g.
   // micromamba missing in dev), `provisioner` stays undefined but the notebook-env handlers are STILL
   // registered below (as unavailable stubs), so the renderer gets an actionable "runtime unavailable"
@@ -1620,35 +1629,38 @@ const createApplicationModules = async (
   try {
     const configuredMirror = await settingsService.getPackageMirror()
     const mirror = await effectiveMirrorAsync(configuredMirror, app.getLocale())
-    provisioner = createProductionProvisioner({
-      root: provisioningRoot,
-      channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
-      caBundle: mirror.caBundle,
-      micromamba: { resourcesPath: process.resourcesPath },
-      // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
-      // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
-      // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
-      // blocked set at call time (recovery is awaited before the gate touches any prefix).
-      isPrefixBlocked: (prefix) => notebookService.isPrefixRecoveryBlocked(prefix),
-      // An explicit user Reset (repair with force) clears the in-memory block; the provisioner also
-      // clears the retained journal record + sidecar so the quarantine doesn't re-arm next startup.
-      clearPrefixBlock: (prefix) => notebookService.clearRecoveryBlock(prefix),
-      // Reset also clears an interrupted install's runtime-ID block, or bound sessions would still be
-      // rejected after the env rebuilds until the next restart.
-      clearRuntimeBlock: (runtimeId) => notebookService.clearRuntimeRecoveryBlock(runtimeId),
-      // A force Reset that finds the journal itself corrupt moves it aside and releases just THAT prefix
-      // from the global corrupt-journal barrier — other envs stay blocked until their own Reset/restart.
-      clearCorruptBlock: (prefix) => notebookService.clearCorruptRecoveryBlock(prefix),
-      // On an unconfirmed-child prefix-write failure, block the prefix in-process immediately so an
-      // in-session retry can't begin() a second op that races the first's possibly-live orphan.
-      blockPrefix: (prefix) => notebookService.blockPrefixRecovery(prefix),
-      // Lets a force Reset refuse a prefix an interrupted install (or prefix write) this session left with
-      // a possibly-live orphan — the provisioner can't see install failures in its own set.
-      isPrefixLiveUnconfirmed: (prefix) => notebookService.isPrefixLiveUnconfirmed(prefix),
-      // Share the service's per-env install lock so a default-env create/repair/upgrade serializes with
-      // a package install into the same env prefix instead of racing it on a separate lock.
-      withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
-    })
+    provisioner = createProductionProvisioner(
+      {
+        root: provisioningRoot,
+        channel: mirror.condaChannel ?? process.env.OPEN_SCIENCE_CONDA_CHANNEL ?? 'conda-forge',
+        caBundle: mirror.caBundle,
+        micromamba: { resourcesPath: process.resourcesPath },
+        // Self-guard the provisioner's prefix writes (startup restore/upgrade/repair, named create, lazy
+        // materialize) against a prefix crash-recovery could not confirm free of a live orphan — closes
+        // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
+        // blocked set at call time (recovery is awaited before the gate touches any prefix).
+        isPrefixBlocked: (prefix) => notebookService.isPrefixRecoveryBlocked(prefix),
+        // An explicit user Reset (repair with force) clears the in-memory block; the provisioner also
+        // clears the retained journal record + sidecar so the quarantine doesn't re-arm next startup.
+        clearPrefixBlock: (prefix) => notebookService.clearRecoveryBlock(prefix),
+        // Reset also clears an interrupted install's runtime-ID block, or bound sessions would still be
+        // rejected after the env rebuilds until the next restart.
+        clearRuntimeBlock: (runtimeId) => notebookService.clearRuntimeRecoveryBlock(runtimeId),
+        // A force Reset that finds the journal itself corrupt moves it aside and releases just THAT prefix
+        // from the global corrupt-journal barrier — other envs stay blocked until their own Reset/restart.
+        clearCorruptBlock: (prefix) => notebookService.clearCorruptRecoveryBlock(prefix),
+        // On an unconfirmed-child prefix-write failure, block the prefix in-process immediately so an
+        // in-session retry can't begin() a second op that races the first's possibly-live orphan.
+        blockPrefix: (prefix) => notebookService.blockPrefixRecovery(prefix),
+        // Lets a force Reset refuse a prefix an interrupted install (or prefix write) this session left with
+        // a possibly-live orphan — the provisioner can't see install failures in its own set.
+        isPrefixLiveUnconfirmed: (prefix) => notebookService.isPrefixLiveUnconfirmed(prefix),
+        // Share the service's per-env install lock so a default-env create/repair/upgrade serializes with
+        // a package install into the same env prefix instead of racing it on a separate lock.
+        withPrefixLock: (envName, fn) => notebookService.withEnvLock(envName, fn)
+      },
+      { runner: micromambaRunner }
+    )
     // One serialized wrapper shared by the startup gate and the notebook service's on-demand default
     // provisioning, so a concurrent build of the same default env (UI R-tab + an agent R run) can't
     // race the provisioner's shared in-flight flag; materialize is also idempotent as a backstop.
@@ -1710,7 +1722,8 @@ const createApplicationModules = async (
     runtime,
     notebook: notebookService,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
-    settingsService
+    settingsService,
+    micromambaRunner
   })
   declareElectronAdapter('storage', () =>
     registerStorageIpcHandlers(

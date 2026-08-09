@@ -5,7 +5,10 @@ import { dirname, join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { createMicromambaRunnerResolver, type MicromambaRunnerCandidate } from './micromamba-runner'
+import {
+  createMicromambaRunnerResolver,
+  type MicromambaRunnerCandidate
+} from './windows-micromamba-runner'
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
 
