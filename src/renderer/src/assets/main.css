@@ -332,7 +332,7 @@
     background: linear-gradient(90deg, transparent, var(--session-running-shimmer), transparent);
     content: '';
     pointer-events: none;
-    animation: home-session-running-shimmer 3.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+    animation: home-session-running-shimmer 7.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
   }
 
   .home-session-dismiss {
