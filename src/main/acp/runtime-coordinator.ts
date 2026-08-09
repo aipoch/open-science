@@ -129,6 +129,7 @@ class AcpRuntimeCoordinator {
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
   private promptAdmissionClosedForQuit = false
+  private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
@@ -336,6 +337,7 @@ class AcpRuntimeCoordinator {
   }
 
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
+    this.providerShutdownStartedForQuit = true
     this.invalidateAllSessionTurns()
     this.supersedeInitializationRequests()
     return this.shutdownAll((runtime) => runtime.shutdownForQuit())
@@ -695,6 +697,7 @@ class AcpRuntimeCoordinator {
         if (
           operation === 'sendPrompt' &&
           this.promptAdmissionClosedForQuit &&
+          this.providerShutdownStartedForQuit &&
           this.durableQuitDetachedSessionIds.has(request.sessionId)
         ) {
           return { stopReason: 'cancelled' as const }

@@ -1296,7 +1296,9 @@ class AcpRuntime {
       throw new Error('Restored structured input request id does not match the response')
     }
     let restoredContinuation:
-      | Awaited<ReturnType<AcpRuntimeSessionOwners['durableContinuationContext']['prepare']>>
+      | Awaited<
+          ReturnType<AcpRuntimeSessionOwners['durableContinuationContext']['prepareElicitation']>
+        >
       | undefined
     if (
       !this.elicitationOwner
@@ -1307,14 +1309,11 @@ class AcpRuntime {
       if (!this.activeSessionFor(response.request.sessionId)) {
         throw new Error(`ACP session not found: ${response.request.sessionId}`)
       }
-      const promptMessageId = response.request.durable?.promptMessageId
-      if (!promptMessageId) {
-        throw new Error('Restored structured input request has no durable prompt authority')
-      }
-      restoredContinuation = await this.durableContinuationContext.prepare({
+      restoredContinuation = await this.durableContinuationContext.prepareElicitation({
         projectId: this.sessionEnvironment.projectName(response.request.sessionId),
         sessionId: response.request.sessionId,
-        promptMessageId,
+        requestId: response.request.requestId,
+        toolCallId: response.request.toolCallId,
         ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
           ? {
               replay: {
@@ -1324,7 +1323,7 @@ class AcpRuntime {
             }
           : {})
       })
-      if (!this.elicitationOwner.restoreDetached(response.request)) {
+      if (!this.elicitationOwner.restoreDetached(restoredContinuation.request)) {
         throw new Error('Invalid restored structured input request')
       }
     }

@@ -206,10 +206,7 @@ class SessionPersistenceCoordinator {
     )
   }
 
-  loadSessionForContinuation(
-    projectId: string,
-    sessionId: string
-  ): Promise<PersistedChatSession> {
+  loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
       if (loaded.status !== 'found') {
