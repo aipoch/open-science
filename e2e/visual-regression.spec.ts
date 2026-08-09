@@ -195,7 +195,7 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
     await expect(page.getByRole('button', { name: 'Search' })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
     const updates = page.getByRole('region', { name: 'Session updates' })
-    const scroller = updates.locator(':scope > div')
+    const cardGrid = updates.locator(':scope > div')
     const cards = updates.getByRole('button')
     const expectedInset = width < 768 ? 16 : 32
     const expectedCardWidth =
@@ -203,29 +203,25 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
 
     await expect(updates).toBeVisible()
     await expect(cards.first()).toBeVisible()
-    await scroller.evaluate((element) => element.scrollTo({ left: 0, behavior: 'instant' }))
     await expect
-      .poll(() => scroller.evaluate((element) => element.scrollWidth > element.clientWidth))
+      .poll(() => cardGrid.evaluate((element) => element.scrollWidth <= element.clientWidth))
       .toBe(true)
+    await expect(cards.first()).toHaveCSS('cursor', 'pointer')
 
     const firstCardBox = await cards.first().boundingBox()
+    const secondCardBox = await cards.nth(1).boundingBox()
     expect(firstCardBox?.x).toBeCloseTo(expectedInset, 0)
     expect(firstCardBox?.width).toBeCloseTo(expectedCardWidth, 0)
     expect((firstCardBox?.x ?? 0) + (firstCardBox?.width ?? 0)).toBeLessThanOrEqual(
       width - expectedInset + 1
     )
-
-    await scroller.evaluate((element) => {
-      const secondCard = element.querySelectorAll<HTMLElement>('button')[1]
-      if (!secondCard) throw new Error('Expected a second activity card.')
-      element.scrollTo({
-        left: secondCard.offsetLeft - Number.parseFloat(getComputedStyle(element).paddingLeft),
-        behavior: 'instant'
-      })
-    })
-    await expect
-      .poll(async () => (await cards.nth(1).boundingBox())?.x)
-      .toBeCloseTo(expectedInset, 0)
+    if (width < 768) {
+      expect(secondCardBox?.x).toBeCloseTo(expectedInset, 0)
+      expect(secondCardBox?.y).toBeGreaterThan((firstCardBox?.y ?? 0) + (firstCardBox?.height ?? 0))
+    } else {
+      expect(secondCardBox?.x).toBeCloseTo(expectedInset + expectedCardWidth + 12, 0)
+      expect(secondCardBox?.y).toBeCloseTo(firstCardBox?.y ?? 0, 0)
+    }
     await expect
       .poll(() =>
         page.evaluate(

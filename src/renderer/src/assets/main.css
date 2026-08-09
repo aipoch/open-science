@@ -137,6 +137,7 @@
   --chart-4: rgb(178 132 229);
   --chart-5: rgb(225 113 91);
   --session-running: oklch(0.51 0.15 255);
+  --session-running-shimmer: color-mix(in oklch, var(--session-running) 32%, transparent);
   --session-waiting: oklch(0.62 0.16 68);
   --border: #dededa;
   --input: #dededa;
@@ -301,6 +302,54 @@
     }
   }
 
+  /* Running title sweep and completed-card dismiss affordance. */
+  @keyframes home-session-running-shimmer {
+    0%,
+    62%,
+    100% {
+      opacity: 0;
+      transform: translateX(-180%) skewX(-18deg);
+    }
+    70% {
+      opacity: 1;
+    }
+    86% {
+      opacity: 0;
+      transform: translateX(430%) skewX(-18deg);
+    }
+  }
+
+  .home-session-title-running {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .home-session-title-running::after {
+    position: absolute;
+    inset-block: -0.15rem;
+    inset-inline-start: 0;
+    width: 28%;
+    background: linear-gradient(90deg, transparent, var(--session-running-shimmer), transparent);
+    content: '';
+    pointer-events: none;
+    animation: home-session-running-shimmer 3.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+
+  .home-session-dismiss {
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .home-session-dismiss {
+      opacity: 0;
+    }
+
+    .home-session-card:hover .home-session-dismiss,
+    .home-session-card:focus-within .home-session-dismiss {
+      opacity: 1;
+    }
+  }
+
   /* Indeterminate install progress bar: a short segment sweeping left→right while a shelled
    * installer (npm/official) streams output with no byte total to report. */
   @keyframes install-progress-indeterminate {
@@ -384,6 +433,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .home-session-title-running::after {
+      animation: none;
+    }
+
     .open-science-thinking-indicator,
     .open-science-thinking-indicator::before,
     .open-science-thinking-indicator__dot {

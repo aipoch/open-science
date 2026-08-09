@@ -552,24 +552,26 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   and Description; its edit action is labelled `Save`.
 - Project description: explain that the optional description is shown in the Project list for the
   user's reference and is not included in the agent prompt.
-- Session updates: show a single-row horizontal card scroller above the Project/Recent columns for
+- Session updates: show a responsive card grid above the Project/Recent columns for
   every non-archived Session that is `running`, `waiting-permission`, `waiting-plan-approval`, or has
   an unread `task.completed` notification while idle. Cards occupy one column on compact screens and
-  half the row on desktop. Waiting Sessions come first, then running Sessions, then completed
-  Sessions. The track extends beyond the content grid by the same amount as its inline and scroll
-  snap padding, keeping the cards aligned with the columns while the first and last outlines and
-  shadows remain visible at either scroll edge. Every card opens its Session and contains only the
-  Session title, Project name, state, and state-relative time. Opening a completed Session marks its
-  task outcome read, so that card no longer appears when the user returns Home.
+  two columns on desktop, filling rows from top to bottom. Waiting Sessions come first, then running
+  Sessions, then completed Sessions. Every card opens its Session and contains only the Session title,
+  Project name, state, and state-relative time. Cards use the clickable pointer cursor. Opening a
+  completed Session marks its task outcome read, so that card no longer appears when the user returns
+  Home. A completed card also reveals a dismiss action on pointer hover or keyboard focus; dismissing
+  marks every unread completion outcome for that Session read without opening it, and the action stays
+  visible on touch devices.
 - Home reads live Session projections from the application-level runtime owner; it does not mount
   Workspace commands or preview side effects. Background artifacts remain durable, but only the
   foreground Workspace for their owning Project may auto-open a molecule preview.
 - Session activity labels: `running` maps to `Running`; `waiting-permission` and
   `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue
-  in both themes; Running uses a rotating loader in Session update cards and Project counts, with a
-  static loader under reduced motion. Needs you keeps its amber pulse, while Completed uses a static
-  green check in both the Session update card and message center.
+  in both themes; Running uses a rotating loader in Session update cards and Project counts plus an
+  intermittent left-to-right light sweep over the card title, with both title and loader static under
+  reduced motion. Needs you keeps its amber pulse, while Completed uses a static green check in both
+  the Session update card and message center.
 - Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
   additional border, so its built-in hairline ring matches the New project button instead of
   stacking into a heavier outline.

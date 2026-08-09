@@ -13,7 +13,8 @@ import {
   Plus,
   Search,
   Settings,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -63,6 +64,7 @@ type HomeSessionUpdate = {
   session: ChatSession
   activity: HomeSessionActivity
   activityTimestamp: number
+  completedNotificationIds: readonly string[]
 }
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
@@ -116,6 +118,7 @@ const HomePage = ({
   const deleteProject = useProjectStore((state) => state.deleteProject)
   const sessions = useSessionStore((state) => state.sessions)
   const notificationItems = useNotificationInboxStore((state) => state.items)
+  const markNotificationsRead = useNotificationInboxStore((state) => state.markRead)
   const enqueueProjectArchive = useArchiveUndoStore((state) => state.enqueueProject)
   const openProject = useNavigationStore((state) => state.openProject)
   const openSession = useNavigationStore((state) => state.openSession)
@@ -137,6 +140,10 @@ const HomePage = ({
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
   const [archiveProjectError, setArchiveProjectError] = useState<string | undefined>(undefined)
+  const [markingReadSessionIds, setMarkingReadSessionIds] = useState<Set<string>>(() => new Set())
+  const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
+    () => new Set()
+  )
 
   const activeProjects = useMemo(
     () => projects.filter((project) => project.archivedAt === undefined),
@@ -159,18 +166,24 @@ const HomePage = ({
     [activeProjectIds, sessions]
   )
 
-  const unreadCompletedAtBySession = useMemo(() => {
-    const completedAtBySession = new Map<string, number>()
+  const unreadCompletedBySession = useMemo(() => {
+    const completedBySession = new Map<string, { completedAt: number; notificationIds: string[] }>()
 
     for (const item of notificationItems) {
       if (item.kind !== 'task.completed' || item.readAt !== undefined || !item.sessionId) continue
-      completedAtBySession.set(
-        item.sessionId,
-        Math.max(completedAtBySession.get(item.sessionId) ?? 0, item.createdAt)
-      )
+      const completed = completedBySession.get(item.sessionId)
+      if (completed) {
+        completed.completedAt = Math.max(completed.completedAt, item.createdAt)
+        completed.notificationIds.push(item.id)
+      } else {
+        completedBySession.set(item.sessionId, {
+          completedAt: item.createdAt,
+          notificationIds: [item.id]
+        })
+      }
     }
 
-    return completedAtBySession
+    return completedBySession
   }, [notificationItems])
 
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
@@ -185,14 +198,22 @@ const HomePage = ({
             activityTimestamp:
               activity === 'needs-you'
                 ? session.updatedAt
-                : (session.activeRun?.startedAt ?? session.updatedAt)
+                : (session.activeRun?.startedAt ?? session.updatedAt),
+            completedNotificationIds: []
           }
         ]
       }
 
-      const completedAt = unreadCompletedAtBySession.get(session.id)
-      return session.status === 'idle' && completedAt !== undefined
-        ? [{ session, activity: 'completed', activityTimestamp: completedAt }]
+      const completed = unreadCompletedBySession.get(session.id)
+      return session.status === 'idle' && completed !== undefined
+        ? [
+            {
+              session,
+              activity: 'completed',
+              activityTimestamp: completed.completedAt,
+              completedNotificationIds: completed.notificationIds
+            }
+          ]
         : []
     })
 
@@ -202,7 +223,7 @@ const HomePage = ({
         activityOrder.indexOf(left.activity) - activityOrder.indexOf(right.activity) ||
         right.activityTimestamp - left.activityTimestamp
     )
-  }, [persistedSessions, unreadCompletedAtBySession])
+  }, [persistedSessions, unreadCompletedBySession])
 
   const activeSessionCounts = useMemo(
     () => ({
@@ -330,6 +351,31 @@ const HomePage = ({
           return next
         })
       })
+  }
+
+  const dismissCompletedSession = async (
+    sessionId: string,
+    notificationIds: readonly string[]
+  ): Promise<void> => {
+    if (markingReadSessionIds.has(sessionId)) return
+
+    setMarkingReadSessionIds((current) => new Set(current).add(sessionId))
+    setMarkReadErrorSessionIds((current) => {
+      const next = new Set(current)
+      next.delete(sessionId)
+      return next
+    })
+    try {
+      await markNotificationsRead(notificationIds)
+    } catch {
+      setMarkReadErrorSessionIds((current) => new Set(current).add(sessionId))
+    } finally {
+      setMarkingReadSessionIds((current) => {
+        const next = new Set(current)
+        next.delete(sessionId)
+        return next
+      })
+    }
   }
 
   const closeFormDialog = (): void => {
@@ -504,64 +550,106 @@ const HomePage = ({
 
         {sessionUpdates.length > 0 ? (
           <section className="mt-8 sm:mt-10" aria-label="Session updates">
-            <div className="-mx-2 flex snap-x snap-mandatory scroll-px-2 gap-3 overflow-x-auto px-2 py-1">
-              {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
-                const needsYou = activity === 'needs-you'
-                const completed = activity === 'completed'
-                const relativeActivityTime = formatRelativeTime(activityTimestamp)
+            <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
+              {sessionUpdates.map(
+                ({ session, activity, activityTimestamp, completedNotificationIds }) => {
+                  const needsYou = activity === 'needs-you'
+                  const completed = activity === 'completed'
+                  const relativeActivityTime = formatRelativeTime(activityTimestamp)
+                  const markingRead = markingReadSessionIds.has(session.id)
+                  const markReadFailed = markReadErrorSessionIds.has(session.id)
 
-                return (
-                  <button
-                    key={session.id}
-                    type="button"
-                    className="group flex min-h-36 w-full min-w-0 shrink-0 snap-start flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none md:w-[calc(50%_-_0.375rem)]"
-                    onClick={() => openSession(session.projectId, session.id, 'user')}
-                    aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
-                  >
-                    <span className="min-w-0 max-w-full truncate text-base font-semibold text-text-000">
-                      {session.title}
-                    </span>
-                    <span className="mt-1 truncate text-xs text-text-100">
-                      {projectNames.get(session.projectId) ?? 'Unknown project'}
-                    </span>
-                    <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
-                      <span
-                        className={cn(
-                          'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
-                          needsYou
-                            ? 'bg-session-waiting/10 text-session-waiting'
-                            : completed
-                              ? 'bg-success-000/10 text-success-000'
-                              : 'bg-session-running/10 text-session-running'
-                        )}
+                  return (
+                    <div key={session.id} className="home-session-card group relative min-w-0">
+                      <button
+                        type="button"
+                        className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                        onClick={() => openSession(session.projectId, session.id, 'user')}
+                        aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
                       >
-                        {completed ? (
-                          <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                        ) : needsYou ? (
+                        <span
+                          className={cn(
+                            'min-w-0 max-w-full truncate text-base font-semibold text-text-000',
+                            completed && 'pr-10',
+                            !needsYou && !completed && 'home-session-title-running'
+                          )}
+                        >
+                          {session.title}
+                        </span>
+                        <span className="mt-1 truncate text-xs text-text-100">
+                          {projectNames.get(session.projectId) ?? 'Unknown project'}
+                        </span>
+                        <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
                           <span
-                            className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <LoaderCircle
-                            className="size-3.5 animate-spin motion-reduce:animate-none"
-                            strokeWidth={2}
-                            aria-hidden="true"
-                          />
-                        )}
-                        {needsYou ? 'Needs you' : completed ? 'Completed' : 'Running'}
-                      </span>
-                      <span className="shrink-0 text-xs text-text-100">
-                        {completed
-                          ? relativeActivityTime === 'now'
-                            ? 'just now'
-                            : relativeActivityTime
-                          : `${needsYou ? 'waiting' : 'running'} ${relativeActivityTime}`}
-                      </span>
-                    </span>
-                  </button>
-                )
-              })}
+                            className={cn(
+                              'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                              needsYou
+                                ? 'bg-session-waiting/10 text-session-waiting'
+                                : completed
+                                  ? 'bg-success-000/10 text-success-000'
+                                  : 'bg-session-running/10 text-session-running'
+                            )}
+                          >
+                            {completed ? (
+                              <Check className="size-3" strokeWidth={2} aria-hidden="true" />
+                            ) : needsYou ? (
+                              <span
+                                className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <LoaderCircle
+                                className="size-3.5 animate-spin motion-reduce:animate-none"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                            )}
+                            {needsYou ? 'Needs you' : completed ? 'Completed' : 'Running'}
+                          </span>
+                          <span className="shrink-0 text-xs text-text-100">
+                            {completed
+                              ? relativeActivityTime === 'now'
+                                ? 'just now'
+                                : relativeActivityTime
+                              : `${needsYou ? 'waiting' : 'running'} ${relativeActivityTime}`}
+                          </span>
+                        </span>
+                      </button>
+                      {completed ? (
+                        <button
+                          type="button"
+                          className={cn(
+                            "home-session-dismiss absolute top-3 right-3 inline-flex size-9 cursor-pointer items-center justify-center rounded-lg text-text-300 transition-[opacity,color,background-color] duration-150 ease-out before:absolute before:-inset-1 before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none",
+                            markReadFailed && 'text-danger-000'
+                          )}
+                          onClick={() =>
+                            void dismissCompletedSession(session.id, completedNotificationIds)
+                          }
+                          disabled={markingRead}
+                          aria-busy={markingRead}
+                          aria-label={`${markReadFailed ? 'Retry marking' : 'Mark'} completed session ${session.title} as read`}
+                          title={markReadFailed ? 'Could not mark as read. Try again.' : undefined}
+                        >
+                          {markingRead ? (
+                            <LoaderCircle
+                              className="size-4 animate-spin motion-reduce:animate-none"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <X className="size-4" strokeWidth={2} aria-hidden="true" />
+                          )}
+                          {markReadFailed ? (
+                            <span className="sr-only" role="alert">
+                              Could not mark this completed session as read. Try again.
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : null}
+                    </div>
+                  )
+                }
+              )}
             </div>
           </section>
         ) : null}

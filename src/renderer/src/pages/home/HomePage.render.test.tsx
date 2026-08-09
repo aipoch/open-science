@@ -351,13 +351,13 @@ describe('HomePage activity overview', () => {
     )
 
     const activeSection = container.querySelector<HTMLElement>('[aria-label="Session updates"]')
-    const scroller = activeSection?.firstElementChild
+    const cardGrid = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
-    expect(scroller?.classList.contains('overflow-x-auto')).toBe(true)
-    expect(scroller?.classList.contains('-mx-2')).toBe(true)
-    expect(scroller?.classList.contains('scroll-px-2')).toBe(true)
-    expect(scroller?.classList.contains('px-2')).toBe(true)
-    expect(cards[0]?.classList.contains('shrink-0')).toBe(true)
+    expect(cardGrid?.classList.contains('grid')).toBe(true)
+    expect(cardGrid?.classList.contains('grid-cols-1')).toBe(true)
+    expect(cardGrid?.classList.contains('md:grid-cols-2')).toBe(true)
+    expect(cardGrid?.classList.contains('overflow-x-auto')).toBe(false)
+    expect(cards[0]?.classList.contains('cursor-pointer')).toBe(true)
     expect([...cards].map((card) => card.getAttribute('aria-label'))).toEqual([
       'Open session Plan review, needs you',
       'Open session Permission request, needs you',
@@ -379,6 +379,9 @@ describe('HomePage activity overview', () => {
     expect(runningBadge?.classList.contains('bg-session-running/10')).toBe(true)
     expect(runningBadge?.classList.contains('text-session-running')).toBe(true)
     expect(runningBadge?.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
+    expect(runningCard?.querySelector('.home-session-title-running')?.textContent?.trim()).toBe(
+      'Running analysis'
+    )
     expect(
       runningBadge?.querySelector('svg')?.classList.contains('motion-reduce:animate-none')
     ).toBe(true)
@@ -420,10 +423,11 @@ describe('HomePage activity overview', () => {
     ).not.toBeNull()
   })
 
-  it('shows an unread completed session until its result is marked read', async () => {
+  it('dismisses every unread completion for a session without opening it', async () => {
     const now = 600_000
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
     const openSession = vi.fn()
+    const markRead = vi.fn().mockResolvedValue(undefined)
     const completedItem = {
       id: 'completed-1',
       sequence: 1,
@@ -446,11 +450,21 @@ describe('HomePage activity overview', () => {
       sessions: [session('finished', 'Finished analysis', 'idle', now - 10 * 60_000)]
     })
     useNotificationInboxStore.setState({
-      revision: 1,
-      unreadCount: 1,
-      latestSequence: 1,
+      revision: 2,
+      unreadCount: 2,
+      latestSequence: 2,
       status: 'ready',
-      items: [completedItem]
+      items: [
+        completedItem,
+        {
+          ...completedItem,
+          id: 'completed-2',
+          sequence: 2,
+          dedupeKey: 'task:completed:finished:follow-up',
+          createdAt: now - 1
+        }
+      ],
+      markRead
     })
     useNavigationStore.setState({ openSession } as never)
 
@@ -470,6 +484,30 @@ describe('HomePage activity overview', () => {
     expect(completedCard?.textContent).toContain('just now')
     expect(completedBadge?.classList.contains('text-success-000')).toBe(true)
     expect(completedBadge?.querySelector('svg')?.classList.contains('animate-spin')).toBe(false)
+    expect(completedCard?.classList.contains('cursor-pointer')).toBe(true)
+
+    const dismissButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Mark completed session Finished analysis as read"]'
+    )
+    expect(dismissButton?.classList.contains('home-session-dismiss')).toBe(true)
+    expect(dismissButton?.classList.contains('cursor-pointer')).toBe(true)
+
+    await act(async () => dismissButton?.click())
+
+    expect(markRead).toHaveBeenCalledWith(['completed-1', 'completed-2'])
+    expect(openSession).not.toHaveBeenCalled()
+
+    markRead.mockRejectedValueOnce(new Error('read failed'))
+    await act(async () => dismissButton?.click())
+
+    expect(
+      container.querySelector(
+        '[aria-label="Retry marking completed session Finished analysis as read"]'
+      )
+    ).not.toBeNull()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not mark this completed session as read.'
+    )
 
     await act(async () => completedCard?.click())
 
@@ -477,9 +515,19 @@ describe('HomePage activity overview', () => {
 
     await act(async () => {
       useNotificationInboxStore.setState({
-        revision: 2,
+        revision: 3,
         unreadCount: 0,
-        items: [{ ...completedItem, readAt: now }]
+        items: [
+          { ...completedItem, readAt: now },
+          {
+            ...completedItem,
+            id: 'completed-2',
+            sequence: 2,
+            dedupeKey: 'task:completed:finished:follow-up',
+            createdAt: now - 1,
+            readAt: now
+          }
+        ]
       })
     })
 
