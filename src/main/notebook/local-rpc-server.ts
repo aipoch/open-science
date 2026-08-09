@@ -139,6 +139,9 @@ type NotebookLocalRpcServerOptions = {
     read(op: unknown, context: TrustedCallingSession): Promise<unknown>
     dispatch?(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
+  skillsService?: {
+    dispatch(op: unknown, context: TrustedCallingSession): Promise<unknown>
+  }
 }
 
 type NotebookRpcPayload = {
@@ -177,7 +180,13 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
-const CONTROL_RPC_METHODS = new Set(['mcpCall', 'computeCall', 'agentsCall', 'requestUserInput'])
+const CONTROL_RPC_METHODS = new Set([
+  'mcpCall',
+  'computeCall',
+  'agentsCall',
+  'skillsCall',
+  'requestUserInput'
+])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
 
@@ -221,6 +230,7 @@ class NotebookLocalRpcServer {
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
+  private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -256,6 +266,7 @@ class NotebookLocalRpcServer {
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.agentsService = options.agentsService
+    this.skillsService = options.skillsService
   }
 
   issueArtifactRunCapability(
@@ -695,7 +706,7 @@ class NotebookLocalRpcServer {
             ...params,
             sessionId: sessionBinding.sessionId,
             ...(sessionBinding.projectId ? { projectId: sessionBinding.projectId } : {}),
-            ...(method === 'agentsCall'
+            ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
                   turn_id: sessionBinding.activeControlInvocation?.turnId,
@@ -1112,6 +1123,19 @@ class NotebookLocalRpcServer {
                   .map((input) => input.sourceFileId) ?? []
             }
           : { sessionId: resolvedSessionId }
+      )
+    }
+
+    // skillsCall: native host.skills lifecycle. Authentication and session ownership are identical
+    // to host.agents, but operation semantics live entirely in HostSkillsService. Reserved routing
+    // fields are stripped before dispatch so delete approval can only target the server-bound Session.
+    if (method === 'skillsCall') {
+      if (!this.skillsService) throw new Error('Skills service is not configured.')
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : undefined
+      const op = typeof params.op === 'string' ? params.op : ''
+      return this.skillsService.dispatch(
+        { op, params: stripAgentsReservedParams(params) },
+        { sessionId }
       )
     }
 

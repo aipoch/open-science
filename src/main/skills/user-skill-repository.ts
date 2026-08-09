@@ -374,8 +374,8 @@ class UserSkillRepository {
   // For each slug: if a `.backup-` exists and the live dir is gone, the newest backup is restored (the
   // interrupted replace is rolled back, and a failed restore rejects the operation) and any older
   // backups discarded; a backup whose live dir is present, and every staged `.import-` dir, are dropped.
-  private async doRecoverImportedTransactions(): Promise<void> {
-    const dir = this.sourceDir('imported')
+  private async doRecoverTransactions(source: (typeof USER_SOURCES)[number]): Promise<void> {
+    const dir = this.sourceDir(source)
     let entries: string[]
     try {
       entries = await readdir(dir)
@@ -438,6 +438,11 @@ class UserSkillRepository {
     for (const entry of stagings) {
       await rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
     }
+  }
+
+  private async doRecoverImportedTransactions(): Promise<void> {
+    await this.doRecoverTransactions('imported')
+    await this.doRecoverTransactions('personal')
   }
 
   // Lists every personal + imported skill, skipping any dir whose SKILL.md is missing/unreadable. The
@@ -543,6 +548,59 @@ class UserSkillRepository {
       await this.writeSkill('personal', slug, input)
 
       return `personal-${slug}`
+    })
+  }
+
+  // Publishes an app-authored draft as a complete Personal Skill package. Unlike the form editor,
+  // this path preserves arbitrary safe files (scripts/, assets/, nested references, and so on).
+  // The source is validated and copied into a sibling staging directory before the live package is
+  // swapped, so a failed copy or replace never exposes a partial Skill.
+  async publishPersonalDirectory(
+    requestedSlug: string,
+    sourcePath: string,
+    overwrite = false
+  ): Promise<string> {
+    const slug = requestedSlug.trim()
+    assertUsableSlug(slug)
+
+    return this.runExclusive(async () => {
+      await this.doRecoverTransactions('personal')
+      if (!overwrite && (await this.slugTaken('personal', slug))) {
+        throw new Error(`A skill with ID "${slug}" already exists.`)
+      }
+
+      const destination = this.skillDir('personal', slug)
+      const generation = nextGeneration()
+      const staging = join(dirname(destination), `.${basename(destination)}.import-${generation}`)
+      try {
+        await cp(sourcePath, staging, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: async (entry) => {
+            if ((await lstat(entry)).isSymbolicLink()) {
+              throw new Error('Refusing to publish a Skill containing a symbolic link.')
+            }
+            if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
+              throw new Error(`Skill publish may not include the reserved file ${SOURCE_MANIFEST}.`)
+            }
+            return true
+          }
+        })
+        const entries = await this.inspectAgentHomeSkill(staging)
+        if (
+          !entries.some(
+            (entry) => entry.kind === 'file' && entry.relativePath === 'SKILL.md'
+          )
+        ) {
+          throw new Error('A published Skill must contain SKILL.md at its root.')
+        }
+        await this.swapStaging('personal', slug, staging, generation)
+        return `personal-${slug}`
+      } catch (error) {
+        await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+        throw error
+      }
     })
   }
 
@@ -1236,17 +1294,18 @@ class UserSkillRepository {
       throw buildError
     }
 
-    await this.swapImportedStaging(slug, staging, generation)
+    await this.swapStaging('imported', slug, staging, generation)
   }
 
   // Atomically promotes a fully-built sibling staging directory. This is shared by downloaded and
   // installed-skill imports so both refresh paths preserve the previous live copy on swap failure.
-  private async swapImportedStaging(
+  private async swapStaging(
+    source: (typeof USER_SOURCES)[number],
     slug: string,
     staging: string,
     generation: string
   ): Promise<void> {
-    const dir = this.skillDir('imported', slug)
+    const dir = this.skillDir(source, slug)
     const backup = join(dirname(dir), `.${basename(dir)}.backup-${generation}`)
     // Swap: move the old copy aside to the backup, move staging into place, then drop the backup. This
     // runs inside the caller's operation-level critical section (recovery + dedup + slug + swap share
@@ -1594,7 +1653,7 @@ class UserSkillRepository {
           return { status: 'unchanged', id: `imported-${existingSlug}` }
         }
 
-        await this.swapImportedStaging(slug, staged.staging, staged.generation)
+        await this.swapStaging('imported', slug, staged.staging, staged.generation)
         return {
           status: existingSlug ? 'updated' : 'imported',
           id: `imported-${slug}`

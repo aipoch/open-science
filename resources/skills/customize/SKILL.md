@@ -1,30 +1,40 @@
 ---
 name: customize
-description: Use when the user wants to create, inspect, update, delete, reassign capabilities for, or switch the current conversation to a Specialist agent. Covers the conversational `/customize` flow against the JavaScript `host.agents` SDK — clarifying scope, drafting a complete target state, reviewing it, confirming, mutating with read-back, and reporting — plus the confirmation boundaries for ordinary versus privileged operations.
+description: Use when the user wants to create or manage a Specialist agent or create, revise, publish, or delete a Skill through the conversational `/Customize` entry. Routes Skill work to the internal skill-creator and handles Specialist work through the JavaScript host.agents SDK.
 license: Apache-2.0
 ---
 
-# Customize Specialist
+# Customize
 
-This Skill is conversational workflow guidance for managing Specialist agents. It is **not a security
-boundary**: it helps the user draft, review, confirm, and report Specialist changes through the
-JavaScript control-plane SDK. Whether a destructive or identity-affecting operation actually takes
-effect is decided by the application, not by this Skill.
+This Skill routes conversational customization to one of two native composers. It is **not a security
+boundary**: it helps the user draft, review, confirm, and report changes, while the application decides
+whether a destructive or identity-affecting operation actually takes effect.
 
 > Important: this is a framework Skill, not hard isolation. Do not claim that this Skill provides hard
 > security isolation; it is workflow guidance only.
 
-## Runtime
+## Route first
+
+- For creating, revising, publishing, inspecting, or deleting a Skill, call
+  `host.skills.read('skill-creator')` and follow that internal Skill completely. Do not duplicate its
+  authoring workflow here.
+- For creating or managing a Specialist, follow the Specialist workflow below.
+- For a combined request, create or revise the Skill first. After publish and read-back, attach it to
+  the selected Specialist only when the user requested that relationship.
+
+Do not create a plan record for Specialist or Skill CRUD. Ask only about choices that materially change
+behavior, access, or safety. Skills and Specialists are application-managed resources, not Artifacts.
+
+## Specialist runtime
 
 The Skill runs in the **JavaScript control-plane REPL only**. It uses JavaScript exclusively. Do not
-use Python or R here, and do not look for `host.agents` in a data kernel — it is absent there. All
-mutation happens through `host.agents.*` methods.
+use Python or R here, and do not look for `host.agents` or `host.skills` in a data kernel — they are
+absent there. Specialist mutation happens through `host.agents.*`; Skill lifecycle work is delegated
+to the internal Skill Creator above.
 
 The Skill never uses the following, and you must not invent them:
 
 - Do not use a Customize Specialist/Profile (there is no such profile).
-- Do not perform Skill authoring (this Skill does not author Skills).
-- Do not use a `host.skills.*` namespace (use `host.agents` reads instead).
 - Do not use a management MCP tool, and do not route `host.agents` through `host.mcp()`.
 - Do not create per-Specialist environments.
 - Do not perform duplicate operations (no duplicate Specialist or duplicate operation).

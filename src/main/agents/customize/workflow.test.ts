@@ -163,6 +163,13 @@ describe('customize Skill: bundled source', () => {
     }
   })
 
+  it('routes Skill requests to the internal native Skill Creator without using Artifacts', async () => {
+    const raw = await readFile(skillPath, 'utf8')
+    expect(raw).toContain("host.skills.read('skill-creator')")
+    expect(raw).toContain('not Artifacts')
+    expect(raw).toContain('create or revise the Skill first')
+  })
+
   it('is activated in the Featured manifest (issue 08 turns on the live journey)', async () => {
     const manifestRaw = await readFile(
       join(__dirname, '..', '..', '..', '..', 'resources', 'skills', 'manifest.json'),
@@ -198,11 +205,6 @@ describe('customize Skill: static rejection of forbidden architecture', () => {
       except: /do not use python/i
     },
     {
-      label: 'host.skills namespace',
-      needle: /\bhost\.skills\./,
-      except: /do not (use|call).*host\.skills|never.*host\.skills/i
-    },
-    {
       label: 'management MCP',
       needle: /management mcp|host\.mcp\(\).*agents/i,
       except: /do not.*management mcp|never.*host\.mcp/i
@@ -211,11 +213,6 @@ describe('customize Skill: static rejection of forbidden architecture', () => {
       label: 'Customize Profile',
       needle: /customize (specialist\/)?profile/i,
       except: /do not.*customize profile|no customize profile/i
-    },
-    {
-      label: 'Skill authoring',
-      needle: /\bauthor (a |skills|new skills)\b/i,
-      except: /do not.*author skills|no skill authoring/i
     },
     {
       label: 'duplicate operations',

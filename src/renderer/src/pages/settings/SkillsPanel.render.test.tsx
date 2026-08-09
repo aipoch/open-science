@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
@@ -39,6 +41,14 @@ const seedSkills = [
 ]
 
 beforeEach(() => {
+  useProjectStore.setState(createInitialProjectState())
+  useNavigationStore.setState({
+    view: 'home',
+    activeProjectId: undefined,
+    userNavigationRevision: 0,
+    explicitNavigationRevision: 0,
+    pendingCustomizePrefill: undefined
+  })
   ;(window as unknown as { api: unknown }).api = {
     settings: {
       getGitHubTokenStatus: vi.fn().mockResolvedValue({ configured: false }),
@@ -394,6 +404,41 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Import installed skills')
     expect(document.body.textContent).toContain('Scan global skill folders')
+  })
+
+  it('opens a new Skill Creator conversation with the Skill Customize goal', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-a',
+          name: 'Project A',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+    const closeSettings = vi.spyOn(useSettingsStore.getState(), 'closeSettings')
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    openRadixMenu(addSkill)
+    const chat = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.includes('Chat with agent')
+    )
+    await act(async () => chat?.click())
+
+    expect(closeSettings).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toMatchObject({
+      projectId: 'project-a',
+      goal: 'skill'
+    })
+    closeSettings.mockRestore()
   })
 
   it('hides installed-skill import when the desktop bridge is unavailable', () => {

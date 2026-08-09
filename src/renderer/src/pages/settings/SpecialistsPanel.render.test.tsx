@@ -1349,7 +1349,10 @@ describe('SpecialistsPanel Chat with agent', () => {
     ).find((item) => item.textContent?.includes('Chat with agent'))
     await act(async () => clickRadixMenuItem(chatItem))
 
-    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('active-project')
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
+      'active-project',
+      'specialist'
+    )
   })
 
   it('closes Settings and starts a customize conversation for the resolved project', async () => {
@@ -1364,7 +1367,10 @@ describe('SpecialistsPanel Chat with agent', () => {
       clickRadixMenuItem(chatItem)
     })
 
-    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('climate-models')
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
+      'climate-models',
+      'specialist'
+    )
     expect(closeSettingsSpy).toHaveBeenCalled()
   })
 

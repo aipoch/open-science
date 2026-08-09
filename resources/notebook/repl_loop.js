@@ -1082,6 +1082,58 @@ const hostAgents = {
   }
 }
 
+// host.skills: application-native Skill authoring. Draft files live in the app-managed Skill store;
+// publish promotes a complete package directly into Personal Skills. This intentionally never routes
+// through Artifact or conversation-import APIs.
+async function skillsRpc(op, params = {}) {
+  if (!RPC_ENDPOINT) throw new Error('host.skills is unavailable: connector RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'skillsCall',
+      params: {
+        op,
+        ...(COMPUTE_SESSION_ID ? { session_id: COMPUTE_SESSION_ID } : {}),
+        ...(params || {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    const serverMessage = body.error || 'host.skills HTTP ' + res.status
+    throw new Error(
+      /^host\.skills\./.test(serverMessage)
+        ? serverMessage
+        : `host.skills.${op}: ${serverMessage}`
+    )
+  }
+  return body.result
+}
+
+const hostSkills = {
+  async list() {
+    return skillsRpc('list')
+  },
+  async read(name, path = 'SKILL.md') {
+    return skillsRpc('read', { name, path })
+  },
+  async edit(name, path, content, old_string = undefined) {
+    return skillsRpc('edit', {
+      name,
+      path,
+      content,
+      ...(old_string !== undefined ? { old_string } : {})
+    })
+  },
+  async publish(name, overwrite = false) {
+    return skillsRpc('publish', { name, overwrite })
+  },
+  async delete(name) {
+    return skillsRpc('delete', { name })
+  }
+}
+
 // Maps a computeCall failure into an Error. ComputeService raises structured errors that the RPC layer
 // re-serializes as a JSON string in `error` ({error_code, message, retry_after_user_action}); parse it
 // and hang those fields off the Error so REPL code can branch on `e.error_code` (matching the old Python
@@ -1219,7 +1271,7 @@ const hostCompute = {
 
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).
 const sandbox = {
-  host: { mcp: hostMcp, compute: hostCompute, agents: hostAgents },
+  host: { mcp: hostMcp, compute: hostCompute, agents: hostAgents, skills: hostSkills },
   console,
   process,
   require,

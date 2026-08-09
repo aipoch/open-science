@@ -326,6 +326,8 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.
     expect(tool?.description).toContain('host.compute')
+    expect(tool?.description).toContain('host.agents')
+    expect(tool?.description).toContain('host.skills')
     expect(tool?.description).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
     expect(tool?.description).not.toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')

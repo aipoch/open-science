@@ -38,9 +38,15 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'notebook',
   'skill-import',
   'plan',
-  'host-agents'
+  'host-agents',
+  'host-skills'
 ] as const
-const NOTEBOOK_CONTROL_RPC_METHODS = ['mcpCall', 'computeCall', 'agentsCall'] as const
+const NOTEBOOK_CONTROL_RPC_METHODS = [
+  'mcpCall',
+  'computeCall',
+  'agentsCall',
+  'skillsCall'
+] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 
@@ -449,6 +455,12 @@ export class AcpSessionCapabilityOwner {
     ) {
       capabilities.push('host-agents')
     }
+    if (
+      capabilities.includes('notebook') &&
+      policyAllowsSessionCapability(request.policy, 'host-skills')
+    ) {
+      capabilities.push('host-skills')
+    }
 
     const descriptor = freezeDescriptor({
       role: request.policy.role,
@@ -457,7 +469,8 @@ export class AcpSessionCapabilityOwner {
       capabilities,
       canonicalMcpServerNames,
       modelFacingMcpServerNames,
-      controlRpcMethods: capabilities.includes('host-agents')
+      controlRpcMethods:
+        capabilities.includes('host-agents') || capabilities.includes('host-skills')
         ? [...NOTEBOOK_CONTROL_RPC_METHODS]
         : []
     })
@@ -661,6 +674,7 @@ export class AcpSessionCapabilityOwner {
     skillImport: boolean
     plan: boolean
     hostAgents: boolean
+    hostSkills: boolean
   }> {
     const transportAvailable = input.framework.acceptsStdioMcp || Boolean(this.options.mcpHttpHost)
     const notebook =
@@ -683,7 +697,8 @@ export class AcpSessionCapabilityOwner {
         transportAvailable &&
         Boolean(this.options.plan) &&
         policyAllowsSessionCapability(input.policy, 'plan'),
-      hostAgents: notebook && policyAllowsSessionCapability(input.policy, 'host-agents')
+      hostAgents: notebook && policyAllowsSessionCapability(input.policy, 'host-agents'),
+      hostSkills: notebook && policyAllowsSessionCapability(input.policy, 'host-skills')
     })
   }
 

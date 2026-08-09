@@ -64,6 +64,32 @@ describe('SkillRegistry', () => {
     expect(await registry.body('demo')).toContain('# Demo body')
   })
 
+  it('marks internal bundled Skills without changing their runtime source', async () => {
+    const root = await seedRoot()
+    const manifestPath = join(root, 'manifest.json')
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        version: 1,
+        skills: [
+          {
+            id: 'demo',
+            name: 'Demo',
+            source: 'featured',
+            exposure: 'internal',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      })
+    )
+
+    expect((await new SkillRegistry(root).list())[0]).toMatchObject({
+      id: 'demo',
+      source: 'featured',
+      exposure: 'internal'
+    })
+  })
+
   it('derives a stable compatibility identity from bundled Skill content', async () => {
     const root = await seedRoot()
     const before = (await new SkillRegistry(root).list())[0]?.compatibility

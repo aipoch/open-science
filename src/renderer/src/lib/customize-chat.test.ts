@@ -6,6 +6,7 @@ import { docToSkillIds, docToText, emptyDoc } from '@/pages/workspace/composer/c
 import {
   buildCustomizePrefillDoc,
   CUSTOMIZE_PREFILL_TEXT,
+  CUSTOMIZE_SKILL_PREFILL_TEXT,
   CUSTOMIZE_SKILL_REF
 } from './customize-chat'
 
@@ -34,6 +35,14 @@ describe('customize-chat prefill doc', () => {
     expect(docToText(buildCustomizePrefillDoc())).toBe(
       '/Customize  Help me create a new specialist.'
     )
+  })
+
+  it('builds the Skill Creator entry with the same Customize chip', () => {
+    expect(CUSTOMIZE_SKILL_PREFILL_TEXT).toBe('  Help me create a new skill.')
+    expect(docToText(buildCustomizePrefillDoc('skill'))).toBe(
+      '/Customize  Help me create a new skill.'
+    )
+    expect(docToSkillIds(buildCustomizePrefillDoc('skill'))).toEqual(['customize'])
   })
 
   it('reports the customize skill id through the normal picked-Skill mechanism', () => {

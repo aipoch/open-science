@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
+import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
 import {
@@ -41,7 +42,7 @@ type WorkspaceComposerControllerInput = {
   currentDraftKey: string
   newConversationDraftKey: string
   activeProjectId: string | undefined
-  pendingCustomizePrefill: string | undefined
+  pendingCustomizePrefill: CustomizePrefillIntent | undefined
   onCustomizePrefillApplied: () => void
   historyEntries: ComposerHistoryEntry[]
   hasActiveSession: boolean
@@ -117,7 +118,8 @@ const useWorkspaceComposerController = ({
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
-  const [appliedCustomizePrefill, setAppliedCustomizePrefill] = useState<string>()
+  const [appliedCustomizePrefill, setAppliedCustomizePrefill] =
+    useState<CustomizePrefillIntent>()
 
   const activeDraftKeyRef = useRef(currentDraftKey)
   const draftsRef = useRef<Record<string, ComposerDraft>>({})
@@ -149,19 +151,19 @@ const useWorkspaceComposerController = ({
 
   if (
     pendingCustomizePrefill !== undefined &&
-    pendingCustomizePrefill === activeProjectId &&
+    pendingCustomizePrefill.projectId === activeProjectId &&
     currentDraftKey === newConversationDraftKey &&
-    appliedCustomizePrefill !== pendingCustomizePrefill
+    appliedCustomizePrefill?.requestId !== pendingCustomizePrefill.requestId
   ) {
     setAppliedCustomizePrefill(pendingCustomizePrefill)
     setHistoryBrowsingKey(undefined)
     setHistoryStatus('')
-    setDoc(buildCustomizePrefillDoc())
+    setDoc(buildCustomizePrefillDoc(pendingCustomizePrefill.goal))
     onCustomizePrefillApplied()
   }
 
   useLayoutEffect(() => {
-    if (appliedCustomizePrefill === activeProjectId) {
+    if (appliedCustomizePrefill?.projectId === activeProjectId) {
       delete historyRef.current[newConversationDraftKey]
     }
   }, [activeProjectId, appliedCustomizePrefill, newConversationDraftKey])
@@ -218,7 +220,7 @@ const useWorkspaceComposerController = ({
     const customizePrefillPending =
       currentDraftKey === newConversationDraftKey &&
       pendingCustomizePrefill !== undefined &&
-      pendingCustomizePrefill === activeProjectId
+      pendingCustomizePrefill.projectId === activeProjectId
     const nextDraft = draftsRef.current[currentDraftKey] ?? blank()
     if (!customizePrefillPending) setDoc(nextDraft.doc)
     setAttachments(nextDraft.attachments)

@@ -91,6 +91,52 @@ describe('repl_loop local RPC transport', () => {
       )
     }
   }, 60_000)
+
+  it('routes host.skills through its native skillsCall method', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result: { status: 'edited', origin: 'draft' } }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-skills-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send(
+        "return await host.skills.edit('demo', 'SKILL.md', 'new body', 'old body')"
+      )
+      expect(result.error).toBeNull()
+      expect(received).toMatchObject({
+        method: 'skillsCall',
+        params: {
+          op: 'edit',
+          name: 'demo',
+          path: 'SKILL.md',
+          content: 'new body',
+          old_string: 'old body'
+        }
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
 })
 
 gate('repl_loop.js', () => {

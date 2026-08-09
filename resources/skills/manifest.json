@@ -114,6 +114,13 @@
       "name": "Customize",
       "source": "featured",
       "updatedAt": "2026-07-31T00:00:00.000Z"
+    },
+    {
+      "id": "skill-creator",
+      "name": "Skill Creator",
+      "source": "featured",
+      "exposure": "internal",
+      "updatedAt": "2026-08-09T00:00:00.000Z"
     }
   ]
 }

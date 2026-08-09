@@ -149,9 +149,31 @@ class SkillCatalogModule {
     return [...featured, ...user]
   }
 
+  private async managedCatalog(): Promise<BundledSkill[]> {
+    return (await this.catalog()).filter((skill) => skill.exposure !== 'internal')
+  }
+
+  // Main-process adapter for host.skills. This intentionally includes internal bundled Skills so
+  // /Customize can load skill-creator, while user-facing projections below use managedCatalog().
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.catalog()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    const bundled = (await this.skillRegistry.list()).find((skill) => skill.id === id)
+    return bundled ? read(bundled) : this.userSkills.withSkillReadLock(id, read)
+  }
+
+  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.userSkills.publishPersonalDirectory(slug, sourcePath, overwrite)
+  }
+
   async listSkills(): Promise<SkillView[]> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -170,7 +192,7 @@ class SkillCatalogModule {
     }>
   > {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -188,12 +210,13 @@ class SkillCatalogModule {
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
     const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
-    return ids.filter((id) => disabled.has(id))
+    const managedIds = new Set((await this.managedCatalog()).map((skill) => skill.id))
+    return ids.filter((id) => managedIds.has(id) && disabled.has(id))
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
     const nameById = new Map(
-      (await this.catalog()).map((skill) => [
+      (await this.managedCatalog()).map((skill) => [
         skill.id,
         skill.source === 'featured' ? skill.id : skill.name
       ])
@@ -211,7 +234,7 @@ class SkillCatalogModule {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
     const rootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
-    const byId = new Map((await this.catalog()).map((skill) => [skill.id, skill] as const))
+    const byId = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill] as const))
     const descriptors: Array<{ name: string; path: string }> = []
     for (const id of [...new Set(ids)]) {
       const skill = byId.get(id)
@@ -248,7 +271,7 @@ class SkillCatalogModule {
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => !disabled.has(skill.id))
+        .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
         .map((skill) => ({
           directory: `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.source === 'featured' ? skill.id : skill.name,
@@ -276,7 +299,7 @@ class SkillCatalogModule {
 
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const skill = skills.find((entry) => entry.id === id)
@@ -731,7 +754,9 @@ class SkillCatalogModule {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
-      (await this.catalog()).filter((skill) => !disabled.has(skill.id))
+      (await this.catalog()).filter(
+        (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
+      )
     )
   }
 
@@ -740,9 +765,13 @@ class SkillCatalogModule {
     disabledSkillIds: string[],
     modelConfig?: ClaudeRuntimeModelConfig | null
   ): Promise<void> {
+    const skills = await this.catalog()
+    const internalIds = new Set(
+      skills.filter((skill) => skill.exposure === 'internal').map((skill) => skill.id)
+    )
     await provisionAppClaudeConfigDir(configDir, {
-      skills: await this.catalog(),
-      disabledSkillIds,
+      skills,
+      disabledSkillIds: disabledSkillIds.filter((id) => !internalIds.has(id)),
       ...(modelConfig === undefined ? {} : { modelConfig })
     })
   }

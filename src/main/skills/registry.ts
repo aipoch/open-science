@@ -26,9 +26,19 @@ export type BundledSkill = {
   thirdParty?: string
   category?: string
   requirements?: string
+  // Internal bundled Skills are materialized for the agent runtime but omitted from every Settings
+  // and Specialist picker surface. The source remains `featured`; exposure is a presentation rule,
+  // not a fourth persisted Skill source.
+  exposure?: 'catalog' | 'internal'
 }
 
-type ManifestEntry = { id: string; name: string; source: SkillSource; updatedAt: string }
+type ManifestEntry = {
+  id: string
+  name: string
+  source: SkillSource
+  updatedAt: string
+  exposure?: 'catalog' | 'internal'
+}
 
 const SAFE_ID = /^[a-z0-9-]+$/
 
@@ -75,6 +85,9 @@ const readManifest = async (rootDir: string): Promise<ManifestEntry[]> => {
         SAFE_ID.test(record.id) &&
         typeof record?.name === 'string' &&
         record?.source === 'featured' &&
+        (record?.exposure === undefined ||
+          record?.exposure === 'catalog' ||
+          record?.exposure === 'internal') &&
         typeof record?.updatedAt === 'string'
       )
     })
@@ -121,7 +134,8 @@ class SkillRegistry {
           // The "Third-party software, content, terms, and information" row; several key spellings.
           thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty,
           category: fields.category,
-          requirements: fields.requirements
+          requirements: fields.requirements,
+          exposure: entry.exposure
         })
       } catch (error) {
         log.warn('skipping bundled skill with unreadable SKILL.md', { id: entry.id, error })

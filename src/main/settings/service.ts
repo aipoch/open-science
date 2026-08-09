@@ -92,7 +92,7 @@ import {
   type ExplicitAgentBackendTarget
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SkillExportArchive } from '../skills/export'
 import type { FetchLike } from '../skills/github-import'
@@ -472,6 +472,23 @@ class SettingsService {
   // Compatibility facade: Skill state and filesystem rules live in SkillCatalogModule.
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
+  }
+
+  // Internal main-process adapter used by host.skills. Unlike listSkills(), this includes bundled
+  // internal Skills and returns source directories only to the trusted caller callback.
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.skills.listHostSkills()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    return this.skills.withHostSkillRead(id, read)
+  }
+
+  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.skills.publishHostSkill(slug, sourcePath, overwrite)
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {

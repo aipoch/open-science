@@ -1,4 +1,13 @@
-import { ChevronDown, Download, FileUp, FolderInput, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  ChevronDown,
+  Download,
+  FileUp,
+  FolderInput,
+  MessagesSquare,
+  Pencil,
+  Plus,
+  Trash2
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillSource } from '../../../../shared/settings'
@@ -11,6 +20,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
+import { resolveCustomizeProjectId } from '@/lib/last-opened-project'
 import { SkillDetailView } from './SkillDetailView'
 import { SkillEditor, SkillEditLoader } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
@@ -72,6 +84,7 @@ const SkillsPanel = ({
     (state) => state.setConversationSkillImportEnabled
   )
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const projects = useProjectStore((state) => state.projects)
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState<Partial<Record<SkillSource, boolean>>>({})
@@ -80,6 +93,16 @@ const SkillsPanel = ({
   const [exportStatus, setExportStatus] = useState<{ id: string; message: string } | undefined>()
   const [exportingId, setExportingId] = useState<string | undefined>()
   const canExportSkills = typeof window.api?.settings?.exportSkill === 'function'
+  const chatProjectId = useMemo(
+    () => resolveCustomizeProjectId(projects.filter((project) => project.archivedAt === undefined)),
+    [projects]
+  )
+
+  const startChatWithAgent = (): void => {
+    if (!chatProjectId) return
+    useSettingsStore.getState().closeSettings()
+    useNavigationStore.getState().startCustomizeConversation(chatProjectId, 'skill')
+  }
 
   const exportSkill = async (id: string, name: string): Promise<void> => {
     if (!canExportSkills) return
@@ -216,6 +239,17 @@ const SkillsPanel = ({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={!chatProjectId}
+              onSelect={startChatWithAgent}
+            >
+              <MessagesSquare className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex flex-col">
+                <span>Chat with agent</span>
+                <span className="text-xs text-muted-foreground">Describe it in a new session</span>
+              </span>
+            </DropdownMenuItem>
             <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
               <Pencil className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">

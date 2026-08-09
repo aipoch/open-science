@@ -591,7 +591,8 @@ describe('ACP session capability owner', () => {
       'artifacts',
       'notebook',
       'skill-import',
-      'host-agents'
+      'host-agents',
+      'host-skills'
     ])
     expect(primary.descriptor.modelFacingMcpServerNames).toEqual([
       'open_science_artifacts',
@@ -603,7 +604,12 @@ describe('ACP session capability owner', () => {
       'open-science-notebook',
       'open-science-skills'
     ])
-    expect(primary.descriptor.controlRpcMethods).toEqual(['mcpCall', 'computeCall', 'agentsCall'])
+    expect(primary.descriptor.controlRpcMethods).toEqual([
+      'mcpCall',
+      'computeCall',
+      'agentsCall',
+      'skillsCall'
+    ])
     expect(reviewer.mcpServers).toEqual([])
     expect(reviewer.descriptor.capabilities).toEqual([])
     expect(policyAllowsSessionCapability(REVIEWER_SESSION_CAPABILITY_POLICY, 'notebook')).toBe(

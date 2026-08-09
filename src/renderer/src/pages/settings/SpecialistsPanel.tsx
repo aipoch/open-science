@@ -262,7 +262,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const startChatWithAgent = (): void => {
     if (!chatProjectId) return
     useSettingsStore.getState().closeSettings()
-    useNavigationStore.getState().startCustomizeConversation(chatProjectId)
+    useNavigationStore.getState().startCustomizeConversation(chatProjectId, 'specialist')
   }
 
   const downloadTemplate = (): void => {

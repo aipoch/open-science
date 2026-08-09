@@ -25,7 +25,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const createCatalog = async (): Promise<SkillCatalogModule> => {
+const createCatalog = async (includeInternal = false): Promise<SkillCatalogModule> => {
   const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
   const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-skill-bundle-'))
   roots.push(storageRoot, bundleRoot)
@@ -34,12 +34,30 @@ const createCatalog = async (): Promise<SkillCatalogModule> => {
     join(bundleRoot, 'demo', 'SKILL.md'),
     '---\nname: demo\ndescription: A demo skill.\n---\n\ndemo body\n'
   )
+  if (includeInternal) {
+    await mkdir(join(bundleRoot, 'skill-creator'), { recursive: true })
+    await writeFile(
+      join(bundleRoot, 'skill-creator', 'SKILL.md'),
+      '---\nname: skill-creator\ndescription: Create Skills.\n---\n\ninternal body\n'
+    )
+  }
   await writeFile(
     join(bundleRoot, 'manifest.json'),
     JSON.stringify({
       version: 1,
       skills: [
-        { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' }
+        { id: 'demo', name: 'Demo', source: 'featured', updatedAt: '2026-01-01T00:00:00.000Z' },
+        ...(includeInternal
+          ? [
+              {
+                id: 'skill-creator',
+                name: 'Skill Creator',
+                source: 'featured',
+                exposure: 'internal',
+                updatedAt: '2026-08-09T00:00:00.000Z'
+              }
+            ]
+          : [])
       ]
     })
   )
@@ -54,6 +72,25 @@ const createCatalog = async (): Promise<SkillCatalogModule> => {
 }
 
 describe('SkillCatalogModule', () => {
+  it('keeps internal bundled Skills runtime-visible but out of Settings and Specialist catalogs', async () => {
+    const catalog = await createCatalog(true)
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+    roots.push(runtimeRoot)
+
+    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toContain('skill-creator')
+    expect((await catalog.listSkills()).map((skill) => skill.id)).not.toContain('skill-creator')
+    expect((await catalog.listSpecialistSkillCatalog()).map((skill) => skill.id)).not.toContain(
+      'skill-creator'
+    )
+
+    await catalog.materializeSkills(runtimeRoot, ['skill-creator'])
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-skill-creator', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('internal body')
+    await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+    await chmod(join(runtimeRoot, 'skills', 'os-skill-creator'), 0o755)
+  })
+
   it('verifies before replacing a saved token and keeps the old token on failure', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-github-token-'))
     roots.push(storageRoot)

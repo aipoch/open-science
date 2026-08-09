@@ -222,7 +222,11 @@ describe('navigation store customize conversation', () => {
     expect(state.activeProjectId).toBe('project-a')
     // New conversation draft: no session selected, so no Specialist binding.
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
-    expect(state.pendingCustomizePrefill).toBe('project-a')
+    expect(state.pendingCustomizePrefill).toEqual({
+      projectId: 'project-a',
+      goal: 'specialist',
+      requestId: 1
+    })
   })
 
   it('records the customize target as the last-opened project', () => {
@@ -250,10 +254,22 @@ describe('navigation store customize conversation', () => {
 
   it('clears the pending prefill intent once consumed', () => {
     useNavigationStore.getState().startCustomizeConversation('project-a')
-    expect(useNavigationStore.getState().pendingCustomizePrefill).toBe('project-a')
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toMatchObject({
+      projectId: 'project-a',
+      goal: 'specialist'
+    })
 
     useNavigationStore.getState().consumeCustomizePrefill()
     expect(useNavigationStore.getState().pendingCustomizePrefill).toBeUndefined()
+  })
+
+  it('carries a Skill goal as a distinct one-shot Customize intent', () => {
+    useNavigationStore.getState().startCustomizeConversation('project-a', 'skill')
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toEqual({
+      projectId: 'project-a',
+      goal: 'skill',
+      requestId: 1
+    })
   })
 })
 
