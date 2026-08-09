@@ -179,6 +179,35 @@ type ToolCallUpdate = Extract<
   { sessionUpdate: 'tool_call' | 'tool_call_update' }
 >
 
+// codex-acp represents native automatic and manual context compaction as a tool lifecycle with a
+// structural metadata marker. Normalize it before generic tool projection so every framework reaches
+// the renderer through the same compaction interface.
+const isContextCompactionUpdate = (update: ToolCallUpdate): boolean => {
+  const meta = update._meta
+
+  return isRecord(meta) && meta.contextCompaction === true
+}
+
+const projectContextCompactionUpdate = (
+  update: ToolCallUpdate
+): Pick<AcpRuntimeEvent, 'kind' | 'status' | 'title' | 'toolCallId'> => {
+  const status =
+    update.status ?? (update.sessionUpdate === 'tool_call_update' ? 'completed' : 'in_progress')
+  const title =
+    status === 'completed'
+      ? 'Context compacted'
+      : status === 'failed'
+        ? 'Context compaction failed'
+        : 'Compacting context'
+
+  return {
+    kind: 'compaction',
+    status,
+    title,
+    toolCallId: update.toolCallId
+  }
+}
+
 // Native Skill calls return their instruction document as a tool result. It is agent context, not
 // user-facing output, so do not send it through the activity, IPC, or persistence pipelines.
 const isNativeSkillToolUpdate = (update: ToolCallUpdate): boolean => {
@@ -288,6 +317,13 @@ const toAcpRuntimeEvent = (
         text: contentToText(update.content)
       }
     case 'tool_call':
+      if (isContextCompactionUpdate(update)) {
+        return {
+          ...base,
+          raw: undefined,
+          ...projectContextCompactionUpdate(update)
+        }
+      }
       // Tool events expose only the bounded fields consumed by the UI. Do not retain the original
       // notification because it duplicates the unbounded arguments and results inside `raw`.
       return {
@@ -302,6 +338,13 @@ const toAcpRuntimeEvent = (
         status: update.status
       }
     case 'tool_call_update':
+      if (isContextCompactionUpdate(update)) {
+        return {
+          ...base,
+          raw: undefined,
+          ...projectContextCompactionUpdate(update)
+        }
+      }
       // Tool updates stay compact and do not expose future preview metadata assumptions.
       return {
         ...base,

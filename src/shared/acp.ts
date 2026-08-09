@@ -113,6 +113,11 @@ export type AcpRuntimeEventKind =
   | 'stop'
   | 'raw'
 
+// Durable renderer marker for compaction lifecycle rows stored through the existing tool-activity
+// projection. The runtime event remains `kind: 'compaction'`; this value only identifies its transcript
+// activity after persistence and replay.
+export const ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME = 'ContextCompaction'
+
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
 export type AcpHandoffFailure = {

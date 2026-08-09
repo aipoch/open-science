@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 
 import {
@@ -15,7 +16,9 @@ type ConversationMessageItem = {
   message: ChatMessage
 }
 
-type ConversationActivityItemBase<ItemType extends 'activity' | 'plan-activity'> = {
+type ConversationActivityItemBase<
+  ItemType extends 'activity' | 'plan-activity' | 'compaction-activity'
+> = {
   id: string
   type: ItemType
   createdAt: number
@@ -25,6 +28,7 @@ type ConversationActivityItemBase<ItemType extends 'activity' | 'plan-activity'>
 
 type ConversationActivityItem = ConversationActivityItemBase<'activity'>
 type ConversationPlanActivityItem = ConversationActivityItemBase<'plan-activity'>
+type ConversationCompactionActivityItem = ConversationActivityItemBase<'compaction-activity'>
 
 // A lifecycle row is a read-only annotation on its originating user turn. It is not another user
 // message and cannot own a separate continuation identity.
@@ -38,6 +42,7 @@ type ConversationItem =
   | ConversationMessageItem
   | ConversationActivityItem
   | ConversationPlanActivityItem
+  | ConversationCompactionActivityItem
   | ConversationHandoffItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
@@ -90,6 +95,9 @@ const formatNotebookToolName = (toolName: string): string | undefined => {
 const isActivityActive = (activity: ToolActivity): boolean =>
   activity.status === 'pending' || activity.status === 'in_progress'
 
+const isContextCompactionActivity = (activity: ToolActivity): boolean =>
+  activity.providerToolName === ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME
+
 // Normalizes optional labels so empty strings can fall back to tool-kind names.
 const trimDetail = (value: string | null | undefined): string | undefined => {
   const trimmedValue = value?.trim()
@@ -133,6 +141,15 @@ const formatActivityToolName = (activity: ToolActivity): string => {
 
 // Builds the status-sensitive text for non-search activity chips.
 const formatActivityTitle = (activity: ToolActivity): string => {
+  if (isContextCompactionActivity(activity)) {
+    const title = trimDetail(activity.title)
+
+    if (title) return title
+    if (activity.status === 'failed') return 'Context compaction failed'
+    if (activity.status === 'completed') return 'Context compacted'
+    return 'Compacting context'
+  }
+
   if (isSkillActivity(activity)) {
     const skillName = getLoadedSkillName(activity)
 
@@ -168,13 +185,19 @@ const createConversationItems = (
     session?.activities?.flatMap((activity): ConversationItem[] => {
       const planToolKind = getPlanToolKind(activity)
       if (planToolKind === 'update_step_status') return []
+      const isCompaction = isContextCompactionActivity(activity)
       return [
         {
-          id:
-            planToolKind === 'generate_plan'
+          id: isCompaction
+            ? `compaction-activity-${activity.id}`
+            : planToolKind === 'generate_plan'
               ? `plan-activity-${activity.id}`
               : `activity-${activity.id}`,
-          type: planToolKind === 'generate_plan' ? 'plan-activity' : 'activity',
+          type: isCompaction
+            ? 'compaction-activity'
+            : planToolKind === 'generate_plan'
+              ? 'plan-activity'
+              : 'activity',
           createdAt: activity.createdAt,
           sortIndex: activity.sortIndex,
           activity
@@ -203,6 +226,7 @@ export {
   formatActivityTitle,
   formatNotebookToolName,
   getNotebookToolSuffix,
-  isActivityActive
+  isActivityActive,
+  isContextCompactionActivity
 }
 export type { ConversationItem }

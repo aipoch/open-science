@@ -1,4 +1,8 @@
-import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../../../shared/acp'
+import {
+  ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
+  type AcpRuntimeEvent,
+  type AcpTurnTokenUsage
+} from '../../../../shared/acp'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile,
@@ -669,19 +673,52 @@ const applyWorkspaceRuntimeEvent = async (
     return true
   }
 
-  // Native compaction is a framework control turn, not a chat turn. Reflect its lifecycle in the
-  // existing neutral compacting state while keeping command/status output out of the transcript.
+  // Native compaction is a framework control turn, not a chat Message. Persist one branch-scoped,
+  // non-interactive activity row while retaining the existing neutral Session compacting state.
   if (event.kind === 'compaction' && event.sessionId) {
+    const sessionBeforeCompaction = store.sessions.find(
+      (candidate) => candidate.id === event.sessionId
+    )
+    const existingActivity = event.toolCallId
+      ? sessionBeforeCompaction?.activities?.find((activity) => activity.id === event.toolCallId)
+      : undefined
+    if (
+      existingActivity?.providerToolName === ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME &&
+      isTerminalToolActivity(existingActivity)
+    ) {
+      return true
+    }
+
     if (event.status === 'in_progress') {
       store.beginCompaction(event.sessionId)
-    } else if (event.compactionReason === 'overflow-recovery') {
-      // The recovery flow owns the terminal transition: keep the composer gated until its retry
-      // replaces compacting with a new active run, or its fallback reports a concrete failure.
-      return true
-    } else if (event.status === 'completed' || event.status === 'cancelled') {
-      store.finishCompaction(event.sessionId)
-    } else if (event.status === 'failed') {
-      store.failCompaction(event.sessionId, getEventErrorText(event))
+    } else if (event.compactionReason !== 'overflow-recovery') {
+      if (event.status === 'completed' || event.status === 'cancelled') {
+        store.finishCompaction(event.sessionId)
+      } else if (event.status === 'failed') {
+        store.failCompaction(event.sessionId, getEventErrorText(event))
+      }
+    }
+    // For overflow recovery, the recovery flow owns the terminal Session transition: the activity row
+    // still settles below, while the composer stays gated until a retry or fallback takes over.
+
+    const session = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === event.sessionId)
+    const promptMessageId =
+      event.promptMessageId ?? (session ? getCurrentPromptMessageId(session) : undefined)
+    if (event.toolCallId && promptMessageId) {
+      store.completeActivityGroup(event.sessionId, promptMessageId)
+      store.upsertToolActivity({
+        sessionId: event.sessionId,
+        toolCallId: event.toolCallId,
+        eventId: event.id,
+        timestamp: event.timestamp,
+        promptMessageId,
+        title: event.title,
+        status: event.status === 'cancelled' ? 'completed' : event.status,
+        providerToolName: ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
+        toolKind: 'other'
+      })
     }
 
     return true

@@ -455,6 +455,43 @@ describe('AcpSessionUpdateProjector', () => {
     ])
   })
 
+  it('projects the legacy Codex completion notice as a completed compaction lifecycle', () => {
+    const projector = createProjector()
+    const notice = "*Context compacted to fit the model's context window.*\n\n"
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: notice }
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-legacy-compaction',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+    )
+
+    expect(effects).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      {
+        kind: 'visible-event',
+        event: {
+          kind: 'compaction',
+          sessionId: 'session-1',
+          status: 'completed',
+          title: 'Context compacted',
+          toolCallId: 'context-compaction:event-legacy-compaction'
+        }
+      }
+    ])
+    expect(effects.at(-1)).not.toHaveProperty('event.text')
+  })
+
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
     const projector = createProjector()
     const notification: SessionNotification = {

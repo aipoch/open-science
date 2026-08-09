@@ -411,53 +411,145 @@ describe('workspace runtime events', () => {
 
   it('tracks native context compaction without adding chat messages', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
-    const messageCount = useSessionStore.getState().sessions[0].messages.length
+    const sessionBefore = useSessionStore.getState().sessions[0]
+    const messageCount = sessionBefore.messages.length
+    const promptMessageId = sessionBefore.messages[0].id
 
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
-      compacting: true
+      compacting: true,
+      activities: [
+        expect.objectContaining({
+          id: 'context-compaction:1',
+          promptMessageId,
+          providerToolName: 'ContextCompaction',
+          status: 'in_progress',
+          title: 'Compacting context'
+        })
+      ]
     })
 
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-done', kind: 'compaction', status: 'completed' })
+      createEvent({
+        id: 'compact-done',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'completed',
+        title: 'Context compacted',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.compacting).toBeUndefined()
     expect(session.status).toBe('idle')
     expect(session.messages).toHaveLength(messageCount)
-  })
+    expect(session.activities).toEqual([
+      expect.objectContaining({
+        id: 'context-compaction:1',
+        eventIds: ['compact-start', 'compact-done'],
+        promptMessageId,
+        providerToolName: 'ContextCompaction',
+        status: 'completed',
+        title: 'Context compacted'
+      })
+    ])
+    expect(toPersistedSession(session).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'context-compaction:1',
+        promptMessageId,
+        providerToolName: 'ContextCompaction',
+        status: 'completed'
+      })
+    ])
 
-  it('settles cancelled native compaction without surfacing a session error', async () => {
-    useSessionStore.getState().finishRun('transport-session-1')
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
-    )
-    await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-cancelled', kind: 'compaction', status: 'cancelled' })
+      createEvent({
+        id: 'compact-late-start',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
       compacting: undefined,
-      error: undefined
+      activities: [
+        expect.objectContaining({
+          eventIds: ['compact-start', 'compact-done'],
+          status: 'completed',
+          title: 'Context compacted'
+        })
+      ]
+    })
+  })
+
+  it('settles cancelled native compaction without surfacing a session error', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:cancelled'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-cancelled',
+        kind: 'compaction',
+        status: 'cancelled',
+        title: 'Context compaction cancelled',
+        toolCallId: 'context-compaction:cancelled'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: undefined,
+      error: undefined,
+      activities: [
+        expect.objectContaining({
+          status: 'completed',
+          title: 'Context compaction cancelled'
+        })
+      ]
     })
   })
 
   it('surfaces native compaction failures as non-reportable session errors', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:failed'
+      })
     )
     await applyWorkspaceRuntimeEvent(
       createEvent({
         id: 'compact-failed',
         kind: 'compaction',
         status: 'failed',
+        title: 'Context compaction failed',
+        toolCallId: 'context-compaction:failed',
         text: 'Agent rejected /compact'
       })
     )
@@ -466,7 +558,10 @@ describe('workspace runtime events', () => {
       status: 'error',
       compacting: undefined,
       error: 'Agent rejected /compact',
-      errorReportable: false
+      errorReportable: false,
+      activities: [
+        expect.objectContaining({ status: 'failed', title: 'Context compaction failed' })
+      ]
     })
   })
 

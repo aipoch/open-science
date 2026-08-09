@@ -7,6 +7,7 @@ const USER_MESSAGE = 'Summarize the deterministic fixture.'
 const EDITED_USER_MESSAGE = 'Summarize the revised deterministic fixture.'
 const AGENT_REPLY = `Deterministic reply: ${USER_MESSAGE}`
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
@@ -97,6 +98,31 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Deny', exact: true }).click()
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
+})
+
+test('shows context compaction loading and completion inside the Session transcript', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CONTEXT_COMPACTION_PROMPT)
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const conversation = page.getByRole('region', { name: 'Conversation' })
+  const compaction = conversation.getByTestId('context-compaction-activity')
+  await expect(compaction).toContainText('Compacting context')
+  await expect(compaction).toContainText('Context compacted')
+  await expect(compaction.getByTestId('tool-chip')).not.toHaveAttribute('role', 'status')
+
+  for (const width of [320, 375, 414, 768]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(compaction).toBeVisible()
+    expect(await compaction.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
+  }
 })
 
 test('archives a completed session from its sidebar actions', async ({ app }) => {

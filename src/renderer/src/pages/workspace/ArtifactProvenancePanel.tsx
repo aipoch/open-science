@@ -42,6 +42,7 @@ import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
@@ -383,6 +384,16 @@ const ProvenanceMessagesTimeline = ({
                 if (conversationItem.type === 'plan-activity') {
                   return (
                     <WorkspacePlanActivityRecord
+                      key={conversationItem.id}
+                      activity={conversationItem.activity}
+                      contentPaddingClassName="px-0 md:px-0"
+                    />
+                  )
+                }
+
+                if (conversationItem.type === 'compaction-activity') {
+                  return (
+                    <WorkspaceContextCompactionActivityRow
                       key={conversationItem.id}
                       activity={conversationItem.activity}
                       contentPaddingClassName="px-0 md:px-0"

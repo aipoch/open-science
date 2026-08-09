@@ -18,6 +18,7 @@ import type { AcpSessionRegistry } from './session-registry'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
+const CODEX_LEGACY_COMPACTION_NOTICE = "*Context compacted to fit the model's context window.*"
 const AGENT_USER_CHOICE_TOOL = 'open-science-notebook/ask_user_question'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -199,7 +200,24 @@ class AcpSessionUpdateProjector {
         routing.framework === 'claude-code'
       )
     )
-    const event = deepFreeze(projection.event)
+    const projectedEvent = projection.event
+    const event = deepFreeze(
+      routing.framework === 'codex' &&
+        projectedEvent.kind === 'message' &&
+        projectedEvent.messageId === undefined &&
+        projectedEvent.text?.trim() === CODEX_LEGACY_COMPACTION_NOTICE
+        ? {
+            id: projectedEvent.id,
+            timestamp: projectedEvent.timestamp,
+            level: projectedEvent.level,
+            kind: 'compaction' as const,
+            sessionId: projectedEvent.sessionId,
+            status: 'completed',
+            title: 'Context compacted',
+            toolCallId: `context-compaction:${routing.eventId}`
+          }
+        : projectedEvent
+    )
     // codex-acp 1.1.4 flattens Codex's post-compaction warning into an unscoped assistant chunk.
     // Keep the separate compaction notice, but do not attribute this adapter-authored warning to the model.
     if (

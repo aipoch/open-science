@@ -152,6 +152,55 @@ describe('ACP runtime event normalization', () => {
     expect(event).not.toHaveProperty('previewToolKind')
   })
 
+  it('maps Codex context-compaction tool calls into the shared compaction lifecycle', () => {
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'compact-1',
+        title: 'Context compacting',
+        kind: 'other',
+        status: 'in_progress',
+        _meta: { contextCompaction: true }
+      }
+    }
+
+    expect(toAcpRuntimeEvent(notification, 'event-compact-start', 1710000000002)).toMatchObject({
+      id: 'event-compact-start',
+      timestamp: 1710000000002,
+      kind: 'compaction',
+      sessionId: 'session-1',
+      toolCallId: 'compact-1',
+      title: 'Compacting context',
+      status: 'in_progress'
+    })
+  })
+
+  it.each(['tool_call', 'tool_call_update'] as const)(
+    'maps Codex %s completion events for live updates and history replay',
+    (sessionUpdate) => {
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate,
+          toolCallId: 'compact-1',
+          title: 'Context compacted',
+          kind: 'other',
+          status: 'completed',
+          _meta: { contextCompaction: true }
+        }
+      }
+
+      expect(toAcpRuntimeEvent(notification, `event-${sessionUpdate}`)).toMatchObject({
+        kind: 'compaction',
+        sessionId: 'session-1',
+        toolCallId: 'compact-1',
+        title: 'Context compacted',
+        status: 'completed'
+      })
+    }
+  )
+
   it('maps tool call updates without preview metadata', () => {
     const notification: SessionNotification = {
       sessionId: 'session-1',

@@ -43,6 +43,7 @@ const groupConversationItems = (
       item.type === 'message' ||
       item.type === 'handoff' ||
       item.type === 'plan-activity' ||
+      item.type === 'compaction-activity' ||
       (item.type === 'activity' && item.activity.elicitation)
     ) {
       groupedItems.push(item)

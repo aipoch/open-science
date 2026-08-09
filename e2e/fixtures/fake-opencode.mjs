@@ -10,8 +10,11 @@ const PERMISSION_PROMPT = 'Request fixture permission.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
+const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 
 const sessionRoutes = new Map()
+
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
 const stringEnvironment = (overrides = []) => {
   const environment = Object.fromEntries(
@@ -194,7 +197,31 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(PROVIDER_BRIDGE_PROMPT)) {
+        if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-context-compaction',
+              title: 'Context compacting',
+              kind: 'other',
+              status: 'in_progress',
+              _meta: { contextCompaction: true }
+            }
+          })
+          await delay(1_500)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-context-compaction',
+              title: 'Context compacted',
+              status: 'completed',
+              _meta: { contextCompaction: true }
+            }
+          })
+          reply = 'Compaction preview complete.'
+        } else if (prompt.includes(PROVIDER_BRIDGE_PROMPT)) {
           reply = verifyProviderBridge()
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)

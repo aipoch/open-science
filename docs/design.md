@@ -483,6 +483,11 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Agent loading surface is transparent and keeps `px-3 py-2` for stable transcript geometry; elapsed and status text use `text-text-000/70`, while the brand indicator uses `text-text-300`. A silent foreground prompt shows `[indicator] · thinking` with elapsed time and the existing slow-response hint. Active tools and permission waits show `[indicator] · interacting with tools` without a timer. Visible assistant text or images hide the indicator; when the current tool transitions to a terminal state, Thinking returns with a fresh timer until the next visible output. Runtime stop, failure, disconnect, and compaction clear the transient indicator state. Historical, duplicate, and late tool events must not revive it or reorder the activity timeline.
 - User Message copy and edit actions sit immediately left of the bubble and use the standard inline-action opacity transition on row hover or keyboard focus. When editing creates multiple Branches, keep the Branch navigation persistently visible at the right end of the metadata footer below the bubble, after the sent time, with previous/next controls around a Branch icon and the current/total count. Let the footer wrap on narrow surfaces so the navigation remains the final bottom row without colliding with the sent time.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
+- Context compaction is a standalone, non-interactive activity row rather than a generic Tool group.
+  Keep the existing Tool-row geometry inside a quiet `bg-bg-200/70` surface. Show a spinner with
+  `Compacting context` while active, a check with `Context compacted` when complete, the standard
+  failure icon on error, and a neutral cancelled state. Persist the row on its originating Message
+  Branch and do not let duplicate, replayed, or late lifecycle events reopen a terminal row.
 - Tool row metadata: `text-[12.5px] text-muted-foreground tabular-nums`.
 - Link: `text-primary underline-offset-4 hover:underline`.
 - Inline code / resource reference: `rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary`.

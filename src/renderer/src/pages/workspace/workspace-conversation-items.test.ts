@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatSession, ToolActivity } from '@/stores/session-store'
+import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
 import {
   createConversationItems,
@@ -44,6 +45,25 @@ describe('workspace conversation items', () => {
     expect(
       formatActivityTitle(createActivity({ title: 'Loading skill: mcp-pubmed', status: 'failed' }))
     ).toBe('Skill failed: mcp-pubmed')
+  })
+
+  it('projects context compaction as a standalone status item with trusted lifecycle copy', () => {
+    const activity = createActivity({
+      id: 'context-compaction:1',
+      providerToolName: ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
+      status: 'in_progress',
+      title: 'Compacting context'
+    })
+    const session: ChatSession = { ...baseSession, activities: [activity] }
+
+    expect(formatActivityTitle(activity)).toBe('Compacting context')
+    expect(createConversationItems(session)).toEqual([
+      expect.objectContaining({
+        id: 'compaction-activity-context-compaction:1',
+        type: 'compaction-activity',
+        activity
+      })
+    ])
   })
 
   it('orders messages and activities by stable runtime sort index when timestamps match', () => {

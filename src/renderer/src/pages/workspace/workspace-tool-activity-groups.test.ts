@@ -60,6 +60,14 @@ const planActivityItem = (activity: ToolActivity): ConversationItem => ({
   activity
 })
 
+const compactionActivityItem = (activity: ToolActivity): ConversationItem => ({
+  id: `compaction-activity-${activity.id}`,
+  type: 'compaction-activity',
+  createdAt: activity.createdAt,
+  sortIndex: activity.sortIndex,
+  activity
+})
+
 // The ToolSearch wrapper row that can precede concrete search entries.
 const toolSearchWrapper = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
   createActivity({ id: 'tool-search-wrapper', title: 'ToolSearch', ...overrides })
@@ -187,6 +195,21 @@ describe('groupConversationItems', () => {
         .filter((item) => item.type === 'activity-group')
         .map((item) => formatStepCount(item.activities))
     ).toEqual(['1 step', '1 step'])
+  })
+
+  it('keeps context compaction standalone between adjacent tool groups', () => {
+    const compaction = createActivity({ id: 'context-compaction:1', sortIndex: 2 })
+    const grouped = groupConversationItems([
+      activityItem(createActivity({ id: 'read-1', sortIndex: 1 })),
+      compactionActivityItem(compaction),
+      activityItem(createActivity({ id: 'read-2', sortIndex: 3 }))
+    ])
+
+    expect(grouped.map((item) => item.type)).toEqual([
+      'activity-group',
+      'compaction-activity',
+      'activity-group'
+    ])
   })
 })
 
