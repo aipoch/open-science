@@ -6,7 +6,8 @@ type TimelinePosition = {
   sortIndex?: number
 }
 
-type AgentLoadingPhase = 'hidden' | 'thinking' | 'interacting-with-tools'
+type AgentLoadingPhase =
+  'hidden' | 'thinking' | 'interacting-with-tools' | 'waiting-for-approval' | 'waiting-for-response'
 
 const isLaterThan = (candidate: TimelinePosition, reference: TimelinePosition): boolean => {
   if (candidate.updatedAt !== reference.updatedAt) return candidate.updatedAt > reference.updatedAt
@@ -50,15 +51,17 @@ const getAgentThinkingStartedAt = (session: ChatSession | undefined): number | u
   return Math.max(runStartedAt, latestTool?.updatedAt ?? runStartedAt)
 }
 
-// The transient row belongs to the active request, not persisted history. Text output owns the
-// transcript, while tool activity and the silent gaps around it use their own indicator phases.
+// The transient row belongs to the active request, not persisted history. User waits stay visible
+// until answered; otherwise text output owns the transcript while tools and silent gaps use their
+// own indicator phases.
 const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
   if (!session) return 'hidden'
-  if (session.status === 'waiting-for-user') return 'hidden'
+  if (session.status === 'waiting-for-user') return 'waiting-for-response'
+  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+    return 'waiting-for-approval'
+  }
 
-  const hasLocalRun =
-    Boolean(session.activeRun) &&
-    (session.status === 'running' || session.status === 'waiting-permission')
+  const hasLocalRun = Boolean(session.activeRun) && session.status === 'running'
   if (!hasLocalRun && !session.agentPromptInFlight) return 'hidden'
 
   const { prompt, tools: currentRunTools } = getCurrentRunTimeline(session)
@@ -66,7 +69,6 @@ const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPha
 
   // Any live tool in the current request takes precedence over the surrounding thinking gaps.
   if (currentRunTools.some(isActivityActive)) return 'interacting-with-tools'
-  if (session.status === 'waiting-permission') return 'interacting-with-tools'
   if (session.awaitingFirstAgentOutput) return 'thinking'
   if (!session.activeRun) return 'hidden'
 

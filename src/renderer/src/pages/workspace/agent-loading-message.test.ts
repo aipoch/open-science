@@ -40,7 +40,12 @@ const createActivity = (overrides: Partial<ToolActivity> = {}): ToolActivity => 
 const loadAgentLoadingMessageModule = async (): Promise<{
   getAgentLoadingPhase: (
     session: ChatSession | undefined
-  ) => 'hidden' | 'thinking' | 'interacting-with-tools'
+  ) =>
+    | 'hidden'
+    | 'thinking'
+    | 'interacting-with-tools'
+    | 'waiting-for-approval'
+    | 'waiting-for-response'
 }> => import('./agent-loading-message')
 
 describe('agent loading message state', () => {
@@ -306,7 +311,7 @@ describe('agent loading message state', () => {
     ).toBe('hidden')
   })
 
-  it('shows tool interaction during permission waits and hides it without a current run', async () => {
+  it('shows an approval wait during permission requests and hides it without a current run', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const runningSession = createSession({
       activeRun: {
@@ -316,13 +321,13 @@ describe('agent loading message state', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // Permission is part of tool interaction even when the provider has not emitted a tool row yet.
+    // Permission is a distinct user wait even when the provider has not emitted a tool row yet.
     expect(
       getAgentLoadingPhase({
         ...runningSession,
         status: 'waiting-permission'
       })
-    ).toBe('interacting-with-tools')
+    ).toBe('waiting-for-approval')
     expect(
       getAgentLoadingPhase({
         ...runningSession,
@@ -332,7 +337,7 @@ describe('agent loading message state', () => {
     ).toBe('hidden')
   })
 
-  it('shows tool interaction during a permission wait after visible agent content', async () => {
+  it('keeps the approval wait visible after agent content arrives', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
 
     // A permission pause takes over from body output until the user answers it.
@@ -357,6 +362,27 @@ describe('agent loading message state', () => {
           ]
         })
       )
-    ).toBe('interacting-with-tools')
+    ).toBe('waiting-for-approval')
   })
+
+  it.each([
+    ['waiting-for-user', 'waiting-for-response'],
+    ['waiting-plan-approval', 'waiting-for-approval']
+  ] as const)(
+    'shows the user wait for a pending %s session after the agent turn ends',
+    async (status, phase) => {
+      const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+
+      expect(
+        getAgentLoadingPhase(
+          createSession({
+            status,
+            activeRun: undefined,
+            agentPromptInFlight: false,
+            messages: [createMessage({ id: 'prompt-1' })]
+          })
+        )
+      ).toBe(phase)
+    }
+  )
 })

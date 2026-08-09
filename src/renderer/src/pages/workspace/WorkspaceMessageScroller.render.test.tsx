@@ -630,7 +630,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('data-message-id="reply-2" data-disable-containment="true"')
   })
 
-  it('shows tool interaction during permission waits and hides it without an active run', async () => {
+  it('shows an approval wait during permission requests and hides ordinary loading without a run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -639,10 +639,10 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // Permission remains a tool interaction before and after visible assistant output.
+    // Permission remains a user-facing approval wait before and after visible assistant output.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({
         ...runningSession,
@@ -659,11 +659,30 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
   })
+
+  it.each([
+    ['waiting-for-user', 'Waiting for your response'],
+    ['waiting-plan-approval', 'Waiting for your approval']
+  ] as const)(
+    'shows the user wait for a %s session without an active run',
+    async (status, label) => {
+      await expect(
+        renderScroller(
+          createSession({
+            status,
+            activeRun: undefined,
+            agentPromptInFlight: false,
+            messages: [createMessage({ id: 'prompt-1' })]
+          })
+        )
+      ).resolves.toContain(`>${label}</span>`)
+    }
+  )
 
   it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
     const html = await renderScroller(

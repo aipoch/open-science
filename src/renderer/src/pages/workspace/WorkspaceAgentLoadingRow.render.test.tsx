@@ -191,6 +191,20 @@ describe('WorkspaceAgentLoadingRow', () => {
     expect(container.textContent).not.toContain('retrying request…')
   })
 
+  it.each([
+    ['waiting-for-approval', 'Waiting for your approval'],
+    ['waiting-for-response', 'Waiting for your response']
+  ] as const)('shows the %s message without elapsed time', (phase, label) => {
+    seedRunningSession(45_000, 'retrying request…')
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase={phase} />))
+
+    expect(container.textContent).toContain(label)
+    expect(container.textContent).not.toContain('Interacting with tools')
+    expect(container.textContent).not.toContain('0:45')
+    expect(container.textContent).not.toContain('taking longer than usual')
+    expect(container.textContent).not.toContain('retrying request…')
+  })
+
   it('reuses the thinking indicator for Session resume progress', () => {
     seedRunningSession(5000)
     act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="resuming" />))

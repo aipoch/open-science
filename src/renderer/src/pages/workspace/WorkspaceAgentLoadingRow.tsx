@@ -76,7 +76,15 @@ const AgentLoadingIndicator = ({
       ) : (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
-          <span>{phase === 'resuming' ? 'Resuming session' : 'Interacting with tools'}</span>
+          <span>
+            {phase === 'resuming'
+              ? 'Resuming session'
+              : phase === 'waiting-for-approval'
+                ? 'Waiting for your approval'
+                : phase === 'waiting-for-response'
+                  ? 'Waiting for your response'
+                  : 'Interacting with tools'}
+          </span>
         </div>
       )}
     </div>
