@@ -58,6 +58,12 @@ export type PendingElicitationRequest = {
   durable?: ElicitationProjection['durable']
 }
 
+export const isDurableAgentUserChoiceRequest = (
+  request: PendingElicitationRequest
+): request is PendingElicitationRequest & {
+  durable: NonNullable<ElicitationProjection['durable']>
+} => request.durable?.kind === 'agent-user-choice'
+
 export type ElicitationResponse = {
   requestId: string
   action: 'accept' | 'decline' | 'cancel'

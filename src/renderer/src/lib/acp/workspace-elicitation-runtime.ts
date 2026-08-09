@@ -1,4 +1,4 @@
-import type { ElicitationResponse } from '../../../../shared/acp'
+import { isDurableAgentUserChoiceRequest, type ElicitationResponse } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import type { AgentFrameworkId } from '../../../../shared/settings'
@@ -250,7 +250,9 @@ const reviseWorkspaceElicitation = async (
     syncWorkspaceInteractionState(snapshot)
     if (
       !snapshot.pendingElicitations?.some(
-        (request) => request.sessionId === restoredRequest.sessionId
+        (request) =>
+          request.sessionId === restoredRequest.sessionId &&
+          isDurableAgentUserChoiceRequest(request)
       )
     ) {
       useSessionStore.getState().setElicitationPending(restoredRequest.sessionId, false)
@@ -367,7 +369,9 @@ const respondToWorkspaceElicitation = async (
       ?.sessionId
   if (
     sessionId &&
-    !snapshot.pendingElicitations?.some((request) => request.sessionId === sessionId)
+    !snapshot.pendingElicitations?.some(
+      (request) => request.sessionId === sessionId && isDurableAgentUserChoiceRequest(request)
+    )
   ) {
     useSessionStore.getState().setElicitationPending(sessionId, false)
   }

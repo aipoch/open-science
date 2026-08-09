@@ -9,7 +9,11 @@ import type {
   PendingElicitationRequest
 } from './elicitation'
 
-export { MAX_ELICITATION_MESSAGE_CHARS, resolveAgentUserChoiceQuestions } from './elicitation'
+export {
+  isDurableAgentUserChoiceRequest,
+  MAX_ELICITATION_MESSAGE_CHARS,
+  resolveAgentUserChoiceQuestions
+} from './elicitation'
 export type {
   AgentUserChoiceQuestion,
   ElicitationAnswer,

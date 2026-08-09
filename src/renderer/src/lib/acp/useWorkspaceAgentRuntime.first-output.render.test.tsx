@@ -129,7 +129,8 @@ describe('workspace Agent first-output runtime sync', () => {
             sessionId: 'session-1',
             toolCallId: 'choice-tool-1',
             message: 'Choose an approach',
-            fields: [{ id: 'approach', label: 'Approach', kind: 'text' }]
+            fields: [{ id: 'approach', label: 'Approach', kind: 'text' }],
+            durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
           }
         ]
       })
@@ -176,6 +177,34 @@ describe('workspace Agent first-output runtime sync', () => {
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
     expect(container.textContent).toBe('')
+  })
+
+  it('does not project an unrendered generic ACP form as waiting for the user', async () => {
+    await act(async () => root.render(<Harness />))
+
+    runtimeMock.current = createRuntime(
+      createSnapshot({
+        promptInFlight: true,
+        promptInFlightSessionIds: ['session-1'],
+        agentPromptInFlightSessionIds: ['session-1'],
+        pendingElicitations: [
+          {
+            requestId: 'generic-form-1',
+            sessionId: 'session-1',
+            toolCallId: 'generic-form-tool-1',
+            message: 'Provide additional input',
+            fields: [{ id: 'detail', label: 'Detail', kind: 'text' }]
+          }
+        ]
+      })
+    )
+    await act(async () => root.render(<Harness />))
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      agentPromptInFlight: true
+    })
+    expect(container.textContent).toBe('thinking')
   })
 
   it('does not rearm waiting when prompt ownership and the first visible output share a snapshot', async () => {

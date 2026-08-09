@@ -1,10 +1,11 @@
-import type {
-  AcpConnectionStatus,
-  AcpContextUsage,
-  AcpPermissionRequest,
-  AcpRuntimeEvent,
-  AcpStateSnapshot,
-  PendingElicitationRequest
+import {
+  isDurableAgentUserChoiceRequest,
+  type AcpConnectionStatus,
+  type AcpContextUsage,
+  type AcpPermissionRequest,
+  type AcpRuntimeEvent,
+  type AcpStateSnapshot,
+  type PendingElicitationRequest
 } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
@@ -243,7 +244,9 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
 
 // Keeps Session status aligned with app-owned questions independently of Agent execution state.
 const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): void => {
-  const nextSessionIds = new Set(requests.map((request) => request.sessionId))
+  const nextSessionIds = new Set(
+    requests.filter(isDurableAgentUserChoiceRequest).map((request) => request.sessionId)
+  )
   const store = useSessionStore.getState()
 
   for (const sessionId of nextSessionIds) {

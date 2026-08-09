@@ -637,7 +637,7 @@ describe('workspace durable elicitation', () => {
     vi.unstubAllGlobals()
   })
 
-  it('returns to running as soon as an answer starts the hidden continuation', async () => {
+  it('returns to running when no actionable user choice remains', async () => {
     useSessionStore.getState().setElicitationPending('session-choice-1', true)
     const response = {
       requestId: 'choice-1',
@@ -656,7 +656,15 @@ describe('workspace durable elicitation', () => {
       promptInFlight: true,
       promptInFlightSessionIds: ['session-choice-1'],
       agentPromptInFlightSessionIds: ['session-choice-1'],
-      pendingElicitations: []
+      pendingElicitations: [
+        {
+          requestId: 'generic-form-1',
+          sessionId: 'session-choice-1',
+          toolCallId: 'generic-form-tool-1',
+          message: 'Provide additional input',
+          fields: [{ id: 'detail', label: 'Detail', kind: 'text' as const }]
+        }
+      ]
     }
 
     await respondToWorkspaceElicitation(
@@ -700,7 +708,8 @@ describe('workspace durable elicitation', () => {
           sessionId: 'session-choice-1',
           toolCallId: 'tool-choice-2',
           message: 'Choose a format',
-          fields: [{ id: 'question_0', label: 'Format', kind: 'text' as const }]
+          fields: [{ id: 'question_0', label: 'Format', kind: 'text' as const }],
+          durable: { kind: 'agent-user-choice' as const, requestId: 'choice-2' }
         }
       ]
     }
