@@ -1,7 +1,15 @@
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, SearchX, Star } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  LoaderCircle,
+  ScrollText,
+  SearchX,
+  Star
+} from 'lucide-react'
 
 import type {
   GitHubRepositorySearchView,
@@ -433,23 +441,36 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
       </div>
 
-      <h3 className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground">
-        Imported skills
-      </h3>
-      {imported.length > 0 ? (
-        <ul className="mt-2 flex flex-col divide-y divide-border">
-          {imported.map((skill) => (
-            <li key={skill.id} className="flex items-center gap-2 py-2.5">
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{skill.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{skill.id}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 py-2 text-xs text-muted-foreground">
-          No imported skills yet. Repos you import from will appear here.
-        </p>
-      )}
+      <section aria-labelledby="imported-skills-heading">
+        <h3
+          id="imported-skills-heading"
+          className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground"
+        >
+          Imported skills
+        </h3>
+        {imported.length > 0 ? (
+          <ul className="mt-2 flex flex-col divide-y divide-border">
+            {imported.map((skill) => (
+              <li key={skill.id} className="flex items-center gap-2 py-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  {skill.name}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">{skill.id}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="flex min-h-64 flex-col items-center justify-center px-4 py-8 text-center">
+            <span className="inline-flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <ScrollText className="size-5" aria-hidden="true" />
+            </span>
+            <p className="mt-3 text-sm font-medium text-foreground">No imported skills yet</p>
+            <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
+              Repos you import from will appear here.
+            </p>
+          </div>
+        )}
+      </section>
 
       <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>

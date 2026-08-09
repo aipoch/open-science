@@ -770,6 +770,11 @@ describe('SkillsPanel (sub-views)', () => {
       (heading) => heading.textContent?.trim() === 'Imported skills'
     )
     expect(importedHeading?.className).toContain('border-t')
+    const importedSection = importedHeading?.closest('section')
+    expect(importedSection?.textContent).toContain('No imported skills yet')
+    expect(importedSection?.textContent).toContain('Repos you import from will appear here.')
+    expect(importedSection?.querySelector('svg')).not.toBeNull()
+    expect(importedHeading?.nextElementSibling?.className).toContain('items-center')
   })
 
   it('shows row-level scan progress, then collapses repository results after scanning', async () => {
