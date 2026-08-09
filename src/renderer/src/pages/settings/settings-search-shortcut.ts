@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react'
 
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
+const HIDDEN_SEARCH_SELECTOR = '[data-state="closed"], [hidden], [aria-hidden="true"]'
 
 export const getSettingsSearchKeyShortcuts = (): string =>
   window.api?.platform === 'darwin' ? 'Meta+K' : 'Control+K'
@@ -28,6 +29,7 @@ export const useSettingsSearchShortcut = (
 
       const input = inputRef.current
       if (!input?.isConnected || input.disabled) return
+      if (input.closest(HIDDEN_SEARCH_SELECTOR)) return
 
       const dialogs = document.querySelectorAll<HTMLElement>(OPEN_DIALOG_SELECTOR)
       const topmostDialog = dialogs.item(dialogs.length - 1)

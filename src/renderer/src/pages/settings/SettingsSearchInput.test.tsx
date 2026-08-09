@@ -90,4 +90,23 @@ describe('SettingsSearchInput', () => {
       document.body.querySelector<HTMLInputElement>('[aria-label="Filter packages"]')
     )
   })
+
+  it.each([
+    ['closing', { 'data-state': 'closed' }],
+    ['hidden', { hidden: true }]
+  ])('does not consume the shortcut for a search in a %s dialog', (_, dialogProps) => {
+    ;(window as unknown as { api: unknown }).api = { platform: 'darwin' }
+    act(() => {
+      root.render(
+        <div role="dialog" {...dialogProps}>
+          <SettingsSearchInput aria-label="Search skills" value="" onChange={() => undefined} />
+        </div>
+      )
+    })
+
+    const event = pressSearchShortcut({ metaKey: true })
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(document.body)
+  })
 })
