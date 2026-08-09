@@ -1311,7 +1311,16 @@ const createApplicationModules = async (
             sideChatId
           })
       },
-      onEvent: (event) => broadcastToRenderers('side-chat:event', event)
+      onEvent: (event) => broadcastToRenderers('side-chat:event', event),
+      setParentInteractionsPaused: (sessionId, paused) => {
+        if (paused) {
+          approvalBroker.pauseSession(sessionId)
+          computeIpcModule.handlers.approvalPauseSession(sessionId)
+          return
+        }
+        approvalBroker.resumeSession(sessionId)
+        computeIpcModule.handlers.approvalResumeSession(sessionId)
+      }
     },
     (options) => {
       const owner = new SideChatRuntimeOwner(options)
@@ -1345,9 +1354,12 @@ const createApplicationModules = async (
   )
   // Archive availability is checked at the final admission point, rather than trusting renderer
   // visibility, so an archived Project/Session cannot restart work through another surface.
-  runtime.setPromptAdmissionGuard((sessionId) =>
-    archiveCoordinator.assertSessionAvailableById(sessionId)
-  )
+  runtime.setPromptAdmissionGuard(async (sessionId) => {
+    await archiveCoordinator.assertSessionAvailableById(sessionId)
+    if (sideChatRuntime.hasForParent(sessionId)) {
+      throw new Error('Close Side chat before sending a message to Main.')
+    }
+  })
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
     {

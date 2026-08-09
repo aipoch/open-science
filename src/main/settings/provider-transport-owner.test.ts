@@ -55,6 +55,8 @@ const makeResponsesBridge = (index: number): ResponsesBridgeStub => ({
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setReasoningEffort: vi.fn(),
   setModelTarget: vi.fn(),
   setTarget: vi.fn()
@@ -77,6 +79,8 @@ const makeNativeProxy = (startError?: Error, closeError?: Error): NativeProxyStu
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setModelTarget: vi.fn(),
   setTarget: vi.fn()
 })

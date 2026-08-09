@@ -36,6 +36,7 @@ import { AcpRuntime, type AcpRuntimeOptions } from '../acp/runtime'
 import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from '../acp/session-capability-owner'
 import type { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import {
+  HOST_MESSAGE_CONTENT_INSTRUCTION,
   HOST_MESSAGE_MCP_SERVER_NAME,
   HOST_MESSAGE_NAMESPACED_TOOLS,
   HOST_SEND_MESSAGE_TOOL_NAME
@@ -45,6 +46,7 @@ const SIDE_CHAT_AGENT_NAME = 'open-science-side-chat'
 const HOST_MESSAGE_IDENTITY = `${HOST_MESSAGE_MCP_SERVER_NAME}/${HOST_SEND_MESSAGE_TOOL_NAME}`
 const MAX_PERSISTED_SIDE_CHAT_ENTRIES = 1_000
 const MAX_PERSISTED_SIDE_CHAT_TRANSCRIPT_JSON_CHARS = 512_000
+const PERSISTED_MESSAGE_TRUNCATION_PREFIX = '[Earlier message content truncated]\n'
 const log = createLogger('side-chat')
 const SIDE_CHAT_SYSTEM_PROMPT = [
   'You are in a Side chat attached to a main conversation.',
@@ -52,6 +54,11 @@ const SIDE_CHAT_SYSTEM_PROMPT = [
   'Answer the user directly and concisely.',
   'You have no workspace, shell, file, web, Skill, compute, delegation, or child-Agent capabilities.',
   'Your only tool is send_message with target "main". It queues advisory text for the next real main user turn; it never wakes, interrupts, or authorizes the main Agent.',
+  'Do not call send_message for ordinary Side chat questions, requests, follow-ups, or suggestions.',
+  'Call it only when the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main.',
+  'Never infer permission to relay merely because Main could perform the requested work.',
+  'Do not call it again on a later turn unless the user explicitly asks again.',
+  HOST_MESSAGE_CONTENT_INSTRUCTION,
   'Do not claim the main Agent has received or acted on a relay beyond the structured result returned by that tool.'
 ].join(' ')
 
@@ -95,6 +102,7 @@ type SideChatRuntimeOwnerOptions = Readonly<{
     }): Promise<boolean>
   }>
   onEvent: (event: SideChatRuntimeEvent) => void
+  setParentInteractionsPaused?: (parentSessionId: string, paused: boolean) => void
   createRuntime?: (options: AcpRuntimeOptions) => SideChatRuntimePort
 }>
 
@@ -110,7 +118,7 @@ type ActiveSideChat = {
   projectId: string
   sideSessionId: string
   runtimeSessionId: string
-  relaySenderId?: string
+  relaySenderIds: Set<string>
   runtime: SideChatRuntimePort
   jobRoot: string
   bridgeScopes: Map<HostMessageBridge, Set<string>>
@@ -134,6 +142,13 @@ type ActiveSideChat = {
   queuedPersistLifecycle?: PersistedSideChat['lifecycle']
   needsReplay?: boolean
 }
+
+const nextEntrySequence = (entries: readonly SideChatEntry[]): number =>
+  entries.reduce((highest, entry) => {
+    const match = /^user-(\d+)$/.exec(entry.id)
+    const sequence = match ? Number(match[1]) : Number.NaN
+    return Number.isSafeInteger(sequence) ? Math.max(highest, sequence) : highest
+  }, entries.length)
 
 type DormantSideChat = {
   revision: number
@@ -214,14 +229,25 @@ const boundedPersistedEntries = (entries: readonly SideChatEntry[]): SideChatEnt
   let jsonChars = 2
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]
-    const entryChars = JSON.stringify(entry).length + (reversed.length > 0 ? 1 : 0)
+    const boundedEntry =
+      entry.kind === 'message' && entry.text.length > SIDE_CHAT_MESSAGE_LIMIT
+        ? {
+            ...entry,
+            text:
+              PERSISTED_MESSAGE_TRUNCATION_PREFIX +
+              entry.text.slice(
+                -(SIDE_CHAT_MESSAGE_LIMIT - PERSISTED_MESSAGE_TRUNCATION_PREFIX.length)
+              )
+          }
+        : { ...entry }
+    const entryChars = JSON.stringify(boundedEntry).length + (reversed.length > 0 ? 1 : 0)
     if (
       reversed.length >= MAX_PERSISTED_SIDE_CHAT_ENTRIES ||
       jsonChars + entryChars > MAX_PERSISTED_SIDE_CHAT_TRANSCRIPT_JSON_CHARS
     ) {
       break
     }
-    reversed.push({ ...entry })
+    reversed.push(boundedEntry)
     jsonChars += entryChars
   }
   return reversed.reverse()
@@ -236,6 +262,7 @@ class SideChatRuntimeOwner {
   private readonly closingByParent = new Map<string, Promise<void>>()
   private readonly closeRequestedParents = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
+  private readonly pausedParents = new Set<string>()
   private revision = 0
   private shuttingDown = false
 
@@ -268,6 +295,7 @@ class SideChatRuntimeOwner {
         parentSessionId: record.parentSessionId,
         sideChat: structuredClone(record.sideChat)
       })
+      this.setParentInteractionsPaused(record.parentSessionId, true)
     }
   }
 
@@ -338,6 +366,7 @@ class SideChatRuntimeOwner {
       done: deferred()
     }
     this.startingByParent.set(request.parentSessionId, starting)
+    this.setParentInteractionsPaused(request.parentSessionId, true)
     try {
       await mkdir(this.root, { recursive: true })
       jobRoot = join(this.root, sideChatId)
@@ -421,6 +450,7 @@ class SideChatRuntimeOwner {
         runtimeSessionId: created.sessionId,
         runtime,
         jobRoot,
+        relaySenderIds: new Set(),
         bridgeScopes: new Map(),
         historyPreamble: request.historyPreamble,
         entries: [],
@@ -477,6 +507,9 @@ class SideChatRuntimeOwner {
         starting.done.resolve()
       }
       this.closeRequestedParents.delete(request.parentSessionId)
+      if (!this.hasForParent(request.parentSessionId)) {
+        this.setParentInteractionsPaused(request.parentSessionId, false)
+      }
     }
   }
 
@@ -489,6 +522,15 @@ class SideChatRuntimeOwner {
   ): Readonly<{ parentSessionId: string; projectId: string }> | undefined {
     const chat = this.findActive(sideSessionId) ?? this.findDormant(sideSessionId)
     return chat ? { parentSessionId: chat.parentSessionId, projectId: chat.projectId } : undefined
+  }
+
+  hasForParent(parentSessionId: string): boolean {
+    return (
+      this.activeByParent.has(parentSessionId) ||
+      this.dormantByParent.has(parentSessionId) ||
+      this.startingByParent.has(parentSessionId) ||
+      this.closingByParent.has(parentSessionId)
+    )
   }
 
   async requestProviderReconnect(): Promise<void> {
@@ -808,6 +850,32 @@ class SideChatRuntimeOwner {
       }
       runtime = this.createRuntime(runtimeOptions)
       runtimeRef.current = runtime
+      activeChat = {
+        revision: dormant.revision,
+        parentSessionId: dormant.parentSessionId,
+        projectId: dormant.projectId,
+        sideSessionId: sideChat.id,
+        runtimeSessionId: sideChat.id,
+        runtime,
+        jobRoot,
+        relaySenderIds: new Set(),
+        bridgeScopes: new Map(),
+        historyPreamble: sideChat.historyPreamble,
+        entries: sideChat.entries.map((entry) => ({ ...entry })),
+        entrySequence: nextEntrySequence(sideChat.entries),
+        running: false,
+        closing: false,
+        frameworkId: sideChat.frameworkId,
+        ...(sideChat.backendId ? { backendId: sideChat.backendId } : {}),
+        ...(sideChat.providerSessionId ? { providerSessionId: sideChat.providerSessionId } : {}),
+        ...(sideChat.providerContinuityToken
+          ? { providerContinuityToken: sideChat.providerContinuityToken }
+          : {}),
+        ...(sideChat.model ? { model: sideChat.model } : {}),
+        createdAt: sideChat.createdAt,
+        persistTail: Promise.resolve()
+      }
+      if (bridge) this.registerBridgeScope(activeChat, bridge, activeChat.runtimeSessionId)
       const resumed = await runtime.resumeSession({
         sessionId: sideChat.id,
         ...(sideChat.providerSessionId ? { providerSessionId: sideChat.providerSessionId } : {}),
@@ -819,33 +887,9 @@ class SideChatRuntimeOwner {
         previousFrameworkId: sideChat.frameworkId,
         ...(sideChat.backendId ? { previousBackendId: sideChat.backendId } : {})
       })
-      activeChat = {
-        revision: dormant.revision,
-        parentSessionId: dormant.parentSessionId,
-        projectId: dormant.projectId,
-        sideSessionId: sideChat.id,
-        runtimeSessionId: resumed.sessionId,
-        runtime,
-        jobRoot,
-        bridgeScopes: new Map(),
-        historyPreamble: sideChat.historyPreamble,
-        entries: sideChat.entries.map((entry) => ({ ...entry })),
-        entrySequence: sideChat.entries.length,
-        running: false,
-        closing: false,
-        frameworkId: sideChat.frameworkId,
-        ...(sideChat.backendId ? { backendId: sideChat.backendId } : {}),
-        ...(sideChat.providerSessionId ? { providerSessionId: sideChat.providerSessionId } : {}),
-        ...(sideChat.providerContinuityToken
-          ? { providerContinuityToken: sideChat.providerContinuityToken }
-          : {}),
-        ...(sideChat.model ? { model: sideChat.model } : {}),
-        createdAt: sideChat.createdAt,
-        persistTail: Promise.resolve(),
-        ...(resumed.contextReset ? { needsReplay: true } : {})
-      }
       this.applyProviderIdentity(activeChat, resumed, initialBackend)
-      if (bridge) this.registerBridgeScope(activeChat, bridge, activeChat.runtimeSessionId)
+      this.registerAllBridgeScopes(activeChat, activeChat.runtimeSessionId)
+      if (resumed.contextReset) activeChat.needsReplay = true
       this.dormantByParent.delete(dormant.parentSessionId)
       this.activeByParent.set(dormant.parentSessionId, activeChat)
       this.touch(activeChat)
@@ -857,10 +901,12 @@ class SideChatRuntimeOwner {
       return activeChat
     } catch (error) {
       if (activeChat?.closing) throw error
-      if (activeChat && this.activeByParent.get(dormant.parentSessionId) === activeChat) {
-        this.activeByParent.delete(dormant.parentSessionId)
+      if (activeChat) {
+        if (this.activeByParent.get(dormant.parentSessionId) === activeChat) {
+          this.activeByParent.delete(dormant.parentSessionId)
+        }
         this.unregisterBridgeScopes(activeChat)
-        if (activeChat.relaySenderId) this.options.relay.releaseSide(activeChat.relaySenderId)
+        this.releaseRelaySenders(activeChat)
       }
       await runtime?.shutdownForQuit().catch(() => undefined)
       if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
@@ -1022,19 +1068,21 @@ class SideChatRuntimeOwner {
     if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
       throw new Error('Side chat sender is no longer active.')
     }
-    if (!active.relaySenderId) {
-      active.relaySenderId = routingId
+    if (!active.relaySenderIds.has(routingId)) {
       this.options.relay.bind({
         sideSessionId: routingId,
         sideChatId: active.sideSessionId,
         parentSessionId: active.parentSessionId,
         projectId: active.projectId
       })
-    }
-    if (active.relaySenderId !== routingId) {
-      throw new Error('Side chat sender binding does not match the active capability.')
+      active.relaySenderIds.add(routingId)
     }
     return this.options.relay.send({ sideSessionId: routingId, ...request })
+  }
+
+  private releaseRelaySenders(active: ActiveSideChat): void {
+    for (const routingId of active.relaySenderIds) this.options.relay.releaseSide(routingId)
+    active.relaySenderIds.clear()
   }
 
   private handlePermission(
@@ -1163,6 +1211,16 @@ class SideChatRuntimeOwner {
     return chat.revision
   }
 
+  private setParentInteractionsPaused(parentSessionId: string, paused: boolean): void {
+    if (paused) {
+      if (this.pausedParents.has(parentSessionId)) return
+      this.pausedParents.add(parentSessionId)
+    } else if (!this.pausedParents.delete(parentSessionId)) {
+      return
+    }
+    this.options.setParentInteractionsPaused?.(parentSessionId, paused)
+  }
+
   private snapshotStarting(starting: StartingSideChat): SideChatSnapshot {
     return {
       revision: starting.revision,
@@ -1215,6 +1273,7 @@ class SideChatRuntimeOwner {
     try {
       await closing
       this.activeByParent.delete(active.parentSessionId)
+      this.setParentInteractionsPaused(active.parentSessionId, false)
       if (notify) this.emitRuntimeClosed(active, 'closed')
     } catch (error) {
       active.closing = false
@@ -1267,7 +1326,7 @@ class SideChatRuntimeOwner {
       }
     }
     await active.runtime.shutdownForQuit().catch(() => undefined)
-    if (active.relaySenderId) this.options.relay.releaseSide(active.relaySenderId)
+    this.releaseRelaySenders(active)
     this.unregisterBridgeScopes(active)
     this.activeByParent.delete(active.parentSessionId)
     const dormant: DormantSideChat = {
@@ -1291,7 +1350,7 @@ class SideChatRuntimeOwner {
       })
     }
     active.turnAccepted?.reject(new Error('Side chat closed.'))
-    if (active.relaySenderId) this.options.relay.releaseSide(active.relaySenderId)
+    this.releaseRelaySenders(active)
     if (active.turn) {
       await active.runtime
         .cancelPrompt({ sessionId: active.runtimeSessionId })
@@ -1321,6 +1380,7 @@ class SideChatRuntimeOwner {
         () => undefined
       )
       this.dormantByParent.delete(dormant.parentSessionId)
+      this.setParentInteractionsPaused(dormant.parentSessionId, false)
       this.options.onEvent({
         revision: dormant.revision,
         parentSessionId: dormant.parentSessionId,

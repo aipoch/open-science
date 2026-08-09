@@ -866,6 +866,52 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.runtimeContext?.permission).toEqual(continuingPermission)
   })
 
+  it('preserves committed Side chat relays on a stale renderer save', async () => {
+    const prompt: PersistedChatMessage = {
+      id: 'main-prompt-1',
+      role: 'user',
+      content: 'Draw a cosine curve.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const relay: PersistedChatMessage = {
+      id: 'side-chat-relay-1',
+      role: 'user',
+      content: 'Use a black line.',
+      status: 'complete',
+      eventIds: [],
+      responseToMessageId: prompt.id,
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+      createdAt: 4,
+      updatedAt: 4
+    }
+    let durable = materializeSessionConversationGraph(
+      createSession({ messages: [prompt, relay], updatedAt: 4 })
+    )
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await coordinator.saveSession(
+      materializeSessionConversationGraph(
+        createSession({ title: 'Renamed by renderer', messages: [prompt], updatedAt: 3 })
+      )
+    )
+
+    expect(durable.title).toBe('Renamed by renderer')
+    expect(durable.messages).toEqual([prompt, relay])
+    expect(durable.conversationGraph?.messages.map((message) => message.id)).toContain(relay.id)
+  })
+
   it('preserves main-owned archive state on a stale whole-session save', async () => {
     let durable = createSession({ archivedAt: 10 })
     const repository = createSessionRepository({

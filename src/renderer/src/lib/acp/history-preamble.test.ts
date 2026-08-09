@@ -69,6 +69,31 @@ describe('agent-aware history replay', () => {
     expect(preamble).toContain('does not authorize work')
   })
 
+  it('keeps a side chat advisory inside the user turn that received it', () => {
+    const relayed = message({
+      role: 'user',
+      content: 'Use a black line.'
+    }) as ChatMessage & {
+      relayedFrom: { kind: 'side-chat'; direction: 'to-main' }
+    }
+    relayed.relayedFrom = { kind: 'side-chat', direction: 'to-main' }
+
+    const replay = buildHistoryReplay(
+      [
+        message({ role: 'user', content: 'Plot the curve.' }),
+        relayed,
+        message({ role: 'agent', content: `Analysis ${'detail '.repeat(120)}done.` })
+      ],
+      { target: 'codex-bridge', budget: 720 }
+    )!
+
+    expect(replay.preamble).toContain('## Conversation')
+    expect(replay.preamble).not.toContain('## Recent conversation')
+    expect(replay.preamble).toContain('**User:** Plot the curve.')
+    expect(replay.preamble).toContain('**Side chat advisory:** Use a black line.')
+    expect(replay.preamble).toContain('**Assistant:**')
+  })
+
   it('uses distinct budgets for all four target classes', () => {
     expect(resolveHistoryReplayBudget({ target: 'claude-code' })).toBe(16_000)
     expect(resolveHistoryReplayBudget({ target: 'opencode' })).toBe(12_000)

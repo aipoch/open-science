@@ -154,6 +154,8 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
     hasMainConversation(options.activeSession) &&
     !options.sideChatOpen &&
     options.isPersistenceReady &&
+    options.activeSession.status !== 'waiting-for-user' &&
+    options.activeSession.status !== 'waiting-permission' &&
     options.composer.view.transfers.length === 0 &&
     options.composer.view.attachments.length === 0 &&
     docToText(options.composer.view.doc).trim()

@@ -62,6 +62,39 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('deny')
   })
 
+  it('pauses a Session timeout while Side chat owns the composer', async () => {
+    let now = 0
+    const timers: Array<{ fn: () => void; ms: number }> = []
+    const clearTimer = vi.fn()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      timeoutMs: 1_000,
+      now: () => now,
+      setTimer: (fn, ms) => {
+        timers.push({ fn, ms })
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer
+    })
+
+    const decision = broker.request({
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{}',
+      sessionId: 'session-1'
+    })
+    now = 250
+    broker.pauseSession('session-1')
+    now = 5_000
+    broker.resumeSession('session-1')
+
+    expect(clearTimer).toHaveBeenCalledWith(1)
+    expect(timers.map(({ ms }) => ms)).toEqual([1_000, 750])
+    timers[1]?.fn()
+    await expect(decision).resolves.toBe('deny')
+  })
+
   it('ignores a response for an unknown or already-settled id', async () => {
     const timer = makeTimer()
     const broker = new ApprovalBroker({

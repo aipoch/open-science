@@ -187,6 +187,8 @@ type ComputeHandlers = {
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
+  approvalPauseSession: (sessionId: string) => void
+  approvalResumeSession: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -379,6 +381,8 @@ const createComputeHandlers = (
     computeService: service,
     approvalRespond: (id, decision) => broker.respond(id, decision),
     approvalReplay: (id) => broker.getPending(id),
+    approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
+    approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()

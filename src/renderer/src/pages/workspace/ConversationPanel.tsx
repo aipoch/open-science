@@ -90,7 +90,7 @@ import { hasMainConversation, type SideChatView } from './use-side-chat-controll
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const composerIconButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 
@@ -110,7 +110,7 @@ const composerSplitSendMenuButtonClassName = cn(
 )
 
 const composerCancelButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
@@ -471,6 +471,8 @@ const ConversationPanel = ({
   const canStartSideChat =
     Boolean(activeSession) &&
     hasMainConversation(activeSession) &&
+    activeSession?.status !== 'waiting-for-user' &&
+    activeSession?.status !== 'waiting-permission' &&
     canEditDraft &&
     hasTextDraft &&
     attachments.length === 0 &&
@@ -1150,18 +1152,28 @@ const ConversationPanel = ({
                             </button>
                             {onStartSideChat ? (
                               <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <button
-                                    type="button"
-                                    className={composerIconButtonClassName}
-                                    disabled={!canStartSideChat}
-                                    aria-label="More send options"
-                                    data-testid="running-side-chat-menu-trigger"
-                                    title={sideChatDisabledReason}
-                                  >
-                                    <ChevronDown className="size-3.5" aria-hidden="true" />
-                                  </button>
-                                </DropdownMenuTrigger>
+                                <TooltipProvider delayDuration={200}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex">
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={composerIconButtonClassName}
+                                            disabled={!canStartSideChat}
+                                            aria-label="More send options"
+                                            data-testid="running-side-chat-menu-trigger"
+                                          >
+                                            <ChevronDown className="size-3.5" aria-hidden="true" />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {sideChatDisabledReason ?? 'More send options'}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
                                 <DropdownMenuContent side="top" align="end" className="w-64">
                                   <DropdownMenuItem
                                     data-testid="menu-side-chat"

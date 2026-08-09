@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { PersistedSideChat } from '../../shared/session-persistence'
+import { SIDE_CHAT_MESSAGE_LIMIT } from '../../shared/side-chat'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { AgentModelChangeTarget, ResolvedAgentBackend } from '../agent-framework'
@@ -12,7 +13,11 @@ import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import { SideChatRuntimeOwner, prepareSideChatBackend } from './runtime-owner'
+import {
+  SIDE_CHAT_SYSTEM_PROMPT,
+  SideChatRuntimeOwner,
+  prepareSideChatBackend
+} from './runtime-owner'
 
 const createRelayOwner = (targetState: 'idle' | 'completed' = 'idle'): SideChatRelayOwner =>
   new SideChatRelayOwner({
@@ -85,6 +90,23 @@ const modelChangeTarget = (model: string): AgentModelChangeTarget => ({
   sessionModelRequired: false,
   reasoningEffort: 'medium',
   supportsImageInput: false
+})
+
+describe('Side chat relay instructions', () => {
+  it('requires a new explicit user request before every message sent to Main', () => {
+    expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
+      'Do not call send_message for ordinary Side chat questions, requests, follow-ups, or suggestions.'
+    )
+    expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
+      'Call it only when the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main.'
+    )
+    expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
+      'Do not call it again on a later turn unless the user explicitly asks again.'
+    )
+    expect(SIDE_CHAT_SYSTEM_PROMPT).toContain(
+      'Send only the advisory content; do not prepend a Side chat source or relay label.'
+    )
+  })
 })
 
 describe('Side chat restricted backend profile', () => {
@@ -230,6 +252,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     }
     const relay = createRelayOwner()
+    const setParentInteractionsPaused = vi.fn()
     let runtimeOptions: AcpRuntimeOptions | undefined
     const createSession = vi.fn(async () => ({
       sessionId: 'side-session-1',
@@ -282,6 +305,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       relay,
       persistence: createPersistence(),
       onEvent: vi.fn(),
+      setParentInteractionsPaused,
       createRuntime: (options) => {
         runtimeOptions = options
         return {
@@ -307,6 +331,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       frameworkId: 'claude-code',
       model: 'model-a'
     })
+    expect(owner.hasForParent('main-session-1')).toBe(true)
+    expect(setParentInteractionsPaused).toHaveBeenCalledWith('main-session-1', true)
     expect(runtimeOptions?.sessionCapabilityPolicy).toMatchObject({ role: 'side-chat' })
     expect(sendPrompt).toHaveBeenCalledWith({
       sessionId: 'side-session-1',
@@ -329,15 +355,29 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     ])
     queuedRelay?.restore()
 
+    await runtimeOptions?.sideChat?.sendMessage(started.sideSessionId, {
+      target: 'main',
+      text: 'Keep the labels.'
+    })
+    const reconnectedRelay = relay.claim('main-session-1')
+    expect(reconnectedRelay?.messages).toEqual([
+      expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' }),
+      expect.objectContaining({ text: 'Keep the labels.', sideSessionId: started.sideSessionId })
+    ])
+    reconnectedRelay?.restore()
+
     await owner.closeForParent('main-session-1')
 
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-1')
     expect(closeOrder).toEqual(['runtime', 'scope'])
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'side-session-1' })
     expect(shutdownForQuit).toHaveBeenCalledOnce()
+    expect(owner.hasForParent('main-session-1')).toBe(false)
+    expect(setParentInteractionsPaused).toHaveBeenLastCalledWith('main-session-1', false)
     await expect(stat(join(temporaryRoot, 'runtime-support', 'side-chat'))).resolves.toBeDefined()
     expect(relay.claim('main-session-1')?.messages).toEqual([
-      expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' })
+      expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' }),
+      expect.objectContaining({ text: 'Keep the labels.', sideSessionId: started.sideSessionId })
     ])
   })
 
@@ -370,7 +410,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
                 sessionId: request.sessionId,
                 kind: 'message',
                 role: 'assistant',
-                text: 'x'
+                text: 'x'.repeat(200)
               } as never)
             }
             runtimeOptions!.callbacks?.onEvent?.({
@@ -395,11 +435,20 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Stream'
     })
     await vi.waitFor(() => expect(persistence.save).toHaveBeenCalledTimes(2))
+    expect(owner.list().chats[0]?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(20_000) })
+      ])
+    )
     expect(persistence.save).toHaveBeenLastCalledWith(
       expect.objectContaining({
         sideChat: expect.objectContaining({
           entries: expect.arrayContaining([
-            expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(100) })
+            expect.objectContaining({
+              id: 'assistant-coalesced',
+              text:
+                '[Earlier message content truncated]\n' + 'x'.repeat(SIDE_CHAT_MESSAGE_LIMIT - 36)
+            })
           ])
         })
       })
@@ -630,7 +679,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           providerSessionId: 'provider-restored',
           historyPreamble: 'Original Main snapshot.',
           entries: [
-            { id: 'user-1', kind: 'message', role: 'user', text: 'Earlier question' },
+            { id: 'user-1001', kind: 'message', role: 'user', text: 'Earlier question' },
             { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Earlier answer' }
           ],
           createdAt: 10,
@@ -668,10 +717,88 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         sideChat: expect.objectContaining({
           id: 'side-chat-restored',
           entries: expect.arrayContaining([
-            expect.objectContaining({ role: 'user', text: 'Continue' })
+            expect.objectContaining({ id: 'user-1002', role: 'user', text: 'Continue' })
           ])
         })
       })
+    )
+  })
+
+  it('scopes every Responses bridge resolved while a dormant Side chat resumes', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-resume-bridge-'))
+    const registrations = [vi.fn(), vi.fn()]
+    const bridges = registrations.map((registerHostMessageSession) => ({
+      selectSkills: vi.fn(async () => []),
+      registerReviewerSession: vi.fn(),
+      unregisterReviewerSession: vi.fn(() => false),
+      registerHostMessageSession,
+      unregisterHostMessageSession: vi.fn(() => true),
+      release: vi.fn(async () => undefined)
+    }))
+    let resolution = 0
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => ({ ...target, frameworkId: 'codex' as const })),
+      resolveTarget: vi.fn(async () => ({
+        ...backend(codexFramework),
+        backendId: 'codex:provider-a',
+        responsesBridgeLease: bridges[Math.min(resolution++, bridges.length - 1)]
+      })),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(),
+          resumeSession: vi.fn(async () => {
+            await options.resolveBackend?.({ forcedSkillIds: [], systemPromptAppends: [] })
+            await options.resolveBackend?.({ forcedSkillIds: [], systemPromptAppends: [] })
+            return {
+              sessionId: 'side-chat-restored',
+              providerSessionId: 'provider-restored',
+              frameworkId: 'codex' as const,
+              backendId: 'codex:provider-a'
+            }
+          }),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-restored',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-restored',
+          lifecycle: 'open',
+          frameworkId: 'codex',
+          backendId: 'codex:provider-a',
+          providerSessionId: 'provider-restored',
+          historyPreamble: 'Original Main snapshot.',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue' })
+
+    expect(registrations[1]).toHaveBeenCalledWith(
+      'side-chat-restored',
+      [expect.objectContaining({ name: 'send_message' })],
+      { failClosedUnknownKeys: true }
     )
   })
 

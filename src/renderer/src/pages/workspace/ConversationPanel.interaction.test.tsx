@@ -912,6 +912,38 @@ describe('ConversationPanel composer intake', () => {
     expect(onStartSideChat).toHaveBeenCalledOnce()
   })
 
+  it.each(['waiting-for-user', 'waiting-permission'] as const)(
+    'keeps Side chat disabled while the main Session is %s',
+    (status) => {
+      const onStartSideChat = vi.fn()
+      renderPanel({
+        activeSession: {
+          id: 'session-waiting',
+          projectId: 'project-a',
+          title: 'Waiting session',
+          cwd: '/workspace',
+          status,
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        canSendMessage: false,
+        canEditDraft: true,
+        draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+        onStartSideChat
+      })
+
+      const trigger = container.querySelector(
+        '[data-testid="running-side-chat-menu-trigger"]'
+      ) as HTMLButtonElement
+      const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(trigger.disabled).toBe(true)
+      expect(item.disabled).toBe(true)
+      act(() => item.click())
+      expect(onStartSideChat).not.toHaveBeenCalled()
+    }
+  )
+
   it('explains why strict Side chat is unavailable for an unsupported backend', () => {
     const reason = 'Strict tool isolation is unavailable.'
     renderPanel({
@@ -1004,7 +1036,8 @@ describe('ConversationPanel composer intake', () => {
     const plus = sideChatPanel.querySelector('[data-testid="side-chat-plus-button"]')
     const agentControls = sideChatPanel.querySelector('[data-testid="mock-agent-controls"]')
     const modelPicker = sideChatPanel.querySelector('[data-testid="mock-model-picker"]')
-    expect((plus as HTMLButtonElement).disabled).toBe(true)
+    expect(plus?.getAttribute('aria-disabled')).toBe('true')
+    expect((plus as HTMLButtonElement).disabled).toBe(false)
     expect(agentControls?.getAttribute('data-read-only')).toBe('true')
     expect(agentControls?.getAttribute('data-permission-read-only')).toBe('true')
     expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
@@ -1044,8 +1077,37 @@ describe('ConversationPanel composer intake', () => {
     const messageScroll = container.querySelector(
       '[data-testid="side-chat-message-scroll"]'
     ) as HTMLDivElement
-    Object.defineProperty(messageScroll, 'scrollHeight', { configurable: true, value: 640 })
-    messageScroll.scrollTop = 0
+    const messageScrollViewport = messageScroll.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLDivElement
+    const header = container.querySelector('[data-testid="side-chat-header"]') as HTMLDivElement
+    const viewport = container.querySelector(
+      '[data-testid="side-chat-message-viewport"]'
+    ) as HTMLDivElement
+    const composer = container.querySelector('[data-testid="side-chat-composer"]') as HTMLDivElement
+    const topFade = container.querySelector('[data-testid="side-chat-message-fade-top"]')
+    const bottomFade = container.querySelector('[data-testid="side-chat-message-fade-bottom"]')
+
+    expect(
+      container
+        .querySelector('[data-testid="side-chat-panel"]')
+        ?.classList.contains('h-[min(70dvh,44rem)]')
+    ).toBe(true)
+    expect(viewport.previousElementSibling).toBe(header)
+    expect(viewport.nextElementSibling).toBe(composer)
+    expect(messageScroll.parentElement).toBe(viewport)
+    expect(header.classList.contains('shrink-0')).toBe(true)
+    expect(composer.classList.contains('shrink-0')).toBe(true)
+    expect(viewport.classList.contains('overflow-hidden')).toBe(true)
+    expect(messageScroll.getAttribute('data-slot')).toBe('scroll-area')
+    expect(messageScrollViewport).not.toBeNull()
+    expect(topFade?.classList.contains('bg-gradient-to-b')).toBe(true)
+    expect(bottomFade?.classList.contains('bg-gradient-to-t')).toBe(true)
+    Object.defineProperty(messageScrollViewport, 'scrollHeight', {
+      configurable: true,
+      value: 640
+    })
+    messageScrollViewport.scrollTop = 0
 
     renderPanel({
       ...sideChatProps,
@@ -1066,7 +1128,7 @@ describe('ConversationPanel composer intake', () => {
     const followUp = container.querySelector(
       'textarea[placeholder="Follow up…"]'
     ) as HTMLTextAreaElement
-    expect(messageScroll.scrollTop).toBe(640)
+    expect(messageScrollViewport.scrollTop).toBe(640)
     expect(followUp.value).toBe('Keep this draft')
     expect(followUp.disabled).toBe(false)
     expect(container.querySelector('[aria-label="Send Side chat follow up"]')).toBeNull()

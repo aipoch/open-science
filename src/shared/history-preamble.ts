@@ -54,12 +54,10 @@ type HistoryTurn = { index: number; messages: IndexedHistoryMessage[] }
 type ProjectedTurn = { index: number; text: string; selectedMessageIndexes: number[] }
 
 const isUserMessage = (message: HistoryMessage): boolean => message.role === 'user'
-const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' | 'Side chat advisory' =>
+const isSideChatAdvisory = (message: HistoryMessage): boolean =>
   message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
-    ? 'Side chat advisory'
-    : isUserMessage(message)
-      ? 'User'
-      : 'Assistant'
+const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' | 'Side chat advisory' =>
+  isSideChatAdvisory(message) ? 'Side chat advisory' : isUserMessage(message) ? 'User' : 'Assistant'
 const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
 const formatMessage = (message: HistoryMessage): string =>
   `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}`
@@ -175,7 +173,7 @@ const groupUserLedTurns = (messages: HistoryMessage[]): HistoryTurn[] => {
   const turns: HistoryTurn[] = []
 
   for (const message of usable) {
-    if (isUserMessage(message)) {
+    if (isUserMessage(message) && (!isSideChatAdvisory(message) || turns.length === 0)) {
       turns.push({ index: turns.length, messages: [message] })
       continue
     }
@@ -223,33 +221,42 @@ const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefin
     }
   }
 
-  const fullUser = formatMessage(user)
-  const assistant = turn.messages.at(-1)
-  if (!assistant || isUserMessage(assistant))
-    return { index: turn.index, text: fullUser, selectedMessageIndexes }
+  let lead = formatMessage(user)
+  const lastMessage = turn.messages.at(-1)
+  const assistant = lastMessage && !isUserMessage(lastMessage) ? lastMessage : undefined
+  const assistantPrefix = assistant ? `**Assistant:** ${RESPONSE_OMISSION_NOTE}\n` : ''
+
+  for (const advisory of turn.messages.slice(1).filter(isSideChatAdvisory)) {
+    const candidate = `${lead}\n\n${formatMessage(advisory)}`
+    const reservedAssistantCost = assistant ? estimateHistoryTokens(assistantPrefix) + 2 : 0
+    if (estimateHistoryTokens(candidate) + reservedAssistantCost > budget) break
+    lead = candidate
+    selectedMessageIndexes.push(advisory.index)
+  }
+
+  if (!assistant) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   if (!assistant.content.trim() && assistant.hasReplayMedia) {
-    const text = `${fullUser}\n\n${formatMessage(assistant)}`
+    const text = `${lead}\n\n${formatMessage(assistant)}`
     return estimateHistoryTokens(text) <= budget
       ? {
           index: turn.index,
           text,
           selectedMessageIndexes: [...selectedMessageIndexes, assistant.index]
         }
-      : { index: turn.index, text: fullUser, selectedMessageIndexes }
+      : { index: turn.index, text: lead, selectedMessageIndexes }
   }
 
-  const assistantPrefix = `**Assistant:** ${RESPONSE_OMISSION_NOTE}\n`
   const assistantBudget =
-    budget - estimateHistoryTokens(fullUser) - estimateHistoryTokens(assistantPrefix) - 2
-  if (assistantBudget <= 0) return { index: turn.index, text: fullUser, selectedMessageIndexes }
+    budget - estimateHistoryTokens(lead) - estimateHistoryTokens(assistantPrefix) - 2
+  if (assistantBudget <= 0) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   const tail = truncateTextToEstimatedTokens(assistant.content.trim(), assistantBudget, 'end')
-  if (!tail) return { index: turn.index, text: fullUser, selectedMessageIndexes }
+  if (!tail) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   return {
     index: turn.index,
-    text: `${fullUser}\n\n${assistantPrefix}${tail}`,
+    text: `${lead}\n\n${assistantPrefix}${tail}`,
     selectedMessageIndexes: [...selectedMessageIndexes, assistant.index]
   }
 }

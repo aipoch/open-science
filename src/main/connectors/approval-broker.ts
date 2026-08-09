@@ -24,29 +24,34 @@ type ApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  now?: () => number
   onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired') => void
+}
+
+type PendingApproval = {
+  request: ConnectorApprovalRequest
+  resolve: (decision: ApprovalDecision) => void
+  timer?: ReturnType<typeof setTimeout>
+  remainingMs: number
+  timerStartedAt?: number
 }
 
 // Bridges the main-process connector gate to the renderer approval card: it holds a connector call
 // open (a promise) while the user decides, and resolves it when the renderer responds. Unanswered
 // requests are auto-denied after `timeoutMs` so a call can never hang the kernel indefinitely.
 export class ApprovalBroker {
-  private readonly pending = new Map<
-    string,
-    {
-      request: ConnectorApprovalRequest
-      resolve: (decision: ApprovalDecision) => void
-      timer: ReturnType<typeof setTimeout>
-    }
-  >()
+  private readonly pending = new Map<string, PendingApproval>()
+  private readonly pausedSessions = new Set<string>()
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  private readonly now: () => number
 
   constructor(private readonly deps: ApprovalBrokerDeps) {
     this.timeoutMs = deps.timeoutMs ?? 5 * 60_000
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h))
+    this.now = deps.now ?? Date.now
   }
 
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies it).
@@ -55,8 +60,9 @@ export class ApprovalBroker {
     const request = { id, ...info, availableScopes: info.availableScopes ?? ['once'] }
 
     return new Promise<ApprovalDecision>((resolve) => {
-      const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
-      this.pending.set(id, { request, resolve, timer })
+      const entry: PendingApproval = { request, resolve, remainingMs: this.timeoutMs }
+      this.pending.set(id, entry)
+      this.schedule(id, entry)
       this.deps.broadcast(request)
     })
   }
@@ -70,6 +76,39 @@ export class ApprovalBroker {
     this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
   }
 
+  pauseSession(sessionId: string): void {
+    if (this.pausedSessions.has(sessionId)) return
+    this.pausedSessions.add(sessionId)
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionId !== sessionId || entry.timer === undefined) continue
+      this.clearTimer(entry.timer)
+      entry.timer = undefined
+      entry.remainingMs = Math.max(
+        0,
+        entry.remainingMs - (this.now() - (entry.timerStartedAt ?? this.now()))
+      )
+      entry.timerStartedAt = undefined
+    }
+  }
+
+  resumeSession(sessionId: string): void {
+    if (!this.pausedSessions.delete(sessionId)) return
+    for (const [id, entry] of this.pending) {
+      if (entry.request.sessionId === sessionId) this.schedule(id, entry)
+    }
+  }
+
+  private schedule(id: string, entry: PendingApproval): void {
+    const sessionId = entry.request.sessionId
+    if (sessionId && this.pausedSessions.has(sessionId)) return
+    if (entry.remainingMs <= 0) {
+      this.settle(id, 'deny', 'expired')
+      return
+    }
+    entry.timerStartedAt = this.now()
+    entry.timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), entry.remainingMs)
+  }
+
   private settle(
     id: string,
     decision: ApprovalDecision,
@@ -77,7 +116,7 @@ export class ApprovalBroker {
   ): void {
     const entry = this.pending.get(id)
     if (!entry) return
-    this.clearTimer(entry.timer)
+    if (entry.timer !== undefined) this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
     this.deps.onSettled?.(id, state)

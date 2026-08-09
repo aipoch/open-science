@@ -9,12 +9,13 @@ import {
 
 const HOST_MESSAGE_MCP_SERVER_NAME = 'open-science-host-message'
 const HOST_SEND_MESSAGE_TOOL_NAME = 'send_message'
+const HOST_MESSAGE_CONTENT_INSTRUCTION =
+  'Send only the advisory content; do not prepend a Side chat source or relay label.'
 const HOST_MESSAGE_NAMESPACED_TOOLS = [
   {
     namespace: 'mcp__open_science_host_message',
     name: HOST_SEND_MESSAGE_TOOL_NAME,
-    description:
-      'Queue advisory text for the parent main conversation without waking or interrupting it.',
+    description: `Queue advisory text for the parent main conversation without waking or interrupting it. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION}`,
     parameters: {
       type: 'object',
       properties: {
@@ -41,8 +42,7 @@ const createHostMessageMcpServer = (handler: HostMessageMcpHandler): ModelContex
     HOST_SEND_MESSAGE_TOOL_NAME,
     {
       title: 'Send advisory to main',
-      description:
-        'Queue advisory text for the parent main conversation. This does not wake, interrupt, or authorize the main Agent; delivery waits for the next real main user turn.',
+      description: `Queue advisory text for the parent main conversation. Use only after the user explicitly asks in the current Side chat turn to send, relay, forward, or tell something to Main. Do not use for ordinary Side chat questions, requests, follow-ups, or suggestions. ${HOST_MESSAGE_CONTENT_INSTRUCTION} This does not wake, interrupt, or authorize the main Agent; delivery waits for the next real main user turn.`,
       inputSchema: {
         target: z.literal('main'),
         text: z.string().trim().min(1).max(SIDE_CHAT_MESSAGE_LIMIT)
@@ -60,6 +60,7 @@ const createHostMessageMcpServer = (handler: HostMessageMcpHandler): ModelContex
 }
 
 export {
+  HOST_MESSAGE_CONTENT_INSTRUCTION,
   HOST_MESSAGE_MCP_SERVER_NAME,
   HOST_MESSAGE_NAMESPACED_TOOLS,
   HOST_SEND_MESSAGE_TOOL_NAME,

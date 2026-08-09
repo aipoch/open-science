@@ -28,6 +28,7 @@ type ComputeApprovalBrokerDeps = {
   // Injectable timer for tests.
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  now?: () => number
   onSettled?: (id: string, state: 'resolved' | 'rejected' | 'expired' | 'cancelled') => void
   permissionGrants?: ComputePermissionGrantAdapter
   // Optional: check whether a project-scope grant exists for (projectId, operation, providerId).
@@ -47,6 +48,16 @@ type ComputeApprovalBrokerDeps = {
   isProviderCurrent?: (owner: { providerId: string; ownerId?: string }) => Promise<boolean>
 }
 
+type PendingComputeApproval = {
+  request: ComputeApprovalRequest
+  resolve: (decision: ComputeApprovalDecision) => void
+  timer?: ReturnType<typeof setTimeout>
+  remainingMs: number
+  timerStartedAt?: number
+  providerId: string
+  context?: ComputeApprovalContext
+}
+
 // Bridges the main-process compute gate to the renderer approval card. Holds the call_command
 // open (a Promise) while the user decides; auto-denies after timeoutMs to prevent indefinite hangs.
 // Follows the same promise + broadcast + IPC-respond pattern as ApprovalBroker in connectors.
@@ -58,16 +69,8 @@ type ComputeApprovalBrokerDeps = {
 // Use request() for legacy callers that do not supply context (only 'once'/'deny' can result).
 // Use requestWithContext() to enable grant memory.
 export class ComputeApprovalBroker {
-  private readonly pending = new Map<
-    string,
-    {
-      request: ComputeApprovalRequest
-      resolve: (decision: ComputeApprovalDecision) => void
-      timer: ReturnType<typeof setTimeout>
-      providerId: string
-      context?: ComputeApprovalContext
-    }
-  >()
+  private readonly pending = new Map<string, PendingComputeApproval>()
+  private readonly pausedSessions = new Set<string>()
 
   private readonly providerGenerations = new Map<string, number>()
   private readonly invalidatingProviders = new Set<string>()
@@ -79,11 +82,13 @@ export class ComputeApprovalBroker {
   private readonly timeoutMs: number
   private readonly setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   private readonly clearTimer: (handle: ReturnType<typeof setTimeout>) => void
+  private readonly now: () => number
 
   constructor(private readonly deps: ComputeApprovalBrokerDeps) {
     this.timeoutMs = deps.timeoutMs ?? 5 * 60_000
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h))
+    this.now = deps.now ?? Date.now
   }
 
   // Broadcasts an approval request and resolves once the renderer responds (or the timeout denies).
@@ -97,8 +102,15 @@ export class ComputeApprovalBroker {
     const request = { id, ...info }
 
     return new Promise<ComputeApprovalDecision>((resolve) => {
-      const timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), this.timeoutMs)
-      this.pending.set(id, { request, resolve, timer, providerId, context })
+      const entry: PendingComputeApproval = {
+        request,
+        resolve,
+        remainingMs: this.timeoutMs,
+        providerId,
+        context
+      }
+      this.pending.set(id, entry)
+      this.schedule(id, entry)
       this.deps.broadcast(request, context)
     })
   }
@@ -223,6 +235,39 @@ export class ComputeApprovalBroker {
     this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
   }
 
+  pauseSession(sessionId: string): void {
+    if (this.pausedSessions.has(sessionId)) return
+    this.pausedSessions.add(sessionId)
+    for (const entry of this.pending.values()) {
+      if (entry.context?.sessionId !== sessionId || entry.timer === undefined) continue
+      this.clearTimer(entry.timer)
+      entry.timer = undefined
+      entry.remainingMs = Math.max(
+        0,
+        entry.remainingMs - (this.now() - (entry.timerStartedAt ?? this.now()))
+      )
+      entry.timerStartedAt = undefined
+    }
+  }
+
+  resumeSession(sessionId: string): void {
+    if (!this.pausedSessions.delete(sessionId)) return
+    for (const [id, entry] of this.pending) {
+      if (entry.context?.sessionId === sessionId) this.schedule(id, entry)
+    }
+  }
+
+  private schedule(id: string, entry: PendingComputeApproval): void {
+    const sessionId = entry.context?.sessionId
+    if (sessionId && this.pausedSessions.has(sessionId)) return
+    if (entry.remainingMs <= 0) {
+      this.settle(id, 'deny', 'expired')
+      return
+    }
+    entry.timerStartedAt = this.now()
+    entry.timer = this.setTimer(() => this.settle(id, 'deny', 'expired'), entry.remainingMs)
+  }
+
   // Host deletion begins by advancing its generation and denying every approval card that was
   // created for the old owner. A later host may reuse providerId, but it cannot reuse these calls.
   async invalidateProvider(providerId: string): Promise<void> {
@@ -272,7 +317,7 @@ export class ComputeApprovalBroker {
   ): void {
     const entry = this.pending.get(id)
     if (!entry) return
-    this.clearTimer(entry.timer)
+    if (entry.timer !== undefined) this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
     this.deps.onSettled?.(id, state)

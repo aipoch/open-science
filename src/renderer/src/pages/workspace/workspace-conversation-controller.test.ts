@@ -186,6 +186,23 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
 
+  it.each(['waiting-for-user', 'waiting-permission'] as const)(
+    'does not start Side chat while the main Session is %s',
+    (status) => {
+      const input = options({
+        activeSession: session({ status }),
+        sideChat: { start: vi.fn(async () => true) }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      act(() => hook.result.current.actions.sideChat.start())
+
+      expect(input.sideChat?.start).not.toHaveBeenCalled()
+      expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    }
+  )
+
   it('blocks main submit, revise, resume, and cancel while Side chat owns the Session', async () => {
     const input = options({ sideChatOpen: true })
     const hook = renderController(input)

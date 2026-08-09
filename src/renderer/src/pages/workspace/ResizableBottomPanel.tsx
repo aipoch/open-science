@@ -106,7 +106,9 @@ const ResizableBottomPanel = ({
     <div
       ref={surfaceRef}
       className={`relative z-10 flex min-h-0 w-full min-w-0 max-h-[min(70dvh,44rem)] flex-col overflow-visible px-px pb-px ${
-        variant === 'integrated' ? 'pt-0' : 'pt-8 [@media(pointer:coarse)]:pt-11'
+        variant === 'integrated'
+          ? 'h-[min(70dvh,44rem)] pt-0'
+          : 'pt-8 [@media(pointer:coarse)]:pt-11'
       }`}
       data-testid={testId}
       style={height === undefined ? undefined : { height }}
@@ -114,7 +116,7 @@ const ResizableBottomPanel = ({
       <button
         type="button"
         aria-label={ariaLabel}
-        className={`group absolute top-0 z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
+        className={`group absolute top-0 z-20 grid cursor-ns-resize touch-none select-none place-items-center focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
           variant === 'integrated'
             ? 'left-1/2 h-8 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-bg-10/0 to-bg-000/95 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28'
             : 'inset-x-0 h-8 rounded-lg active:bg-bg-200 [@media(pointer:coarse)]:h-11'

@@ -150,6 +150,20 @@ const sessionBindingTopologyHash = (session: PersistedChatSession): string => {
   return createHash('sha256').update(JSON.stringify(topology)).digest('hex')
 }
 
+const mergeMainOwnedRelayMessages = (
+  submitted: readonly PersistedChatMessage[],
+  authoritative: readonly PersistedChatMessage[] | undefined
+): PersistedChatMessage[] => {
+  const authoritativeRelays =
+    authoritative?.filter(
+      (message) =>
+        message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
+    ) ?? []
+  if (authoritativeRelays.length === 0) return [...submitted]
+  const relayIds = new Set(authoritativeRelays.map((message) => message.id))
+  return [...submitted.filter((message) => !relayIds.has(message.id)), ...authoritativeRelays]
+}
+
 type FinalizedArtifactBindingValidation =
   | { status: 'valid' }
   | { status: 'unavailable' }
@@ -381,6 +395,7 @@ class SessionPersistenceStateOwner {
         : undefined
     const mergedSession: PersistedChatSession = {
       ...rendererOwnedSession,
+      messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),

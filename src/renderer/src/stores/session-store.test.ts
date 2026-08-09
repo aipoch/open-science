@@ -104,6 +104,36 @@ describe('session store', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
   })
 
+  it('keeps a Side chat relay distinct from a local user message with matching text', () => {
+    const localMessage = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Use a black line.'
+    })
+    if (!localMessage) throw new Error('Expected a local user Message.')
+
+    const relayMessage = useSessionStore.getState().appendRoutedUserMessage({
+      sessionId: 'transport-session-1',
+      messageId: 'side-chat-relay-1',
+      eventId: 'side-chat-relay-event-1',
+      content: 'Use a black line.',
+      createdAt: Date.now() + 1,
+      responseToMessageId: localMessage.messageId,
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+    })
+
+    expect(relayMessage).toEqual({
+      sessionId: 'transport-session-1',
+      messageId: 'side-chat-relay-1'
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({ id: localMessage.messageId }),
+      expect.objectContaining({
+        id: 'side-chat-relay-1',
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+      })
+    ])
+  })
+
   it('tracks the first Agent output wait as transient session state', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
