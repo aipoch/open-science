@@ -329,6 +329,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     let runtimeOptions: AcpRuntimeOptions | undefined
     const createSession = vi.fn(async () => ({
       sessionId: 'side-session-1',
+      providerSessionId: 'provider-session-1',
       frameworkId: 'claude-code' as const
     }))
     const permissionDecision = deferred<{
@@ -414,7 +415,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       resumeFallback: { historyPreamble: 'Main snapshot.' }
     })
     expect(registerHostMessageSession).toHaveBeenCalledWith(
-      'side-session-1',
+      'provider-session-1',
       [expect.objectContaining({ name: 'send_message' })],
       { failClosedUnknownKeys: true }
     )
@@ -441,7 +442,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await owner.closeForParent('main-session-1')
 
-    expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-1')
+    expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-1')
     expect(closeOrder).toEqual(['runtime', 'scope'])
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'side-session-1' })
     expect(shutdownForQuit).toHaveBeenCalledOnce()
@@ -928,11 +929,18 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue' })
 
-    expect(registrations[1]).toHaveBeenCalledWith(
-      'side-chat-restored',
-      [expect.objectContaining({ name: 'send_message' })],
-      { failClosedUnknownKeys: true }
-    )
+    for (const registerHostMessageSession of registrations) {
+      expect(registerHostMessageSession).toHaveBeenCalledWith(
+        'provider-restored',
+        [expect.objectContaining({ name: 'send_message' })],
+        { failClosedUnknownKeys: true }
+      )
+      expect(registerHostMessageSession).not.toHaveBeenCalledWith(
+        'side-chat-restored',
+        expect.any(Array),
+        expect.any(Object)
+      )
+    }
   })
 
   it('rolls back an unadmitted follow-up when its durable write fails', async () => {
@@ -1302,6 +1310,10 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         selectedFramework.id === 'opencode'
           ? 'side-session-reconfigured'
           : 'side-session-reconfigure',
+      providerSessionId:
+        selectedFramework.id === 'opencode'
+          ? 'provider-session-reconfigured'
+          : 'side-session-reconfigure',
       frameworkId: selectedFramework.id,
       ...(selectedFramework.id === 'opencode' ? { contextReset: true } : {})
     }))
@@ -1396,14 +1408,19 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       { failClosedUnknownKeys: true }
     )
     expect(registerHostMessageSession).toHaveBeenCalledWith(
-      'side-session-reconfigured',
+      'provider-session-reconfigured',
       expect.any(Array),
       { failClosedUnknownKeys: true }
+    )
+    expect(registerHostMessageSession).not.toHaveBeenCalledWith(
+      'side-session-reconfigured',
+      expect.any(Array),
+      expect.any(Object)
     )
 
     await owner.close({ sideSessionId: started.sideSessionId })
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigure')
-    expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigured')
+    expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-reconfigured')
   })
 
   it('retains context-reset replay when reconnect identity persistence fails', async () => {

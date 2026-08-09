@@ -402,7 +402,7 @@ class SideChatRuntimeOwner {
           )
         }
         if (bridge && activeChat?.runtimeSessionId) {
-          this.registerBridgeScope(activeChat, bridge, activeChat.runtimeSessionId)
+          this.registerBridgeScope(activeChat, bridge)
         }
         return resolved
       }
@@ -485,7 +485,7 @@ class SideChatRuntimeOwner {
         createdAt: Date.now(),
         persistTail: Promise.resolve()
       }
-      if (bridge) this.registerBridgeScope(activeChat, bridge, created.sessionId)
+      if (bridge) this.registerBridgeScope(activeChat, bridge)
       this.activeByParent.set(request.parentSessionId, activeChat)
       this.touch(activeChat)
       if (this.closeRequestedParents.delete(request.parentSessionId)) {
@@ -711,7 +711,7 @@ class SideChatRuntimeOwner {
         ...(active.backendId ? { previousBackendId: active.backendId } : {})
       })
       this.applyProviderIdentity(active, resumed)
-      this.registerAllBridgeScopes(active, active.runtimeSessionId)
+      this.syncBridgeScopes(active)
       if (active.reconnect === reconnect) active.reconnect = undefined
       if (resumed.contextReset) {
         needsReplay = true
@@ -825,7 +825,7 @@ class SideChatRuntimeOwner {
           )
         }
         if (bridge && activeChat?.runtimeSessionId) {
-          this.registerBridgeScope(activeChat, bridge, activeChat.runtimeSessionId)
+          this.registerBridgeScope(activeChat, bridge)
         }
         return resolved
       }
@@ -901,7 +901,7 @@ class SideChatRuntimeOwner {
         createdAt: sideChat.createdAt,
         persistTail: Promise.resolve()
       }
-      if (bridge) this.registerBridgeScope(activeChat, bridge, activeChat.runtimeSessionId)
+      if (bridge) this.registerBridgeScope(activeChat, bridge)
       const resumed = await runtime.resumeSession({
         sessionId: sideChat.id,
         ...(sideChat.providerSessionId ? { providerSessionId: sideChat.providerSessionId } : {}),
@@ -914,7 +914,7 @@ class SideChatRuntimeOwner {
         ...(sideChat.backendId ? { previousBackendId: sideChat.backendId } : {})
       })
       this.applyProviderIdentity(activeChat, resumed, initialBackend)
-      this.registerAllBridgeScopes(activeChat, activeChat.runtimeSessionId)
+      this.syncBridgeScopes(activeChat)
       if (resumed.contextReset) activeChat.needsReplay = true
       this.dormantByParent.delete(dormant.parentSessionId)
       this.activeByParent.set(dormant.parentSessionId, activeChat)
@@ -1022,25 +1022,28 @@ class SideChatRuntimeOwner {
     return write.then(() => persisted!)
   }
 
-  private registerBridgeScope(
-    active: ActiveSideChat,
-    bridge: HostMessageBridge,
-    runtimeSessionId: string
-  ): void {
+  private registerBridgeScope(active: ActiveSideChat, bridge: HostMessageBridge): void {
+    const providerSessionId = active.providerSessionId ?? active.runtimeSessionId
     const registered = active.bridgeScopes.get(bridge) ?? new Set<string>()
-    if (registered.has(runtimeSessionId)) return
+    if (registered.has(providerSessionId)) return
     bridge.registerHostMessageSession?.(
-      runtimeSessionId,
+      providerSessionId,
       HOST_MESSAGE_NAMESPACED_TOOLS.map((tool) => ({ ...tool })),
       { failClosedUnknownKeys: true }
     )
-    registered.add(runtimeSessionId)
+    registered.add(providerSessionId)
     active.bridgeScopes.set(bridge, registered)
   }
 
-  private registerAllBridgeScopes(active: ActiveSideChat, runtimeSessionId: string): void {
-    for (const bridge of active.bridgeScopes.keys()) {
-      this.registerBridgeScope(active, bridge, runtimeSessionId)
+  private syncBridgeScopes(active: ActiveSideChat): void {
+    const providerSessionId = active.providerSessionId ?? active.runtimeSessionId
+    for (const [bridge, registered] of active.bridgeScopes) {
+      for (const staleSessionId of [...registered]) {
+        if (staleSessionId === providerSessionId) continue
+        bridge.unregisterHostMessageSession?.(staleSessionId)
+        registered.delete(staleSessionId)
+      }
+      this.registerBridgeScope(active, bridge)
     }
   }
 
