@@ -351,8 +351,11 @@ describe('HomePage activity overview', () => {
     )
 
     const activeSection = container.querySelector<HTMLElement>('[aria-label="Session updates"]')
+    const home = container.querySelector('main')
     const cardGrid = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    expect(home?.classList.contains('h-svh')).toBe(true)
+    expect(home?.classList.contains('overflow-y-auto')).toBe(true)
     expect(cardGrid?.classList.contains('grid')).toBe(true)
     expect(cardGrid?.classList.contains('grid-cols-1')).toBe(true)
     expect(cardGrid?.classList.contains('md:grid-cols-2')).toBe(true)
