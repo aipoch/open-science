@@ -1316,7 +1316,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(captureTarget).toHaveBeenCalledTimes(2)
     expect(resolveTarget.mock.calls[1]?.[0]).toMatchObject({ frameworkId: 'opencode' })
     expect(resumeSession).toHaveBeenLastCalledWith({
-      sessionId: started.sideSessionId,
+      sessionId: 'side-session-reconfigure',
       providerSessionId: 'side-session-reconfigure',
       cwd: expect.stringContaining('/cwd'),
       projectName: 'project-1',

@@ -681,7 +681,7 @@ class SideChatRuntimeOwner {
       await reconnect
       if (active.reconnect !== reconnect) continue
       const resumed = await active.runtime.resumeSession({
-        sessionId: active.sideSessionId,
+        sessionId: active.runtimeSessionId,
         ...(active.providerSessionId ? { providerSessionId: active.providerSessionId } : {}),
         ...(active.providerContinuityToken
           ? { providerContinuityToken: active.providerContinuityToken }
