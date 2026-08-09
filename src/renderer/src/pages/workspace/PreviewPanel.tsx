@@ -49,7 +49,7 @@ const PreviewActiveContent = ({
 }
 
 const previewTabClassName =
-  'group flex h-8 max-w-[240px] shrink-0 items-center gap-1 rounded-md pl-2 pr-1 text-[12px] transition-colors'
+  'group flex h-8 max-w-[160px] shrink-0 items-center gap-1 rounded-md pl-2 pr-1 text-[12px] transition-colors'
 
 const getPreviewTabId = (itemId: string): string => `preview-tab-${encodeURIComponent(itemId)}`
 const getPreviewPanelId = (itemId: string): string => `preview-panel-${encodeURIComponent(itemId)}`
