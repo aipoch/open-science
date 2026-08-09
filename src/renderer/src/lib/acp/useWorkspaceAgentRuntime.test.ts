@@ -133,6 +133,17 @@ describe('workspace permission wait recovery', () => {
     expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [liveRequest])).toEqual(
       [liveRequest]
     )
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? { ...session, status: 'error', error: 'Continuation failed' }
+          : session
+      )
+    }))
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([
+      durableRequest
+    ])
   })
 })
 

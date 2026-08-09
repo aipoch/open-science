@@ -469,8 +469,14 @@ const WorkspacePage = ({
     : activeSession?.status === 'error'
       ? 'Resolve the current session error before compacting.'
       : 'Wait for the current agent activity to finish.'
+  const durablePermissionError =
+    activeSession?.status === 'waiting-permission' && activeSession.runtimeContext?.permission
+      ? (activeSession.error ?? actionError)
+      : null
   const visibleActionError =
-    attachmentError ?? sessionController.view.exportError ?? (activeSession ? null : actionError)
+    attachmentError ??
+    sessionController.view.exportError ??
+    (activeSession ? durablePermissionError : actionError)
 
   const compactActiveContext = useCallback((): void => {
     if (!activeSession || !canCompactContext) return

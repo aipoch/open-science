@@ -1403,6 +1403,10 @@ class AcpRuntime {
             text: errorMessage(error)
           })
         }
+      } else if (durablePermission) {
+        // The durable authority remains the retry token after a failed provider continuation. Release
+        // only the process-local dedup reservation so the restored card can submit another attempt.
+        this.durablePermissionContinuations?.delete(sessionId)
       }
       this.appContinuations.complete(sessionId)
       this.emitState()

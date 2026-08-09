@@ -72,7 +72,7 @@ const pendingWorkspacePermissions = (
   for (const session of sessions) {
     const request = session.runtimeContext?.permission?.request
     if (
-      session.status === 'waiting-permission' &&
+      (session.status === 'waiting-permission' || session.status === 'error') &&
       request?.sessionId === session.id &&
       !liveRequestIds.has(request.requestId)
     ) {
@@ -353,10 +353,13 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const respondToPermission = useCallback(
     async (requestId: string, optionId?: string): Promise<void> => {
       const request = pendingPermissions.find((item) => item.requestId === requestId)
+      const isRestoredRequest = Boolean(
+        request &&
+        !runtime.state.pendingPermissions.some((item) => item.requestId === request.requestId)
+      )
       try {
-        const live = runtime.state.pendingPermissions.some((item) => item.requestId === requestId)
         let restored: AcpPermissionResponse['restored']
-        if (request && !live) {
+        if (request && isRestoredRequest) {
           let session = useSessionStore
             .getState()
             .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -424,7 +427,13 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           useSessionStore.getState().clearPermissionPending(request.sessionId)
         }
       } catch (error) {
-        if (request) useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
+        if (request && isRestoredRequest) {
+          // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
+          // the transient action error separately for the active Session to display.
+          useSessionStore.getState().setPermissionPending(request.sessionId)
+        } else if (request) {
+          useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
+        }
       }
     },
     [getSessionHistoryReplayDescriptor, getSessionSupportsImageInput, pendingPermissions, runtime]
