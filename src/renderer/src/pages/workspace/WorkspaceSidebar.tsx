@@ -12,6 +12,7 @@ import {
   PinOff,
   Plus,
   Settings,
+  Toolbox,
   Trash2,
   X
 } from 'lucide-react'
@@ -271,6 +272,24 @@ const WorkspaceSidebarView = ({
                 <Plus className="size-3.5" strokeWidth={2} />
               </span>
               <span>New</span>
+            </button>
+          </div>
+          <div className="flex h-9 items-center gap-1 px-2">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-text-000 hover:bg-bg-300',
+                sidebarInteractiveTransitionClassName
+              )}
+              onClick={onOpenSettings}
+            >
+              <span
+                className="flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Toolbox className="size-3.5" strokeWidth={2} />
+              </span>
+              <span>Customize</span>
             </button>
           </div>
           <div className="flex h-9 items-center gap-1 px-2">

@@ -3,6 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { Toolbox } from 'lucide-react'
 import type { ChatSession } from '@/stores/session-store'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -220,9 +221,10 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Files directly after New and wires it to the preview opener', async () => {
+  it('renders Customize between New and Files and wires both entries', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
+    const onOpenSettings = vi.fn()
     const tree = WorkspaceSidebarView({
       now: Date.now(),
       projectName: 'Example project',
@@ -243,16 +245,23 @@ describe('WorkspaceSidebar accessible render', () => {
       onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings
     })
     const buttons = collectElements(tree).filter((element) => element.type === 'button')
     const newButtonIndex = buttons.findIndex((button) => getTextContent(button).trim() === 'New')
+    const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
-    expect(buttons[newButtonIndex + 1]).toBe(filesButton)
+    expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
+    expect(buttons[newButtonIndex + 2]).toBe(filesButton)
+    expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
+
+    expect(customizeButton?.props.onClick).toBeTypeOf('function')
+    ;(customizeButton?.props.onClick as () => void)()
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
 
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
