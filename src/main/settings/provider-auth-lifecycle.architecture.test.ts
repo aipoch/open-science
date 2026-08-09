@@ -21,7 +21,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const projectRoot = resolve(__dirname, '../../..')
-const ownerPath = resolve(__dirname, 'provider-runtime-projection.ts')
+const ownerPath = resolve(__dirname, 'provider-auth-lifecycle.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const sourceFileFor = (path: string): SourceFile =>
@@ -59,7 +59,7 @@ const importsOwner = (path: string): boolean => {
   const visit = (node: Node): void => {
     if (
       isImportDeclaration(node) &&
-      node.moduleSpecifier.getText(sourceFile).includes('provider-runtime-projection')
+      node.moduleSpecifier.getText(sourceFile).includes('provider-auth-lifecycle')
     ) {
       imports = true
     }
@@ -72,7 +72,7 @@ const importsOwner = (path: string): boolean => {
 const publicOperations = (): string[] => {
   const declaration = sourceFileFor(ownerPath).statements.find(
     (statement) =>
-      isClassDeclaration(statement) && statement.name?.text === 'ProviderRuntimeProjectionOwner'
+      isClassDeclaration(statement) && statement.name?.text === 'ProviderAuthLifecycleOwner'
   )
   if (!declaration || !isClassDeclaration(declaration)) throw new Error('owner class not found')
   return declaration.members
@@ -89,22 +89,33 @@ const publicOperations = (): string[] => {
     .sort()
 }
 
-describe('Provider runtime projection ownership', () => {
+describe('Provider authentication lifecycle ownership', () => {
   it('keeps one focused owner below the production hard limit', () => {
     const source = readSource(ownerPath)
     expect(source.split(/\r?\n/).length - Number(source.endsWith('\n'))).toBeLessThanOrEqual(660)
-    expect(source).not.toMatch(/SettingsRepository|setActiveProvider|upsertProvider/)
+    expect(source).not.toMatch(/ipcMain|contextBridge|window\.api/)
+    expect(source).toContain('keyRef: encryptKey(token)')
+    expect(source).not.toMatch(/keyRef:\s*token\b/)
   })
 
   it('locks the owner interface and compatibility exports', () => {
     expect(publicOperations()).toEqual([
-      'resolveActiveModel',
-      'resolveProvider',
-      'resolveProviderApiEndpoints',
-      'resolveRuntimeModelCatalog',
-      'resolveRuntimeReasoningEffortProfile',
-      'resolveRuntimeTarget',
-      'toProviderView'
+      'cancelClaudeIsolatedLogin',
+      'cancelClaudeLogin',
+      'cancelCodexLogin',
+      'cleanupProviderBeforeDelete',
+      'getClaudeIsolatedStatus',
+      'getClaudeSharedStatus',
+      'isProviderKeyUsable',
+      'loginClaudeShared',
+      'loginIsolatedClaude',
+      'loginIsolatedClaudeBrowser',
+      'loginIsolatedCodex',
+      'logoutClaudeShared',
+      'logoutIsolatedClaude',
+      'logoutIsolatedCodex',
+      'prepareCodexProviderUpsert',
+      'validateProviderAuth'
     ])
 
     const exportDeclaration = sourceFileFor(ownerPath).statements.filter(isExportDeclaration)
@@ -118,10 +129,9 @@ describe('Provider runtime projection ownership', () => {
           : []
       )
     ).toEqual([
-      'value:ProviderRuntimeProjectionOwner',
-      'value:requiresNativeResponsesCompatibility',
-      'type:ProviderRuntimeTarget',
-      'type:RuntimeProviderModelSelection'
+      'value:CLAUDE_SHARED_DISCONNECTED_MESSAGE',
+      'value:ProviderAuthLifecycleOwner',
+      'type:ProviderAuthLifecycleOwnerOptions'
     ])
   })
 
@@ -132,15 +142,13 @@ describe('Provider runtime projection ownership', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as {
       modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>
     }
-    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
-      'src/main/settings/provider-accounts.ts',
-      'src/main/settings/provider-auth-lifecycle.ts',
-      'src/main/settings/provider-runtime-projection.ts'
-    ])
+    expect(manifest.modules.settings_provider_accounts.ownerPaths).toContain(
+      'src/main/settings/provider-auth-lifecycle.ts'
+    )
     expect(manifest.modules.settings_provider_accounts.testFiles.owner).toEqual(
       expect.arrayContaining([
-        'src/main/settings/provider-runtime-projection.test.ts',
-        'src/main/settings/provider-runtime-projection.architecture.test.ts'
+        'src/main/settings/provider-auth-lifecycle.test.ts',
+        'src/main/settings/provider-auth-lifecycle.architecture.test.ts'
       ])
     )
   })

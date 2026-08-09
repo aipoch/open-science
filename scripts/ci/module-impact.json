@@ -250,6 +250,7 @@
     "settings_provider_accounts": {
       "ownerPaths": [
         "src/main/settings/provider-accounts.ts",
+        "src/main/settings/provider-auth-lifecycle.ts",
         "src/main/settings/provider-runtime-projection.ts"
       ],
       "interfacePaths": ["src/main/settings/provider-accounts.ts"],
@@ -258,6 +259,8 @@
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
           "src/main/settings/provider-accounts.test.ts",
+          "src/main/settings/provider-auth-lifecycle.test.ts",
+          "src/main/settings/provider-auth-lifecycle.architecture.test.ts",
           "src/main/settings/provider-runtime-projection.test.ts",
           "src/main/settings/provider-runtime-projection.architecture.test.ts",
           "src/main/settings/codex-auth.test.ts",

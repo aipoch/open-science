@@ -270,7 +270,7 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(700)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1095)
+    expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1407)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1003)
@@ -473,6 +473,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/notebook-runtime-settings.ts',
       'src/main/settings/preferences.ts',
       'src/main/settings/provider-accounts.ts',
+      'src/main/settings/provider-auth-lifecycle.ts',
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts'
     ])
