@@ -3,12 +3,15 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { createLogger } from '../logger'
 import { appendChatCompletions } from './base-url'
-import { resolveChatReasoningTransport } from './reasoning-transport'
 import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
   CustomReasoningEffortTransport,
   ModelReasoningEffort
 } from '../../shared/reasoning-effort'
+import {
+  responsesToChatRequest,
+  type ResponsesBridgeNamespacedTool
+} from './responses-request-adapter'
 import {
   boundedSkillSelectorCatalog,
   renderSkillSelectorCatalog,
@@ -49,14 +52,6 @@ export type ResponsesBridgeModelTarget = Pick<
   'model' | 'vendorId' | 'reasoningEffortTransport' | 'reasoningEffort'
 >
 
-export type ResponsesBridgeNamespacedTool = {
-  namespace: string
-  name: string
-  description?: string
-  parameters: JsonObject
-  strict?: boolean
-}
-
 export type ResponsesBridgeConnection = {
   baseUrl: string
   token: string
@@ -94,20 +89,6 @@ class BridgeHttpError extends Error {
   }
 }
 
-const ALLOWED_INCLUDE_VALUES = new Set(['reasoning.encrypted_content'])
-const ALLOWED_REASONING_KEYS = new Set(['effort', 'summary'])
-const ALLOWED_REASONING_EFFORTS = new Set([
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-  'ultra'
-])
-const ALLOWED_REASONING_SUMMARIES = new Set(['auto', 'concise', 'detailed'])
-const ALLOWED_IMAGE_DETAILS = new Set(['auto', 'low', 'high'])
 const UPSTREAM_IMAGE_TYPES = new Set(['image', 'image_url', 'input_image', 'output_image'])
 
 const unsupportedUpstreamImageOutput = (): BridgeHttpError =>
@@ -116,62 +97,6 @@ const unsupportedUpstreamImageOutput = (): BridgeHttpError =>
     502,
     'unsupported_upstream_output'
   )
-
-const UNSUPPORTED_FIELDS = [
-  'previous_response_id',
-  'conversation',
-  'background',
-  'prompt',
-  'context_management'
-] as const
-
-// Codex built-in / auto-generated ResponseItem types that carry no Chat Completions message form and
-// are safe to skip (logged). Anything outside {message, function_call, function_call_output} and this
-// set is unknown history the bridge would silently discard, so it hard-errors instead (see
-// inputToMessages) — that throw happens before response headers, so it surfaces as a clean 400.
-const KNOWN_SKIPPABLE_ITEM_TYPES = new Set([
-  'reasoning',
-  'additional_tools',
-  'tool_search_call',
-  'tool_search_output',
-  'custom_tool_call',
-  'custom_tool_call_output',
-  'web_search_call',
-  'image_generation_call',
-  'compaction',
-  'compaction_trigger',
-  'context_compaction',
-  'local_shell_call',
-  'internal_chat_message_metadata_passthrough'
-])
-
-// A Chat Completions endpoint can only accept `function` tools. These Codex built-in, Responses-native
-// tool declarations (including tool_search, whose deferred-tool discovery only works against the real
-// OpenAI Responses backend) have no Chat Completions representation and are safe to drop (logged). A
-// tool type outside {function} and this set is unknown: the bridge hard-errors rather than silently
-// dropping it, matching the MVP boundary used for unknown history items (throw before headers ⇒ 400).
-const FILTERABLE_TOOL_TYPES = new Set([
-  'namespace',
-  'mcp',
-  'web_search',
-  'web_search_preview',
-  'file_search',
-  'code_interpreter',
-  'computer_use_preview',
-  'image_generation',
-  'local_shell',
-  'custom',
-  'tool_search'
-])
-
-// Codex's MCP resource browser functions enumerate resources exposed by MCP servers attached directly
-// to Codex. Open Science data connectors are reached through host.mcp in the notebook instead, so these
-// names are misleading in bridge mode (e.g. `mcp-pubmed` is a skill, not a Codex MCP server).
-const FILTERABLE_FUNCTION_NAMES = new Set([
-  'list_mcp_resources',
-  'list_mcp_resource_templates',
-  'read_mcp_resource'
-])
 
 const json = (response: ServerResponse, status: number, body: unknown): void => {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -206,71 +131,6 @@ const upstreamErrorMessage = (body: string, status: number): string => {
   }
 
   return `Chat Completions upstream returned ${status}`
-}
-
-const imageUrlFromPart = (part: JsonObject): JsonObject => {
-  if (part.file_id !== undefined && part.file_id !== null) {
-    throw new Error('Responses image file_id is not supported by this gateway')
-  }
-
-  const imageUrl = part.image_url
-  const url = typeof imageUrl === 'object' && imageUrl !== null ? imageUrl.url : imageUrl
-  const nestedDetail =
-    typeof imageUrl === 'object' && imageUrl !== null ? imageUrl.detail : undefined
-  if (part.detail !== undefined && nestedDetail !== undefined && part.detail !== nestedDetail) {
-    throw new Error('Responses image detail values must not conflict')
-  }
-  const detail = part.detail ?? nestedDetail
-
-  if (typeof url !== 'string' || url.length === 0) {
-    throw new Error('Responses image_url must be a non-empty string')
-  }
-  if (detail !== undefined && !ALLOWED_IMAGE_DETAILS.has(String(detail))) {
-    throw new Error(`Unsupported Responses image detail: ${String(detail)}`)
-  }
-
-  if (url.startsWith('data:')) {
-    const match = /^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/]+={0,2})$/i.exec(url)
-    if (!match || match[1].length % 4 !== 0) {
-      throw new Error('Responses image data URL must contain valid base64 image data')
-    }
-  } else {
-    let parsed: URL
-    try {
-      parsed = new URL(url)
-    } catch {
-      throw new Error('Responses image_url must be an absolute HTTP(S) or image data URL')
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('Responses image_url must use HTTP(S) or an image data URL')
-    }
-  }
-
-  return {
-    type: 'image_url',
-    image_url: { url, ...(detail === undefined ? {} : { detail }) }
-  }
-}
-
-const textFromContent = (content: unknown): string | JsonObject[] => {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content.map((part) => {
-    if (!part || typeof part !== 'object') {
-      throw new Error('Responses content parts must be objects')
-    }
-    if (part.type === 'input_text' || part.type === 'output_text' || part.type === 'text') {
-      if (typeof part.text !== 'string') {
-        throw new Error(`Responses ${String(part.type)} content must contain string text`)
-      }
-      return { type: 'text', text: part.text }
-    }
-    if (part.type === 'input_image' || part.type === 'image_url') {
-      return imageUrlFromPart(part)
-    }
-    throw new Error(`Unsupported Responses content part: ${String(part.type)}`)
-  })
 }
 
 const upstreamTextFromContent = (content: unknown): string => {
@@ -325,352 +185,13 @@ const hasUpstreamImageField = (value: JsonObject): boolean =>
   value.image_url !== undefined ||
   value.output_image !== undefined
 
-const namespacedToolAlias = (
-  tool: Pick<ResponsesBridgeNamespacedTool, 'namespace' | 'name'>
-): string => `${tool.namespace}__${tool.name}`
-
-const namespacedToolByAlias = (
-  tools: readonly ResponsesBridgeNamespacedTool[]
-): Map<string, ResponsesBridgeNamespacedTool> =>
-  new Map(tools.map((tool) => [namespacedToolAlias(tool), tool]))
-
-const chatToolName = (
-  item: JsonObject,
-  tools: readonly ResponsesBridgeNamespacedTool[]
-): string => {
-  if (typeof item.namespace !== 'string' || item.namespace.length === 0) {
-    return String(item.name ?? '')
-  }
-
-  const match = tools.find(
-    (tool) => tool.namespace === item.namespace && tool.name === String(item.name ?? '')
-  )
-  return match ? namespacedToolAlias(match) : `${item.namespace}__${String(item.name ?? '')}`
-}
-
 const responseFunctionIdentity = (
   chatName: unknown,
   tools: readonly ResponsesBridgeNamespacedTool[]
 ): { name: string; namespace?: string } => {
   const name = String(chatName ?? '')
-  const namespaced = namespacedToolByAlias(tools).get(name)
+  const namespaced = tools.find((tool) => `${tool.namespace}__${tool.name}` === name)
   return namespaced ? { name: namespaced.name, namespace: namespaced.namespace } : { name }
-}
-
-// Thinking-mode providers (e.g. DeepSeek reasoner) reject a follow-up request whose assistant
-// tool-call turn omits the reasoning_content the model produced with those calls ("the
-// reasoning_content in the thinking mode must be passed back to the API"). Codex never round-trips
-// that field, so the bridge caches it per tool-call id when a response is produced and re-attaches it
-// here when the same call is replayed in history. Optional so plain (non-thinking) turns and unit
-// tests need not supply it.
-const inputToMessages = (
-  body: JsonObject,
-  reasoningByCallId?: Map<string, string>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
-): JsonObject[] => {
-  const messages: JsonObject[] = []
-  if (typeof body.instructions === 'string' && body.instructions.length > 0) {
-    messages.push({ role: 'system', content: body.instructions })
-  }
-
-  const input =
-    typeof body.input === 'string'
-      ? [{ type: 'message', role: 'user', content: body.input }]
-      : body.input
-  if (!Array.isArray(input)) return messages
-
-  const droppedItemTypes = new Set<string>()
-  // Chat Completions requires an assistant message with tool_calls to be immediately followed by a
-  // tool message per tool_call_id. Codex emits parallel tool calls as consecutive function_call items
-  // (fc_A, fc_B, output_A, output_B), so coalesce a run of function_call items into ONE assistant
-  // message rather than one message each — otherwise assistant[A] is followed by assistant[B] and the
-  // upstream rejects it. Flushed when a message or a tool output ends the run.
-  let pendingToolCalls: JsonObject[] = []
-  let pendingReasoning: string | undefined
-  const flushToolCalls = (): void => {
-    if (pendingToolCalls.length === 0) return
-    messages.push({
-      role: 'assistant',
-      ...(pendingReasoning ? { reasoning_content: pendingReasoning } : {}),
-      tool_calls: pendingToolCalls
-    })
-    pendingToolCalls = []
-    pendingReasoning = undefined
-  }
-
-  for (const item of input) {
-    if (!item || typeof item !== 'object') throw new Error('Responses input items must be objects')
-    if (item.type === 'function_call') {
-      const callId = item.call_id ?? item.id
-      const reasoning = reasoningByCallId?.get(String(callId))
-      if (reasoning && !pendingReasoning) pendingReasoning = reasoning
-      pendingToolCalls.push({
-        id: callId,
-        type: 'function',
-        function: { name: chatToolName(item, namespacedTools), arguments: item.arguments ?? '{}' }
-      })
-    } else if (item.type === 'message') {
-      flushToolCalls()
-      // Responses uses `developer` for higher-priority instructions; Chat Completions vendors such
-      // as DeepSeek generally only accept `system`, so preserve the instruction semantics with the
-      // broadly supported role.
-      const role = item.role === 'developer' ? 'system' : (item.role ?? 'user')
-      if (!['system', 'user', 'assistant'].includes(role)) {
-        throw new Error(`Unsupported Responses message role: ${String(item.role)}`)
-      }
-      messages.push({ role, content: textFromContent(item.content) })
-    } else if (item.type === 'function_call_output') {
-      flushToolCalls()
-      messages.push({
-        role: 'tool',
-        tool_call_id: item.call_id,
-        content: typeof item.output === 'string' ? item.output : JSON.stringify(item.output)
-      })
-    } else if (KNOWN_SKIPPABLE_ITEM_TYPES.has(String(item.type))) {
-      // Known built-in items (reasoning, additional_tools, …) have no Chat Completions message form.
-      // Skip them (logged), but do NOT flush a pending tool-call run — that would split parallel calls
-      // back into separate assistant messages.
-      droppedItemTypes.add(String(item.type))
-    } else {
-      // An unknown item type would silently discard history while still returning a "successful"
-      // answer. Fail the turn instead (before headers ⇒ clean 400) so the boundary stays explicit.
-      throw new Error(`Unsupported Responses input item: ${String(item.type)}`)
-    }
-  }
-  // A run of tool calls at the very end (no trailing output yet) still emits as one assistant message.
-  flushToolCalls()
-
-  if (droppedItemTypes.size > 0) {
-    log.info('bridge dropped non-representable input items', {
-      droppedTypes: [...droppedItemTypes]
-    })
-  }
-
-  const systemMessages = messages.filter((message) => message.role === 'system')
-  if (systemMessages.length <= 1) return messages
-
-  // Some OpenAI-compatible gateways (notably MiniMax) only accept one system message and require
-  // it to be first. Responses can provide both `instructions` and developer message items, so merge
-  // their text while preserving the order of every non-system message.
-  const systemText = systemMessages
-    .map((message) => {
-      if (typeof message.content === 'string') return message.content
-      if (Array.isArray(message.content)) {
-        return message.content
-          .map((part) => (typeof part === 'object' ? String(part.text ?? '') : String(part)))
-          .join('')
-      }
-      return ''
-    })
-    .filter(Boolean)
-    .join('\n\n')
-
-  return [
-    { role: 'system', content: systemText },
-    ...messages.filter((message) => message.role !== 'system')
-  ]
-}
-
-const toolsToChat = (
-  tools: unknown,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = []
-): JsonObject[] | undefined => {
-  if (tools === undefined) return undefined
-  if (!Array.isArray(tools)) throw new Error('Responses tools must be an array')
-
-  const dropped = new Set<string>()
-  const droppedFunctions = new Set<string>()
-  const converted = tools.flatMap((tool) => {
-    if (!tool || typeof tool !== 'object' || typeof tool.type !== 'string') {
-      throw new Error('Responses tools must have a supported type')
-    }
-    const responseTool = tool as JsonObject
-    if (
-      responseTool.type === 'function' &&
-      FILTERABLE_FUNCTION_NAMES.has(String(responseTool.name))
-    ) {
-      droppedFunctions.add(String(responseTool.name))
-      return []
-    }
-    // Known built-in types (tool_search, custom/freeform apply_patch, web_search, namespace, …) have no
-    // Chat Completions equivalent; drop them (logged). tool_search in particular can't work over the
-    // bridge — Codex's deferred-tool discovery is resolved server-side by the OpenAI Responses backend,
-    // so forwarding it just yields tool calls Codex rejects as "unsupported". An unknown type is
-    // rejected so the boundary stays explicit rather than silently discarding a tool the turn needs.
-    if (responseTool.type !== 'function') {
-      if (!FILTERABLE_TOOL_TYPES.has(responseTool.type)) {
-        throw new Error(`Unsupported Responses tool type: ${responseTool.type}`)
-      }
-      dropped.add(responseTool.type)
-      return []
-    }
-    return {
-      type: 'function',
-      function: {
-        name: responseTool.name,
-        description: responseTool.description,
-        parameters: responseTool.parameters,
-        ...(responseTool.strict === undefined ? {} : { strict: responseTool.strict })
-      }
-    }
-  })
-  for (const tool of namespacedTools) {
-    converted.push({
-      type: 'function',
-      function: {
-        name: namespacedToolAlias(tool),
-        description: tool.description,
-        parameters: tool.parameters,
-        ...(tool.strict === undefined ? {} : { strict: tool.strict })
-      }
-    })
-  }
-  if (dropped.size > 0) {
-    log.info('bridge dropped non-function tools', { droppedTypes: [...dropped] })
-  }
-  if (droppedFunctions.size > 0) {
-    log.info('bridge dropped MCP resource browser functions', {
-      droppedNames: [...droppedFunctions]
-    })
-  }
-  return converted
-}
-
-const toolChoiceToChat = (toolChoice: unknown): unknown => {
-  if (toolChoice === undefined || toolChoice === null) return toolChoice
-  if (typeof toolChoice === 'string') {
-    if (!['auto', 'none', 'required'].includes(toolChoice)) {
-      throw new Error(`Unsupported Responses tool_choice: ${toolChoice}`)
-    }
-    return toolChoice
-  }
-  if (
-    toolChoice &&
-    typeof toolChoice === 'object' &&
-    (toolChoice as JsonObject).type === 'function' &&
-    typeof (toolChoice as JsonObject).name === 'string'
-  ) {
-    return { type: 'function', function: { name: (toolChoice as JsonObject).name } }
-  }
-  throw new Error('Only function tool_choice values are supported by the Chat Completions bridge')
-}
-
-export const responsesToChatRequest = (
-  body: JsonObject,
-  upstreamModel?: string,
-  reasoningByCallId?: Map<string, string>,
-  namespacedTools: readonly ResponsesBridgeNamespacedTool[] = [],
-  options?: {
-    reasoningEffortOverride?: ModelReasoningEffort
-    vendorId?: OfficialVendorId
-    reasoningEffortTransport?: CustomReasoningEffortTransport
-  }
-): JsonObject => {
-  for (const field of UNSUPPORTED_FIELDS) {
-    if (body[field] !== undefined && body[field] !== null) {
-      throw new Error(`Responses field "${field}" is not supported by this gateway`)
-    }
-  }
-  if (body.stream !== undefined && typeof body.stream !== 'boolean') {
-    throw new Error('Responses stream must be a boolean')
-  }
-  if (body.include !== undefined && body.include !== null) {
-    if (!Array.isArray(body.include)) throw new Error('Responses include must be an array')
-    for (const value of body.include) {
-      if (typeof value !== 'string' || !ALLOWED_INCLUDE_VALUES.has(value)) {
-        throw new Error(
-          `Responses include value is not supported by this gateway: ${String(value)}`
-        )
-      }
-    }
-    // Codex requests `reasoning.encrypted_content` automatically. Chat Completions has no equivalent,
-    // so the one allowlisted advisory value is intentionally omitted from the upstream request.
-  }
-  if (body.reasoning !== undefined && body.reasoning !== null) {
-    if (typeof body.reasoning !== 'object' || Array.isArray(body.reasoning)) {
-      throw new Error('Responses reasoning must be an object')
-    }
-    for (const key of Object.keys(body.reasoning)) {
-      if (!ALLOWED_REASONING_KEYS.has(key)) {
-        throw new Error(`Responses reasoning field is not supported by this gateway: ${key}`)
-      }
-    }
-    const effort = body.reasoning.effort
-    if (effort !== undefined && effort !== null && !ALLOWED_REASONING_EFFORTS.has(String(effort))) {
-      throw new Error(`Unsupported Responses reasoning effort: ${String(effort)}`)
-    }
-    const summary = body.reasoning.summary
-    if (
-      summary !== undefined &&
-      summary !== null &&
-      !ALLOWED_REASONING_SUMMARIES.has(String(summary))
-    ) {
-      throw new Error(`Unsupported Responses reasoning summary: ${String(summary)}`)
-    }
-    // The summary preference has no portable Chat Completions equivalent and is omitted; the
-    // effort is translated below.
-  }
-  if (body.store !== undefined && body.store !== false && body.store !== null) {
-    throw new Error('Stored Responses are not supported by this gateway')
-  }
-  if (
-    body.prompt_cache_key !== undefined &&
-    body.prompt_cache_key !== null &&
-    typeof body.prompt_cache_key !== 'string'
-  ) {
-    throw new Error('Responses prompt_cache_key must be a string')
-  }
-  if (
-    body.max_output_tokens !== undefined &&
-    body.max_output_tokens !== null &&
-    typeof body.max_output_tokens !== 'number'
-  ) {
-    throw new Error('Responses max_output_tokens must be a number')
-  }
-
-  const tools = toolsToChat(body.tools ?? [], namespacedTools)
-  const hasTools = Boolean(tools && tools.length > 0)
-  const requestedToolChoice =
-    body.tool_choice === undefined ? undefined : toolChoiceToChat(body.tool_choice)
-  const toolChoice = hasTools ? requestedToolChoice : undefined
-  const stream = body.stream !== false
-
-  // The model profile already chose the upstream API value. Never derive it from Codex's request:
-  // Codex runs a catalog transport model and may omit, default, or clamp values that the real model
-  // supports. Undefined intentionally strips Codex's own effort from the Chat request.
-  const chatReasoningEffort = options?.reasoningEffortOverride
-  const reasoningTransport = chatReasoningEffort
-    ? resolveChatReasoningTransport(
-        options?.vendorId,
-        upstreamModel,
-        chatReasoningEffort,
-        options?.reasoningEffortTransport
-      )
-    : undefined
-
-  return {
-    model: upstreamModel ?? body.model,
-    messages: inputToMessages(body, reasoningByCallId, namespacedTools),
-    ...(hasTools ? { tools } : {}),
-    ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
-    ...(!hasTools || body.parallel_tool_calls === undefined
-      ? {}
-      : { parallel_tool_calls: body.parallel_tool_calls }),
-    ...(body.temperature === undefined ? {} : { temperature: body.temperature }),
-    ...(body.top_p === undefined ? {} : { top_p: body.top_p }),
-    ...(body.max_output_tokens === undefined || body.max_output_tokens === null
-      ? {}
-      : { max_tokens: body.max_output_tokens }),
-    ...(reasoningTransport?.reasoningEffort
-      ? { reasoning_effort: reasoningTransport.reasoningEffort }
-      : {}),
-    ...(reasoningTransport?.thinking ? { thinking: reasoningTransport.thinking } : {}),
-    ...(reasoningTransport?.reasoning ? { reasoning: reasoningTransport.reasoning } : {}),
-    stream,
-    // Responses stream options are not Chat Completions options. Request final usage explicitly and
-    // do not forward fields such as include_obfuscation that a Chat-compatible gateway may reject.
-    ...(stream ? { stream_options: { include_usage: true } } : {})
-  }
 }
 
 const responseEnvelope = (
@@ -1420,4 +941,10 @@ export class ResponsesBridge {
   }
 }
 
-export { chatUrl, completionToResponse, inputToMessages, toolsToChat, upstreamErrorMessage }
+export { chatUrl, completionToResponse, upstreamErrorMessage }
+export {
+  inputToMessages,
+  responsesToChatRequest,
+  toolsToChat,
+  type ResponsesBridgeNamespacedTool
+} from './responses-request-adapter'

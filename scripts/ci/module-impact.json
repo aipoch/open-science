@@ -276,7 +276,8 @@
     "settings_backend_resolution": {
       "ownerPaths": [
         "src/main/settings/backend-resolver.ts",
-        "src/main/settings/responses-bridge.ts"
+        "src/main/settings/responses-bridge.ts",
+        "src/main/settings/responses-request-adapter.ts"
       ],
       "interfacePaths": [
         "src/main/settings/backend-resolver.ts",
@@ -291,6 +292,8 @@
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
           "src/main/settings/backend-resolver.test.ts",
+          "src/main/settings/responses-request-adapter.architecture.test.ts",
+          "src/main/settings/responses-request-adapter.test.ts",
           "src/main/settings/responses-bridge.test.ts",
           "src/main/settings/responses-bridge.integration.test.ts",
           "src/main/settings/native-responses-compatibility.test.ts",

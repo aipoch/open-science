@@ -3,14 +3,8 @@ import { createConnection } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  ResponsesBridge,
-  completionToResponse,
-  inputToMessages,
-  responsesToChatRequest,
-  toolsToChat,
-  upstreamErrorMessage
-} from './responses-bridge'
+import { ResponsesBridge, completionToResponse, upstreamErrorMessage } from './responses-bridge'
+import { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
