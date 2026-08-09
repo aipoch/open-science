@@ -124,6 +124,7 @@
     "compute_service": {
       "ownerPaths": [
         "src/main/compute/compute-host-profile-owner.ts",
+        "src/main/compute/compute-remote-operation-owner.ts",
         "src/main/compute/compute-service.ts"
       ],
       "interfacePaths": ["src/main/compute/compute-service.ts"],
@@ -131,16 +132,19 @@
       "testFiles": {
         "owner": [
           "src/main/compute/compute-host-profile-owner.test.ts",
+          "src/main/compute/compute-remote-operation-owner.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
           "src/main/compute/concurrency-integration.test.ts"
         ],
         "contract": [
+          "src/main/compute/scp-runner.test.ts",
           "src/main/compute/ssh-runner.test.ts",
           "src/main/compute/ipc.test.ts",
           "src/main/compute/application-commands.test.ts",
           "src/main/notebook/local-rpc-server.mcpcall.test.ts",
-          "src/main/notebook/local-rpc-server.test.ts"
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/shared/remote-fs.test.ts"
         ],
         "consumer": [
           "src/main/compute/job-runtime.test.ts",

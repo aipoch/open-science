@@ -1,8 +1,6 @@
-import { mkdir, mkdtemp, readdir, stat as fsStat, rm } from 'node:fs/promises'
-import { app } from 'electron'
+import { readdir } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { tmpdir } from 'node:os'
 
 import type {
   ComputeCallError,
@@ -14,25 +12,12 @@ import type {
   ProbeResult,
   SubmitJobResult
 } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
-import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ComputeHostRepository } from './repository'
 import type { SshRunner } from './ssh-runner'
-import { resolveSshTarget } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
-import {
-  GLOB_CHARS,
-  MAX_DOWNLOAD_BYTES,
-  MAX_IMPORT_BYTES,
-  SHELL_UNSAFE_CHARS,
-  SystemScpRunner,
-  inferMimeType,
-  resolveDestFilename,
-  runScpTransfer,
-  shellSingleQuote,
-  validateImportPath
-} from './scp-runner'
+import { GLOB_CHARS, SHELL_UNSAFE_CHARS, SystemScpRunner } from './scp-runner'
 import type { ComputeJobRepository } from './job-repository'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 import type { StagedInputEntry } from './job-dispatcher'
@@ -41,40 +26,12 @@ import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { workspaceRelativePath } from './workspace-path'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
+import { ComputeRemoteOperationOwner } from './compute-remote-operation-owner'
 
 export { parseProbeOutput } from './compute-host-profile-owner'
 export type { ProbeScriptOutput } from './compute-host-profile-owner'
 
-// Default timeout for call_command (design.md §5). Callers may pass a longer value but 60s prevents
-// accidental indefinite hangs when the agent forgets to set a timeout.
-const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
-
-// Maximum bytes captured per stream for call_command (design.md §5). Prevents `cat big_file` from
-// filling memory or the RPC response buffer.
-const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024
-
-// Maximum bytes for listDir output. 5000 entries × ~100 bytes each ≈ 500KB; set to ~2MB for safety.
-// The default 64KB would truncate large directories before hitting the 5000-entry limit.
-const LIST_DIR_MAX_OUTPUT_BYTES = 2 * 1024 * 1024
-
-// Hard upper limit on directory entries returned by listDir. When a directory has more entries
-// than this, truncated=true is set and only the first MAX_LIST_ENTRIES items are returned.
-const MAX_LIST_ENTRIES = 5000
-
-// Timeout for listDir. Directories with many files can take a few seconds; 30s is generous.
-const LIST_DIR_TIMEOUT_MS = 30_000
-
-// Short command preview shown in the approval card when the full command is long.
 const COMMAND_PREVIEW_MAX_LEN = 120
-
-const errorTail = (stderr: string, stdout: string, maxLines = 10): string => {
-  const lines = [stderr, stdout]
-    .filter(Boolean)
-    .join('\n')
-    .split('\n')
-    .filter((line) => line.trim())
-  return lines.slice(-maxLines).join('\n')
-}
 
 // Raw input spec as submitted by the agent (before resolution to local paths).
 // Three kinds:
@@ -185,26 +142,18 @@ const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
 // Default timeout when not specified (24 hours).
 const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 
-// ComputeService preserves the public facade while ComputeHostProfileOwner owns probe and host
-// profile mutations. Both share the injected runner and repository. See design.md §4 for the
-// probe/Details distinction.
-// approvalBroker is optional: when omitted, callCommand throws rather than requesting approval
-// (unit tests that don't exercise the approval path omit it).
-// scpRunner is optional: when omitted a SystemScpRunner is used (production default).
-// overrideDownloadsDir is optional: when supplied, used as the OS Downloads dir (for tests).
-// jobRepository is optional: when omitted, submitJob will throw (for tests that don't need it).
-// artifactResolver is optional: when omitted, artifact inputs in submitJob throw.
-// concurrencyManager is optional: when omitted, submitJob will not enforce concurrency limits.
+// Stable facade composed from private host-profile, remote-operation and job workflows.
 export class ComputeService {
   private readonly scpRunner: ScpRunner
   private readonly hostProfiles: ComputeHostProfileOwner
+  private readonly remoteOperations: ComputeRemoteOperationOwner
 
   constructor(
     private readonly runner: SshRunner,
     private readonly repository: ComputeHostRepository,
     private readonly approvalBroker?: ComputeApprovalBroker,
     scpRunner?: ScpRunner,
-    private readonly overrideDownloadsDir?: string,
+    overrideDownloadsDir?: string,
     private readonly jobRepository?: ComputeJobRepository,
     private readonly onJobUpdated?: (job: import('../../shared/compute').ComputeJob) => void,
     private readonly artifactResolver?: ArtifactResolver,
@@ -213,6 +162,13 @@ export class ComputeService {
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
     this.hostProfiles = new ComputeHostProfileOwner(runner, repository)
+    this.remoteOperations = new ComputeRemoteOperationOwner(
+      runner,
+      repository,
+      approvalBroker,
+      this.scpRunner,
+      overrideDownloadsDir
+    )
   }
 
   async probe(providerId: string): Promise<ProbeResult> {
@@ -249,133 +205,10 @@ export class ComputeService {
     return this.hostProfiles.setConcurrencyLimit(providerId, limit)
   }
 
-  // Lists the contents of a remote directory using find -printf via the existing exec SshRunner.
-  // A single SSH round-trip collects: realpath (resolves ..), echo $HOME, and find output.
-  // Returns a DirListing with entries sorted directories-first then alphabetically, plus roots and
-  // resolvedPath metadata. Throws an Error with a .remoteFsError property on failure.
   async listDir(providerId: string, path: string): Promise<DirListing> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const fsErr = new Error(msg) as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsErr.remoteFsError = { detail: msg, remoteKind: 'connection', retry_after_user_action: true }
-      throw fsErr
-    }
-
-    // One round-trip: realpath → cd → echo $HOME → find -printf (NUL-separated).
-    // Stdout format: <resolvedPath>\n<home>\n<find_output>
-    // %Y = file type following symlinks (d for dir, f for file, l for broken symlink, etc.)
-    // %s = size in bytes; %T@ = mtime as float seconds; %f = filename (last component)
-    //
-    // `cd … || exit 1` is deliberate: a nonexistent / inaccessible path must surface a real
-    // error (nonzero exit + cd's stderr) rather than silently falling back to listing $HOME.
-    // We keep cd's stderr intact (no `2>&1`) so classifyRemoteError can distinguish
-    // not_found ("no such file or directory") from permission ("permission denied").
-    //
-    // Single-quote the path so the remote shell performs no expansion: an attacker-named directory
-    // like `$(...)` or with backticks (browsed via double-click) cannot inject commands. We author
-    // this ssh-exec command ourselves, so single-quoting is robust (unlike scp — see validateImportPath).
-    //
-    // Exception: bare `~` and `~/…` are user-facing navigation shortcuts. Single-quoting suppresses
-    // tilde expansion, so `realpath '~'` resolves to a literal file named "~" and `cd '~'` fails.
-    // Expand these to `$HOME` / `$HOME/…` instead — $HOME is safe (set by sshd, not user input).
-    const expandedPath =
-      path === '~' ? '$HOME' : path.startsWith('~/') ? `$HOME/${path.slice(2)}` : path
-    const quotedPath = expandedPath.startsWith('$HOME')
-      ? expandedPath
-      : shellSingleQuote(expandedPath)
-    const remoteCmd = [
-      `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
-      `cd ${quotedPath} || exit 1`,
-      'echo "$HOME"',
-      `find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0' 2>/dev/null`
-    ].join('\n')
-
-    const runResult = await this.runner.run(target, remoteCmd, {
-      timeoutMs: LIST_DIR_TIMEOUT_MS,
-      loginShell: false,
-      maxOutputBytes: LIST_DIR_MAX_OUTPUT_BYTES
-    })
-
-    // Connection-level failure.
-    if (runResult.timedOut || runResult.exitCode === 255) {
-      const tail = errorTail(runResult.stderr, runResult.stdout)
-      const fsErr = new Error(tail || 'Connection failed') as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsErr.remoteFsError = {
-        detail: tail || 'SSH connection failed.',
-        remoteKind: 'connection',
-        retry_after_user_action: true
-      }
-      throw fsErr
-    }
-
-    // Non-connection failure: classify via stderr text.
-    if (runResult.exitCode !== 0 && runResult.stderr) {
-      const classified = classifyRemoteError({ stderr: runResult.stderr })
-      const fsErr = new Error(runResult.stderr) as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsErr.remoteFsError = {
-        detail: runResult.stderr,
-        remoteKind: classified.remoteKind,
-        retry_after_user_action: classified.retry_after_user_action
-      }
-      throw fsErr
-    }
-
-    // Parse the composite stdout: first line = resolvedPath, second line = home, rest = find output.
-    const nlIdx1 = runResult.stdout.indexOf('\n')
-    const nlIdx2 = runResult.stdout.indexOf('\n', nlIdx1 + 1)
-
-    const resolvedPath = nlIdx1 !== -1 ? runResult.stdout.slice(0, nlIdx1).trim() : path
-    const home = nlIdx2 !== -1 ? runResult.stdout.slice(nlIdx1 + 1, nlIdx2).trim() : ''
-    const findOutput = nlIdx2 !== -1 ? runResult.stdout.slice(nlIdx2 + 1) : ''
-
-    // Parse, sort, and apply 5000-entry hard limit.
-    const parsed = parseFindListing(findOutput)
-
-    // Sort: directories first, then files; each group alphabetical (case-sensitive, matching ls).
-    parsed.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-      return a.name.localeCompare(b.name)
-    })
-
-    const truncated = parsed.length > MAX_LIST_ENTRIES
-    const entries = truncated ? parsed.slice(0, MAX_LIST_ENTRIES) : parsed
-
-    return {
-      entries,
-      truncated,
-      roots: {
-        home: home || '~',
-        scratch: host.scratchRoot ?? undefined
-      },
-      resolvedPath: resolvedPath || path
-    }
+    return this.remoteOperations.listDir(providerId, path)
   }
 
-  // Executes a short remote command on the SSH host, preceded by an approval gate (design.md §6).
-  //
-  // When sessionId and projectId are supplied, grant memory is checked and recorded:
-  //   - conversation: durable logical Session grant (legacy wire name)
-  //   - project/global: durable Registry grants at the corresponding scope
-  //   - once: no memory — card shown every time
-  //
-  // call_command does NOT count against the concurrent job limit (design.md §5).
-  //
-  // Returns ExecResult on success; throws ComputeCallError (as an Error with .code property) on
-  // approval_denied, host_unreachable, or timeout.
   async callCommand(
     providerId: string,
     cmd: string,
@@ -384,443 +217,23 @@ export class ComputeService {
     timeoutSeconds?: number,
     context?: { sessionId: string; projectId: string }
   ): Promise<ExecResult> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    // ── APPROVAL GATE (must fire before any SSH call) ──────────────────────────────
-    if (!this.approvalBroker) {
-      throw new Error('ComputeApprovalBroker is required to call callCommand.')
-    }
-
-    const commandPreview =
-      cmd.length > COMMAND_PREVIEW_MAX_LEN ? `${cmd.slice(0, COMMAND_PREVIEW_MAX_LEN)}…` : cmd
-
-    const approvalInfo = {
-      provider_id: host.providerId,
-      provider_name: host.displayName,
-      shape: host.shape,
+    return this.remoteOperations.callCommand(
+      providerId,
+      cmd,
       intent,
-      command_preview: commandPreview,
-      command_full: cmd
-    }
-
-    // Use grant-aware requestWithContext when session/project context is available (issue 05).
-    // Fall back to legacy request() otherwise (keeps backward compatibility).
-    const decision = context
-      ? await this.approvalBroker.requestWithContext(approvalInfo, {
-          sessionId: context.sessionId,
-          projectId: context.projectId,
-          operation: 'call_command',
-          ownerId: host.id
-        })
-      : await this.approvalBroker.request(approvalInfo)
-
-    if (decision === 'deny') {
-      const err = new Error(
-        `Remote command approval was denied for host "${host.displayName}".`
-      ) as Error & { computeCallError: ComputeCallError }
-      err.computeCallError = {
-        error_code: 'approval_denied',
-        message: `Approval denied for call_command on ${host.displayName}.`,
-        retry_after_user_action: false
-      }
-      throw err
-    }
-
-    // ── SSH EXECUTION ───────────────────────────────────────────────────────────────
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const callErr = new Error(msg) as Error & { computeCallError: ComputeCallError }
-      callErr.computeCallError = {
-        error_code: 'host_unreachable',
-        message: msg,
-        retry_after_user_action: true
-      }
-      throw callErr
-    }
-
-    // cwd = scratchRoot if configured; fallback to home on cd failure (design.md §5).
-    const cwdExpr = host.scratchRoot
-      ? `cd ${JSON.stringify(host.scratchRoot)} 2>/dev/null || cd ~`
-      : 'cd ~'
-
-    // Wrap the user command in a cwd-change prefix so it runs in the right directory.
-    const wrappedCmd = `${cwdExpr}; ${cmd}`
-
-    const timeoutMs =
-      typeof timeoutSeconds === 'number' && timeoutSeconds > 0
-        ? timeoutSeconds * 1000
-        : CALL_COMMAND_DEFAULT_TIMEOUT_MS
-
-    const runResult = await this.runner.run(target, wrappedCmd, {
-      timeoutMs,
       loginShell,
-      maxOutputBytes: CALL_COMMAND_MAX_OUTPUT_BYTES
-    })
-
-    // ── ERROR MAPPING ────────────────────────────────────────────────────────────────
-    if (runResult.timedOut) {
-      const callErr = new Error(
-        `call_command on "${host.displayName}" timed out after ${timeoutMs}ms.`
-      ) as Error & { computeCallError: ComputeCallError }
-      callErr.computeCallError = {
-        error_code: 'timeout',
-        message: `Command timed out after ${timeoutMs / 1000}s.`,
-        retry_after_user_action: false
-      }
-      throw callErr
-    }
-
-    // SSH exit code 255 indicates a connection-level failure (BatchMode auth failure, unknown host
-    // key, network error). The user must fix the external condition; no automatic retry.
-    if (runResult.exitCode === 255) {
-      const tail = errorTail(runResult.stderr, runResult.stdout)
-      const callErr = new Error(
-        `SSH connection to "${host.displayName}" failed: ${tail || 'exit 255'}`
-      ) as Error & { computeCallError: ComputeCallError }
-      callErr.computeCallError = {
-        error_code: 'host_unreachable',
-        message: tail || 'SSH exit 255: connection failed.',
-        retry_after_user_action: true
-      }
-      throw callErr
-    }
-
-    return {
-      exit_code: runResult.exitCode,
-      stdout: runResult.stdout,
-      stderr: runResult.stderr,
-      truncated: runResult.truncated
-    }
+      timeoutSeconds,
+      context
+    )
   }
 
-  // Downloads a remote file to one of three destinations (design.md §4):
-  //   - os-downloads:  scp directly to OS Downloads; ≤2 GiB; duplicate names get (1)/(2) suffix.
-  //   - artifact:      scp to temp → validate (not-empty, not-dir, no-glob, ≤50 MB, post-transfer
-  //                    re-stat) → write as project artifact with provenance metadata.
-  //   - session-cache: scp to session workspace; agent Python API path (issue 04).
-  //                    Requires approval from the ComputeApprovalBroker BEFORE scp.
-  //                    Optional context enables grant-aware approval (conversation/project scope).
-  //
-  // Approval gates by INITIATOR, not destination (see SECURITY.md "Scope and trust boundaries").
-  // os-downloads and artifact are UI-initiated — the user's click IS the authorization, so no
-  // approval card is shown. Only session-cache is agent-initiated and goes through the
-  // ComputeApprovalBroker before scp (design §5). All destinations still validate the remote path
-  // and enforce size caps below regardless of initiator.
-  //
-  // Throws an Error with .remoteFsError on any failure (too_large / not_a_file / connection /
-  // outside_roots / permission / other).
   async download(
     providerId: string,
     remotePath: string,
     dest: DownloadDest,
     context?: { sessionId: string; projectId: string }
   ): Promise<LocalFile> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    // ── Resolve SSH target (used for both stat check and ControlMaster mux for scp) ──
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const fsErr = new Error(msg) as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsErr.remoteFsError = { detail: msg, remoteKind: 'connection', retry_after_user_action: true }
-      throw fsErr
-    }
-
-    // Validate the remote path for EVERY destination before it reaches scp: absolute, no glob, no
-    // shell-injection metacharacters/control chars. scp may pass the path through a remote shell
-    // (version-dependent), so os-downloads and session-cache need this guard just as import does.
-    const pathError = validateImportPath(remotePath)
-    if (pathError) {
-      const fsErr = new Error(`Invalid remote path: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: 'Path must be absolute and contain no glob or shell metacharacters.',
-        remoteKind: pathError
-      }
-      throw fsErr
-    }
-
-    const filename = basename(remotePath)
-
-    if (dest.kind === 'os-downloads') {
-      return this._downloadToOsDownloads(host, target, remotePath, filename)
-    } else if (dest.kind === 'artifact') {
-      return this._downloadToArtifact(host, target, remotePath, filename)
-    } else {
-      // session-cache: agent download path — requires approval BEFORE scp (design.md §5).
-      if (!this.approvalBroker) {
-        throw new Error('ComputeApprovalBroker is required for session-cache downloads.')
-      }
-
-      const approvalInfo = {
-        provider_id: host.providerId,
-        provider_name: host.displayName,
-        shape: host.shape,
-        intent: 'Download remote file to session workspace',
-        remote_path: remotePath
-      }
-
-      // Use grant-aware requestWithContext when session/project context is available.
-      // Falls back to once-only request() when no context is supplied.
-      const decision = context
-        ? await this.approvalBroker.requestWithContext(approvalInfo, {
-            sessionId: context.sessionId,
-            projectId: context.projectId,
-            operation: 'download',
-            ownerId: host.id
-          })
-        : await this.approvalBroker.request(approvalInfo)
-
-      if (decision === 'deny') {
-        const err = new Error(
-          `Download approval was denied for "${remotePath}" on host "${host.displayName}".`
-        ) as Error & { code: string }
-        err.code = 'download_denied'
-        throw err
-      }
-
-      return this._downloadToSessionCache(host, target, remotePath, filename)
-    }
-  }
-
-  // Downloads to the OS Downloads folder. ≤2GiB limit, (1)/(2) collision rename.
-  private async _downloadToOsDownloads(
-    host: ComputeHost,
-    target: import('./ssh-runner').ResolvedSshTarget,
-    remotePath: string,
-    filename: string
-  ): Promise<LocalFile> {
-    // Pre-transfer size check via ssh runner.
-    const remoteSize = await this._statRemoteSize(host, target, remotePath)
-
-    if (remoteSize > MAX_DOWNLOAD_BYTES) {
-      const fsErr = new Error(
-        `File exceeds 2 GiB download limit (${remoteSize} bytes)`
-      ) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: `File size ${remoteSize} bytes exceeds the 2 GiB download limit.`,
-        remoteKind: 'too_large'
-      }
-      throw fsErr
-    }
-
-    const downloadsDir = this.overrideDownloadsDir ?? this._getDownloadsDir()
-    await mkdir(downloadsDir, { recursive: true })
-
-    const destName = await resolveDestFilename(downloadsDir, filename)
-    const destPath = join(downloadsDir, destName)
-
-    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
-
-    const fileStat = await fsStat(destPath)
-    const mimeType = inferMimeType(filename)
-
-    return { path: destPath, name: destName, size: fileStat.size, mimeType }
-  }
-
-  // Downloads to a temp dir and stores as project artifact with provenance.
-  // projectId is carried via the dest object; the actual ArtifactRepository write hook
-  // will be wired in issue 04. For now we return the temp path + artifactId for the renderer.
-  private async _downloadToArtifact(
-    host: ComputeHost,
-    target: import('./ssh-runner').ResolvedSshTarget,
-    remotePath: string,
-    filename: string
-  ): Promise<LocalFile> {
-    // Validate path: absolute, no glob chars.
-    const pathError = validateImportPath(remotePath)
-    if (pathError) {
-      const fsErr = new Error(`Invalid remote path: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: `Path must be absolute and contain no glob characters.`,
-        remoteKind: pathError
-      }
-      throw fsErr
-    }
-
-    // Pre-transfer stat: must be a regular non-empty file ≤50 MB.
-    const { fileType, size: remoteSize } = await this._statRemote(host, target, remotePath)
-
-    if (fileType !== 'f') {
-      const fsErr = new Error(`Remote path is not a regular file: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: fileType === 'd' ? 'Path is a directory.' : 'Path is not a regular file.',
-        remoteKind: 'not_a_file'
-      }
-      throw fsErr
-    }
-
-    if (remoteSize === 0) {
-      const fsErr = new Error(`Remote file is empty: ${remotePath}`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: 'Cannot import an empty file.',
-        remoteKind: 'not_a_file'
-      }
-      throw fsErr
-    }
-
-    if (remoteSize > MAX_IMPORT_BYTES) {
-      const fsErr = new Error(`File exceeds 50 MB import limit (${remoteSize} bytes)`) as Error & {
-        remoteFsError: RemoteFsError
-      }
-      fsErr.remoteFsError = {
-        detail: `File size ${remoteSize} bytes exceeds the 50 MB import limit.`,
-        remoteKind: 'too_large'
-      }
-      throw fsErr
-    }
-
-    // scp to a temp directory.
-    const tmpBase = this.overrideDownloadsDir ?? tmpdir()
-    const tempDir = await mkdtemp(join(tmpBase, 'cs-import-'))
-    const tempPath = join(tempDir, filename)
-
-    try {
-      await runScpTransfer(this.scpRunner, target, remotePath, tempPath)
-
-      // Post-transfer re-stat: reject if the file grew during transfer (TOCTOU guard).
-      const localStat = await fsStat(tempPath)
-      if (localStat.size > remoteSize) {
-        const fsErr = new Error(`File grew during transfer: ${remotePath}`) as Error & {
-          remoteFsError: RemoteFsError
-        }
-        fsErr.remoteFsError = {
-          detail: 'File size changed during transfer — import rejected.',
-          remoteKind: 'not_a_file'
-        }
-        await rm(tempDir, { recursive: true, force: true })
-        throw fsErr
-      }
-
-      // Build artifact id. Provenance (ssh:<host>:<path>) is embedded in the LocalFile for the
-      // IPC handler to forward to ArtifactRepository when persisting (issue 04 hook).
-      const artifactId = `${randomUUID()}|ssh:${host.displayName}:${remotePath}`
-      const mimeType = inferMimeType(filename)
-
-      // Return the artifact info. The caller (IPC handler) is responsible for persisting this
-      // artifact via the ArtifactRepository so it appears in the project artifact panel.
-      return {
-        path: tempPath,
-        name: filename,
-        size: localStat.size,
-        mimeType,
-        artifactId
-        // provenance is stored in artifactId so the renderer can surface it
-        // (ArtifactFile metadata will include provenance via the IPC handler)
-      }
-    } catch (err) {
-      // Clean up the temp dir unless we already cleaned it above.
-      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
-      throw err
-    }
-  }
-
-  // Downloads to a session-cache temp dir. Approval gate is applied in download() before this is
-  // called for session-cache requests (design.md §5 — approval fires before scp).
-  private async _downloadToSessionCache(
-    _host: ComputeHost,
-    target: import('./ssh-runner').ResolvedSshTarget,
-    remotePath: string,
-    filename: string
-  ): Promise<LocalFile> {
-    const tempDir = await mkdtemp(join(tmpdir(), 'cs-session-'))
-    const destPath = join(tempDir, filename)
-
-    await runScpTransfer(this.scpRunner, target, remotePath, destPath)
-
-    const fileStat = await fsStat(destPath)
-    const mimeType = inferMimeType(filename)
-
-    return { path: destPath, name: filename, size: fileStat.size, mimeType }
-  }
-
-  // Returns the OS Downloads path via Electron's app module.
-  private _getDownloadsDir(): string {
-    try {
-      return app.getPath('downloads')
-    } catch {
-      // Fallback for test environments without a full Electron runtime.
-      return join(tmpdir(), 'downloads')
-    }
-  }
-
-  // Runs a remote stat to get file type and size in a single SSH round-trip.
-  // Output format: "<type> <size>" where type ∈ { f, d, ? }.
-  private async _statRemote(
-    _host: ComputeHost,
-    target: import('./ssh-runner').ResolvedSshTarget,
-    remotePath: string
-  ): Promise<{ fileType: string; size: number }> {
-    // Single-quote to neutralise shell expansion of the path in this ssh-exec command (same
-    // injection class as listDir). The scp transfer that follows is guarded separately by
-    // validateImportPath, since scp's remote-path shell handling is version-dependent.
-    const quoted = shellSingleQuote(remotePath)
-    // Portable: test for file/dir, get size via stat -c (Linux) with macOS fallback.
-    const cmd = [
-      `if [ -f ${quoted} ]; then`,
-      `  printf 'f '; stat -c '%s' ${quoted} 2>/dev/null || stat -f '%z' ${quoted}`,
-      `elif [ -d ${quoted} ]; then`,
-      `  echo 'd 0'`,
-      `else`,
-      `  echo '? 0'`,
-      `fi`
-    ].join('\n')
-
-    const result = await this.runner.run(target, cmd, {
-      timeoutMs: 10_000,
-      loginShell: false,
-      maxOutputBytes: 64
-    })
-
-    if (result.timedOut || result.exitCode === 255) {
-      const fsErr = new Error('SSH connection failed during stat') as Error & {
-        remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
-      }
-      fsErr.remoteFsError = {
-        detail: 'Connection failed.',
-        remoteKind: 'connection',
-        retry_after_user_action: true
-      }
-      throw fsErr
-    }
-
-    const parts = result.stdout.trim().split(/\s+/)
-    const fileType = parts[0] ?? '?'
-    const size = Number.parseInt(parts[1] ?? '0', 10)
-
-    return { fileType, size: Number.isFinite(size) ? size : 0 }
-  }
-
-  // Runs a remote stat returning only file size. Used for os-downloads where we don't need type.
-  private async _statRemoteSize(
-    host: ComputeHost,
-    target: import('./ssh-runner').ResolvedSshTarget,
-    remotePath: string
-  ): Promise<number> {
-    const { size } = await this._statRemote(host, target, remotePath)
-    return size
+    return this.remoteOperations.download(providerId, remotePath, dest, context)
   }
 
   // Submits a remote compute job asynchronously (design.md §4, §5).
