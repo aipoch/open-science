@@ -71,7 +71,7 @@ describe('PermissionApprovalControls interactions', () => {
     const sessionItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
       (item) => item.textContent?.includes('This conversation')
     )
-    expect(sessionItem?.textContent).toContain('Until this chat ends')
+    expect(sessionItem?.textContent).toContain('Remembered for this conversation')
     expect(container.textContent).not.toContain('Agent session')
   })
 
@@ -239,7 +239,7 @@ describe('PermissionApprovalControls interactions', () => {
     )
     expect(
       scopeItems.find((item) => item.textContent?.includes('This conversation'))?.textContent
-    ).toContain('Until this chat ends')
+    ).toContain('Remembered for this conversation')
     expect(
       scopeItems.find((item) => item.textContent?.includes('This project'))?.textContent
     ).toContain('Remembered for this project')

@@ -47,7 +47,7 @@ type ScopeOption = { scope: PermissionScope; label: string; subtitle: string }
 
 const SCOPE_OPTIONS: ScopeOption[] = [
   { scope: 'once', label: 'Once', subtitle: 'This call only' },
-  { scope: 'session', label: 'This conversation', subtitle: 'Until this chat ends' },
+  { scope: 'session', label: 'This conversation', subtitle: 'Remembered for this conversation' },
   { scope: 'project', label: 'This project', subtitle: 'Remembered for this project' },
   { scope: 'global', label: 'Global', subtitle: 'Remembered across all projects' }
 ]
@@ -616,8 +616,8 @@ const PermissionApprovalControls = ({
         : effectiveScope === 'global'
           ? 'Approval applies to matching calls in every project.'
           : presentation.notebookRuntime
-            ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this conversation.`
-            : 'Approval applies to matching calls until this conversation ends.'
+            ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this conversation, including across restarts.`
+            : 'Approval remains attached to this conversation across restarts.'
   const hasScopePicker = availableScopes.size > 1
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
