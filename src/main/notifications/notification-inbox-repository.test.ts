@@ -178,6 +178,27 @@ describe('NotificationInboxDbRepository', () => {
     ).toBeUndefined()
   })
 
+  it('acknowledges session completions without marking other task outcomes read', async () => {
+    const repository = await createRepository()
+    await record(repository, 'visible')
+    await repository.record({
+      id: 'failed-visible',
+      dedupeKey: 'task:failed:visible',
+      kind: 'task.failed',
+      sessionId: 'session-visible',
+      originId: 'failed-visible',
+      title: 'Task failed',
+      summary: 'The task failed.'
+    })
+
+    await repository.markSessionCompletionsRead(['session-visible'], 2750)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.find((item) => item.kind === 'task.completed')?.readAt).toBe(2750)
+    expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
+  })
+
   it('migrates legacy unread sessions exactly once and clears the old projection', async () => {
     const repository = await createRepository()
     await client!.unreadTaskSession.create({ data: { sessionId: 'legacy-session' } })
@@ -270,10 +291,11 @@ describe('NotificationInboxDbRepository', () => {
     await repository.markRead(sessionIds, 6000)
     await repository.markSessionsRead(sessionIds, 6000)
     await repository.markSessionTaskOutcomesRead(sessionIds, 6000)
+    await repository.markSessionCompletionsRead(sessionIds, 6000)
     await repository.deleteSessions(sessionIds)
     await repository.reconcileSessionCatalog([])
 
-    expect(updateMany).toHaveBeenCalledTimes(6)
+    expect(updateMany).toHaveBeenCalledTimes(8)
     expect(deleteMany).toHaveBeenCalledTimes(4)
   })
 })

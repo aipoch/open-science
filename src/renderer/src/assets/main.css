@@ -435,6 +435,7 @@
   @media (prefers-reduced-motion: reduce) {
     .home-session-title-running::after {
       animation: none;
+      display: none;
     }
 
     .open-science-thinking-indicator,

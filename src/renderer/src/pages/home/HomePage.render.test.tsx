@@ -423,11 +423,11 @@ describe('HomePage activity overview', () => {
     ).not.toBeNull()
   })
 
-  it('dismisses every unread completion for a session without opening it', async () => {
+  it('dismisses every backend completion for a session without opening it', async () => {
     const now = 600_000
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
     const openSession = vi.fn()
-    const markRead = vi.fn().mockResolvedValue(undefined)
+    const markSessionCompletionsRead = vi.fn().mockResolvedValue(undefined)
     const completedItem = {
       id: 'completed-1',
       sequence: 1,
@@ -464,7 +464,7 @@ describe('HomePage activity overview', () => {
           createdAt: now - 1
         }
       ],
-      markRead
+      markSessionCompletionsRead
     })
     useNavigationStore.setState({ openSession } as never)
 
@@ -494,10 +494,10 @@ describe('HomePage activity overview', () => {
 
     await act(async () => dismissButton?.click())
 
-    expect(markRead).toHaveBeenCalledWith(['completed-1', 'completed-2'])
+    expect(markSessionCompletionsRead).toHaveBeenCalledWith(['finished'])
     expect(openSession).not.toHaveBeenCalled()
 
-    markRead.mockRejectedValueOnce(new Error('read failed'))
+    markSessionCompletionsRead.mockRejectedValueOnce(new Error('read failed'))
     await act(async () => dismissButton?.click())
 
     expect(

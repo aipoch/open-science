@@ -84,6 +84,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notifications.getSnapshot': 'notifications:get-snapshot',
   'notifications.markAllRead': 'notifications:mark-all-read',
   'notifications.markRead': 'notifications:mark-read',
+  'notifications.markSessionCompletionsRead': 'notifications:mark-session-completions-read',
   'notifications.peekPendingOpenSession': 'notifications:peek-pending-open-session',
   'notifications.takePendingOpenSession': 'notifications:take-pending-open-session',
   'permissions.extendUndo': 'permissions:extend-undo',

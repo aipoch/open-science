@@ -228,6 +228,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('notifications', 'notifications', [
     ['getSnapshot', 'notifications:get-snapshot'], ['markAllRead', 'notifications:mark-all-read'], ['markRead', 'notifications:mark-read'],
+    ['markSessionCompletionsRead', 'notifications:mark-session-completions-read'],
     ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', DORMANT_EVENT],
     ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
     ['syncViewState', 'notifications:sync-unread-view', SEND], ['takePendingOpenSession', 'notifications:take-pending-open-session'],

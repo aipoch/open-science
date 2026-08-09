@@ -2,12 +2,13 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import type { NotificationInboxController } from './notification-inbox-controller'
 import {
   requireNotificationMarkAllReadRequest,
-  requireNotificationMarkReadRequest
+  requireNotificationMarkReadRequest,
+  requireNotificationMarkSessionCompletionsReadRequest
 } from './notification-inbox-requests'
 
 type NotificationInboxIpcOwner = Pick<
   NotificationInboxController,
-  'getSnapshot' | 'markAllRead' | 'markRead'
+  'getSnapshot' | 'markAllRead' | 'markRead' | 'markSessionCompletionsRead'
 >
 
 // Electron retains direct IPC adapters while local/remote Web dispatch through the application
@@ -21,6 +22,10 @@ const registerNotificationInboxIpcAdapter = (owner: NotificationInboxIpcOwner): 
   ipcMainHandle('notifications:mark-all-read', (_event, input: unknown) => {
     const request = requireNotificationMarkAllReadRequest(input)
     return owner.markAllRead(request.throughSequence)
+  })
+  ipcMainHandle('notifications:mark-session-completions-read', (_event, input: unknown) => {
+    const request = requireNotificationMarkSessionCompletionsReadRequest(input)
+    return owner.markSessionCompletionsRead(request.sessionIds)
   })
 }
 

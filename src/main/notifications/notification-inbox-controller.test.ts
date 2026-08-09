@@ -28,6 +28,11 @@ const repository = (
       unreadCount: 0,
       latestSequence: 1
     })),
+    markSessionCompletionsRead: vi.fn(async () => ({
+      changed: true,
+      unreadCount: 0,
+      latestSequence: 1
+    })),
     deleteSessions: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 0 })),
     reconcileSessionCatalog: vi.fn(async () => ({
       changed: false,
@@ -159,6 +164,20 @@ describe('createNotificationInboxController', () => {
     await inbox.markAllRead(42)
 
     expect(db.markAllRead).toHaveBeenCalledWith(42, 3000)
+  })
+
+  it('marks every completion for an explicitly dismissed session', async () => {
+    const db = repository()
+    const inbox = createNotificationInboxController({
+      headless: false,
+      repository: db,
+      onChanged: vi.fn(),
+      now: () => 3500
+    })
+
+    await inbox.markSessionCompletionsRead(['session-1'])
+
+    expect(db.markSessionCompletionsRead).toHaveBeenCalledWith(['session-1'], 3500)
   })
 
   it('waits for an in-flight authorization record before settling it', async () => {

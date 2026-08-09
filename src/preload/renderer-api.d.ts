@@ -77,6 +77,7 @@ import type {
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
+  NotificationMarkSessionCompletionsReadRequest,
   OpenSessionFromNotificationRequest,
   UnreadTaskViewState
 } from '../shared/notifications'
@@ -545,6 +546,9 @@ export interface OpenScienceAPI {
     getSnapshot(): Promise<NotificationInboxSnapshot>
     markAllRead(request: NotificationMarkAllReadRequest): Promise<void>
     markRead(request: NotificationMarkReadRequest): Promise<void>
+    markSessionCompletionsRead(
+      request: NotificationMarkSessionCompletionsReadRequest
+    ): Promise<void>
     onChanged(listener: AcpListener<NotificationInboxChanged>): RemoveListener
     onOpenSession(listener: () => void): RemoveListener
     peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>

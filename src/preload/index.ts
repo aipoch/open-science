@@ -377,6 +377,8 @@ const api: OpenScienceAPI = {
     markAllRead: (request) =>
       electronRendererContracts.invoke('notifications.markAllRead', request),
     markRead: (request) => electronRendererContracts.invoke('notifications.markRead', request),
+    markSessionCompletionsRead: (request) =>
+      electronRendererContracts.invoke('notifications.markSessionCompletionsRead', request),
     onChanged: (listener) =>
       electronRendererContracts.subscribe('notifications.onChanged', listener),
     // Main-process task notifications route their click through this channel.

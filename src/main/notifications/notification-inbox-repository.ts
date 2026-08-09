@@ -224,6 +224,16 @@ export class NotificationInboxDbRepository {
     })
   }
 
+  markSessionCompletionsRead(
+    sessionIds: readonly string[],
+    readAt: number
+  ): Promise<NotificationRepositoryState> {
+    const normalized = normalizeIds(sessionIds)
+    return this.updateReadStateForValues('sessionId', normalized, readAt, {
+      kind: 'task.completed'
+    })
+  }
+
   deleteSessions(sessionIds: readonly string[]): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
     if (normalized.length === 0) return this.currentState()

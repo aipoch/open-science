@@ -83,6 +83,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     })),
     markAllRead: vi.fn(async () => undefined),
     markRead: vi.fn(async () => undefined),
+    markSessionCompletionsRead: vi.fn(async () => undefined),
     peekPendingOpenSession: vi.fn(() => ({ sessionId: 'session-1', token: 7 })),
     takePendingOpenSession: vi.fn(() => ({ sessionId: 'session-1', token: 7 }))
   },
@@ -160,7 +161,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 45 request channels in their existing capability groups', () => {
+  it('defines the exact 46 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => ({
@@ -174,7 +175,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     }))
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(45)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(46)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -190,7 +191,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(45)
+    expect(router.dispatcher.commandNames()).toHaveLength(46)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -211,6 +212,7 @@ describe('Host application commands', () => {
     const root = { parent: '/target', markOnboarding: true }
     const markReadRequest = { ids: ['message-1'] }
     const markAllReadRequest = { throughSequence: 7 }
+    const markSessionCompletionsReadRequest = { sessionIds: ['session-1'] }
 
     await router.dispatcher.invoke(hostApplicationCommands.cli.getStatus, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.cli.install, invocation([]))
@@ -241,6 +243,10 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.markRead,
       invocation([markReadRequest])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.notifications.markSessionCompletionsRead,
+      invocation([markSessionCompletionsReadRequest])
     )
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.peekPendingOpenSession,
@@ -320,6 +326,9 @@ describe('Host application commands', () => {
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
     expect(dependencies.notifications.markAllRead).toHaveBeenCalledWith(markAllReadRequest)
     expect(dependencies.notifications.markRead).toHaveBeenCalledWith(markReadRequest)
+    expect(dependencies.notifications.markSessionCompletionsRead).toHaveBeenCalledWith(
+      markSessionCompletionsReadRequest
+    )
     expect(dependencies.remoteAccess.approve).toHaveBeenCalledWith(
       { requestId: 'pair-1', decision: 'once' },
       true,
@@ -499,8 +508,23 @@ describe('Host application commands', () => {
         )
       ).rejects.toThrow('Invalid notifications:mark-all-read request.')
     }
+    for (const invalidRequest of [
+      undefined,
+      null,
+      {},
+      { sessionIds: 'session-1' },
+      { sessionIds: [1] }
+    ]) {
+      await expect(
+        router.dispatcher.invoke(
+          commandByName('notifications:mark-session-completions-read'),
+          invocation([invalidRequest])
+        )
+      ).rejects.toThrow('Invalid notifications:mark-session-completions-read request.')
+    }
 
     expect(dependencies.notifications.markRead).not.toHaveBeenCalled()
     expect(dependencies.notifications.markAllRead).not.toHaveBeenCalled()
+    expect(dependencies.notifications.markSessionCompletionsRead).not.toHaveBeenCalled()
   })
 })

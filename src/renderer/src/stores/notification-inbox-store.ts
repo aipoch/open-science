@@ -8,6 +8,7 @@ type NotificationInboxStore = NotificationInboxSnapshot & {
   refresh: () => Promise<void>
   markRead: (ids: readonly string[]) => Promise<void>
   markAllRead: () => Promise<void>
+  markSessionCompletionsRead: (sessionIds: readonly string[]) => Promise<void>
   listen: () => () => void
 }
 
@@ -60,6 +61,15 @@ export const useNotificationInboxStore = create<NotificationInboxStore>((set, ge
     const mark = window.api?.notifications?.markAllRead
     if (!mark) return
     await mark({ throughSequence })
+    await get().refresh()
+  },
+
+  markSessionCompletionsRead: async (sessionIds) => {
+    const normalized = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))]
+    if (normalized.length === 0) return
+    const mark = window.api?.notifications?.markSessionCompletionsRead
+    if (!mark) return
+    await mark({ sessionIds: normalized })
     await get().refresh()
   },
 

@@ -6,6 +6,7 @@ import type {
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
+  NotificationMarkSessionCompletionsReadRequest,
   OpenSessionFromNotificationRequest
 } from '../shared/notifications'
 import type {
@@ -43,7 +44,8 @@ import type { LocalFsService } from './local-fs/service'
 import type { LogsCommandOwner } from './logs-ipc'
 import {
   requireNotificationMarkAllReadRequest,
-  requireNotificationMarkReadRequest
+  requireNotificationMarkReadRequest,
+  requireNotificationMarkSessionCompletionsReadRequest
 } from './notifications/notification-inbox-requests'
 import {
   canManagePairing,
@@ -122,6 +124,11 @@ const notificationCommands = Object.freeze({
     readonly [request: NotificationMarkReadRequest],
     void
   >('notifications:mark-read'),
+  markSessionCompletionsRead: defineApplicationCommand<
+    'notifications:mark-session-completions-read',
+    readonly [request: NotificationMarkSessionCompletionsReadRequest],
+    void
+  >('notifications:mark-session-completions-read'),
   peekPendingOpenSession: defineApplicationCommand<
     'notifications:peek-pending-open-session',
     readonly [],
@@ -292,6 +299,9 @@ type HostApplicationCommandDependencies = Readonly<{
     getSnapshot: () => Promise<NotificationInboxSnapshot>
     markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
     markRead: (request: NotificationMarkReadRequest) => Promise<void>
+    markSessionCompletionsRead: (
+      request: NotificationMarkSessionCompletionsReadRequest
+    ) => Promise<void>
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
   }>
@@ -381,6 +391,10 @@ const registerHostApplicationCommands = (
         dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
       'notifications:mark-read': ({ args }) =>
         dependencies.notifications.markRead(requireNotificationMarkReadRequest(args[0])),
+      'notifications:mark-session-completions-read': ({ args }) =>
+        dependencies.notifications.markSessionCompletionsRead(
+          requireNotificationMarkSessionCompletionsReadRequest(args[0])
+        ),
       'notifications:peek-pending-open-session': () =>
         dependencies.notifications.peekPendingOpenSession(),
       'notifications:take-pending-open-session': ({ args }) =>

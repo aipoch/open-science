@@ -57,3 +57,7 @@ export type NotificationInboxChanged = Readonly<{
 export type NotificationMarkReadRequest = Readonly<{ ids: readonly string[] }>
 
 export type NotificationMarkAllReadRequest = Readonly<{ throughSequence: number }>
+
+export type NotificationMarkSessionCompletionsReadRequest = Readonly<{
+  sessionIds: readonly string[]
+}>

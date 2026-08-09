@@ -1923,6 +1923,8 @@ const createApplicationModules = async (
         getSnapshot: () => notificationInbox.getSnapshot(),
         markRead: (request) => notificationInbox.markRead(request.ids),
         markAllRead: (request) => notificationInbox.markAllRead(request.throughSequence),
+        markSessionCompletionsRead: (request) =>
+          notificationInbox.markSessionCompletionsRead(request.sessionIds),
         peekPendingOpenSession: () => taskNotifications.peekPendingOpenSession(),
         takePendingOpenSession: (expectedToken) =>
           taskNotifications.takePendingOpenSession(expectedToken)

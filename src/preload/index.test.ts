@@ -324,6 +324,7 @@ describe('preload bridge — public surface inventory', () => {
       'notifications.getSnapshot',
       'notifications.markAllRead',
       'notifications.markRead',
+      'notifications.markSessionCompletionsRead',
       'notifications.onChanged',
       'notifications.onOpenSession',
       'notifications.onViewProbe',
@@ -638,7 +639,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 22-group, 139-callable T1d complement', () => {
+  it('pins the exact 22-group, 140-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -663,7 +664,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(139)
+    expect(coreContracts).toHaveLength(140)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -675,16 +676,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 102, events: 26, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 103, events: 26, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 102 request methods through their cataloged Electron channels', async () => {
+  it('routes all 103 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(102)
+    expect(requestContracts).toHaveLength(103)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
