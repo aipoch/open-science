@@ -122,11 +122,15 @@
       "fallbackCapability": "renderer_view"
     },
     "compute_service": {
-      "ownerPaths": ["src/main/compute/compute-service.ts"],
+      "ownerPaths": [
+        "src/main/compute/compute-host-profile-owner.ts",
+        "src/main/compute/compute-service.ts"
+      ],
       "interfacePaths": ["src/main/compute/compute-service.ts"],
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",
           "src/main/compute/concurrency-integration.test.ts"

@@ -14,7 +14,6 @@ import type {
   ProbeResult,
   SubmitJobResult
 } from '../../shared/compute'
-import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
 import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
@@ -41,13 +40,10 @@ import { getJobHarvestDir } from './harvest-engine'
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
 import { workspaceRelativePath } from './workspace-path'
+import { ComputeHostProfileOwner } from './compute-host-profile-owner'
 
-// Probe timeout for the full bundle — individual commands share one connection but each gets this
-// budget. Set generously so slow clusters don't abort, but short enough for a responsive UI (30s).
-const PROBE_TIMEOUT_MS = 30_000
-
-// Maximum output to capture per probe command (4 KB is plenty for nproc / nvidia-smi -L output).
-const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
+export { parseProbeOutput } from './compute-host-profile-owner'
+export type { ProbeScriptOutput } from './compute-host-profile-owner'
 
 // Default timeout for call_command (design.md §5). Callers may pass a longer value but 60s prevents
 // accidental indefinite hangs when the agent forgets to set a timeout.
@@ -71,112 +67,13 @@ const LIST_DIR_TIMEOUT_MS = 30_000
 // Short command preview shown in the approval card when the full command is long.
 const COMMAND_PREVIEW_MAX_LEN = 120
 
-// Shell script run as a single SSH command. We collect all outputs in one round-trip:
-//   - uname -s for OS
-//   - nproc for CPU count
-//   - free -m for memory (Linux only; macOS falls back via sysctl)
-//   - nvidia-smi -L for GPU list (optional; missing command is fine)
-//   - which sbatch / qsub / bsub for scheduler detection
-//   - echo $SCRATCH for scratch root suggestion
-//
-// The output is a simple line-delimited key=value format so the parser is a pure function.
-const PROBE_SCRIPT = [
-  'echo "os=$(uname -s 2>/dev/null)"',
-  'echo "cpus=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo)"',
-  // Linux: free -m | awk, macOS: sysctl hw.memsize converted to MiB.
-  'echo "mem_mib=$(free -m 2>/dev/null | awk \'NR==2{print $2}\' || echo $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )))"',
-  "echo \"gpus=$(nvidia-smi -L 2>/dev/null | grep -oP 'GPU \\d+: \\K[^(]+' | tr '\\n' ';' || echo)\"",
-  'echo "sbatch=$(command -v sbatch 2>/dev/null && echo yes || echo no)"',
-  'echo "qsub=$(command -v qsub 2>/dev/null && echo yes || echo no)"',
-  'echo "bsub=$(command -v bsub 2>/dev/null && echo yes || echo no)"',
-  'echo "scratch=$SCRATCH"'
-].join('\n')
-
-// Parsed output from the probe script — a pure-data structure so parseProbeOutput is unit-testable
-// without SSH.
-export type ProbeScriptOutput = {
-  os?: string
-  cpus?: number
-  memMib?: number
-  gpus?: Array<{ type: string; count: number }>
-  detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
-  scratchEnv?: string
-}
-
-// Counts consecutive identical GPU model names to build the [{type, count}] list.
-const aggregateGpus = (raw: string): Array<{ type: string; count: number }> => {
-  if (!raw.trim()) return []
-  const models = raw
-    .split(';')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const counts: Map<string, number> = new Map()
-  for (const model of models) {
-    counts.set(model, (counts.get(model) ?? 0) + 1)
-  }
-  return Array.from(counts.entries()).map(([type, count]) => ({ type, count }))
-}
-
-// Pure function: parses the line-delimited key=value output of PROBE_SCRIPT into ProbeScriptOutput.
-// Exported so it can be unit-tested independently of SSH.
-export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
-  const kv: Record<string, string> = {}
-  for (const line of stdout.split('\n')) {
-    const eq = line.indexOf('=')
-    if (eq === -1) continue
-    const key = line.slice(0, eq).trim()
-    const value = line.slice(eq + 1).trim()
-    kv[key] = value
-  }
-
-  const cpusRaw = Number.parseInt(kv['cpus'] ?? '', 10)
-  const memRaw = Number.parseInt(kv['mem_mib'] ?? '', 10)
-
-  const scheduler: ProbeScriptOutput['detectedScheduler'] =
-    kv['sbatch'] === 'yes'
-      ? 'slurm'
-      : kv['qsub'] === 'yes'
-        ? 'pbs'
-        : kv['bsub'] === 'yes'
-          ? 'lsf'
-          : 'none'
-
-  return {
-    os: kv['os'] || undefined,
-    cpus: Number.isFinite(cpusRaw) && cpusRaw > 0 ? cpusRaw : undefined,
-    memMib: Number.isFinite(memRaw) && memRaw > 0 ? memRaw : undefined,
-    gpus: aggregateGpus(kv['gpus'] ?? ''),
-    detectedScheduler: scheduler,
-    scratchEnv: kv['scratch'] || undefined
-  }
-}
-
-// Extracts a short tail from stderr/stdout to surface in the UI probe-failed banner.
 const errorTail = (stderr: string, stdout: string, maxLines = 10): string => {
-  const combined = [stderr, stdout].filter(Boolean).join('\n')
-  const lines = combined.split('\n').filter((l) => l.trim())
+  const lines = [stderr, stdout]
+    .filter(Boolean)
+    .join('\n')
+    .split('\n')
+    .filter((line) => line.trim())
   return lines.slice(-maxLines).join('\n')
-}
-
-// Synthesizes a first-contact skeleton from a successful probeResult. Used by getDetails when
-// detailsDoc is empty — gives agents a structured starting point without requiring a manual edit.
-const buildDetailsSkeleton = (probe: ProbeResult): string => {
-  const lines: string[] = ['## Resources', '']
-  if (probe.cpus != null) {
-    lines.push(`cpus: ${probe.cpus}`)
-  }
-  if (probe.memMib != null) {
-    const gb = Math.round(probe.memMib / 1024)
-    lines.push(`mem: ${gb} GB`)
-  }
-  if (probe.gpus && probe.gpus.length > 0) {
-    const gpuStr = probe.gpus.map((g) => `${g.count}x ${g.type}`).join(', ')
-    lines.push(`gpus: ${gpuStr}`)
-  }
-  if (probe.detectedScheduler) {
-    lines.push(`scheduler: ${probe.detectedScheduler}`)
-  }
-  return lines.join('\n')
 }
 
 // Raw input spec as submitted by the agent (before resolution to local paths).
@@ -288,9 +185,9 @@ const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
 // Default timeout when not specified (24 hours).
 const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 
-// ComputeService owns probe logic. It is injected with a SshRunner (for testability) and a
-// repository (for persistence). It does NOT write detailsDoc — only probeResult, shape, and
-// scratchRoot (when applicable). See design.md §4 for the probe/Details distinction.
+// ComputeService preserves the public facade while ComputeHostProfileOwner owns probe and host
+// profile mutations. Both share the injected runner and repository. See design.md §4 for the
+// probe/Details distinction.
 // approvalBroker is optional: when omitted, callCommand throws rather than requesting approval
 // (unit tests that don't exercise the approval path omit it).
 // scpRunner is optional: when omitted a SystemScpRunner is used (production default).
@@ -300,6 +197,7 @@ const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 // concurrencyManager is optional: when omitted, submitJob will not enforce concurrency limits.
 export class ComputeService {
   private readonly scpRunner: ScpRunner
+  private readonly hostProfiles: ComputeHostProfileOwner
 
   constructor(
     private readonly runner: SshRunner,
@@ -314,216 +212,41 @@ export class ComputeService {
     private readonly concurrencyManager?: ConcurrencyManager
   ) {
     this.scpRunner = scpRunner ?? new SystemScpRunner()
+    this.hostProfiles = new ComputeHostProfileOwner(runner, repository)
   }
 
-  // Runs the probe bundle against the host identified by providerId. Persists the structured
-  // probeResult and (conditionally) scratchRoot. Never touches detailsDoc.
   async probe(providerId: string): Promise<ProbeResult> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    const probedAt = new Date().toISOString()
-
-    // Resolve SSH target (runs ssh -G, applies overrides). On connection failure this itself may
-    // throw — we catch below and treat it as host_unreachable.
-    let target
-    try {
-      target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
-    } catch (err) {
-      const result: ProbeResult = {
-        ok: false,
-        probedAt,
-        exitCode: null,
-        errorTail: err instanceof Error ? err.message : String(err)
-      }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
-      return result
-    }
-
-    // Run the probe script in a login shell so module/conda PATHs are present.
-    let runResult = await this.runner.run(target, PROBE_SCRIPT, {
-      timeoutMs: PROBE_TIMEOUT_MS,
-      loginShell: true,
-      maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
-    })
-
-    // SSH exit 255 signals a connection-level failure (host unreachable / batch-mode auth failure /
-    // unknown host key). Any non-zero exit from the script itself is still a "probe succeeded at
-    // connection level" — we report it as ok:true with partial data.
-    const connectionFailed =
-      runResult.timedOut ||
-      runResult.exitCode === 255 ||
-      (runResult.exitCode === null && runResult.stderr.includes('Connection'))
-
-    // Retry once on transient routing errors (e.g. "No route to host", "Network is unreachable").
-    // These occur on macOS when a virtual network bridge (multipass vmnet, Docker, VPN) is still
-    // recovering after sleep/wake — the kernel immediately returns EHOSTUNREACH regardless of
-    // ConnectTimeout. A 3-second wait is usually enough for the bridge to restore its routes.
-    if (connectionFailed && !runResult.timedOut) {
-      const errText = (runResult.stderr + runResult.stdout).toLowerCase()
-      const isTransientRouting =
-        errText.includes('no route to host') || errText.includes('network is unreachable')
-      if (isTransientRouting) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 3000))
-        runResult = await this.runner.run(target, PROBE_SCRIPT, {
-          timeoutMs: PROBE_TIMEOUT_MS,
-          loginShell: true,
-          maxOutputBytes: PROBE_MAX_OUTPUT_BYTES
-        })
-      }
-    }
-
-    const connectionFailedFinal =
-      runResult.timedOut ||
-      runResult.exitCode === 255 ||
-      (runResult.exitCode === null && runResult.stderr.includes('Connection'))
-
-    if (connectionFailedFinal) {
-      const tail = errorTail(runResult.stderr, runResult.stdout)
-      const result: ProbeResult = {
-        ok: false,
-        probedAt,
-        exitCode: runResult.exitCode,
-        errorTail: tail || 'Connection failed'
-      }
-      await this.repository.updateProbeResult(providerId, result, 'direct_ssh')
-      return result
-    }
-
-    const parsed = parseProbeOutput(runResult.stdout)
-
-    // Infer shape from detected scheduler (design.md §4).
-    const shape =
-      parsed.detectedScheduler && parsed.detectedScheduler !== 'none'
-        ? 'scheduler_cluster'
-        : 'direct_ssh'
-
-    const result: ProbeResult = {
-      ok: true,
-      probedAt,
-      exitCode: runResult.exitCode,
-      errorTail: null,
-      os: parsed.os,
-      cpus: parsed.cpus,
-      memMib: parsed.memMib,
-      gpus: parsed.gpus && parsed.gpus.length > 0 ? parsed.gpus : undefined,
-      detectedScheduler: parsed.detectedScheduler
-    }
-
-    // Persist probe result and shape. Update scratchRoot only when not pinned and the env var was set.
-    await this.repository.updateProbeResult(providerId, result, shape)
-    if (!host.scratchPinned && parsed.scratchEnv) {
-      await this.repository.updateScratchRoot(providerId, parsed.scratchEnv)
-    }
-
-    return result
+    return this.hostProfiles.probe(providerId)
   }
 
-  // Lists all registered compute hosts, newest-first. Returns a lightweight summary for discovery
-  // (provider_id / display_name / shape / status derived from probeResult.ok).
   async list(): Promise<ComputeHost[]> {
     return this.repository.list()
   }
 
-  // Returns the details document for a host. When detailsDoc is empty and a successful probe
-  // exists, synthesizes a first-contact skeleton from probeResult (## Resources + resource lines).
-  // isSkeleton=true signals the caller this was auto-generated, not user/agent content.
   async getDetails(providerId: string): Promise<{ doc: string; isSkeleton: boolean }> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    if (host.detailsDoc) {
-      return { doc: host.detailsDoc, isSkeleton: false }
-    }
-
-    // No stored doc — synthesize a skeleton from the last probe result if available.
-    const probe = host.probeResult
-    if (!probe || !probe.ok) {
-      return { doc: '', isSkeleton: false }
-    }
-
-    return { doc: buildDetailsSkeleton(probe), isSkeleton: true }
+    return this.hostProfiles.getDetails(providerId)
   }
 
-  // Replaces detailsDoc via exact-match: the full current doc is replaced with `text` only if
-  // `oldText` equals the current detailsDoc. This prevents concurrent edit collisions and is the
-  // mechanism used by both the UI (author='user') and the agent (author='agent', issue 06).
   async replaceDetails(
     providerId: string,
-    { text, oldText, author }: { text: string; oldText: string; author: DetailsAuthor }
+    request: { text: string; oldText: string; author: DetailsAuthor }
   ): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    // Exact-match guard: oldText must equal the current stored doc.
-    if (host.detailsDoc !== oldText) {
-      throw new Error(
-        `replaceDetails: old_text does not match the current details document for "${providerId}".`
-      )
-    }
-
-    if (text.length > DETAILS_DOC_MAX_LENGTH) {
-      throw new Error(
-        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (got ${text.length}).`
-      )
-    }
-
-    await this.repository.updateDetails(providerId, text, author)
+    return this.hostProfiles.replaceDetails(providerId, request)
   }
 
-  // Appends text to detailsDoc, respecting the 32KB cap. Used by the agent-facing details channel
-  // (design.md §5). Reads the current doc, validates the combined length, then delegates to the
-  // repository updateDetails — same path as replaceDetails, no duplicated validation logic.
   async appendDetails(
     providerId: string,
-    { text, author }: { text: string; author: DetailsAuthor }
+    request: { text: string; author: DetailsAuthor }
   ): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    const newDoc = host.detailsDoc ? `${host.detailsDoc}\n${text}` : text
-
-    if (newDoc.length > DETAILS_DOC_MAX_LENGTH) {
-      throw new Error(
-        `Details must be ${DETAILS_DOC_MAX_LENGTH} characters or fewer (appended doc would be ${newDoc.length}).`
-      )
-    }
-
-    await this.repository.updateDetails(providerId, newDoc, author)
+    return this.hostProfiles.appendDetails(providerId, request)
   }
 
-  // Sets the scratch root and marks the host as pinned. Pinned hosts are never overwritten by
-  // probe (probe checks scratchPinned before updating scratchRoot — see probe() above).
   async setScratchRoot(providerId: string, path: string): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    await this.repository.updateScratchPinned(providerId, path)
+    return this.hostProfiles.setScratchRoot(providerId, path)
   }
 
-  // Stores the concurrent job limit (1..500). Phase 1 persists it only — no enforcement until
-  // the job runner lands in a later phase.
   async setConcurrencyLimit(providerId: string, limit: number): Promise<void> {
-    const host = await this.repository.get(providerId)
-    if (!host) {
-      throw new Error(`No compute host found with provider id "${providerId}".`)
-    }
-
-    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
-      throw new Error(`Concurrent job limit must be an integer in the range 1..500 (got ${limit}).`)
-    }
-
-    await this.repository.updateConcurrencyLimit(providerId, limit)
+    return this.hostProfiles.setConcurrencyLimit(providerId, limit)
   }
 
   // Lists the contents of a remote directory using find -printf via the existing exec SshRunner.
