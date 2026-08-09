@@ -173,9 +173,11 @@ export class HostSkillsService {
   }
 
   private async resolvePublished(name: string): Promise<BundledSkill | undefined> {
-    const matches = (await this.options.catalog.list()).filter(
-      (skill) => skill.id === name || skill.name === name || publicSlug(skill) === name
-    )
+    const skills = await this.options.catalog.list()
+    const exactIds = skills.filter((skill) => skill.id === name)
+    if (exactIds.length > 1) throw new Error(`Skill id "${name}" is duplicated`)
+    if (exactIds[0]) return exactIds[0]
+    const matches = skills.filter((skill) => skill.name === name || publicSlug(skill) === name)
     if (matches.length > 1) throw new Error(`Skill reference "${name}" is ambiguous`)
     return matches[0]
   }
@@ -357,10 +359,9 @@ export class HostSkillsService {
     }
     const relativePath = safeRelativePath(params.path)
     const explicitDraft = explicitDraftSlug(requestedName)
-    if (explicitDraft && !(await exists(this.draftDir(explicitDraft)))) {
-      throw new Error(`Unknown draft: ${explicitDraft}`)
-    }
-    const draft = await this.ensureDraft(explicitDraft ?? requestedName)
+    const existingExplicitDraft =
+      explicitDraft && (await exists(this.draftDir(explicitDraft))) ? explicitDraft : undefined
+    const draft = await this.ensureDraft(existingExplicitDraft ?? requestedName)
     const target = resolve(draft.path, relativePath)
     const root = resolve(draft.path)
     if (!target.startsWith(root + sep)) throw new Error('unsafe path')

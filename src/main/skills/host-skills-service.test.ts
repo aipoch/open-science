@@ -339,6 +339,38 @@ describe('HostSkillsService', () => {
     ).resolves.toMatchObject({ content: expect.stringContaining('Second draft.') })
   })
 
+  it('allows a new Skill slug to start with the draft prefix', async () => {
+    const { service } = await makeFixture()
+
+    await expect(
+      service.dispatch({
+        op: 'edit',
+        params: {
+          name: 'draft-review',
+          path: 'SKILL.md',
+          content: '---\nname: draft-review\ndescription: Review drafts.\n---\nBody.\n'
+        }
+      })
+    ).resolves.toMatchObject({ status: 'edited', name: 'draft-review' })
+    await expect(service.dispatch({ op: 'list' })).resolves.toContainEqual(
+      expect.objectContaining({ id: 'draft-draft-review', name: 'draft-review' })
+    )
+  })
+
+  it('resolves an exact published stable id before colliding public slugs', async () => {
+    const { service, userSkills } = await makeFixture()
+    await userSkills.createPersonal({ name: 'Foo', description: 'Exact id.', body: 'Exact body.' })
+    await userSkills.createPersonal({
+      name: 'Personal Foo',
+      description: 'Colliding slug.',
+      body: 'Collision body.'
+    })
+
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'personal-foo' } })
+    ).resolves.toMatchObject({ name: 'Foo', content: expect.stringContaining('Exact body.') })
+  })
+
   it('requires approval for delete and reports a decline as a normal result', async () => {
     const { service, userSkills, approveDelete, reload } = await makeFixture()
     await userSkills.createPersonal({
