@@ -337,14 +337,19 @@ describe('SessionPersistenceCoordinator', () => {
       })
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const beforePersist = vi.fn()
 
     await coordinator.appendUserMessageToInteraction({
       projectId: 'project-1',
       sessionId: 'session-1',
       interactionId: 'interaction-1',
-      content: 'Split the analysis by cohort.'
+      content: 'Split the analysis by cohort.',
+      beforePersist
     })
 
+    expect(beforePersist).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1', messages: [] })
+    )
     expect(durable.messages).toContainEqual(
       expect.objectContaining({
         role: 'user',

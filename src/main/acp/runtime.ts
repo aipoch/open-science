@@ -174,7 +174,9 @@ type AcpRuntimeOptions = {
       | 'containsMessageOnActiveBranch'
       | 'loadSessionForContinuation'
     > &
-      Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
+      Partial<
+        Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction' | 'sessionProjectId'>
+      >
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
   sideChat?: Readonly<{
@@ -1314,6 +1316,9 @@ class AcpRuntime {
         sessionId: response.request.sessionId,
         requestId: response.request.requestId,
         toolCallId: response.request.toolCallId,
+        action: response.action,
+        answers: response.answers,
+        replacePreviousAnswer: response.replacePreviousAnswer,
         ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
           ? {
               replay: {

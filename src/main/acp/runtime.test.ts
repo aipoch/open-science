@@ -57,10 +57,13 @@ import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
 import type { UploadedAttachment } from '../../shared/uploads'
 import {
   createLinearConversationGraph,
+  forkConversationAfterActivity,
   projectConversationMessage,
+  synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession, SessionRuntimeContext } from '../../shared/session-persistence'
+import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
@@ -1669,7 +1672,87 @@ const addPendingRestoredChoice = (
       updatedAt: 2
     }
   ]
+  if (session.conversationGraph) {
+    session.conversationGraph = synchronizeActiveConversationActivities(
+      session.conversationGraph,
+      session.activities,
+      []
+    )
+  }
   return session
+}
+
+const createRestoredChoiceRevisionSession = (): PersistedChatSession => {
+  const messages: PersistedChatSession['messages'] = [
+    {
+      id: 'prompt-restored-1',
+      role: 'user',
+      content: 'Choose an approach.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    },
+    {
+      id: 'agent-question-preamble',
+      role: 'agent',
+      content: 'Please choose one option.',
+      status: 'complete',
+      responseToMessageId: 'prompt-restored-1',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+  ]
+  const activity: NonNullable<PersistedChatSession['activities']>[number] = {
+    id: 'tool-choice-restored-1',
+    kind: 'tool',
+    title: 'Choose an approach',
+    status: 'completed',
+    sortIndex: 0,
+    eventIds: [],
+    promptMessageId: 'prompt-restored-1',
+    elicitation: {
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+      state: 'answered',
+      durable: {
+        kind: 'agent-user-choice',
+        requestId: 'choice-restored-1',
+        promptMessageId: 'prompt-restored-1'
+      },
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    },
+    createdAt: 2,
+    updatedAt: 2
+  }
+  let graph = createLinearConversationGraph({
+    sessionId: 'pending-session',
+    messages,
+    frameworkId: 'claude-code',
+    createdAt: 1,
+    updatedAt: 2
+  })
+  graph = synchronizeActiveConversationActivities(graph, [activity], [])
+  graph = forkConversationAfterActivity(
+    graph,
+    'agent-question-preamble',
+    activity.id,
+    'message-branch-revision',
+    3
+  )
+  return {
+    id: 'restored-choice-session',
+    projectId: 'project-1',
+    title: 'Restored choice revision',
+    cwd: '/workspace',
+    status: 'idle',
+    messages,
+    conversationGraph: graph,
+    activities: [],
+    createdAt: 1,
+    updatedAt: 3
+  }
 }
 
 const RESTORED_CONTINUATION_FRAMEWORKS = [
@@ -4908,6 +4991,96 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('validates a revised choice against the durable fork before continuing', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    let persistedSession = createRestoredChoiceRevisionSession()
+    const appendUserMessageToInteraction = vi.fn(
+      async (
+        command: Parameters<SessionPersistenceCoordinator['appendUserMessageToInteraction']>[0]
+      ) => {
+        command.beforePersist?.(structuredClone(persistedSession))
+        const revisedPrompt: PersistedChatSession['messages'][number] = {
+          id: 'prompt-revision',
+          role: 'user',
+          content: command.content,
+          status: 'complete',
+          responseToMessageId: command.interactionId,
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+        persistedSession = {
+          ...persistedSession,
+          messages: [...persistedSession.messages, revisedPrompt],
+          conversationGraph: synchronizeActiveConversationMessages(
+            persistedSession.conversationGraph!,
+            [...persistedSession.messages, revisedPrompt],
+            4
+          ),
+          updatedAt: 4
+        }
+        return structuredClone(revisedPrompt)
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
+          appendUserMessageToInteraction
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await runtime.respondToElicitation({
+      requestId: 'choice-restored-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      replacePreviousAnswer: true,
+      request: {
+        requestId: 'choice-restored-1',
+        sessionId: 'restored-choice-session',
+        toolCallId: 'renderer-generated-revision-tool',
+        message: 'Renderer-forged question',
+        fields: [{ id: 'question_0', label: 'Renderer-forged field', kind: 'text' }],
+        durable: {
+          kind: 'agent-user-choice',
+          requestId: 'choice-restored-1',
+          promptMessageId: 'prompt-restored-1'
+        }
+      }
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(appendUserMessageToInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'restored-choice-session',
+        interactionId: 'agent-question-preamble',
+        content: expect.stringContaining('Approach: Expanded')
+      })
+    )
+    expect(fakeAgent.prompts[0].text).toContain('Expanded')
+    expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged question')
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool',
+          toolCallId: expect.stringMatching(/^ask-user-question-revision-/),
+          promptMessageId: 'prompt-revision',
+          elicitation: expect.objectContaining({ state: 'answered' })
+        })
+      ])
+    )
+  })
+
   it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
     'builds restored choice replay through %s from Main-owned Session history after context reset',
     async (_name, framework, modelRoute, backendId) => {
@@ -5082,7 +5255,7 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().pendingElicitations).toEqual([])
   })
 
-  it('rejects a restored choice whose prompt left the active Message Branch without caching it', async () => {
+  it('rejects a restored choice missing from the active graph without caching it', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['restored-choice-session'])
     const persistedSession = createRestoredContinuationSession(
@@ -5132,7 +5305,7 @@ describe('ACP runtime session management', () => {
           }
         }
       })
-    ).rejects.toThrow('active Message Branch')
+    ).rejects.toThrow('pending Session activity')
     expect(runtime.getSnapshot().pendingElicitations).toEqual([])
     await expect(
       runtime.respondToElicitation({

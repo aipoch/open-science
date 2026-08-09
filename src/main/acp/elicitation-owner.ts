@@ -314,7 +314,7 @@ const validateAnswerValue = (field: ElicitationField, value: ElicitationValue): 
   return value.every((item) => allowed.has(item))
 }
 
-const validateAnswers = (
+export const validateElicitationAnswers = (
   request: PendingElicitationRequest,
   answers: ElicitationAnswer[] | undefined
 ): ElicitationAnswer[] => {
@@ -505,7 +505,7 @@ export class AcpElicitationOwner {
     let state: ElicitationProjection['state']
 
     if (response.action === 'accept') {
-      answers = validateAnswers(pending.request, response.answers)
+      answers = validateElicitationAnswers(pending.request, response.answers)
       protocolResponse = {
         action: 'accept',
         content: Object.fromEntries(answers.map((answer) => [answer.fieldId, answer.value]))
