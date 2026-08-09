@@ -67,6 +67,22 @@ const makeFixture = async (): Promise<{
 }
 
 describe('HostSkillsService', () => {
+  it('validates a draft through the same frontmatter contract used by publish', async () => {
+    const { service } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'analysis-helper',
+        path: 'SKILL.md',
+        content: '---\nname: analysis-helper\ndescription: Analyze data.\n---\nBody.\n'
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'validate', params: { name: 'analysis-helper' } })
+    ).resolves.toEqual({ valid: true, name: 'analysis-helper', origin: 'draft' })
+  })
+
   it('creates a draft with exact create/replace semantics, publishes it, and reads it back', async () => {
     const { service, root, reload } = await makeFixture()
     const manifest =

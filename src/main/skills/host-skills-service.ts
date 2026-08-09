@@ -123,6 +123,7 @@ export class HostSkillsService {
     try {
       if (op === 'list') return await this.list()
       if (op === 'read') return await this.read(params)
+      if (op === 'validate') return await this.validate(params)
       if (op === 'edit') return await this.mutate(() => this.edit(params))
       if (op === 'publish') return await this.mutate(() => this.publish(params))
       if (op === 'delete') return await this.mutate(() => this.delete(params, context))
@@ -205,6 +206,42 @@ export class HostSkillsService {
     }))
     if (!result) throw new Error(`Unknown Skill: ${requestedName}`)
     return result
+  }
+
+  private async validatePackage(sourceDir: string, expectedName?: string): Promise<string> {
+    const skillDocument = await readPackageText(sourceDir, 'SKILL.md')
+    const parsed = parseSkillDocument(skillDocument)
+    if (!parsed.name?.trim() || !parsed.description?.trim()) {
+      throw new Error('SKILL.md requires name and description frontmatter')
+    }
+    const fieldNames = frontmatterFieldNames(skillDocument).sort()
+    if (fieldNames.length !== 2 || fieldNames[0] !== 'description' || fieldNames[1] !== 'name') {
+      throw new Error('SKILL.md frontmatter must contain exactly name and description')
+    }
+    const name = parsed.name.trim()
+    if (expectedName && name !== expectedName)
+      throw new Error('SKILL.md name must match the draft slug')
+    return name
+  }
+
+  private async validate(params: Params): Promise<unknown> {
+    const requestedName = asString(params.name)?.trim()
+    if (!requestedName) throw new Error('name is required')
+    const draftSlug =
+      explicitDraftSlug(requestedName) ??
+      (SAFE_SLUG.test(requestedName) ? requestedName : undefined)
+    if (draftSlug && (await exists(this.draftDir(draftSlug)))) {
+      const name = await this.validatePackage(this.draftDir(draftSlug), draftSlug)
+      return { valid: true, name, origin: 'draft' }
+    }
+
+    const published = await this.resolvePublished(requestedName)
+    if (!published) throw new Error(`Unknown Skill: ${requestedName}`)
+    const name = await this.options.catalog.withSkillRead(published.id, (skill) =>
+      this.validatePackage(skill.sourceDir)
+    )
+    if (!name) throw new Error(`Unknown Skill: ${requestedName}`)
+    return { valid: true, name, origin: published.source }
   }
 
   private async ensureDraft(name: string): Promise<{ slug: string; path: string }> {
@@ -360,16 +397,7 @@ export class HostSkillsService {
     }
     const draft = this.draftDir(name)
     if (!(await exists(draft))) throw new Error(`Unknown draft: ${name}`)
-    const skillDocument = await readPackageText(draft, 'SKILL.md')
-    const parsed = parseSkillDocument(skillDocument)
-    if (!parsed.name?.trim() || !parsed.description?.trim()) {
-      throw new Error('SKILL.md requires name and description frontmatter')
-    }
-    const fieldNames = frontmatterFieldNames(skillDocument).sort()
-    if (fieldNames.length !== 2 || fieldNames[0] !== 'description' || fieldNames[1] !== 'name') {
-      throw new Error('SKILL.md frontmatter must contain exactly name and description')
-    }
-    if (parsed.name.trim() !== name) throw new Error('SKILL.md name must match the draft slug')
+    await this.validatePackage(draft, name)
 
     const id = await this.options.catalog.publishPersonalDirectory(name, draft, overwrite)
     await rm(draft, { recursive: true, force: true })

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Review __SKILL_NAME_PLACEHOLDER__ evaluation</title>
+    <style>
+      body {
+        font: 14px system-ui;
+        margin: 2rem auto;
+        max-width: 80rem;
+        padding: 0 1rem;
+        color: #222;
+      }
+      nav {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      button {
+        padding: 0.5rem 0.8rem;
+      }
+      article,
+      section {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        margin: 0.75rem 0;
+        padding: 1rem;
+      }
+      pre {
+        background: #f6f6f6;
+        overflow: auto;
+        padding: 0.75rem;
+        white-space: pre-wrap;
+      }
+      img {
+        max-width: 100%;
+      }
+      textarea {
+        box-sizing: border-box;
+        min-height: 6rem;
+        width: 100%;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 0.5rem;
+        text-align: left;
+      }
+      .hidden {
+        display: none;
+      }
+      .muted {
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Review __SKILL_NAME_PLACEHOLDER__ evaluation</h1>
+    <nav>
+      <button data-view="outputs">Outputs</button><button data-view="benchmark">Benchmark</button>
+    </nav>
+    <main id="outputs"></main>
+    <main id="benchmark" class="hidden"></main>
+    <button id="submit" type="button">Download feedback</button>
+    <script>
+      const data = __REVIEW_DATA_PLACEHOLDER__
+      const feedback = new Map()
+      const element = (tag, text) => {
+        const node = document.createElement(tag)
+        if (text !== undefined) node.textContent = text
+        return node
+      }
+      const outputs = document.querySelector('#outputs')
+      for (const run of data.runs || []) {
+        const article = element('article')
+        article.append(element('h2', run.id), element('p', run.prompt))
+        for (const file of run.outputs || []) {
+          const section = element('section')
+          section.append(element('h3', file.name))
+          if (file.type === 'text') section.append(element('pre', file.content))
+          else if (file.type === 'image') {
+            const image = element('img')
+            image.src = file.data_uri
+            image.alt = file.name
+            section.append(image)
+          } else
+            section.append(
+              element('p', file.reason || `${file.type} file (${file.size || 0} bytes)`)
+            )
+          article.append(section)
+        }
+        if (run.grading) {
+          const details = element('details')
+          details.append(
+            element('summary', 'Formal grading'),
+            element('pre', JSON.stringify(run.grading, null, 2))
+          )
+          article.append(details)
+        }
+        const area = element('textarea')
+        area.placeholder = 'What should change? Leave empty when this output is acceptable.'
+        area.addEventListener('input', () => feedback.set(run.id, area.value))
+        article.append(area)
+        outputs.append(article)
+      }
+      if (!(data.runs || []).length) outputs.append(element('p', 'No evaluation outputs found.'))
+      const benchmark = document.querySelector('#benchmark')
+      benchmark.append(
+        element(
+          'pre',
+          data.benchmark ? JSON.stringify(data.benchmark, null, 2) : 'No benchmark data found.'
+        )
+      )
+      document.querySelectorAll('[data-view]').forEach((button) =>
+        button.addEventListener('click', () => {
+          document
+            .querySelectorAll('main')
+            .forEach((panel) => panel.classList.toggle('hidden', panel.id !== button.dataset.view))
+        })
+      )
+      document.querySelector('#submit').addEventListener('click', () => {
+        const reviews = (data.runs || []).map((run) => ({
+          run_id: run.id,
+          feedback: feedback.get(run.id) || '',
+          timestamp: new Date().toISOString()
+        }))
+        const blob = new Blob(
+          [JSON.stringify({ schema_version: 1, reviews, status: 'complete' }, null, 2)],
+          { type: 'application/json' }
+        )
+        const link = element('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = 'feedback.json'
+        link.click()
+        URL.revokeObjectURL(link.href)
+      })
+    </script>
+  </body>
+</html>

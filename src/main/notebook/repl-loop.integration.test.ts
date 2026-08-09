@@ -130,6 +130,13 @@ describe('repl_loop local RPC transport', () => {
           old_string: 'old body'
         }
       })
+
+      const validated = await send("return await host.skills.validate('demo')")
+      expect(validated.error).toBeNull()
+      expect(received).toMatchObject({
+        method: 'skillsCall',
+        params: { op: 'validate', name: 'demo' }
+      })
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

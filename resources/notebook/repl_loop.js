@@ -1116,6 +1116,9 @@ const hostSkills = {
   async read(name, path = 'SKILL.md') {
     return skillsRpc('read', { name, path })
   },
+  async validate(name) {
+    return skillsRpc('validate', { name })
+  },
   async edit(name, path, content, old_string = undefined) {
     return skillsRpc('edit', {
       name,
