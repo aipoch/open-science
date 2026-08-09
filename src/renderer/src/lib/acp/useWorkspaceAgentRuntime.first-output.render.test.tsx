@@ -141,7 +141,7 @@ describe('workspace Agent first-output runtime sync', () => {
       status: 'waiting-for-user',
       agentPromptInFlight: true
     })
-    expect(container.textContent).toBe('')
+    expect(container.textContent).toBe('waiting-for-response')
 
     runtimeMock.current = createRuntime(
       createSnapshot({
@@ -343,7 +343,7 @@ describe('workspace Agent first-output runtime sync', () => {
     expect(container.textContent).toBe('')
   })
 
-  it('shows runtime-owned tool interaction while permission input is pending', async () => {
+  it('shows a runtime-owned approval wait while permission input is pending', async () => {
     await act(async () => root.render(<Harness />))
 
     runtimeMock.current = createRuntime(
@@ -368,7 +368,7 @@ describe('workspace Agent first-output runtime sync', () => {
       status: 'waiting-permission',
       awaitingFirstAgentOutput: true
     })
-    expect(container.textContent).toBe('interacting-with-tools')
+    expect(container.textContent).toBe('waiting-for-approval')
   })
 
   it('does not start waiting for a compaction-only runtime interaction', async () => {
