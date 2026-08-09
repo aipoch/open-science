@@ -54,12 +54,23 @@ const writeProviderLoopbackJson = (
 const oversizedRequestError = (): ProviderLoopbackRequestError =>
   new ProviderLoopbackRequestError('Provider loopback request exceeds the 64 MiB size limit.')
 
-const readJsonObject = async (request: IncomingMessage): Promise<ProviderLoopbackJsonObject> => {
+const closeRequestAfterResponse = (request: IncomingMessage, response: ServerResponse): void => {
+  response.shouldKeepAlive = false
+  if (!response.headersSent) response.setHeader('connection', 'close')
+  if (response.writableFinished) request.destroy()
+  else response.once('finish', () => request.destroy())
+}
+
+const readJsonObject = async (
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<ProviderLoopbackJsonObject> => {
   const declaredLength = request.headers['content-length']
   if (
     declaredLength !== undefined &&
     Number(declaredLength) > MAX_PROVIDER_LOOPBACK_REQUEST_BYTES
   ) {
+    closeRequestAfterResponse(request, response)
     throw oversizedRequestError()
   }
 
@@ -230,7 +241,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
           url: new URL(path, 'http://127.0.0.1'),
           headers: request.headers,
           signal: controller.signal,
-          readJsonObject: () => (body ??= readJsonObject(request))
+          readJsonObject: () => (body ??= readJsonObject(request, response))
         }),
         response
       )

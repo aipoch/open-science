@@ -1,4 +1,3 @@
-import { request as httpRequest } from 'node:http'
 import { connect } from 'node:net'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -96,41 +95,42 @@ describe('ProviderLoopbackHttpHost', () => {
     expect(acceptedApiKey.status).toBe(200)
   })
 
-  it('rejects a declared request body larger than the fixed 64 MiB envelope', async () => {
+  it('rejects an oversized declared body and closes the authenticated keep-alive connection', async () => {
     const host = jsonHost()
     hosts.push(host)
     const connection = await host.start()
     const endpoint = new URL(`${connection.baseUrl}/echo`)
+    const socket = connect({ host: endpoint.hostname, port: Number(endpoint.port) })
+    const chunks: Buffer[] = []
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+    socket.on('error', () => undefined)
+    await new Promise<void>((resolve) => socket.once('connect', resolve))
+    const closed = new Promise<string>((resolve) =>
+      socket.once('close', () => resolve(Buffer.concat(chunks).toString()))
+    )
 
-    const response = new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const request = httpRequest(
-        {
-          hostname: endpoint.hostname,
-          port: endpoint.port,
-          path: endpoint.pathname,
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${connection.token}`,
-            'content-type': 'application/json',
-            'content-length': 64 * 1024 * 1024 + 1
-          }
-        },
-        (incoming) => {
-          const chunks: Buffer[] = []
-          incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
-          incoming.once('end', () =>
-            resolve({ status: incoming.statusCode ?? 0, body: Buffer.concat(chunks).toString() })
-          )
-        }
+    socket.write(
+      [
+        'POST /echo HTTP/1.1',
+        `Host: ${endpoint.host}`,
+        `Authorization: Bearer ${connection.token}`,
+        'Content-Type: application/json',
+        'Content-Length: 67108865',
+        'Connection: keep-alive',
+        '',
+        ''
+      ].join('\r\n')
+    )
+
+    const response = await Promise.race([
+      closed,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('oversized request connection stayed open')), 1_000)
       )
-      request.once('error', reject)
-      request.flushHeaders()
-    })
-
-    await expect(response).resolves.toMatchObject({
-      status: 400,
-      body: expect.stringContaining('64 MiB')
-    })
+    ])
+    expect(response).toContain('HTTP/1.1 400')
+    expect(response.toLowerCase()).toContain('connection: close')
+    expect(response).toContain('64 MiB')
   })
 
   it('aborts the adapter signal when the client disconnects', async () => {
