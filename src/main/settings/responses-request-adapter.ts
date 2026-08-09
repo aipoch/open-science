@@ -5,6 +5,7 @@ import type {
   ModelReasoningEffort
 } from '../../shared/reasoning-effort'
 import { resolveChatReasoningTransport } from './reasoning-transport'
+import type { ResponsesBridgeNamespacedTool } from './responses-protocol-types'
 
 // Responses and Chat Completions payloads are open-ended at this protocol seam. The adapter validates
 // the supported subset before producing an upstream request.
@@ -12,14 +13,6 @@ import { resolveChatReasoningTransport } from './reasoning-transport'
 type JsonObject = Record<string, any>
 
 const log = createLogger('acp-bridge')
-
-export type ResponsesBridgeNamespacedTool = {
-  namespace: string
-  name: string
-  description?: string
-  parameters: JsonObject
-  strict?: boolean
-}
 
 export type ResponsesRequestAdapterOptions = {
   reasoningEffortOverride?: ModelReasoningEffort

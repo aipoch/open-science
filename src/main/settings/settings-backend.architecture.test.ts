@@ -272,7 +272,7 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1095)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1407)
-    expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(950)
+    expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1003)
   })
 
@@ -435,12 +435,10 @@ describe('Settings backend ownership architecture', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
         addCustomServer addManualInterpreter authenticateCustomServer buildCustomServerTemplateExport
-        buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin
-        cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment codexSkillCatalog
+        buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
-        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled
-        getGitHubTokenStatus getManualInterpreters getNotificationsEnabled getPackageMirror
+        getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getManualInterpreters getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodex installOpencode isEncryptionAvailable
@@ -606,7 +604,9 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/responses-bridge.ts',
-      'src/main/settings/responses-request-adapter.ts'
+      'src/main/settings/responses-protocol-types.ts',
+      'src/main/settings/responses-request-adapter.ts',
+      'src/main/settings/responses-response-adapter.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',

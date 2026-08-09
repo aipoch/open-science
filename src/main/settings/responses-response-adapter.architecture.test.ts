@@ -29,7 +29,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 const projectRoot = resolve(__dirname, '../../..')
-const adapterPath = resolve(__dirname, 'responses-request-adapter.ts')
+const adapterPath = resolve(__dirname, 'responses-response-adapter.ts')
 const bridgePath = resolve(__dirname, 'responses-bridge.ts')
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const rawLineCount = (source: string): number =>
@@ -140,28 +140,33 @@ const exportInventoryFrom = (path: string): string[] => {
   return names.sort()
 }
 
-describe('Responses request adapter ownership', () => {
-  it('keeps a small, exact conversion interface', () => {
+describe('Responses result adapter ownership', () => {
+  it('keeps exact, bounded adapter and facade interfaces', () => {
     expect(rawLineCount(readSource(adapterPath))).toBeLessThanOrEqual(600)
+    expect(rawLineCount(readSource(bridgePath))).toBeLessThanOrEqual(600)
     expect(exportInventoryFrom(adapterPath)).toEqual([
-      'type:ResponsesRequestAdapterOptions',
-      'value:inputToMessages',
-      'value:responsesToChatRequest',
-      'value:toolsToChat'
+      'type:ResponsesStreamWriter',
+      'value:ResponsesProtocolError',
+      'value:completionToResponse',
+      'value:streamChatToResponses',
+      'value:upstreamErrorMessage'
     ])
     expect(importersOf(adapterPath)).toEqual(['src/main/settings/responses-bridge.ts'])
   })
 
-  it('excludes response projection and HTTP/session lifecycle', () => {
+  it('keeps result/SSE projection out of HTTP and trusted-session lifecycle', () => {
     const adapter = readSource(adapterPath)
     const bridge = readSource(bridgePath)
 
-    expect(adapter).not.toMatch(/from ['"]node:(?:crypto|http|net)['"]/)
-    expect(adapter).not.toContain('fetch(')
-    expect(adapter).not.toMatch(/completionToResponse|streamChatToResponses|responseEnvelope/)
+    expect(adapter).not.toMatch(/from ['"]node:(?:http|net)['"]/)
+    expect(adapter).not.toContain('createServer(')
+    expect(adapter).not.toContain('authorization')
+    expect(adapter).not.toMatch(/reviewerSessionKeys|toolLessSessionKeys|selectSkills\(/)
+    expect(adapter).toContain('terminalFinishReason')
+    expect(adapter).toContain('response.function_call_arguments.delta')
+    expect(bridge).not.toMatch(/const (?:responseEnvelope|writeEvent|chatUsageToResponsesUsage)/)
     expect(bridge).toContain('createServer(')
     expect(bridge).toContain('reviewerSessionKeys')
-    expect(bridge).toContain('reasoningByCallId')
-    expect(bridge).toContain('streamChatToResponses(')
+    expect(bridge).toContain('selectSkills(')
   })
 })

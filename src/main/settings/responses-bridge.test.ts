@@ -3,7 +3,7 @@ import { createConnection } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { ResponsesBridge, completionToResponse, upstreamErrorMessage } from './responses-bridge'
+import { ResponsesBridge } from './responses-bridge'
 import { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
@@ -232,167 +232,6 @@ describe('Responses-compatible bridge conversion', () => {
         input: [{ type: 'message', role: 'developer', content: 'Follow the policy.' }]
       })
     ).toEqual([{ role: 'system', content: 'Follow the policy.' }])
-  })
-
-  it('maps Chat Completions output text and tool calls to a Responses response', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-1',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'done',
-              tool_calls: [
-                {
-                  id: 'call-1',
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{"id":1}' }
-                }
-              ]
-            }
-          }
-        ],
-        usage: {
-          prompt_tokens: 3,
-          prompt_tokens_details: { cached_tokens: 1 },
-          completion_tokens: 2,
-          completion_tokens_details: { reasoning_tokens: 1 },
-          total_tokens: 5
-        }
-      })
-    ).toMatchObject({
-      id: 'chat-1',
-      model: 'model-a',
-      output: [
-        { type: 'message', content: [{ type: 'output_text', text: 'done' }] },
-        { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"id":1}' }
-      ],
-      usage: {
-        input_tokens: 3,
-        input_tokens_details: { cached_tokens: 1 },
-        output_tokens: 2,
-        output_tokens_details: { reasoning_tokens: 1 },
-        total_tokens: 5
-      }
-    })
-  })
-
-  it('restores namespace metadata for non-streaming Chat Completions tool calls', () => {
-    expect(
-      completionToResponse(
-        {
-          id: 'chat-mcp-json',
-          model: 'model-a',
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: 'call-mcp-json',
-                    type: 'function',
-                    function: {
-                      name: 'mcp__open_science_notebook__notebook_execute',
-                      arguments: '{"code":"print(1)"}'
-                    }
-                  }
-                ]
-              }
-            }
-          ]
-        },
-        [
-          {
-            namespace: 'mcp__open_science_notebook',
-            name: 'notebook_execute',
-            parameters: { type: 'object' }
-          }
-        ]
-      )
-    ).toMatchObject({
-      output: [
-        {
-          type: 'function_call',
-          call_id: 'call-mcp-json',
-          namespace: 'mcp__open_science_notebook',
-          name: 'notebook_execute'
-        }
-      ]
-    })
-  })
-
-  it('drops reasoning_content and keeps the visible answer instead of aborting the turn', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-reasoning',
-        model: 'model-a',
-        choices: [
-          { message: { role: 'assistant', reasoning_content: 'hidden thought', content: '11' } }
-        ]
-      })
-    ).toMatchObject({
-      output: [{ type: 'message', content: [{ type: 'output_text', text: '11' }] }]
-    })
-  })
-
-  it('surfaces a refusal as the visible answer', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-refusal',
-        model: 'model-a',
-        choices: [{ message: { role: 'assistant', refusal: 'I cannot help with that.' } }]
-      })
-    ).toMatchObject({
-      output: [
-        { type: 'message', content: [{ type: 'output_text', text: 'I cannot help with that.' }] }
-      ]
-    })
-  })
-
-  it('rejects upstream image output instead of returning an empty Responses result', () => {
-    expect(() =>
-      completionToResponse({
-        id: 'chat-image',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: [
-                {
-                  type: 'image_url',
-                  image_url: { url: 'data:image/png;base64,aGVsbG8=' }
-                }
-              ]
-            }
-          }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
-    expect(() =>
-      completionToResponse({
-        id: 'chat-images',
-        model: 'model-a',
-        choices: [
-          { message: { role: 'assistant', images: [{ url: 'https://example.test/a.png' }] } }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
-    expect(() =>
-      completionToResponse({
-        id: 'chat-image-object',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: { type: 'output_image', image_url: 'https://example.test/a.png' }
-            }
-          }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
   })
 
   it('rejects stateful features and filters non-translatable Codex tools', () => {
@@ -636,13 +475,6 @@ describe('Responses-compatible bridge conversion', () => {
         stream_options: { include_obfuscation: true }
       })
     ).toMatchObject({ stream_options: { include_usage: true } })
-  })
-
-  it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
-    expect(
-      upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
-    ).toBe('Model deepseek-v4-flash does not exist')
-    expect(upstreamErrorMessage('plain upstream failure', 400)).toBe('plain upstream failure')
   })
 
   it('serves an authenticated Responses SSE stream from a Chat Completions upstream', async () => {

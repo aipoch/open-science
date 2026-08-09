@@ -150,6 +150,30 @@ describe('module test impact commands', () => {
       ]
     ],
     [
+      'src/main/settings/responses-response-adapter.ts',
+      [
+        'artifact_provenance',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
+      'src/main/settings/responses-protocol-types.ts',
+      [
+        'artifact_provenance',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
       'src/main/settings/service.ts',
       ['settings_service_facade', 'workspace_page', 'workspace_runtime']
     ]
@@ -167,7 +191,9 @@ describe('module test impact commands', () => {
         : path === 'src/main/settings/provider-accounts.ts'
           ? 'settings_provider_accounts'
           : path === 'src/main/settings/responses-bridge.ts' ||
-              path === 'src/main/settings/responses-request-adapter.ts'
+              path === 'src/main/settings/responses-protocol-types.ts' ||
+              path === 'src/main/settings/responses-request-adapter.ts' ||
+              path === 'src/main/settings/responses-response-adapter.ts'
             ? 'settings_backend_resolution'
             : 'settings_service_facade'
     expect(plan.reasonChains).toEqual(
