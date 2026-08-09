@@ -96,6 +96,82 @@ describe('module test impact commands', () => {
     }
   )
 
+  it.each([
+    [
+      'src/main/settings/repository.ts',
+      [
+        'artifact_provenance',
+        'compute_service',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_provider_accounts',
+        'settings_repository',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
+      'src/main/settings/provider-accounts.ts',
+      [
+        'artifact_provenance',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_provider_accounts',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
+      'src/main/settings/responses-bridge.ts',
+      [
+        'artifact_provenance',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
+      'src/main/settings/service.ts',
+      ['settings_service_facade', 'workspace_page', 'workspace_runtime']
+    ]
+  ])('expands Settings ownership through real consumers for %s', (path, expectedModules) => {
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'current',
+      testFiles: []
+    })
+
+    expect(plan.mode).toBe('selective')
+    expect([...plan.modules].sort()).toEqual(expectedModules)
+    const rootModule =
+      path === 'src/main/settings/repository.ts'
+        ? 'settings_repository'
+        : path === 'src/main/settings/provider-accounts.ts'
+          ? 'settings_provider_accounts'
+          : path === 'src/main/settings/responses-bridge.ts'
+            ? 'settings_backend_resolution'
+            : 'settings_service_facade'
+    expect(plan.reasonChains).toEqual(
+      expect.arrayContaining(
+        rootModule === 'settings_service_facade'
+          ? [
+              'settings_service_facade -> workspace_runtime',
+              'settings_service_facade -> workspace_runtime -> workspace_page'
+            ]
+          : [
+              `${rootModule}${rootModule === 'settings_repository' ? ' -> settings_provider_accounts' : ''}${rootModule === 'settings_backend_resolution' ? '' : ' -> settings_backend_resolution'} -> reviewer_orchestrator`,
+              `${rootModule} -> settings_service_facade -> workspace_runtime`
+            ]
+      )
+    )
+  })
+
   it('fails closed for unknown and destructive changes', () => {
     expect(
       createAffectedTestPlan([{ path: 'src/main/unknown-owner.ts', status: 'added' }], {

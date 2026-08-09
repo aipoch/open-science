@@ -18,6 +18,23 @@ afterEach(async () => {
 })
 
 describe('mcpCall RPC', () => {
+  it('keeps Settings management outside the Notebook local RPC surface', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp'
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'settingsCall', params: { workspaceCwd: process.cwd() } })
+    })
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'Unknown notebook RPC method: settingsCall'
+    })
+  })
+
   it('rejects privileged calls made with the server-wide bootstrap token', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',

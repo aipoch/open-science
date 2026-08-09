@@ -210,6 +210,156 @@
       "capabilityOverlays": ["windows_sensitive"],
       "fallbackCapability": "main_runtime"
     },
+    "settings_repository": {
+      "ownerPaths": ["src/main/settings/repository.ts"],
+      "interfacePaths": ["src/main/settings/repository.ts"],
+      "consumerModules": [
+        "settings_provider_accounts",
+        "settings_service_facade",
+        "compute_service"
+      ],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/repository.test.ts",
+          "src/main/settings/compute-grants.test.ts",
+          "src/main/settings/connectors-settings.test.ts",
+          "src/main/settings/custom-mcp-settings.test.ts",
+          "src/main/settings/mirror-settings.test.ts"
+        ],
+        "contract": ["src/shared/settings.test.ts"],
+        "consumer": [
+          "src/main/settings/service.test.ts",
+          "src/main/compute/ipc.test.ts",
+          "src/main/settings/agent-runtime-manager.test.ts",
+          "src/main/settings/connector-settings.test.ts",
+          "src/main/settings/notebook-runtime-settings.test.ts",
+          "src/main/settings/preferences.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_provider_accounts": {
+      "ownerPaths": ["src/main/settings/provider-accounts.ts"],
+      "interfacePaths": ["src/main/settings/provider-accounts.ts"],
+      "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/provider-accounts.test.ts",
+          "src/main/settings/codex-auth.test.ts",
+          "src/main/settings/claude-isolated-auth.test.ts",
+          "src/main/settings/claude-shared-auth.test.ts",
+          "src/main/settings/validate.test.ts",
+          "src/main/settings/list-models.test.ts",
+          "src/main/settings/crypto.test.ts",
+          "src/main/settings/provider-env.test.ts"
+        ],
+        "contract": [
+          "src/main/settings/service.providers.test.ts",
+          "src/main/settings/runtime-application-commands.test.ts",
+          "src/shared/provider-registry.test.ts",
+          "src/shared/provider-reasoning-effort.test.ts"
+        ],
+        "consumer": [
+          "src/main/settings/agent-runtime-manager.test.ts",
+          "src/main/settings/backend-resolver.test.ts",
+          "src/renderer/src/stores/settings-provider-auth-slice.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_backend_resolution": {
+      "ownerPaths": [
+        "src/main/settings/backend-resolver.ts",
+        "src/main/settings/responses-bridge.ts"
+      ],
+      "interfacePaths": [
+        "src/main/settings/backend-resolver.ts",
+        "src/main/settings/responses-bridge.ts"
+      ],
+      "consumerModules": [
+        "settings_service_facade",
+        "reviewer_orchestrator",
+        "artifact_provenance"
+      ],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/backend-resolver.test.ts",
+          "src/main/settings/responses-bridge.test.ts",
+          "src/main/settings/responses-bridge.integration.test.ts",
+          "src/main/settings/native-responses-compatibility.test.ts",
+          "src/main/settings/anthropic-provider-bridge.test.ts",
+          "src/main/settings/openai-provider-bridge.test.ts",
+          "src/main/settings/system-proxy.test.ts"
+        ],
+        "contract": [
+          "src/main/agent-framework/codex.test.ts",
+          "src/main/agent-framework/opencode.test.ts",
+          "src/main/agent-framework/registry.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/acp/artifact-code-reconstruction-runner.test.ts",
+          "src/main/acp/backend-generation-owner.test.ts",
+          "src/main/acp/provider-prompt-executor.test.ts",
+          "src/main/acp/task-agent-port.test.ts",
+          "src/main/acp/turn-skill-owner.test.ts",
+          "src/main/artifacts/code-reconstruction.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/reviewer/mcp-server.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_service_facade": {
+      "ownerPaths": ["src/main/settings/service.ts"],
+      "interfacePaths": [
+        "src/main/settings/service.ts",
+        "src/main/settings/application-commands.ts",
+        "src/main/settings/runtime-application-commands.ts",
+        "src/main/settings/integration-application-commands.ts",
+        "src/main/settings/ipc.ts"
+      ],
+      "consumerModules": ["workspace_runtime"],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/service.test.ts",
+          "src/main/settings/service.providers.test.ts",
+          "src/main/settings/service.connectors.test.ts"
+        ],
+        "contract": [
+          "src/main/settings/application-commands.test.ts",
+          "src/main/settings/runtime-application-commands.test.ts",
+          "src/main/settings/integration-application-commands.test.ts",
+          "src/main/settings/ipc.test.ts",
+          "src/main/settings/capabilities.test.ts",
+          "src/main/settings/workflows.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/preload/electron-renderer-contract-adapter.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/acp/backend-generation-owner.test.ts",
+          "src/main/acp/runtime-provider-session-composition.test.ts",
+          "src/main/acp/task-agent-port.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/renderer/src/stores/settings-runtime-slice.test.ts",
+          "src/renderer/src/stores/settings-store.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["settings_ipc", "renderer_settings", "windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
     "artifact_storage": {
       "ownerPaths": [
         "src/main/artifacts/compatibility-owner.ts",
