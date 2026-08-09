@@ -205,7 +205,7 @@ describe('AcpDurableContinuationContextOwner', () => {
     ).rejects.toThrow('pending Session activity')
   })
 
-  it('validates a revision fork and creates Main-owned prompt and tool-call identities', async () => {
+  it('validates an inherited revision fork and creates Main-owned identities', async () => {
     const prompt = message('prompt-active', 'Choose an approach.')
     const preamble: PersistedChatMessage = {
       id: 'agent-question-preamble',
@@ -227,12 +227,25 @@ describe('AcpDurableContinuationContextOwner', () => {
       }
     })
     setActivities(durable, [answeredChoice])
+    const graph = durable.conversationGraph!
+    const frame = graph.frames[0]
+    const rootBranch = graph.branches[0]
+    graph.branches.push({
+      id: 'message-branch-intermediate',
+      agentFrameId: frame.id,
+      parentBranchId: rootBranch.id,
+      forkMessageId: preamble.id,
+      headMessageId: preamble.id,
+      createdAt: 3,
+      updatedAt: 3
+    })
+    frame.activeBranchId = 'message-branch-intermediate'
     durable.conversationGraph = forkConversationAfterActivity(
-      durable.conversationGraph!,
+      graph,
       preamble.id,
       answeredChoice.id,
       'message-branch-revision',
-      3
+      4
     )
     durable.activities = []
     durable.status = 'idle'

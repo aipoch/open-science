@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { AcpPromptRequest } from '../../shared/acp'
 import {
   getActiveConversationContext,
+  type PersistedConversationGraph,
   resolveActiveConversationActivities,
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
@@ -40,6 +41,26 @@ type DurableContinuationReplay = {
 }
 
 type PublishDurableContinuationSession = (session: PersistedChatSession) => Promise<void> | void
+
+const isActivityVisibleOnBranch = (
+  graph: PersistedConversationGraph,
+  frameId: string,
+  branchId: string,
+  activityId: string
+): boolean => {
+  const candidate = structuredClone(graph)
+  const frame = candidate.frames.find((item) => item.id === frameId)
+  if (!frame) return false
+  candidate.activeFrameId = frame.id
+  frame.activeBranchId = branchId
+  try {
+    return resolveActiveConversationActivities(candidate).activities.some(
+      (activity) => activity.id === activityId
+    )
+  } catch {
+    return false
+  }
+}
 
 class AcpDurableContinuationContextOwner {
   constructor(
@@ -211,6 +232,10 @@ class AcpDurableContinuationContextOwner {
     const runtimeSegment = activity
       ? graph?.runtimeSegments.find((candidate) => candidate.id === activity.runtimeSegmentId)
       : undefined
+    const activityVisibleOnParent =
+      graph && frame && parentBranch && activity
+        ? isActivityVisibleOnBranch(graph, frame.id, parentBranch.id, activity.id)
+        : false
     if (
       !graph ||
       session.status !== 'idle' ||
@@ -222,7 +247,7 @@ class AcpDurableContinuationContextOwner {
       parentBranch.agentFrameId !== frame.id ||
       !activity ||
       activity.agentFrameId !== frame.id ||
-      activity.messageBranchId !== parentBranch.id ||
+      !activityVisibleOnParent ||
       !prompt ||
       prompt.role !== 'user' ||
       prompt.status !== 'complete' ||
