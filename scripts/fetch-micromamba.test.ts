@@ -7,7 +7,8 @@ import {
   SUBDIRS,
   resolveDownloadUrl,
   resolveVersion,
-  verifyArchiveDigest
+  verifyArchiveDigest,
+  verifyBinaryDigest
 } from './fetch-micromamba.mjs'
 
 describe('micromamba pinning', () => {
@@ -26,6 +27,19 @@ describe('micromamba pinning', () => {
     expect(resolveDownloadUrl('osx-arm64')).toBe(
       'https://github.com/mamba-org/micromamba-releases/releases/download/2.8.1-1/micromamba-osx-arm64.tar.bz2'
     )
+  })
+
+  it('pins a separately built Windows compatibility runner and both of its digests', () => {
+    expect(PINNED.compatibility).toMatchObject({
+      version: '1.5.12',
+      releaseTag: '1.5.12-0'
+    })
+    expect(PINNED.compatibility.sha256['win-64']).toMatch(/^[0-9a-f]{64}$/)
+    expect(PINNED.compatibility.binarySha256['win-64']).toMatch(/^[0-9a-f]{64}$/)
+    expect(resolveDownloadUrl('win-64', 'compatibility')).toBe(
+      'https://github.com/mamba-org/micromamba-releases/releases/download/1.5.12-0/micromamba-win-64.tar.bz2'
+    )
+    expect(() => resolveDownloadUrl('linux-64', 'compatibility')).toThrow(/no pinned sha256/)
   })
 })
 
@@ -69,6 +83,25 @@ describe('resolveVersion', () => {
     // BEFORE any fetch, with actionable guidance instead of a confusing sha256 mismatch.
     expect(() => resolveVersion({ MICROMAMBA_VERSION: '9.9.9' })).toThrow(
       /does not match the pinned .* update scripts\/micromamba-versions\.json/s
+    )
+  })
+})
+
+describe('verifyBinaryDigest', () => {
+  it('accepts extracted bytes matching the selected pin', () => {
+    const buf = Buffer.from('compatibility executable bytes')
+    const fake = '__test-binary-match__'
+    PINNED.compatibility.binarySha256[fake] = createHash('sha256').update(buf).digest('hex')
+    try {
+      expect(() => verifyBinaryDigest(buf, fake, 'compatibility')).not.toThrow()
+    } finally {
+      delete PINNED.compatibility.binarySha256[fake]
+    }
+  })
+
+  it('rejects an extracted compatibility executable whose digest differs', () => {
+    expect(() => verifyBinaryDigest(Buffer.from('tampered'), 'win-64', 'compatibility')).toThrow(
+      /binary sha256 mismatch/
     )
   })
 })

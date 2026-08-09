@@ -88,6 +88,10 @@ win:
     # looks for it there via process.resourcesPath).
     - from: resources/bin/win/${arch}/micromamba.exe
       to: micromamba.exe
+    # A separately pinned final-1.x build gives the app an independently built runner when the
+    # primary executable cannot even pass `--version` on a particular Windows machine.
+    - from: resources/bin/win/${arch}/micromamba-compat.exe
+      to: micromamba-compat.exe
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
 nsis:

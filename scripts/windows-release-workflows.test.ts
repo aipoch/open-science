@@ -49,6 +49,16 @@ const findStep = (job: WorkflowJob, name: string): WorkflowStep => {
 }
 
 describe('post-merge Windows validation', () => {
+  it('stages the pinned compatibility runner before packaging Windows builds', () => {
+    const job = readWorkflow('build.yml').jobs.build
+    const stage = findStep(job, 'Stage notebook runtime resources')
+
+    expect(stage.run).toContain('micromamba-compat.exe')
+    expect(stage.run).toContain('compatibility')
+    expect(stage.run).toContain('matrix.subdir }}" = "win-64')
+    expect(stage.run).toContain('"$compatibility_path" --version')
+  })
+
   it('runs the complete Windows suite independently after changes land on main', () => {
     const build = readWorkflow('build.yml')
     const workflow = readWorkflow('windows-full-test.yml')

@@ -35,6 +35,14 @@ describe('packaging config', () => {
     expect(yml).toContain('to: micromamba')
   })
 
+  it('ships the independently pinned compatibility runner only on Windows', () => {
+    const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
+    expect(yml).toContain('resources/bin/win/${arch}/micromamba-compat.exe')
+    expect(yml).toContain('to: micromamba-compat.exe')
+    expect(yml).not.toContain('resources/bin/mac/${arch}/micromamba-compat')
+    expect(yml).not.toContain('resources/bin/linux/${arch}/micromamba-compat')
+  })
+
   it('macOS entitlements disable library validation for conda dylibs', () => {
     const plist = readFileSync(join(repoRoot, 'build/entitlements.mac.plist'), 'utf8')
     expect(plist).toContain('com.apple.security.cs.disable-library-validation')

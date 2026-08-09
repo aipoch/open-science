@@ -44,10 +44,13 @@ import {
   createFromLockArgv,
   createFromPackagesArgv,
   installFromLockArgv,
-  micromambaSpawnEnv,
-  resolveMicromamba,
-  type MicromambaDeps
+  micromambaSpawnEnv
 } from './micromamba'
+import {
+  createProductionMicromambaRunner,
+  type MicromambaRunner,
+  type MicromambaRunnerDeps
+} from './micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
 import {
   isChildUnconfirmedError,
@@ -1503,7 +1506,7 @@ export const planStartupAction = (root: string, expectedVersion: number): Startu
 export type ProductionProvisionerOptions = {
   root: string
   channel: string
-  micromamba?: MicromambaDeps
+  micromamba?: MicromambaRunnerDeps
   // PEM CA bundle path (enterprise TLS proxy) exported into micromamba's env so an ONLINE provision /
   // named-env create verifies HTTPS against it. Offline bundle creates need no network, so this only
   // matters on the online paths.
@@ -1531,11 +1534,19 @@ export type ProductionProvisionerOptions = {
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
 }
 
+export type ProductionProvisionerDeps = {
+  runner?: MicromambaRunner
+  fetchBundle?: ProvisionerDeps['fetchBundle']
+  runArgv?: ProvisionerDeps['runArgv']
+  verify?: ProvisionerDeps['verify']
+}
+
 // Wires the real micromamba binary, CDN fetch, subprocess runner and interpreter verification into a
 // DefaultRuntimeProvisioner. Not unit-tested for real I/O (network/subprocess-bound); the orchestration
 // it drives is already covered via injected deps in provisioner.test.ts / provisioner.upgrade.test.ts.
 export const createProductionProvisioner = (
-  opts: ProductionProvisionerOptions
+  opts: ProductionProvisionerOptions,
+  deps: ProductionProvisionerDeps = {}
 ): RuntimeProvisioner => {
   // `root` is `<storageRoot>/runtime`; derive the real home dir from it (storageRoot's parent) as a
   // robust fallback for resolveMicromamba's storage-root branch, instead of leaving it to fall back to
@@ -1543,8 +1554,9 @@ export const createProductionProvisioner = (
   // launched outside a shell. This is dev/prod-agnostic (pure path arithmetic on the caller-resolved
   // root, no directory-name guessing). Caller-supplied opts.micromamba.home still wins when provided.
   const derivedHome = dirname(dirname(opts.root))
-  const mm = resolveMicromamba({ home: derivedHome, ...opts.micromamba })
-  if (!mm) {
+  const runner =
+    deps.runner ?? createProductionMicromambaRunner({ home: derivedHome, ...opts.micromamba })
+  if (!runner) {
     throw new Error(
       'micromamba binary not found (set OPEN_SCIENCE_MICROMAMBA_BIN or ship it as a resource)'
     )
@@ -1563,18 +1575,36 @@ export const createProductionProvisioner = (
   // CA-bundle vars injected into every provisioning subprocess (no-op when unset), so an online
   // create/verify behind an enterprise TLS proxy trusts the custom CA.
   const caEnv = caBundleEnv(opts.caBundle)
-  return new DefaultRuntimeProvisioner({
-    root: opts.root,
-    mm,
-    channel: opts.channel,
-    bundleSource,
-    fetchBundle: chainFetchBundle([
+  const fetchBundle =
+    deps.fetchBundle ??
+    chainFetchBundle([
       createLocalBundleAdapter(opts.root, bundleDir),
       createFetchBundleAdapter(opts.root, cdnBase)
-    ]),
-    runArgv: (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) =>
-      runMicromamba(
-        argv,
+    ])
+  return new DefaultRuntimeProvisioner({
+    root: opts.root,
+    mm: runner.initialPath,
+    channel: opts.channel,
+    bundleSource,
+    fetchBundle: async (...args) => {
+      await runner.resolve()
+      return fetchBundle(...args)
+    },
+    runArgv: async (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) => {
+      const selected = await runner.resolve()
+      const selectedArgv = [selected, ...argv.slice(1)]
+      if (deps.runArgv) {
+        return deps.runArgv(
+          selectedArgv,
+          signal,
+          onChild,
+          onBeforeSpawn,
+          runCache,
+          maxCacheRelativePath
+        )
+      }
+      return runMicromamba(
+        selectedArgv,
         micromambaSpawnEnv(
           opts.root,
           opts.caBundle,
@@ -1591,8 +1621,9 @@ export const createProductionProvisioner = (
         signal,
         onChild,
         onBeforeSpawn
-      ),
-    verify: (bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv }),
+      )
+    },
+    verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,
     clearRuntimeBlock: opts.clearRuntimeBlock,

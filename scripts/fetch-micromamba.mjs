@@ -3,7 +3,7 @@
 
 // Downloads a micromamba binary for one conda subdir and writes it to a destination path.
 //
-//   node scripts/fetch-micromamba.mjs <subdir> <destPath>
+//   node scripts/fetch-micromamba.mjs <subdir> <destPath> [primary|compatibility]
 //   subdir   one of: osx-arm64 | osx-64 | linux-64 | linux-aarch64 | win-64
 //   destPath full path to write the binary to (e.g. resources/bin/mac/arm64/micromamba)
 //
@@ -59,32 +59,44 @@ const findBinary = (dir, name) => {
 // The digests in micromamba-versions.json cover PINNED.version alone, so an override to any other
 // version would download a different archive that can never match — fail fast with actionable guidance
 // instead of a confusing "sha256 mismatch" after the download. `env` defaults to process.env for tests.
-const resolveVersion = (env = process.env) => {
+const resolvePin = (variant = 'primary') => {
+  if (variant === 'primary') return PINNED
+  if (variant === 'compatibility') return PINNED.compatibility
+  throw new Error(`unknown micromamba runner variant "${variant}"`)
+}
+
+const resolveVersion = (env = process.env, variant = 'primary') => {
+  const pin = resolvePin(variant)
+  if (variant === 'compatibility') return pin.version
   const override = env.MICROMAMBA_VERSION
-  if (override && override !== PINNED.version) {
+  if (override && override !== pin.version) {
     throw new Error(
-      `MICROMAMBA_VERSION=${override} does not match the pinned ${PINNED.version}; ` +
+      `MICROMAMBA_VERSION=${override} does not match the pinned ${pin.version}; ` +
         'update scripts/micromamba-versions.json (version + all 5 sha256 digests) to repin, ' +
         'rather than overriding at runtime'
     )
   }
-  return PINNED.version
+  return pin.version
 }
 
-const resolveDownloadUrl = (subdir) => {
-  if (!PINNED.releaseTag) {
+const resolveDownloadUrl = (subdir, variant = 'primary') => {
+  const pin = resolvePin(variant)
+  if (!pin.releaseTag) {
     throw new Error('no pinned releaseTag in micromamba-versions.json')
   }
+  if (!pin.sha256?.[subdir]) {
+    throw new Error(`no pinned sha256 for subdir "${subdir}" in micromamba-versions.json`)
+  }
   return (
-    `https://github.com/mamba-org/micromamba-releases/releases/download/${PINNED.releaseTag}/` +
+    `https://github.com/mamba-org/micromamba-releases/releases/download/${pin.releaseTag}/` +
     `micromamba-${subdir}.tar.bz2`
   )
 }
 
 // Throws unless `buffer` (the downloaded .tar.bz2) matches the pinned SHA256 for `subdir`. A missing
 // pinned digest is treated as fatal, so an unverifiable subdir can never ship.
-const verifyArchiveDigest = (buffer, subdir) => {
-  const expected = PINNED.sha256?.[subdir]
+const verifyArchiveDigest = (buffer, subdir, variant = 'primary') => {
+  const expected = resolvePin(variant).sha256?.[subdir]
   if (!expected) {
     throw new Error(`no pinned sha256 for subdir "${subdir}" in micromamba-versions.json`)
   }
@@ -96,10 +108,25 @@ const verifyArchiveDigest = (buffer, subdir) => {
   }
 }
 
+const verifyBinaryDigest = (buffer, subdir, variant = 'primary') => {
+  const expected = resolvePin(variant).binarySha256?.[subdir]
+  if (!expected) {
+    throw new Error(`no pinned binary sha256 for subdir "${subdir}" in micromamba-versions.json`)
+  }
+  const actual = createHash('sha256').update(buffer).digest('hex')
+  if (actual !== expected) {
+    throw new Error(
+      `binary sha256 mismatch for ${subdir}: expected ${expected}, got ${actual} — refusing to use this binary`
+    )
+  }
+}
+
 const main = async () => {
-  const [subdir, destPath] = process.argv.slice(2)
+  const [subdir, destPath, variant = 'primary'] = process.argv.slice(2)
   if (!subdir || !destPath) {
-    console.error('usage: node scripts/fetch-micromamba.mjs <subdir> <destPath>')
+    console.error(
+      'usage: node scripts/fetch-micromamba.mjs <subdir> <destPath> [primary|compatibility]'
+    )
     process.exit(1)
   }
   if (!SUBDIRS.has(subdir)) {
@@ -107,8 +134,9 @@ const main = async () => {
     process.exit(1)
   }
   const binName = subdir === 'win-64' ? 'micromamba.exe' : 'micromamba'
-  const version = resolveVersion()
-  const url = resolveDownloadUrl(subdir)
+  const pin = resolvePin(variant)
+  const version = resolveVersion(process.env, variant)
+  const url = resolveDownloadUrl(subdir, variant)
 
   console.log(`[fetch-micromamba] ${subdir} ${version} -> ${destPath}`)
   const res = await fetch(url)
@@ -116,7 +144,7 @@ const main = async () => {
   const archive = Buffer.from(await res.arrayBuffer())
 
   // Verify the downloaded archive against the pinned digest BEFORE extracting or copying anything.
-  verifyArchiveDigest(archive, subdir)
+  verifyArchiveDigest(archive, subdir, variant)
 
   const staging = mkdtempSync(join(tmpdir(), 'mm-'))
   const archiveName = 'micromamba.tar.bz2'
@@ -129,6 +157,9 @@ const main = async () => {
 
   const found = findBinary(staging, binName)
   if (!found) throw new Error(`micromamba binary (${binName}) not found in the downloaded archive`)
+  if (pin.binarySha256?.[subdir]) {
+    verifyBinaryDigest(readFileSync(found), subdir, variant)
+  }
 
   mkdirSync(dirname(destPath), { recursive: true })
   copyFileSync(found, destPath)
@@ -136,7 +167,15 @@ const main = async () => {
   console.log(`[fetch-micromamba] wrote ${destPath}`)
 }
 
-export { PINNED, SUBDIRS, resolveDownloadUrl, resolveVersion, verifyArchiveDigest }
+export {
+  PINNED,
+  SUBDIRS,
+  resolveDownloadUrl,
+  resolvePin,
+  resolveVersion,
+  verifyArchiveDigest,
+  verifyBinaryDigest
+}
 
 // Run as a CLI only when invoked directly (importing for tests must not trigger a download).
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

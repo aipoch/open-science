@@ -180,8 +180,14 @@ jobs:
           # script verifies against.
           export MICROMAMBA_VERSION=$(node -p "require('./scripts/micromamba-versions.json').version")
           echo "using pinned micromamba $MICROMAMBA_VERSION"
-          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" \
-            "resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
+          primary_path="resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/$name"
+          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$primary_path"
+          if [ "${{ matrix.subdir }}" = "win-64" ]; then
+            compatibility_path="resources/bin/${{ matrix.bin_os }}/${{ matrix.bin_arch }}/micromamba-compat.exe"
+            node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$compatibility_path" compatibility
+            "$primary_path" --version
+            "$compatibility_path" --version
+          fi
 
       # electron-builder 26.15.3 creates its temporary keychain with a random password but invokes
       # `security set-key-partition-list -k` with the P12 password. macOS 26 Intel rejects that
