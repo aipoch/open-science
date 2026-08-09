@@ -172,7 +172,7 @@ type AcpRuntimeOptions = {
       | 'readSessionRuntimeContext'
       | 'patchSessionRuntimeContext'
       | 'containsMessageOnActiveBranch'
-      | 'loadSessionForPermissionReplay'
+      | 'loadSessionForContinuation'
     > &
       Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
@@ -356,12 +356,13 @@ class AcpRuntime {
   private readonly sessionInteractions: AcpSessionInteractionOwner
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
+  private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private durablePermissionContinuations?: Map<
     string,
     { projectId: string; requestId: string; cancellationRequested?: boolean }
   >
-  private restoredPermissionContextResetSessionIds?: Set<string>
+  private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   private readonly turnSkills: AcpTurnSkillOwner
@@ -416,6 +417,7 @@ class AcpRuntime {
     this.publication = session.publication
     this.permissionContext = session.permissionContext
     this.elicitationOwner = session.elicitationOwner
+    this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
     this.appContinuations = session.appContinuations
     this.reviewerSessions = session.reviewerSessions
@@ -633,12 +635,12 @@ class AcpRuntime {
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      this.restoredPermissionContextResetSessionIds?.delete(request.sessionId)
+      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
       const resumed = await this.providerSessionResumer.resume(request)
       if (resumed.contextReset) {
         const contextResetSessionIds =
-          this.restoredPermissionContextResetSessionIds ?? new Set<string>()
-        this.restoredPermissionContextResetSessionIds = contextResetSessionIds
+          this.restoredContinuationContextResetSessionIds ?? new Set<string>()
+        this.restoredContinuationContextResetSessionIds = contextResetSessionIds
         contextResetSessionIds.add(request.sessionId)
       }
       return resumed
@@ -1023,7 +1025,7 @@ class AcpRuntime {
     if (!interactionInFlight && !durablePermission) {
       try {
         if (await this.permissionWaitOwner.cancelPendingSession(request.sessionId)) {
-          this.restoredPermissionContextResetSessionIds?.delete(request.sessionId)
+          this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
           this.permissionContext.clearRestoredDecision(request.sessionId)
           this.pushEvent({
             kind: 'permission',
@@ -1178,15 +1180,19 @@ class AcpRuntime {
       projectId,
       restored.sessionId
     )
-    const historyReplay = this.restoredPermissionContextResetSessionIds?.has(restored.sessionId)
-      ? await this.permissionWaitOwner.buildRestoredContinuationReplay(
-          projectId,
-          restored.sessionId,
-          decision.permission,
-          this.restoredPermissionHistoryReplayDescriptor(),
-          this.backendGeneration.current.context.supportsImageInput
-        )
-      : undefined
+    const continuation = await this.durableContinuationContext.prepare({
+      projectId,
+      sessionId: restored.sessionId,
+      promptMessageId: decision.permission.originatingPromptMessageId,
+      ...(this.restoredContinuationContextResetSessionIds?.has(restored.sessionId)
+        ? {
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+            }
+          }
+        : {})
+    })
     const durablePermissionContinuations =
       this.durablePermissionContinuations ??
       new Map<string, { projectId: string; requestId: string; cancellationRequested?: boolean }>()
@@ -1256,17 +1262,15 @@ class AcpRuntime {
         sessionId: restored.sessionId,
         text,
         suppressUserMessage: true,
-        provenanceContext: {
-          promptMessageId: decision.permission.originatingPromptMessageId
-        },
-        ...(historyReplay?.historyPreamble
-          ? { historyPreamble: historyReplay.historyPreamble }
+        provenanceContext: continuation.provenanceContext,
+        ...(continuation.historyReplay?.historyPreamble
+          ? { historyPreamble: continuation.historyReplay.historyPreamble }
           : {}),
-        ...(historyReplay?.historyAttachments.length
-          ? { historyAttachments: historyReplay.historyAttachments }
+        ...(continuation.historyReplay?.historyAttachments.length
+          ? { historyAttachments: continuation.historyReplay.historyAttachments }
           : {}),
-        ...(historyReplay?.historyImages.length
-          ? { historyImages: historyReplay.historyImages }
+        ...(continuation.historyReplay?.historyImages.length
+          ? { historyImages: continuation.historyReplay.historyImages }
           : {})
       }
     })
@@ -1287,10 +1291,13 @@ class AcpRuntime {
     return this.getSnapshot()
   }
 
-  respondToElicitation(response: ElicitationResponse): AcpStateSnapshot {
+  async respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot> {
     if (response.request && response.request.requestId !== response.requestId) {
       throw new Error('Restored structured input request id does not match the response')
     }
+    let restoredContinuation:
+      | Awaited<ReturnType<AcpRuntimeSessionOwners['durableContinuationContext']['prepare']>>
+      | undefined
     if (
       !this.elicitationOwner
         .getPendingRequests()
@@ -1300,6 +1307,23 @@ class AcpRuntime {
       if (!this.activeSessionFor(response.request.sessionId)) {
         throw new Error(`ACP session not found: ${response.request.sessionId}`)
       }
+      const promptMessageId = response.request.durable?.promptMessageId
+      if (!promptMessageId) {
+        throw new Error('Restored structured input request has no durable prompt authority')
+      }
+      restoredContinuation = await this.durableContinuationContext.prepare({
+        projectId: this.sessionEnvironment.projectName(response.request.sessionId),
+        sessionId: response.request.sessionId,
+        promptMessageId,
+        ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
+          ? {
+              replay: {
+                descriptor: this.durableContinuationHistoryReplayDescriptor(),
+                supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              }
+            }
+          : {})
+      })
       if (!this.elicitationOwner.restoreDetached(response.request)) {
         throw new Error('Invalid restored structured input request')
       }
@@ -1310,7 +1334,8 @@ class AcpRuntime {
       const continuation = this.userChoiceContinuation(
         resolution.request,
         resolution.response,
-        response.historyReplay
+        restoredContinuation?.historyReplay,
+        restoredContinuation?.provenanceContext
       )
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
@@ -1319,6 +1344,7 @@ class AcpRuntime {
         })
         this.schedulePendingAppContinuation(resolution.request.sessionId)
       }
+      this.restoredContinuationContextResetSessionIds?.delete(resolution.request.sessionId)
     }
     return this.getSnapshot()
   }
@@ -1420,7 +1446,8 @@ class AcpRuntime {
   private userChoiceContinuation(
     request: PendingElicitationRequest,
     response: CreateElicitationResponse,
-    historyReplay?: ElicitationResponse['historyReplay']
+    historyReplay?: ElicitationResponse['historyReplay'],
+    provenanceContext?: AcpPromptRequest['provenanceContext']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
     const content =
@@ -1457,13 +1484,16 @@ class AcpRuntime {
         .join('\n\n')
       return `The user answered the pending questions:\n${answers}\nContinue the current task using these answers without asking the same questions again.`
     })()
+    const continuationProvenance =
+      provenanceContext ??
+      (request.durable?.promptMessageId
+        ? { promptMessageId: request.durable.promptMessageId }
+        : undefined)
     return {
       sessionId: request.sessionId,
       text,
       suppressUserMessage: true,
-      ...(request.durable?.promptMessageId
-        ? { provenanceContext: { promptMessageId: request.durable.promptMessageId } }
-        : {}),
+      ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
       ...(historyReplay?.historyPreamble ? { historyPreamble: historyReplay.historyPreamble } : {}),
       ...(historyReplay?.historyAttachments?.length
         ? { historyAttachments: historyReplay.historyAttachments }
@@ -1512,7 +1542,7 @@ class AcpRuntime {
       if (durablePermission?.cancellationRequested) {
         await this.settleCancelledDurablePermissionContinuation(sessionId)
       } else if (completed && durablePermission) {
-        this.restoredPermissionContextResetSessionIds?.delete(sessionId)
+        this.restoredContinuationContextResetSessionIds?.delete(sessionId)
         try {
           const cleared = await this.permissionWaitOwner.clearAfterContinuation(
             durablePermission.projectId,
@@ -1730,7 +1760,7 @@ class AcpRuntime {
     }
     if (this.durablePermissionContinuations?.get(sessionId) !== durablePermission) return
     this.durablePermissionContinuations.delete(sessionId)
-    this.restoredPermissionContextResetSessionIds?.delete(sessionId)
+    this.restoredContinuationContextResetSessionIds?.delete(sessionId)
     this.permissionContext.clearRestoredDecision(sessionId)
     this.pushEvent({
       kind: 'permission',
@@ -1741,7 +1771,7 @@ class AcpRuntime {
     })
   }
 
-  private restoredPermissionHistoryReplayDescriptor(): HistoryReplayDescriptor {
+  private durableContinuationHistoryReplayDescriptor(): HistoryReplayDescriptor {
     const backend = this.backendGeneration.current
     const target =
       backend.framework.id === 'opencode'

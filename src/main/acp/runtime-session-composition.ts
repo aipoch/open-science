@@ -3,6 +3,7 @@ import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import { createLogger } from '../logger'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'
+import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 import { AcpElicitationOwner } from './elicitation-owner'
 import { AcpPermissionContext } from './permission-context'
 import { AcpPermissionWaitOwner } from './permission-wait-owner'
@@ -134,6 +135,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     systemPromptAppends: () => sessionEnvironment.systemPromptAppends(),
     tooling: () => sessionEnvironment.toolingAvailability()
   })
+  const durableContinuationContext = new AcpDurableContinuationContextOwner(
+    options.permissionWait?.sessions
+  )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,
     options.permissionWait?.onSessionUpdated
@@ -239,6 +243,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     publication,
     appContinuations,
     elicitationOwner,
+    durableContinuationContext,
     permissionWaitOwner,
     permissionContext,
     reviewerSessions,

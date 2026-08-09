@@ -424,6 +424,62 @@ describe('workspace Agent Runtime hook contract', () => {
       sessionId: 'session-1',
       projectId: 'project-1'
     })
+
+    await act(async () => {
+      await latest.respondToPermission('permission-restored', 'allow-once')
+    })
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces concurrent responses for the same restored permission request', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    const request = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        activeRun: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+    const deferred = createDeferred<AcpStateSnapshot>()
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtime.respondToPermission.mockReturnValue(deferred.promise)
+    runtimeMock.current = runtime
+    await render()
+
+    let first!: Promise<void>
+    let duplicate!: Promise<void>
+    act(() => {
+      first = latest.respondToPermission('permission-restored', 'allow-once')
+      duplicate = latest.respondToPermission('permission-restored', 'allow-once')
+    })
+
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+    deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    await act(async () => Promise.all([first, duplicate]))
   })
 
   it('keeps a newly persisted permission card when its provider disconnects in-process', async () => {

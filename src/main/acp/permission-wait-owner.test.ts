@@ -68,7 +68,7 @@ const createSessions = (
       readSessionRuntimeContext: vi.fn(async () => structuredClone(context)),
       patchSessionRuntimeContext: patches,
       containsMessageOnActiveBranch: vi.fn(async () => containsMessage),
-      loadSessionForPermissionReplay: vi.fn(async () => structuredClone(session))
+      loadSessionForContinuation: vi.fn(async () => structuredClone(session))
     },
     context: () => context,
     patches

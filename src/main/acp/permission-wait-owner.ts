@@ -1,9 +1,4 @@
 import type { AcpPermissionResponse } from '../../shared/acp'
-import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
-import {
-  buildSessionHistoryReplay,
-  type SessionHistoryReplay
-} from '../../shared/session-history-replay'
 import {
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
@@ -18,7 +13,7 @@ type PermissionWaitSessions = Pick<
   | 'readSessionRuntimeContext'
   | 'patchSessionRuntimeContext'
   | 'containsMessageOnActiveBranch'
-  | 'loadSessionForPermissionReplay'
+  | 'loadSessionForContinuation'
 > &
   Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
 
@@ -178,34 +173,6 @@ class AcpPermissionWaitOwner {
     )
   }
 
-  async buildRestoredContinuationReplay(
-    projectId: string,
-    sessionId: string,
-    permission: SessionPermissionRuntimeContext,
-    descriptor: HistoryReplayDescriptor,
-    supportsImageInput: boolean
-  ): Promise<SessionHistoryReplay | undefined> {
-    if (!this.sessions) {
-      throw new Error('Permission replay Session authority is not available.')
-    }
-    const session = await this.sessions.loadSessionForPermissionReplay(projectId, sessionId)
-    if (
-      session.id !== sessionId ||
-      session.projectId !== projectId ||
-      !session.messages.some(
-        (message) => message.id === permission.originatingPromptMessageId && message.role === 'user'
-      )
-    ) {
-      throw new Error('Permission replay no longer matches the active Message Branch.')
-    }
-    return buildSessionHistoryReplay(
-      session.messages,
-      descriptor,
-      session.projectId,
-      supportsImageInput
-    )
-  }
-
   async resolveRestored(
     response: AcpPermissionResponse,
     projectId: string,
@@ -319,7 +286,7 @@ class AcpPermissionWaitOwner {
           sessionStatus
         })
         if (this.publishSessionUpdated) {
-          const session = await this.sessions.loadSessionForPermissionReplay(projectId, sessionId)
+          const session = await this.sessions.loadSessionForContinuation(projectId, sessionId)
           await this.publishSessionUpdated(session)
         }
         return true

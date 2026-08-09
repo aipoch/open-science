@@ -280,7 +280,7 @@ describe('SessionPersistenceCoordinator', () => {
     }
   )
 
-  it('loads an isolated durable Session snapshot for permission replay', async () => {
+  it('loads an isolated durable Session snapshot for a continuation', async () => {
     const durable = createSession({
       messages: [
         {
@@ -302,14 +302,14 @@ describe('SessionPersistenceCoordinator', () => {
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
-    const loaded = await coordinator.loadSessionForPermissionReplay('project-1', 'session-1')
+    const loaded = await coordinator.loadSessionForContinuation('project-1', 'session-1')
     loaded.messages[0].content = 'mutated snapshot'
 
     expect(durable.messages[0].content).toBe('Run the command')
   })
 
   it.each(['missing', 'unreadable'] as const)(
-    'refuses permission replay when the durable Session is %s',
+    'refuses a durable continuation when the Session is %s',
     async (status) => {
       const repository = createSessionRepository({
         loadSessionWithDiagnostics: vi.fn(async () => ({ status }))
@@ -317,8 +317,8 @@ describe('SessionPersistenceCoordinator', () => {
       const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
 
       await expect(
-        coordinator.loadSessionForPermissionReplay('project-1', 'session-1')
-      ).rejects.toThrow(`Cannot build permission replay for a ${status} Session.`)
+        coordinator.loadSessionForContinuation('project-1', 'session-1')
+      ).rejects.toThrow(`Cannot prepare a durable continuation for a ${status} Session.`)
     }
   )
 

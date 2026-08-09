@@ -14,12 +14,15 @@ import type { AgentModelChangeTarget } from '../agent-framework'
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
   resolve: (value: Value) => void
+  reject: (error: unknown) => void
 } => {
   let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((promiseResolve) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((promiseResolve, promiseReject) => {
     resolve = promiseResolve
+    reject = promiseReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const emptySnapshot = (): AcpStateSnapshot => ({
@@ -808,8 +811,8 @@ describe('AcpRuntimeCoordinator', () => {
     await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
     expect(created.cancelPrompt).not.toHaveBeenCalled()
 
-    prompt.resolve({ stopReason: 'cancelled' })
-    await running
+    prompt.reject(new Error('provider connection closed during quit'))
+    await expect(running).resolves.toMatchObject({ stopReason: 'cancelled' })
   })
 
   it('bounds quit preparation when an agent never returns a terminal response', async () => {

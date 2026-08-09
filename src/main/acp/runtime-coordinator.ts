@@ -113,6 +113,7 @@ class AcpRuntimeCoordinator {
   private readonly runtimeIds = new WeakMap<AcpRuntime, string>()
   private readonly publishedRuntimeEventIds = new WeakMap<AcpRuntime, Set<string>>()
   private readonly applicationEvents: AcpRuntimeEvent[] = []
+  private readonly durableQuitDetachedSessionIds = new Set<string>()
   private readonly permissionGrantStore = new ConversationPermissionGrantStore()
   // Runtime events are persisted on Message nodes. A process-local sequence alone restarts at one
   // after every app launch and can collide with a historical Session's event ids.
@@ -356,6 +357,9 @@ class AcpRuntimeCoordinator {
     const durablePermissionWaitSessionIds = new Set(
       [...activePromptSessionIds].filter((sessionId) => !quitBlockingSessionIds.has(sessionId))
     )
+    for (const sessionId of durablePermissionWaitSessionIds) {
+      this.durableQuitDetachedSessionIds.add(sessionId)
+    }
     const sessionIds = Array.from(
       new Set([
         ...this.activePromptRequests.keys(),
@@ -686,12 +690,24 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    return runtime[operation](taskRequest, attempt.id).finally(() => {
-      this.removePendingPromptStart(request.sessionId, attempt)
-      if (this.activePromptRequests.get(request.sessionId) === activePrompt) {
-        this.activePromptRequests.delete(request.sessionId)
-      }
-    })
+    return runtime[operation](taskRequest, attempt.id)
+      .catch((error: unknown) => {
+        if (
+          operation === 'sendPrompt' &&
+          this.promptAdmissionClosedForQuit &&
+          this.durableQuitDetachedSessionIds.has(request.sessionId)
+        ) {
+          return { stopReason: 'cancelled' as const }
+        }
+        throw error
+      })
+      .finally(() => {
+        this.durableQuitDetachedSessionIds.delete(request.sessionId)
+        this.removePendingPromptStart(request.sessionId, attempt)
+        if (this.activePromptRequests.get(request.sessionId) === activePrompt) {
+          this.activePromptRequests.delete(request.sessionId)
+        }
+      })
   }
 
   async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
@@ -760,7 +776,7 @@ class AcpRuntimeCoordinator {
     return this.getSnapshot()
   }
 
-  respondToElicitation(response: ElicitationResponse): AcpStateSnapshot {
+  async respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot> {
     const runtime =
       Array.from(this.runtimes).find((candidate) =>
         candidate
@@ -769,7 +785,7 @@ class AcpRuntimeCoordinator {
       ) ??
       (response.request ? this.findRuntimeForSession(response.request.sessionId) : undefined) ??
       this.getActiveRuntime()
-    runtime.respondToElicitation(response)
+    await runtime.respondToElicitation(response)
     return this.getSnapshot()
   }
 
