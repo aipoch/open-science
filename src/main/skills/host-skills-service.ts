@@ -348,15 +348,19 @@ export class HostSkillsService {
   }
 
   private async edit(params: Params): Promise<unknown> {
-    const name = asString(params.name)?.trim()
+    const requestedName = asString(params.name)?.trim()
     const content = asString(params.content)
-    if (!name) throw new Error('name is required')
+    if (!requestedName) throw new Error('name is required')
     if (content === undefined) throw new Error('content is required')
     if (Buffer.byteLength(content) > SKILL_IMPORT_LIMITS.maxFileBytes) {
       throw new Error('content is too large')
     }
     const relativePath = safeRelativePath(params.path)
-    const draft = await this.ensureDraft(name)
+    const explicitDraft = explicitDraftSlug(requestedName)
+    if (explicitDraft && !(await exists(this.draftDir(explicitDraft)))) {
+      throw new Error(`Unknown draft: ${explicitDraft}`)
+    }
+    const draft = await this.ensureDraft(explicitDraft ?? requestedName)
     const target = resolve(draft.path, relativePath)
     const root = resolve(draft.path)
     if (!target.startsWith(root + sep)) throw new Error('unsafe path')
@@ -424,8 +428,15 @@ export class HostSkillsService {
     }
 
     const published = await this.resolvePublished(requestedName)
+    const unqualifiedDraft =
+      SAFE_SLUG.test(requestedName) && (await exists(this.draftDir(requestedName)))
+    if (published && publicSlug(published) === requestedName && unqualifiedDraft) {
+      throw new Error(
+        `ambiguous Skill name; use draft-${requestedName} or ${published.id} to choose what to delete`
+      )
+    }
     if (!published) {
-      if (!SAFE_SLUG.test(requestedName) || !(await exists(this.draftDir(requestedName)))) {
+      if (!unqualifiedDraft) {
         throw new Error(`Unknown Skill: ${requestedName}`)
       }
       const approved = await this.options.approveDelete?.(

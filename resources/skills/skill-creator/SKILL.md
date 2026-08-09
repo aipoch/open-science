@@ -12,16 +12,21 @@ Use the JavaScript control-plane REPL and the native `host.skills` composer for 
 
 ```javascript
 await host.skills.list()
-await host.skills.read(name, (path = 'SKILL.md'))
+await host.skills.read(name)
+await host.skills.read(name, path)
 await host.skills.validate(name)
-await host.skills.edit(name, path, content, (old_string = undefined))
-await host.skills.publish(name, (overwrite = false))
-await host.skills.delete(name)
+await host.skills.edit(name, path, content)
+await host.skills.edit(name, path, replacement, oldString)
+await host.skills.publish(name)
+await host.skills.publish(name, true)
+await host.skills.delete(stableId)
 ```
 
 Without `old_string`, `edit` creates a file and fails if it exists. With `old_string`, the old text
 must occur exactly once. Never silently overwrite an existing draft file. `publish` promotes the
-complete draft into Personal Skills. `delete` is privileged and always uses app approval.
+complete draft into Personal Skills. `delete` is privileged and always uses app approval. When a
+published Skill and its draft coexist, delete only by the exact `draft-<slug>` or `personal-<slug>`
+id returned from `list()`; never guess from the shared display name.
 
 ## Choose the current stage
 
@@ -70,8 +75,8 @@ those capabilities are not part of the current composer.
 ## Create test cases
 
 When the user wants evaluation, propose two or three realistic prompts. Ask them to confirm or revise
-the set before running anything. Store the agreed suite as `evals/evals.json` in the draft, following
-[`references/schemas.md`](references/schemas.md).
+the set before running anything. Store output-evaluation cases as `evals/evals.json`. Store trigger
+and near-miss cases as `trigger-evals.json`. Follow [`references/schemas.md`](references/schemas.md).
 
 Good cases cover different phrasings, input shapes, edge cases, and near misses. Expectations should
 be observable from the transcript or output files. Use human review for qualities that cannot be

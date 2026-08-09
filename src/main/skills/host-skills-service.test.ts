@@ -281,6 +281,10 @@ describe('HostSkillsService', () => {
       service.dispatch({ op: 'read', params: { name: 'draft-disposable' } })
     ).resolves.toMatchObject({ name: 'disposable', origin: 'draft' })
     await expect(
+      service.dispatch({ op: 'delete', params: { name: 'disposable' } }, { sessionId: 'session-1' })
+    ).rejects.toThrow('ambiguous')
+    expect(approveDelete).not.toHaveBeenCalled()
+    await expect(
       service.dispatch(
         { op: 'delete', params: { name: 'draft-disposable' } },
         { sessionId: 'session-1' }
@@ -296,6 +300,43 @@ describe('HostSkillsService', () => {
     await expect(
       readFile(join(root, 'skills', 'drafts', 'disposable', 'SKILL.md'))
     ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('edits a draft by the stable id returned from list', async () => {
+    const { service, userSkills } = await makeFixture()
+    await userSkills.createPersonal({
+      name: 'Editable',
+      description: 'Edit me.',
+      body: 'Published body.'
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'personal-editable',
+        path: 'SKILL.md',
+        old_string: 'Published body.',
+        content: 'Draft body.'
+      }
+    })
+    const drafts = (await service.dispatch({ op: 'list' })) as Array<{
+      id: string
+      origin: string
+    }>
+    const draftId = drafts.find(({ origin }) => origin === 'draft')?.id
+
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: draftId,
+        path: 'SKILL.md',
+        old_string: 'Draft body.',
+        content: 'Second draft.'
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'draft-editable' } })
+    ).resolves.toMatchObject({ content: expect.stringContaining('Second draft.') })
   })
 
   it('requires approval for delete and reports a decline as a normal result', async () => {

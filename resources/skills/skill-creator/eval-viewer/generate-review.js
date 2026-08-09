@@ -1,8 +1,9 @@
 'use strict'
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type */
 
-const { readdir, readFile, writeFile } = require('node:fs/promises')
+const { readdir, readFile, stat, writeFile } = require('node:fs/promises')
 const { basename, join, relative, resolve } = require('node:path')
+const { escapeHtml } = require('../scripts/utils')
 
 const MAX_EMBED_BYTES = 2 * 1024 * 1024
 const TEXT_EXTENSIONS = new Set(['.csv', '.html', '.json', '.md', '.txt', '.xml', '.yaml', '.yml'])
@@ -16,10 +17,11 @@ const IMAGE_MIME = {
 const extension = (name) => name.slice(name.lastIndexOf('.')).toLowerCase()
 
 const embedFile = async (path) => {
-  const bytes = await readFile(path)
-  if (bytes.byteLength > MAX_EMBED_BYTES) {
+  const metadata = await stat(path)
+  if (metadata.size > MAX_EMBED_BYTES) {
     return { name: basename(path), type: 'omitted', reason: 'File exceeds the 2 MiB review limit.' }
   }
+  const bytes = await readFile(path)
   const ext = extension(path)
   if (TEXT_EXTENSIONS.has(ext)) {
     return { name: basename(path), type: 'text', content: bytes.toString('utf8') }
@@ -93,7 +95,7 @@ const generateReview = async ({
   const data = JSON.stringify({ skill_name: skillName, runs, benchmark }).replaceAll('<', '\\u003c')
   const html = template
     .replace('__REVIEW_DATA_PLACEHOLDER__', data)
-    .replaceAll('__SKILL_NAME_PLACEHOLDER__', skillName)
+    .replaceAll('__SKILL_NAME_PLACEHOLDER__', () => escapeHtml(skillName))
   await writeFile(outputPath, html, 'utf8')
   return { output_path: outputPath, run_count: runs.length }
 }

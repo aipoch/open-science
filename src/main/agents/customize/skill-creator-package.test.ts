@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const skillRoot = join(__dirname, '..', '..', '..', '..', 'resources', 'skills', 'skill-creator')
 const require = createRequire(import.meta.url)
@@ -57,6 +57,12 @@ describe('skill-creator bundled package', () => {
     expect(skill).toContain('agents/grader.md')
     expect(skill).toContain('eval-viewer/generate-review.js')
     expect(skill).not.toMatch(/python -m|\.py\b/)
+    expect(skill).not.toMatch(/await host\.skills\.\w+\([^)]*=/)
+
+    const triggerReview = await readFile(join(skillRoot, 'assets', 'eval_review.html'), 'utf8')
+    expect(triggerReview).toContain('schema_version: 1')
+    expect(triggerReview).toContain("kind: 'trigger'")
+    expect(triggerReview).toContain("link.download = 'trigger-evals.json'")
   })
 
   it('aggregates paired run metrics without a provider-specific CLI', () => {
@@ -102,27 +108,40 @@ describe('skill-creator bundled package', () => {
     ).toEqual({ valid: false, error: 'Frontmatter must contain exactly name and description.' })
   })
 
-  it('runs trigger probes through an injected app-owned callback', async () => {
+  it('gates evaluation behind the app-owned host.skills.evals capability', async () => {
     const { runEval } = require(join(skillRoot, 'scripts', 'index.js')) as {
-      runEval(input: Record<string, unknown>): Promise<{
-        results: Array<{ triggers: number; pass: boolean }>
-        summary: { passed: number; failed: number; total: number }
-      }>
+      runEval(input: Record<string, unknown>): Promise<unknown>
     }
-    const result = await runEval({
-      queries: [
-        { query: 'create a reusable skill', should_trigger: true },
-        { query: 'what time is it?', should_trigger: false }
-      ],
-      runs: 2,
-      probe: async ({ should_trigger }: { should_trigger: boolean }) => should_trigger
+    await expect(runEval({ hostSkills: {}, evalId: 'eval-1' })).rejects.toThrow(
+      'host.skills.evals.run is unavailable'
+    )
+    const run = vi.fn(async () => ({ status: 'complete' }))
+    await expect(runEval({ hostSkills: { evals: { run } }, evalId: 'eval-1' })).resolves.toEqual({
+      status: 'complete'
     })
+    expect(run).toHaveBeenCalledWith('eval-1')
+  })
 
-    expect(result.results.map(({ triggers, pass }) => ({ triggers, pass }))).toEqual([
-      { triggers: 2, pass: true },
-      { triggers: 0, pass: true }
-    ])
-    expect(result.summary).toEqual({ passed: 2, failed: 0, total: 2 })
+  it('gates the description loop behind the same app-owned evaluation capability', async () => {
+    const { runLoop } = require(join(skillRoot, 'scripts', 'index.js')) as {
+      runLoop(input: Record<string, unknown>): Promise<unknown>
+    }
+    await expect(runLoop({ hostSkills: {}, evalId: 'eval-1' })).rejects.toThrow(
+      'host.skills.evals.run is unavailable'
+    )
+    const run = vi.fn(async () => ({ status: 'complete' }))
+    await expect(runLoop({ hostSkills: { evals: { run } }, evalId: 'eval-1' })).resolves.toEqual({
+      status: 'complete'
+    })
+    expect(run).toHaveBeenCalledWith('eval-1')
+  })
+
+  it('keeps both train and held-out trigger cases nonempty', () => {
+    const { splitEvalSet } = require(join(skillRoot, 'scripts', 'index.js')) as {
+      splitEvalSet(input: unknown[]): { train: unknown[]; test: unknown[] }
+    }
+    expect(splitEvalSet([1, 2, 3])).toEqual({ train: [1, 2], test: [3] })
+    expect(() => splitEvalSet([1])).toThrow('at least two trigger cases')
   })
 
   it('generates a static review from bounded workspace outputs', async () => {
@@ -135,6 +154,9 @@ describe('skill-creator bundled package', () => {
       JSON.stringify({ eval_id: 'eval-1', prompt: 'Create a report.' })
     )
     await writeFile(join(runDirectory, 'outputs', 'report.txt'), '<script>alert(1)</script>')
+    const oversizedOutput = join(runDirectory, 'outputs', 'large.bin')
+    await writeFile(oversizedOutput, '')
+    await truncate(oversizedOutput, 2 * 1024 * 1024 + 1)
     const outputPath = join(workspace, 'review.html')
     const { generateReview } = require(join(skillRoot, 'eval-viewer', 'generate-review.js')) as {
       generateReview(input: Record<string, unknown>): Promise<{
@@ -147,61 +169,15 @@ describe('skill-creator bundled package', () => {
       generateReview({
         workspace,
         outputPath,
-        skillName: 'Report Skill',
+        skillName: '</h1><script>alert(2)</script>',
         templatePath: join(skillRoot, 'eval-viewer', 'viewer.html')
       })
     ).resolves.toEqual({ output_path: outputPath, run_count: 1 })
     const html = await readFile(outputPath, 'utf8')
-    expect(html).toContain('Report Skill')
     expect(html).toContain('\\u003cscript>alert(1)\\u003c/script>')
+    expect(html).not.toContain('</h1><script>alert(2)</script>')
+    expect(html).toContain('&lt;/h1&gt;&lt;script&gt;alert(2)&lt;/script&gt;')
+    expect(html).toContain('File exceeds the 2 MiB review limit.')
     expect(html).toContain('Content-Security-Policy')
-  })
-
-  it('keeps the initial description and returns the first held-out candidate that passes', async () => {
-    const { runLoop } = require(join(skillRoot, 'scripts', 'index.js')) as {
-      runLoop(input: Record<string, unknown>): Promise<{
-        best_description: string
-        history: Array<{ candidate: string }>
-      }>
-    }
-    const evaluated: Array<string> = []
-    const result = await runLoop({
-      queries: [
-        { query: 'create a skill', should_trigger: true },
-        { query: 'write a poem', should_trigger: false }
-      ],
-      initialDescription: 'before',
-      maxIterations: 2,
-      evaluate: async (_queries: unknown[], candidate: string) => {
-        evaluated.push(candidate)
-        return { summary: { failed: candidate === 'after' ? 0 : 1 } }
-      },
-      improve: async () => 'after'
-    })
-
-    expect(evaluated).toEqual(['before', 'before', 'after', 'after'])
-    expect(result.best_description).toBe('after')
-  })
-
-  it('never returns an unevaluated description when the optimization budget is exhausted', async () => {
-    const { runLoop } = require(join(skillRoot, 'scripts', 'index.js')) as {
-      runLoop(input: Record<string, unknown>): Promise<{
-        best_description: string
-        history: Array<{ candidate: string }>
-      }>
-    }
-    const result = await runLoop({
-      queries: [
-        { query: 'create a skill', should_trigger: true },
-        { query: 'write a poem', should_trigger: false }
-      ],
-      initialDescription: 'evaluated',
-      maxIterations: 1,
-      evaluate: async () => ({ summary: { failed: 1 } }),
-      improve: async () => 'not-evaluated'
-    })
-
-    expect(result.best_description).toBe('evaluated')
-    expect(result.history.map(({ candidate }) => candidate)).toEqual(['evaluated'])
   })
 })

@@ -91,10 +91,21 @@
         render()
       })
       document.querySelector('#export').addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' })
+        const triggerEvals = {
+          schema_version: 1,
+          kind: 'trigger',
+          cases: items.map((item, index) => ({
+            id: item.id || `trigger-${index + 1}`,
+            query: item.query || '',
+            should_trigger: Boolean(item.should_trigger)
+          }))
+        }
+        const blob = new Blob([JSON.stringify(triggerEvals, null, 2)], {
+          type: 'application/json'
+        })
         const link = document.createElement('a')
         link.href = URL.createObjectURL(blob)
-        link.download = 'eval_set.json'
+        link.download = 'trigger-evals.json'
         link.click()
         URL.revokeObjectURL(link.href)
       })

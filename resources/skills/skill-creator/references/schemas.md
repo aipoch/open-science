@@ -3,6 +3,22 @@
 These versioned JSON documents are the exchange contract between Skill Creator scripts, evaluation
 runs, graders, and the review UI. Producers must preserve the field names below.
 
+## `trigger-evals.json`
+
+Use this smaller contract only to review whether a Skill should trigger. It is not a replacement for
+the output-evaluation suite below.
+
+```json
+{
+  "schema_version": 1,
+  "kind": "trigger",
+  "cases": [
+    { "id": "create-skill", "query": "Create a reusable Skill.", "should_trigger": true },
+    { "id": "near-miss", "query": "Write a poem.", "should_trigger": false }
+  ]
+}
+```
+
 ## `evals/evals.json`
 
 ```json
