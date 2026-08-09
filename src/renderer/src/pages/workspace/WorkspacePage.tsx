@@ -470,7 +470,8 @@ const WorkspacePage = ({
       ? 'Resolve the current session error before compacting.'
       : 'Wait for the current agent activity to finish.'
   const durablePermissionError =
-    activeSession?.status === 'waiting-permission' && activeSession.runtimeContext?.permission
+    activeSession?.status === 'waiting-permission' &&
+    activeSession.runtimeContext?.permission?.state === 'pending'
       ? (activeSession.error ?? actionError)
       : null
   const visibleActionError =

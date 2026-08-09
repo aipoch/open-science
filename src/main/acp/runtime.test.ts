@@ -1614,6 +1614,7 @@ describe('ACP runtime restored permission continuation', () => {
         version: 1,
         revision: 1,
         permission: {
+          state: 'pending',
           request: {
             requestId: 'permission-restored',
             sessionId: 'restored-session',
@@ -1710,6 +1711,7 @@ describe('ACP runtime restored permission continuation', () => {
       version: 1,
       revision: 1,
       permission: {
+        state: 'pending',
         request: {
           requestId: 'permission-restored',
           sessionId: 'restored-session',
@@ -1790,6 +1792,90 @@ describe('ACP runtime restored permission continuation', () => {
     expect(patchSessionRuntimeContext).toHaveBeenCalledWith(
       expect.objectContaining({ sessionStatus: 'idle', patch: { permission: undefined } })
     )
+  })
+
+  it('keeps a successful continuation non-replayable when clearing its authority fails', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['restored-session'])
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        request: {
+          requestId: 'permission-restored',
+          sessionId: 'restored-session',
+          toolCallId: 'tool-restored',
+          title: 'Run npm test',
+          providerToolName: 'Bash',
+          rawInput: { command: 'npm test' },
+          options: [
+            {
+              optionId: 'allow-once',
+              name: 'Allow once',
+              kind: 'allow_once',
+              scope: 'once'
+            }
+          ]
+        },
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: 'a'.repeat(64),
+        createdAt: 1
+      }
+    }
+    const patchSessionRuntimeContext = vi.fn(
+      async (command: {
+        expectedRevision: number
+        patch: { permission?: SessionRuntimeContext['permission'] }
+      }) => {
+        if (command.patch.permission === undefined) throw new Error('disk unavailable')
+        runtimeContext = {
+          ...runtimeContext,
+          ...command.patch,
+          revision: runtimeContext.revision + 1
+        }
+        return structuredClone(runtimeContext)
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext,
+          containsMessageOnActiveBranch: vi.fn(async () => true)
+        }
+      },
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await runtime.respondToPermission({
+      requestId: 'permission-restored',
+      optionId: 'allow-once',
+      restored: { sessionId: 'restored-session', projectId: 'project-1' }
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() =>
+      expect(
+        runtime
+          .getSnapshot()
+          .events.some(
+            (event) =>
+              event.kind === 'permission' &&
+              event.title === 'Permission continuation completed but its wait could not be cleared'
+          )
+      ).toBe(true)
+    )
+    expect(runtimeContext.permission).toMatchObject({ state: 'continuing' })
   })
 })
 

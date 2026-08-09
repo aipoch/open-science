@@ -49,6 +49,7 @@ const createFakeRuntime = (options: {
   beforeResume?: () => Promise<void>
   afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
+  activePromptSessions?: { projectName: string; sessionId: string }[]
   quitBlockingSessions?: { projectName: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
@@ -184,7 +185,7 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
-    getActivePromptSessions: () => [],
+    getActivePromptSessions: () => options.activePromptSessions ?? [],
     getQuitBlockingPromptSessions: () => options.quitBlockingSessions ?? [],
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
@@ -781,6 +782,34 @@ describe('AcpRuntimeCoordinator', () => {
     await running
     await preparing
     expect(prepared).toBe(true)
+  })
+
+  it('preserves a durable permission wait during quit preparation', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise,
+        activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+        quitBlockingSessions: []
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1'
+    })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
+    await Promise.resolve()
+
+    await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
+    expect(created.cancelPrompt).not.toHaveBeenCalled()
+
+    prompt.resolve({ stopReason: 'cancelled' })
+    await running
   })
 
   it('bounds quit preparation when an agent never returns a terminal response', async () => {

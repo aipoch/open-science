@@ -656,6 +656,7 @@ describe('session persistence repository (per-session files)', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request: {
               requestId: 'permission-1',
               sessionId: 'session-1',
@@ -720,6 +721,47 @@ describe('session persistence repository (per-session files)', () => {
     expect(sessions[0].messages[0].interrupted).toBe(true)
   })
 
+  it('fails a permission continuation closed instead of restoring an actionable card', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          permission: {
+            state: 'continuing',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1710000000200
+          }
+        }
+      })
+    )
+
+    const { sessions } = await repository.loadAll()
+
+    expect(sessions[0]).toMatchObject({
+      status: 'error',
+      runtimeContext: { version: 1, revision: 2 },
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'message-1'
+      }
+    })
+    expect(sessions[0].runtimeContext?.permission).toMatchObject({ state: 'continuing' })
+    expect(sessions[0].messages[0].interrupted).toBe(true)
+  })
+
   it('fails a permission wait closed when its persisted fingerprint is invalid', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(
@@ -730,6 +772,7 @@ describe('session persistence repository (per-session files)', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request: {
               requestId: 'permission-1',
               sessionId: 'session-1',

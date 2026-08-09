@@ -367,11 +367,12 @@ class SessionPersistenceStateOwner {
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
-    const permissionOwnedStatus = authority?.runtimeContext?.permission
-      ? 'waiting-permission'
-      : rendererOwnedSession.status === 'waiting-permission'
-        ? (authority?.status ?? 'idle')
-        : undefined
+    const permissionOwnedStatus =
+      authority?.runtimeContext?.permission?.state === 'pending'
+        ? 'waiting-permission'
+        : rendererOwnedSession.status === 'waiting-permission'
+          ? (authority?.status ?? 'idle')
+          : undefined
     const mainOwnedStatus = permissionOwnedStatus
       ? permissionOwnedStatus
       : authority?.status === 'waiting-plan-approval' ||

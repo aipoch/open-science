@@ -171,6 +171,7 @@ describe('ACP permission broker with durable grants', () => {
 
       await broker.prepareRestoredDecision(
         {
+          state: 'pending',
           request: {
             requestId: 'permission-1',
             sessionId: 'session-1',

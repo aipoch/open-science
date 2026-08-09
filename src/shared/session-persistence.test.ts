@@ -9,7 +9,8 @@ import {
   sanitizeMessageImages,
   sanitizeToolActivity,
   type PersistedChatSession,
-  type SessionPlanRuntimeContext
+  type SessionPlanRuntimeContext,
+  type SessionPermissionRuntimeContext
 } from './session-persistence'
 import {
   activateConversationBranch,
@@ -922,6 +923,36 @@ describe('normalizeSessionFile with activities', () => {
       }
     })
     expect(restored?.error).toBeUndefined()
+  })
+
+  it('normalizes legacy permission authority to pending and accepts only known lifecycle states', () => {
+    const permission = {
+      request: {
+        requestId: 'permission-1',
+        sessionId: 'session-1',
+        toolCallId: 'tool-1',
+        title: 'Run npm test',
+        options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+      },
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: 'a'.repeat(64),
+      createdAt: 1
+    }
+    const normalizePermission = (
+      candidate: Record<string, unknown>
+    ): SessionPermissionRuntimeContext | undefined =>
+      normalizeSessionFile(
+        {
+          ...createSessionWithActivity(undefined),
+          activities: undefined,
+          runtimeContext: { version: 1, revision: 1, permission: candidate }
+        },
+        { preserveRuntimeState: true }
+      )?.runtimeContext?.permission
+
+    expect(normalizePermission(permission)?.state).toBe('pending')
+    expect(normalizePermission({ ...permission, state: 'continuing' })?.state).toBe('continuing')
+    expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
   })
 
   it('round-trips special Plan step titles without changing object prototypes', () => {

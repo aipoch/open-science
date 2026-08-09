@@ -66,6 +66,7 @@ describe('ACP durable permission wait owner', () => {
         sessionStatus: 'waiting-permission',
         patch: {
           permission: expect.objectContaining({
+            state: 'pending',
             request: expect.objectContaining({ requestId: 'permission-1' }),
             originatingPromptMessageId: 'prompt-1',
             fingerprint: 'a'.repeat(64)
@@ -90,6 +91,24 @@ describe('ACP durable permission wait owner', () => {
       permission: { originatingPromptMessageId: 'prompt-1' }
     })
 
+    await owner.beginContinuation('project-1', 'session-1', 'permission-1')
+    expect(fixture.context().permission).toMatchObject({ state: 'continuing' })
+    await expect(
+      owner.resolveRestored(
+        {
+          requestId: 'permission-1',
+          optionId: 'allow-once',
+          restored: { sessionId: 'session-1', projectId: 'project-1' }
+        },
+        'project-1',
+        'session-1'
+      )
+    ).rejects.toThrow('stale or no longer pending')
+
+    await owner.rearmContinuation('project-1', 'session-1', 'permission-1')
+    expect(fixture.context().permission).toMatchObject({ state: 'pending' })
+
+    await owner.beginContinuation('project-1', 'session-1', 'permission-1')
     await owner.clearAfterContinuation('project-1', 'session-1', 'permission-1')
     expect(fixture.context().permission).toBeUndefined()
     expect(fixture.patches).toHaveBeenLastCalledWith(

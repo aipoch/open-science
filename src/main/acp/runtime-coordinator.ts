@@ -347,13 +347,22 @@ class AcpRuntimeCoordinator {
     timeoutMs = QUIT_PREPARATION_TIMEOUT_MS
   ): Promise<Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>> {
     this.promptAdmissionClosedForQuit = true
+    const activePromptSessionIds = new Set(
+      this.getActivePromptSessions().map(({ sessionId }) => sessionId)
+    )
+    const quitBlockingSessionIds = new Set(
+      this.getQuitBlockingPromptSessions().map(({ sessionId }) => sessionId)
+    )
+    const durablePermissionWaitSessionIds = new Set(
+      [...activePromptSessionIds].filter((sessionId) => !quitBlockingSessionIds.has(sessionId))
+    )
     const sessionIds = Array.from(
       new Set([
         ...this.activePromptRequests.keys(),
         ...this.pendingPromptStarts.keys(),
         ...this.getSnapshot().promptInFlightSessionIds
       ])
-    )
+    ).filter((sessionId) => !durablePermissionWaitSessionIds.has(sessionId))
     if (sessionIds.length === 0) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {

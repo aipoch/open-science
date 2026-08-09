@@ -70,9 +70,11 @@ const pendingWorkspacePermissions = (
   const liveRequestIds = new Set(liveRequests.map((request) => request.requestId))
   const restoredRequests: AcpPermissionRequest[] = []
   for (const session of sessions) {
-    const request = session.runtimeContext?.permission?.request
+    const permission = session.runtimeContext?.permission
+    const request = permission?.request
     if (
       (session.status === 'waiting-permission' || session.status === 'error') &&
+      permission?.state === 'pending' &&
       request?.sessionId === session.id &&
       !liveRequestIds.has(request.requestId)
     ) {
@@ -131,7 +133,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     JSON.stringify(
       state.sessions.flatMap((session) => {
         const permission = session.runtimeContext?.permission
-        return session.status === 'waiting-permission' && permission
+        return session.status === 'waiting-permission' && permission?.state === 'pending'
           ? [[session.id, session.runtimeContext?.revision, permission.request.requestId]]
           : []
       })
@@ -214,7 +216,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
           .filter((request) => request.durable)
           .map((request) => request.sessionId),
         ...restoredPermissionSessions
-          .filter((session) => session.runtimeContext?.permission)
+          .filter((session) => session.runtimeContext?.permission?.state === 'pending')
           .map((session) => session.id)
       ])
     ).sort()

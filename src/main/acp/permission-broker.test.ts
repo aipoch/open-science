@@ -228,6 +228,7 @@ describe('ACP permission broker', () => {
     await expect(originalProviderResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
     await broker.prepareRestoredDecision(
       {
+        state: 'pending',
         request: original,
         originatingPromptMessageId: 'prompt-1',
         fingerprint: fingerprint!,

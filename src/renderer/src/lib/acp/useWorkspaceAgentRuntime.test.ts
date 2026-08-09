@@ -116,6 +116,7 @@ describe('workspace permission wait recovery', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request: durableRequest,
             originatingPromptMessageId: session.messages[0].id,
             fingerprint: 'a'.repeat(64),
@@ -144,6 +145,19 @@ describe('workspace permission wait recovery', () => {
     expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([
       durableRequest
     ])
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: session.runtimeContext?.permission
+          ? {
+              ...session.runtimeContext,
+              permission: { ...session.runtimeContext.permission, state: 'continuing' }
+            }
+          : session.runtimeContext
+      }))
+    }))
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([])
   })
 })
 

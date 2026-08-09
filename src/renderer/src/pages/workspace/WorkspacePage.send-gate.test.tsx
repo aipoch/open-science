@@ -614,6 +614,7 @@ describe('WorkspacePage send gate while compacting', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request: {
               requestId: 'permission-restored',
               sessionId: session.id,

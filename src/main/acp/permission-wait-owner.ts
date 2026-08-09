@@ -40,6 +40,7 @@ class AcpPermissionWaitOwner {
     }
 
     const permission = sanitizeSessionPermissionRuntimeContext({
+      state: 'pending',
       request: candidate.request,
       originatingPromptMessageId: candidate.promptMessageId,
       fingerprint: candidate.fingerprint,
@@ -55,6 +56,7 @@ class AcpPermissionWaitOwner {
       (context) => {
         if (
           context.permission &&
+          context.permission.state === 'pending' &&
           context.permission.request.requestId !== permission.request.requestId
         ) {
           throw new Error('Another durable permission request already owns this Session.')
@@ -82,7 +84,41 @@ class AcpPermissionWaitOwner {
     requestId: string
   ): Promise<void> {
     if (!this.sessions) return
-    await this.clear(projectId, sessionId, requestId, 'idle')
+    await this.patch(
+      projectId,
+      sessionId,
+      (context) => {
+        const permission = context.permission
+        if (!permission || permission.request.requestId !== requestId) return permission
+        if (permission.state !== 'continuing') {
+          throw new Error('The restored permission continuation is no longer active.')
+        }
+        return undefined
+      },
+      'idle'
+    )
+  }
+
+  async beginContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
+    await this.transitionContinuation(
+      projectId,
+      sessionId,
+      requestId,
+      'pending',
+      'continuing',
+      'running'
+    )
+  }
+
+  async rearmContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
+    await this.transitionContinuation(
+      projectId,
+      sessionId,
+      requestId,
+      'continuing',
+      'pending',
+      'waiting-permission'
+    )
   }
 
   async resolveRestored(
@@ -101,6 +137,7 @@ class AcpPermissionWaitOwner {
     const permission = context.permission
     if (
       !permission ||
+      permission.state !== 'pending' ||
       permission.request.requestId !== response.requestId ||
       permission.request.sessionId !== sessionId
     ) {
@@ -146,6 +183,33 @@ class AcpPermissionWaitOwner {
       sessionId,
       (context) =>
         context.permission?.request.requestId === requestId ? undefined : context.permission,
+      sessionStatus
+    )
+  }
+
+  private async transitionContinuation(
+    projectId: string,
+    sessionId: string,
+    requestId: string,
+    expectedState: SessionPermissionRuntimeContext['state'],
+    state: SessionPermissionRuntimeContext['state'],
+    sessionStatus: 'waiting-permission' | 'running'
+  ): Promise<void> {
+    if (!this.sessions) return
+    await this.patch(
+      projectId,
+      sessionId,
+      (context) => {
+        const permission = context.permission
+        if (
+          !permission ||
+          permission.request.requestId !== requestId ||
+          permission.state !== expectedState
+        ) {
+          throw new Error('The restored permission request is stale or no longer pending.')
+        }
+        return { ...permission, state }
+      },
       sessionStatus
     )
   }

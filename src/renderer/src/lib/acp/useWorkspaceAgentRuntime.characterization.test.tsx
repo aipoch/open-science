@@ -329,6 +329,7 @@ describe('workspace Agent Runtime hook contract', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request,
             originatingPromptMessageId: session.messages[0].id,
             fingerprint: 'a'.repeat(64),
@@ -395,6 +396,7 @@ describe('workspace Agent Runtime hook contract', () => {
           version: 1,
           revision: 1,
           permission: {
+            state: 'pending',
             request,
             originatingPromptMessageId: session.messages[0].id,
             fingerprint: 'a'.repeat(64),

@@ -92,6 +92,7 @@ export type SessionPlanRuntimeContext = Readonly<{
 }>
 
 export type SessionPermissionRuntimeContext = Readonly<{
+  state: 'pending' | 'continuing'
   request: AcpPermissionRequest
   originatingPromptMessageId: string
   fingerprint: string
@@ -684,6 +685,7 @@ export const sanitizeSessionPermissionRuntimeContext = (
       (field) =>
         ![
           'request',
+          'state',
           'originatingPromptMessageId',
           'fingerprint',
           'categoryKey',
@@ -695,6 +697,7 @@ export const sanitizeSessionPermissionRuntimeContext = (
     return undefined
   }
   const request = sanitizePermissionRequest(value.request)
+  const state = value.state === undefined ? 'pending' : asString(value.state)
   const originatingPromptMessageId = boundedPermissionString(value.originatingPromptMessageId)
   const fingerprint = asString(value.fingerprint)
   const categoryKey = boundedPermissionString(value.categoryKey)
@@ -702,6 +705,7 @@ export const sanitizeSessionPermissionRuntimeContext = (
   const createdAt = asNumber(value.createdAt)
   if (
     !request ||
+    (state !== 'pending' && state !== 'continuing') ||
     !originatingPromptMessageId ||
     !fingerprint ||
     !PERMISSION_FINGERPRINT_PATTERN.test(fingerprint) ||
@@ -713,6 +717,7 @@ export const sanitizeSessionPermissionRuntimeContext = (
     return undefined
   }
   return {
+    state,
     request,
     originatingPromptMessageId,
     fingerprint,
@@ -862,6 +867,7 @@ const hasRestorablePermissionWait = (session: PersistedChatSession): boolean => 
     : session.messages
   return Boolean(
     session.status === 'waiting-permission' &&
+    permission?.state === 'pending' &&
     permission?.request.sessionId === session.id &&
     activeMessages.some(
       (message) => message.id === permission.originatingPromptMessageId && message.role === 'user'
@@ -902,6 +908,25 @@ const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefin
 
 // Restores interrupted sessions as retryable errors because runtime state is gone.
 const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedChatSession => {
+  const continuingPermission = session.runtimeContext?.permission
+  if (continuingPermission?.state === 'continuing') {
+    const promptMessageId = continuingPermission.originatingPromptMessageId
+    return {
+      ...session,
+      status: 'error',
+      activeRun: undefined,
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId
+      },
+      error: session.error ?? INTERRUPTED_SESSION_ERROR,
+      messages: markInterruptedPrompt(
+        session.messages.map(normalizeMessageAfterRestore),
+        promptMessageId
+      )
+    }
+  }
   if (hasRestorablePermissionWait(session)) {
     return {
       ...session,

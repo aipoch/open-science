@@ -1115,7 +1115,15 @@ class AcpRuntime {
         decision.option,
         projectId
       )
+      // Persist the consumed/non-replayable marker before starting provider work. A process loss or
+      // later clear failure must never restore the accepted approval as an actionable card.
+      await this.permissionWaitOwner.beginContinuation(
+        projectId,
+        restored.sessionId,
+        response.requestId
+      )
     } catch (error) {
+      this.permissionContext.clearRestoredDecision(restored.sessionId)
       durablePermissionContinuations.delete(restored.sessionId)
       throw error
     }
@@ -1393,7 +1401,6 @@ class AcpRuntime {
             sessionId,
             durablePermission.requestId
           )
-          this.durablePermissionContinuations?.delete(sessionId)
         } catch (error) {
           this.pushEvent({
             kind: 'permission',
@@ -1402,11 +1409,29 @@ class AcpRuntime {
             title: 'Permission continuation completed but its wait could not be cleared',
             text: errorMessage(error)
           })
+        } finally {
+          this.durablePermissionContinuations?.delete(sessionId)
         }
       } else if (durablePermission) {
-        // The durable authority remains the retry token after a failed provider continuation. Release
-        // only the process-local dedup reservation so the restored card can submit another attempt.
-        this.durablePermissionContinuations?.delete(sessionId)
+        try {
+          // A retry is safe only after durable authority returns from consumed to pending. If this
+          // write fails, retain `continuing` as a fail-closed tombstone and do not expose the card.
+          await this.permissionWaitOwner.rearmContinuation(
+            durablePermission.projectId,
+            sessionId,
+            durablePermission.requestId
+          )
+        } catch (error) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId,
+            title: 'Permission continuation failed and its wait could not be restored',
+            text: errorMessage(error)
+          })
+        } finally {
+          this.durablePermissionContinuations?.delete(sessionId)
+        }
       }
       this.appContinuations.complete(sessionId)
       this.emitState()

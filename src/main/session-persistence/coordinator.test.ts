@@ -65,6 +65,7 @@ const createRuntimePlan = (
 })
 
 const createRuntimePermission = (): SessionPermissionRuntimeContext => ({
+  state: 'pending',
   request: {
     requestId: 'permission-1',
     sessionId: 'session-1',
@@ -537,6 +538,38 @@ describe('SessionPersistenceCoordinator', () => {
       runtimeContext: { version: 1, revision: 4 }
     })
     expect(durable.runtimeContext?.permission).toBeUndefined()
+  })
+
+  it('does not let a stale renderer save revive a consumed permission continuation', async () => {
+    const continuingPermission = { ...createRuntimePermission(), state: 'continuing' as const }
+    let durable = createSession({
+      status: 'running',
+      runtimeContext: { version: 1, revision: 4, permission: continuingPermission }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({
+          status: 'waiting-permission',
+          runtimeContext: { version: 1, revision: 3, permission: createRuntimePermission() }
+        })
+      )
+    ).resolves.toMatchObject({
+      status: 'running',
+      runtimeContext: { version: 1, revision: 4, permission: continuingPermission }
+    })
+    expect(durable.status).toBe('running')
+    expect(durable.runtimeContext?.permission).toEqual(continuingPermission)
   })
 
   it('preserves main-owned archive state on a stale whole-session save', async () => {
