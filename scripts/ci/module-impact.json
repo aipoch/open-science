@@ -212,6 +212,36 @@
       "capabilityOverlays": ["windows_sensitive"],
       "fallbackCapability": "main_runtime"
     },
+    "user_skills_repository": {
+      "ownerPaths": [
+        "src/main/skills/user-skill-repository.ts",
+        "src/main/skills/skill-mutation-owner.ts"
+      ],
+      "interfacePaths": ["src/main/skills/user-skill-repository.ts"],
+      "consumerModules": ["settings_service_facade"],
+      "testFiles": {
+        "owner": [
+          "src/main/skills/user-skill-repository.architecture.test.ts",
+          "src/main/skills/user-skill-repository.atomic.test.ts",
+          "src/main/skills/user-skill-repository.test.ts"
+        ],
+        "contract": [
+          "src/main/skills/host-skills-service.test.ts",
+          "src/main/skills/skill-archive-sniffer.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
+        ],
+        "consumer": [
+          "src/main/skills/conversation-import.test.ts",
+          "src/main/skills/specialist-package-adapter.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/main/settings/service.test.ts",
+          "src/main/specialist/package/release-certification.test.ts",
+          "src/main/specialist/package/service.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
     "settings_repository": {
       "ownerPaths": [
         "src/main/settings/repository.ts",

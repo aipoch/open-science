@@ -50,6 +50,61 @@ describe('module test impact commands', () => {
     expect(plan.fallbackCapabilities).toEqual(['main_runtime'])
   })
 
+  it('expands User Skill repository changes through Settings and cross-surface consumers', () => {
+    const direct = createModuleTestPlan('user_skills_repository')
+    expect(direct.testFiles).toEqual(
+      expect.arrayContaining([
+        'src/main/skills/user-skill-repository.architecture.test.ts',
+        'src/main/skills/user-skill-repository.atomic.test.ts',
+        'src/main/skills/user-skill-repository.test.ts',
+        'src/main/skills/host-skills-service.test.ts',
+        'src/main/skills/conversation-import.test.ts',
+        'src/main/skills/specialist-package-adapter.test.ts',
+        'src/main/notebook/local-rpc-server.test.ts',
+        'src/main/settings/skill-catalog.test.ts',
+        'src/main/settings/service.test.ts',
+        'src/main/specialist/package/release-certification.test.ts',
+        'src/main/specialist/package/service.test.ts'
+      ])
+    )
+
+    for (const path of [
+      'src/main/skills/user-skill-repository.ts',
+      'src/main/skills/skill-mutation-owner.ts'
+    ]) {
+      const affected = createAffectedTestPlan(
+        [
+          {
+            path,
+            status: 'modified'
+          }
+        ],
+        { status: 'current', testFiles: [] }
+      )
+      expect([...affected.modules].sort()).toEqual([
+        'settings_service_facade',
+        'user_skills_repository',
+        'workspace_page',
+        'workspace_runtime'
+      ])
+      expect(affected.reasonChains).toEqual(
+        expect.arrayContaining([
+          'user_skills_repository -> settings_service_facade',
+          'user_skills_repository -> settings_service_facade -> workspace_runtime',
+          'user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page'
+        ])
+      )
+      expect(affected.testFiles).toEqual(
+        expect.arrayContaining([
+          'src/main/settings/ipc.test.ts',
+          'src/shared/renderer-surface-inventory.test.ts',
+          'src/shared/renderer-surface-matrix.test.ts',
+          'src/shared/web-rpc-contract.test.ts'
+        ])
+      )
+    }
+  })
+
   it('expands changed owners through consumer modules and graph candidates', () => {
     const plan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
