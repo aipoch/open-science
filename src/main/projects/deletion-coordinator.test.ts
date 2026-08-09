@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  ProjectDeletionRecoveryLoop,
   ProjectDeletionCoordinator,
   type ProjectDeletionRepository,
   type ProjectSessionDeletion
 } from './deletion-coordinator'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
-afterEach(() => clearMigrationPending())
+afterEach(() => {
+  clearMigrationPending()
+  vi.useRealTimers()
+})
 
 const project = {
   id: 'project-1',
@@ -224,6 +228,66 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
     expect(sessions.listLegacyProjectSessionTombstones).toHaveBeenCalledOnce()
+  })
+
+  it('restores local barriers for pending intents and legacy tombstones without running cleanup', async () => {
+    const projects = createProjects()
+    projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1', 'project-old'])
+    const sessions = createSessions({
+      listLegacyProjectSessionTombstones: vi
+        .fn()
+        .mockResolvedValue(['project-old', 'project-legacy'])
+    })
+    const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        restoreProjectDeletion
+      }
+    )
+
+    await coordinator.restorePendingDeletionBarriers()
+
+    expect(restoreProjectDeletion.mock.calls).toEqual([
+      ['project-1'],
+      ['project-old'],
+      ['project-legacy']
+    ])
+    expect(sessions.deleteProjectSessions).not.toHaveBeenCalled()
+  })
+
+  it('runs startup recovery in the background and retries a transient failure', async () => {
+    vi.useFakeTimers()
+    const recover = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('compute host offline'))
+      .mockResolvedValueOnce(undefined)
+    const onError = vi.fn()
+    const recovery = new ProjectDeletionRecoveryLoop(recover, {
+      retryDelayMs: 1_000,
+      onError
+    })
+
+    expect(recovery.start()).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(recover).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'compute host offline' })
+    )
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(recover).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(recover).toHaveBeenCalledTimes(2)
+
+    recovery.stop()
   })
 
   it('adopts an orphaned legacy tombstone into an intent before preparing its Session authority', async () => {

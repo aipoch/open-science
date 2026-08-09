@@ -44,6 +44,7 @@ import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
+import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
 import { SystemScpRunner } from './scp-runner'
@@ -175,14 +176,12 @@ type ComputeHandlers = {
     queued_count: number
     provider_ceilings: Record<string, number>
   }>
-  // Lists the contents of a remote directory (non-approval, metadata only).
   listDir: (providerId: string, path: string) => Promise<DirListing>
-  // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
-  // Reveals a local file in the OS file manager (Finder/Explorer).
   revealInFolder: (filePath: string) => void
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
+  concurrencyManager?: ConcurrencyManager
   // Responds to a pending approval request from the renderer. Decision now includes
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
@@ -288,44 +287,38 @@ const createComputeHandlers = (
   // jobs when a slot frees up. It is wired here (not in ComputeService) because it needs a
   // dispatchJob closure carrying the same runner/scp/repository deps the dispatcher uses. Only built
   // for the production path — tests inject their own service and drive the manager directly.
+  const sshRunner = new SystemSshRunner()
+  const scpRunner = new SystemScpRunner()
+  const concurrencyManager =
+    !injectedService && jobRepository
+      ? new ConcurrencyManager(
+          jobRepository,
+          repository,
+          (queuedJobId, handleJobUpdated) =>
+            dispatchJob(queuedJobId, {
+              runner: sshRunner,
+              scpRunner,
+              hostRepository: repository,
+              jobRepository,
+              onJobUpdated: handleJobUpdated
+            }),
+          onJobUpdated
+        )
+      : undefined
   const service =
     injectedService ??
-    (() => {
-      const sshRunner = new SystemSshRunner()
-      const scpRunner = new SystemScpRunner()
-
-      // ConcurrencyManager owns the complete publish-and-drain policy. It hands that same bound
-      // sink to queued dispatches, while ComputeService delegates direct dispatch and poller updates
-      // to it. This keeps one contract without a construction-order callback box.
-      const concurrencyManager = jobRepository
-        ? new ConcurrencyManager(
-            jobRepository,
-            repository,
-            (queuedJobId, handleJobUpdated) =>
-              dispatchJob(queuedJobId, {
-                runner: sshRunner,
-                scpRunner,
-                hostRepository: repository,
-                jobRepository,
-                onJobUpdated: handleJobUpdated
-              }),
-            onJobUpdated
-          )
-        : undefined
-
-      return new ComputeService(
-        sshRunner,
-        repository,
-        broker,
-        scpRunner,
-        undefined,
-        jobRepository,
-        undefined,
-        artifactResolver,
-        storageRoot,
-        concurrencyManager
-      )
-    })()
+    new ComputeService(
+      sshRunner,
+      repository,
+      broker,
+      scpRunner,
+      undefined,
+      jobRepository,
+      undefined,
+      artifactResolver,
+      storageRoot,
+      concurrencyManager
+    )
 
   return {
     list: () => repository.list(),
@@ -379,6 +372,7 @@ const createComputeHandlers = (
       shell.showItemInFolder(filePath)
     },
     computeService: service,
+    concurrencyManager,
     approvalRespond: (id, decision) => broker.respond(id, decision),
     approvalReplay: (id) => broker.getPending(id),
     approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
@@ -449,28 +443,30 @@ export const broadcastJobUpdated = (summary: JobSummary): void => {
   broadcastToRenderers(COMPUTE_JOB_UPDATED_CHANNEL, summary)
 }
 
-// Builds the onJobUpdated hook shared by the JobPoller (poll transitions/tails) and the
-// ComputeService/dispatcher (submitted→running→error transitions). Looks up the host display name
-// asynchronously, then broadcasts. Fire-and-forget: a transient failure to fetch the host falls
-// back to the provider_id string so the broadcast always happens.
 export const createJobUpdatedBroadcaster =
-  (hostRepository: ComputeHostRepository, storageRoot: string): ((job: ComputeJob) => void) =>
+  (
+    hostRepository: ComputeHostRepository,
+    storageRoot: string,
+    jobRepository: Pick<ComputeJobRepository, 'get'>
+  ): ((job: ComputeJob) => void) =>
   (job) => {
-    void hostRepository
-      .get(job.provider_id)
-      .then(async (host) => {
-        const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, storageRoot)
-        broadcastJobUpdated(summary)
-      })
-      .catch(async () => {
-        const summary = await toJobSummary(job, job.provider_id, storageRoot)
-        broadcastJobUpdated(summary)
-      })
+    void (async () => {
+      let displayName = job.provider_id
+      try {
+        const host = await hostRepository.get(job.provider_id)
+        if (host) displayName = host.displayName
+      } catch {
+        // Preserve provider fallback; likewise, only a successful null Job lookup proves deletion.
+      }
+      if (!(await jobRepository.get(job.job_id).catch(() => true))) return
+      broadcastJobUpdated(await toJobSummary(job, displayName, storageRoot))
+    })().catch(() => undefined)
   }
 
 type ComputeIpcModule = {
   handlers: ComputeHandlers
   computeService: ComputeService
+  jobDeletionOwner: ComputeJobDeletionOwner
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
@@ -501,8 +497,7 @@ const createComputeIpcModule = (
     legacyComputeGrants ?? createSettingsComputeGrantPort(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot)
-
+  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot, jobRepository)
   const handlers = createComputeHandlers(
     repository,
     undefined,
@@ -517,10 +512,17 @@ const createComputeIpcModule = (
     permissionGrantRegistry,
     () => syncCurrentComputeSkillDocuments(storageRoot, repository)
   )
+  const jobDeletionOwner = createComputeJobDeletionOwner({
+    jobRepository,
+    hostRepository: repository,
+    runner: new SystemSshRunner(),
+    queueManager: handlers.concurrencyManager
+  })
 
   return {
     handlers,
     computeService: handlers.computeService,
+    jobDeletionOwner,
     jobRepository,
     hostRepository: repository,
     enabledComputeHostsRegistry

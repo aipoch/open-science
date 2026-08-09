@@ -42,6 +42,65 @@ type ProjectPermissionGrantDeletion = {
 
 type ProjectDeletionLifecycle = {
   beforeProjectDelete(projectId: string): Promise<void>
+  restoreProjectDeletion?(projectId: string): Promise<void>
+}
+
+type ProjectDeletionRecoveryLoopOptions = {
+  retryDelayMs?: number
+  onError?: (error: unknown) => void
+}
+
+class ProjectDeletionRecoveryLoop {
+  private readonly retryDelayMs: number
+  private readonly onError: (error: unknown) => void
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private started = false
+  private running = false
+
+  constructor(
+    private readonly recover: () => Promise<void>,
+    options: ProjectDeletionRecoveryLoopOptions = {}
+  ) {
+    this.retryDelayMs = options.retryDelayMs ?? 30_000
+    this.onError = options.onError ?? (() => undefined)
+  }
+
+  start(): void {
+    if (this.started) return
+    this.started = true
+    this.run()
+  }
+
+  stop(): void {
+    this.started = false
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
+  }
+
+  private run(): void {
+    if (!this.started || this.running) return
+    this.running = true
+    void Promise.resolve()
+      .then(() => this.recover())
+      .then(
+        () => {
+          this.running = false
+        },
+        (error: unknown) => {
+          this.running = false
+          try {
+            this.onError(error)
+          } catch {
+            // A diagnostic sink failure must not disable durable deletion recovery.
+          }
+          if (!this.started) return
+          this.timer = setTimeout(() => {
+            this.timer = undefined
+            this.run()
+          }, this.retryDelayMs)
+        }
+      )
+  }
 }
 
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
@@ -86,6 +145,22 @@ class ProjectDeletionCoordinator {
   async recoverPendingDeletions(): Promise<void> {
     await this.operationQueue
     return withDataRootWrite(() => this.recoverPendingDeletionsNow())
+  }
+
+  // Restores fail-closed in-memory barriers from local durable authority only. Startup waits for this
+  // bounded phase, then remote cleanup is retried by ProjectDeletionRecoveryLoop after the app opens.
+  async restorePendingDeletionBarriers(): Promise<void> {
+    await this.operationQueue
+    return withDataRootWrite(async () => {
+      if (!this.lifecycle?.restoreProjectDeletion) return
+      const projectIds = new Set(await this.projects.listDeletionIntents())
+      for (const projectId of await this.sessions.listLegacyProjectSessionTombstones()) {
+        projectIds.add(projectId)
+      }
+      for (const projectId of projectIds) {
+        await this.lifecycle.restoreProjectDeletion(projectId)
+      }
+    })
   }
 
   // Deduplicates concurrent intent scans. Completion remains sticky until queued deletion work starts,
@@ -238,9 +313,10 @@ class ProjectDeletionCoordinator {
   }
 }
 
-export { ProjectDeletionCoordinator }
+export { ProjectDeletionCoordinator, ProjectDeletionRecoveryLoop }
 export type {
   PreviewDeletion,
+  ProjectDeletionRecoveryLoopOptions,
   ProjectDeletionRepository,
   ProjectReviewDeletion,
   ProjectProvenanceDeletion,

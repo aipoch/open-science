@@ -37,12 +37,14 @@ const computePaths = {
   hostOwner: resolve(mainRoot, 'compute/compute-host-profile-owner.ts'),
   remoteOwner: resolve(mainRoot, 'compute/compute-remote-operation-owner.ts'),
   jobOwner: resolve(mainRoot, 'compute/compute-job-workflow-owner.ts'),
+  deletionOwner: resolve(mainRoot, 'compute/job-deletion-owner.ts'),
   jobLifecycle: resolve(mainRoot, 'compute/compute-job-lifecycle.ts'),
   jobRepository: resolve(mainRoot, 'compute/job-repository.ts'),
   concurrencyManager: resolve(mainRoot, 'compute/concurrency-manager.ts'),
   jobDispatcher: resolve(mainRoot, 'compute/job-dispatcher.ts'),
   jobPoller: resolve(mainRoot, 'compute/job-poller.ts'),
   ipc: resolve(mainRoot, 'compute/ipc.ts'),
+  mainIpc: resolve(mainRoot, 'ipc.ts'),
   applicationCommands: resolve(mainRoot, 'compute/application-commands.ts'),
   jobRuntime: resolve(mainRoot, 'compute/job-runtime.ts'),
   localRpc: resolve(mainRoot, 'notebook/local-rpc-server.ts')
@@ -193,6 +195,7 @@ const privateOwnerPaths = [
   computePaths.jobOwner
 ] as const
 const lifecyclePaths = [
+  computePaths.deletionOwner,
   computePaths.jobLifecycle,
   computePaths.jobRepository,
   computePaths.concurrencyManager,
@@ -241,6 +244,9 @@ describe('Compute service architecture', () => {
       .sort()
     expect(publicMethods).toEqual(
       [
+        'abortOwnerDeletion',
+        'beginOwnerDeletion',
+        'deleteOwnerRows',
         'dispatchError',
         'dispatchRunning',
         'finishPolled',
@@ -250,9 +256,9 @@ describe('Compute service architecture', () => {
         'recoverInterruptedDispatch'
       ].sort()
     )
-    expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual([
-      'updateIfStatus'
-    ])
+    expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual(
+      ['abortOwnerDeletion', 'beginOwnerDeletion', 'deleteByOwner', 'updateIfStatus'].sort()
+    )
 
     const lifecycleTarget = modulePath(computePaths.jobLifecycle)
     const importers = productionSourcePaths.flatMap((sourcePath) =>
@@ -264,6 +270,7 @@ describe('Compute service architecture', () => {
     )
     expect(importers).toEqual([
       'src/main/compute/concurrency-manager.ts',
+      'src/main/compute/job-deletion-owner.ts',
       'src/main/compute/job-dispatcher.ts',
       'src/main/compute/job-poller.ts'
     ])
@@ -276,6 +283,27 @@ describe('Compute service architecture', () => {
       expect(calls).not.toContain('update')
       expect(calls).not.toContain('updateIfStatus')
     }
+  })
+
+  it('restores local owner barriers before runtime and defers remote recovery until after startup', () => {
+    const source = readSource(computePaths.mainIpc)
+    const projectBarriers = source.indexOf(
+      'await projectDeletionCoordinator.restorePendingDeletionBarriers()'
+    )
+    const jobBarriers = source.indexOf(
+      'await jobDeletionOwner.restoreOrphanJobDeletionBarriers',
+      projectBarriers
+    )
+    const runtimeStart = source.indexOf('const jobPoller = createComputeJobRuntime', jobBarriers)
+    const backgroundRecovery = source.indexOf(
+      'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
+      runtimeStart
+    )
+
+    expect(projectBarriers).toBeGreaterThan(-1)
+    expect(jobBarriers).toBeGreaterThan(projectBarriers)
+    expect(runtimeStart).toBeGreaterThan(jobBarriers)
+    expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
   })
 
   it('keeps every private owner behind the public facade', () => {
@@ -429,6 +457,7 @@ describe('Compute service architecture', () => {
     expect(computeService.ownerPaths).toEqual([
       'src/main/compute/compute-host-profile-owner.ts',
       'src/main/compute/compute-job-lifecycle.ts',
+      'src/main/compute/job-deletion-owner.ts',
       'src/main/compute/compute-job-workflow-owner.ts',
       'src/main/compute/compute-remote-operation-owner.ts',
       'src/main/compute/concurrency-manager.ts',
@@ -446,6 +475,7 @@ describe('Compute service architecture', () => {
       expect.arrayContaining([
         architectureTestPath,
         'src/main/compute/compute-job-lifecycle.test.ts',
+        'src/main/compute/job-deletion-owner.test.ts',
         'src/main/compute/compute-host-profile-owner.test.ts',
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',

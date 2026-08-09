@@ -177,6 +177,7 @@
       "ownerPaths": [
         "src/main/compute/compute-host-profile-owner.ts",
         "src/main/compute/compute-job-lifecycle.ts",
+        "src/main/compute/job-deletion-owner.ts",
         "src/main/compute/compute-job-workflow-owner.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
         "src/main/compute/concurrency-manager.ts",
@@ -191,6 +192,7 @@
       "testFiles": {
         "owner": [
           "src/main/compute/compute-job-lifecycle.test.ts",
+          "src/main/compute/job-deletion-owner.test.ts",
           "src/main/compute/compute-service.architecture.test.ts",
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",

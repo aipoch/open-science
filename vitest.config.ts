@@ -14,6 +14,15 @@ const VITEST_EXCLUDE_PATTERNS = [
   '**/.worktrees/**',
   '**/.worktree/**'
 ]
+const VITEST_COVERAGE_EXCLUDE_PATTERNS = [
+  '**/*.test.{ts,tsx}',
+  '**/*.d.ts',
+  'src/**/index.ts', // process entry wiring
+  'src/main/ipc.ts', // Electron IPC composition root
+  'src/preload/**', // declarative ipcRenderer bridge
+  'src/**/*types.ts',
+  'src/renderer/src/main.tsx'
+]
 // Full-suite shards collect partial coverage maps. Only the merged report may enforce thresholds.
 
 function coverageThresholdsEnabled(env: NodeJS.ProcessEnv): boolean {
@@ -69,14 +78,7 @@ export default defineConfig({
       reportsDirectory: './coverage',
       include: ['src/**/*.{ts,tsx}'],
       // Exclude non-logic files so coverage reflects testable code, not wiring/types.
-      exclude: [
-        '**/*.test.{ts,tsx}',
-        '**/*.d.ts',
-        'src/**/index.ts', // process entry / IPC composition wiring
-        'src/preload/**', // declarative ipcRenderer bridge
-        'src/**/*types.ts',
-        'src/renderer/src/main.tsx'
-      ],
+      exclude: VITEST_COVERAGE_EXCLUDE_PATTERNS,
       // Baseline thresholds: fail CI when global coverage drops below these. Set ~5pts under the
       // current measured baseline (lines 71 / statements 70 / functions 68 / branches 62) so the gate
       // catches regressions while absorbing minor cross-environment variance. Raise over time.
@@ -106,4 +108,4 @@ export default defineConfig({
   }
 })
 
-export { coverageThresholdsEnabled, VITEST_EXCLUDE_PATTERNS }
+export { coverageThresholdsEnabled, VITEST_COVERAGE_EXCLUDE_PATTERNS, VITEST_EXCLUDE_PATTERNS }

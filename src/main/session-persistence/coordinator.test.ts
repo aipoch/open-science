@@ -3717,12 +3717,22 @@ describe('SessionPersistenceCoordinator', () => {
         .fn()
         .mockRejectedValue(new OrphanLegacyUploadAuthorityMissingError('missing Upload authority'))
     }
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(async () => undefined)
+    }
     const coordinator = new SessionPersistenceCoordinator(
       repository,
       fileIndex,
       undefined,
       undefined,
-      uploads
+      uploads,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
     )
 
     await expect(
@@ -3736,6 +3746,8 @@ describe('SessionPersistenceCoordinator', () => {
 
     expect(fileIndex.markReconciliationIncomplete).toHaveBeenCalledOnce()
     expect(fileIndex.softDeleteProject).toHaveBeenCalledWith('project-1')
+    expect(computeJobs.prepareProjectJobDeletion).toHaveBeenCalledWith('project-1')
+    expect(computeJobs.commitProjectJobDeletion).toHaveBeenCalledWith('project-1')
     expect(repository.markCommittedProjectSessionsPrepared).not.toHaveBeenCalled()
     expect(repository.deleteProjectSessions).not.toHaveBeenCalled()
   })
@@ -4203,6 +4215,307 @@ describe('SessionPersistenceCoordinator', () => {
       sources: ['artifact', 'upload'],
       kind: 'reset'
     })
+  })
+
+  it('keeps Compute Job rows until Session authority commits', async () => {
+    const resources = new Set(['job-row', 'remote-workdir', 'pending-notification'])
+    let sessionAuthorityDeleted = false
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async (projectId: string, sessionId: string) => {
+        expect({ projectId, sessionId }).toEqual({
+          projectId: 'project-1',
+          sessionId: 'session-1'
+        })
+      }),
+      commitSessionJobDeletion: vi.fn(async () => {
+        expect(sessionAuthorityDeleted).toBe(true)
+        resources.delete('remote-workdir')
+        resources.delete('job-row')
+        resources.delete('pending-notification')
+      }),
+      prepareProjectJobDeletion: vi.fn(),
+      commitProjectJobDeletion: vi.fn()
+    }
+    const repository = createSessionRepository({
+      deleteSession: vi.fn(async () => {
+        expect(resources).toEqual(new Set(['job-row', 'remote-workdir', 'pending-notification']))
+        sessionAuthorityDeleted = true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(computeJobs.prepareSessionJobDeletion).toHaveBeenCalledOnce()
+    expect(computeJobs.commitSessionJobDeletion).toHaveBeenCalledOnce()
+    expect(resources).toEqual(new Set())
+  })
+
+  it('keeps Compute Job rows until Project Session authority commits', async () => {
+    const resources = new Set(['job-row', 'remote-workdir', 'pending-notification'])
+    let projectAuthorityDeleted = false
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(async (projectId: string) => {
+        expect(projectId).toBe('project-1')
+      }),
+      commitProjectJobDeletion: vi.fn(async () => {
+        expect(projectAuthorityDeleted).toBe(true)
+        resources.delete('remote-workdir')
+        resources.delete('job-row')
+        resources.delete('pending-notification')
+      })
+    }
+    const repository = createSessionRepository({
+      deleteProjectSessions: vi.fn(async () => {
+        expect(resources).toEqual(new Set(['job-row', 'remote-workdir', 'pending-notification']))
+        projectAuthorityDeleted = true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await coordinator.deleteProjectSessions('project-1')
+
+    expect(computeJobs.prepareProjectJobDeletion).toHaveBeenCalledOnce()
+    expect(computeJobs.commitProjectJobDeletion).toHaveBeenCalledOnce()
+    expect(resources).toEqual(new Set())
+  })
+
+  it('arms Compute Job deletion before Session deletion preparation', async () => {
+    const steps: string[] = []
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => {
+        steps.push('job-barrier')
+      }),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(),
+      commitProjectJobDeletion: vi.fn()
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        loadSessionWithDiagnostics: vi.fn(async () => {
+          steps.push('session-preparation')
+          return { status: 'missing' as const }
+        })
+      }),
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await coordinator.deleteSession('project-1', 'session-1')
+
+    expect(steps).toEqual(['job-barrier', 'session-preparation'])
+  })
+
+  it('arms Compute Job deletion before Project deletion preparation', async () => {
+    const steps: string[] = []
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(async () => {
+        steps.push('job-barrier')
+      }),
+      commitProjectJobDeletion: vi.fn()
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        getProjectSessionDeletionState: vi.fn(async () => {
+          steps.push('project-preparation')
+          return 'absent' as const
+        })
+      }),
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await coordinator.deleteProjectSessions('project-1')
+
+    expect(steps.slice(0, 2)).toEqual(['job-barrier', 'project-preparation'])
+  })
+
+  it('restores Compute Job admission when Session authority deletion fails', async () => {
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => undefined),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(),
+      commitProjectJobDeletion: vi.fn(),
+      abortSessionJobDeletion: vi.fn(async () => undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        deleteSession: vi.fn().mockRejectedValue(new Error('disk locked'))
+      }),
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow('disk locked')
+    expect(computeJobs.abortSessionJobDeletion).toHaveBeenCalledWith('project-1', 'session-1')
+  })
+
+  it('keeps Session authority deleted when post-authority Compute cleanup fails', async () => {
+    const session = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+    })
+    const markReconciliationIncomplete = vi.fn()
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => undefined),
+      commitSessionJobDeletion: vi.fn().mockRejectedValue(new Error('remote cleanup failed')),
+      prepareProjectJobDeletion: vi.fn(),
+      commitProjectJobDeletion: vi.fn(),
+      abortSessionJobDeletion: vi.fn(async () => undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ markReconciliationIncomplete }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'remote cleanup failed'
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(computeJobs.abortSessionJobDeletion).not.toHaveBeenCalled()
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+  })
+
+  it('retains missing Session deletion and the Compute barrier when cleanup fails', async () => {
+    const repository = createSessionRepository()
+    const restoreSession = vi.fn().mockResolvedValue(undefined)
+    const markReconciliationIncomplete = vi.fn()
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(async () => undefined),
+      commitSessionJobDeletion: vi.fn().mockRejectedValue(new Error('remote cleanup failed')),
+      prepareProjectJobDeletion: vi.fn(),
+      commitProjectJobDeletion: vi.fn(),
+      abortSessionJobDeletion: vi.fn(async () => undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex({ restoreSession, markReconciliationIncomplete }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await expect(coordinator.deleteSession('project-1', 'session-1')).rejects.toThrow(
+      'remote cleanup failed'
+    )
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(restoreSession).not.toHaveBeenCalled()
+    expect(computeJobs.abortSessionJobDeletion).not.toHaveBeenCalled()
+    expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+  })
+
+  it('restores Compute Job admission when Project authority deletion stays live', async () => {
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn(),
+      abortProjectJobDeletion: vi.fn(async () => undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        deleteProjectSessions: vi.fn().mockRejectedValue(new Error('directory busy')),
+        getProjectSessionDeletionState: vi.fn().mockResolvedValue('live')
+      }),
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow('directory busy')
+    expect(computeJobs.abortProjectJobDeletion).toHaveBeenCalledWith('project-1')
+  })
+
+  it('retains the Project barrier when cleanup fails after tombstone commit', async () => {
+    let authorityCommitted = false
+    const computeJobs = {
+      prepareSessionJobDeletion: vi.fn(),
+      commitSessionJobDeletion: vi.fn(),
+      prepareProjectJobDeletion: vi.fn(async () => undefined),
+      commitProjectJobDeletion: vi.fn().mockRejectedValue(new Error('remote cleanup failed')),
+      abortProjectJobDeletion: vi.fn(async () => undefined)
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      createSessionRepository({
+        deleteProjectSessions: vi.fn(async () => {
+          authorityCommitted = true
+        }),
+        getProjectSessionDeletionState: vi.fn(async () =>
+          authorityCommitted ? ('prepared' as const) : ('live' as const)
+        )
+      }),
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createTestLogger(),
+      computeJobs
+    )
+
+    await expect(coordinator.deleteProjectSessions('project-1')).rejects.toThrow(
+      'remote cleanup failed'
+    )
+    expect(computeJobs.abortProjectJobDeletion).not.toHaveBeenCalled()
   })
 })
 

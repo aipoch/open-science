@@ -41,6 +41,7 @@ describe('module test impact commands', () => {
     expect(plan.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-job-lifecycle.test.ts',
+        'src/main/compute/job-deletion-owner.test.ts',
         'src/main/compute/compute-service.test.ts',
         'src/main/compute/ssh-runner.test.ts',
         'src/main/compute/ipc.test.ts',
@@ -65,6 +66,7 @@ describe('module test impact commands', () => {
 
   it.each([
     'src/main/compute/compute-job-lifecycle.ts',
+    'src/main/compute/job-deletion-owner.ts',
     'src/main/compute/job-repository.ts',
     'src/main/compute/concurrency-manager.ts',
     'src/main/compute/job-dispatcher.ts',
@@ -81,6 +83,7 @@ describe('module test impact commands', () => {
       expect.arrayContaining([
         'src/main/compute/compute-service.architecture.test.ts',
         'src/main/compute/compute-job-lifecycle.test.ts',
+        'src/main/compute/job-deletion-owner.test.ts',
         'src/main/compute/concurrency-manager.test.ts',
         'src/main/compute/job-dispatcher.test.ts',
         'src/main/compute/job-poller.test.ts',

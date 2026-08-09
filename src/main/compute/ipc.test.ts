@@ -908,11 +908,19 @@ describe('createJobUpdatedBroadcaster', () => {
     })
   }
 
+  const liveJobRepository = (): Pick<ComputeJobRepository, 'get'> => ({
+    get: vi.fn(async () => sampleJob())
+  })
+
   it('looks up the host by provider_id and uses its display_name on success', async () => {
     const get = vi.fn(() =>
       Promise.resolve(sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' }))
     )
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob())
@@ -928,7 +936,11 @@ describe('createJobUpdatedBroadcaster', () => {
 
   it('falls back to the provider_id as display_name when hostRepository.get rejects', async () => {
     const get = vi.fn(() => Promise.reject(new Error('db locked')))
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob({ provider_id: 'ssh:lab-gpu' }))
@@ -941,7 +953,11 @@ describe('createJobUpdatedBroadcaster', () => {
 
   it('falls back to the provider_id as display_name when the host row is missing', async () => {
     const get = vi.fn(() => Promise.resolve(null))
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob({ provider_id: 'ssh:unknown' }))
@@ -949,6 +965,48 @@ describe('createJobUpdatedBroadcaster', () => {
 
     const summary = result.payload as { provider_id: string; display_name: string }
     expect(summary.display_name).toBe('ssh:unknown')
+  })
+
+  it('drops a delayed update after the Job owner has been deleted', async () => {
+    const sink = vi.fn()
+    const remove = addRendererBroadcastSink(sink)
+    const jobRepository = { get: vi.fn(async () => null) }
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      jobRepository
+    )
+
+    broadcaster(sampleJob())
+    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalledWith('job-bcast'))
+
+    expect(sink).not.toHaveBeenCalled()
+    remove()
+  })
+
+  it('broadcasts a persisted update when the Job existence lookup fails transiently', async () => {
+    const sink = vi.fn()
+    const remove = addRendererBroadcastSink(sink)
+    const jobRepository = {
+      get: vi.fn(async () => {
+        throw new Error('database temporarily unavailable')
+      })
+    }
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      jobRepository
+    )
+
+    broadcaster(sampleJob({ status: 'success' }))
+
+    await vi.waitFor(() =>
+      expect(sink).toHaveBeenCalledWith(
+        COMPUTE_JOB_UPDATED_CHANNEL,
+        expect.objectContaining({ job_id: 'job-bcast', status: 'success' })
+      )
+    )
+    remove()
   })
 
   it('broadcastJobUpdated is a thin wrapper that emits on the documented channel', async () => {

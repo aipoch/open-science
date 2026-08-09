@@ -34,10 +34,12 @@ const createMockHostRepo = (): ComputeHostRepository =>
     delete: vi.fn()
   }) as unknown as ComputeHostRepository
 
-const createMockDispatchJob = (): ((
-  jobId: string,
-  onJobUpdated: (job: ComputeJob) => void
-) => Promise<void>) => vi.fn(() => Promise.resolve())
+const createMockDispatchJob = (): Mock<
+  (jobId: string, onJobUpdated: (job: ComputeJob) => void) => Promise<void>
+> =>
+  vi.fn<(jobId: string, onJobUpdated: (job: ComputeJob) => void) => Promise<void>>(() =>
+    Promise.resolve()
+  )
 
 describe('ConcurrencyManager', () => {
   let jobRepo: ComputeJobRepository
@@ -242,6 +244,45 @@ describe('ConcurrencyManager', () => {
       await manager.onJobCompleted()
 
       expect(tryDispatchNextSpy).toHaveBeenCalledOnce()
+    })
+
+    it('drains an owner promotion before pausing and rejects later promotions', async () => {
+      let releaseDispatch: (() => void) | undefined
+      dispatchJob.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseDispatch = resolve
+          })
+      )
+      const queuedJob = {
+        job_id: 'job-1',
+        project_id: 'project-1',
+        session_id: 'session-1',
+        provider_id: 'ssh:cluster-a',
+        created_at: 1000,
+        status: 'queued'
+      } as ComputeJob
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([queuedJob])
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+
+      const dispatching = manager.onJobCompleted()
+      await vi.waitFor(() => expect(dispatchJob).toHaveBeenCalledOnce())
+      const pausing = manager.pauseOwner({ projectId: 'project-1', sessionId: 'session-1' })
+
+      releaseDispatch?.()
+      await Promise.all([dispatching, pausing])
+      vi.mocked(jobRepo.updateIfStatus).mockClear()
+      dispatchJob.mockClear()
+
+      await manager.onJobCompleted()
+
+      expect(jobRepo.updateIfStatus).not.toHaveBeenCalled()
+      expect(dispatchJob).not.toHaveBeenCalled()
+
+      manager.resumeOwner({ projectId: 'project-1', sessionId: 'session-1' })
+      await vi.waitFor(() => expect(jobRepo.updateIfStatus).toHaveBeenCalledOnce())
     })
   })
 

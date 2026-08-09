@@ -11,6 +11,7 @@ import type { ComputeHostRepository } from './repository'
 import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
 import type { ConcurrencyManager } from './concurrency-manager'
+import { sharedDispatchTracker } from './dispatch-tracker'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -208,6 +209,66 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('tracks a committed submitted row through dispatcher registration', async () => {
+    const runner = makeFakeRunner({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'dispatch stopped',
+      truncated: false,
+      timedOut: false
+    })
+    const { repo: jobRepo, createCalls } = makeJobRepo()
+    const { repo } = makeRepo()
+    const broker = {
+      request: vi.fn(),
+      requestWithContext: vi.fn(() => Promise.resolve('once' as const)),
+      respond: vi.fn()
+    } as unknown as ComputeApprovalBroker
+    let handoffWait: Promise<void> | undefined
+    const concurrencyManager = {
+      enqueue: vi.fn(async () => 'can_dispatch' as const),
+      admit: vi.fn(
+        async (
+          _params: { sessionId: string; providerId: string },
+          commit: (status: 'submitted' | 'queued') => Promise<void>
+        ): Promise<'submitted'> => {
+          await commit('submitted')
+          const request = createCalls.mock.calls[0]?.[0] as
+            import('./job-repository').CreateJobRequest | undefined
+          expect(request).toBeDefined()
+          expect(sharedDispatchTracker.has(request!.id)).toBe(true)
+          const settled = vi.fn()
+          handoffWait = sharedDispatchTracker.waitFor([request!.id]).then(settled)
+          await Promise.resolve()
+          expect(settled).not.toHaveBeenCalled()
+          return 'submitted'
+        }
+      )
+    } as unknown as ConcurrencyManager
+    const service = makeOwner(
+      runner,
+      repo,
+      broker,
+      jobRepo,
+      undefined,
+      undefined,
+      undefined,
+      concurrencyManager
+    )
+
+    const result = await service.submitJob(
+      'ssh:biowulf',
+      'test dispatch handoff',
+      'echo hi',
+      {},
+      { sessionId: 's1', projectId: 'p1' }
+    )
+
+    expect(handoffWait).toBeDefined()
+    await handoffWait
+    expect(sharedDispatchTracker.has(result.job_id)).toBe(false)
+  })
+
   it('returns job_id + remote_workdir immediately (before dispatch)', async () => {
     // Runner should never be called for submit_job itself (dispatch is background).
     const runner = makeFakeRunner({

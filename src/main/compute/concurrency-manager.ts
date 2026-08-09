@@ -1,4 +1,4 @@
-import type { ComputeJobRepository } from './job-repository'
+import type { ComputeJobOwner, ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJob } from '../../shared/compute'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
@@ -41,6 +41,9 @@ export class ConcurrencyManager {
   // section — the row written by one admit is visible to the DB counts read by the next.
   private admitLock: Promise<unknown> = Promise.resolve()
   private readonly lifecycle: ComputeJobLifecycle
+  private readonly pausedProjects = new Set<string>()
+  private readonly pausedSessions = new Set<string>()
+  private readonly ownerOperations = new Map<Promise<void>, ComputeJobOwner>()
 
   constructor(
     private readonly jobRepository: ComputeJobRepository,
@@ -63,6 +66,25 @@ export class ConcurrencyManager {
   // Set session-level concurrency limit (stored in memory, not persisted).
   setSessionLimit(sessionId: string, limit: number): void {
     this.sessionLimits.set(sessionId, limit)
+  }
+
+  async pauseOwner(owner: ComputeJobOwner): Promise<void> {
+    if (owner.sessionId === undefined) this.pausedProjects.add(owner.projectId)
+    else this.pausedSessions.add(this.sessionOwnerKey(owner.projectId, owner.sessionId))
+
+    while (true) {
+      const operations = [...this.ownerOperations].flatMap(([operation, candidate]) =>
+        this.ownerMatches(owner, candidate) ? [operation] : []
+      )
+      if (operations.length === 0) return
+      await Promise.allSettled(operations)
+    }
+  }
+
+  resumeOwner(owner: ComputeJobOwner): void {
+    if (owner.sessionId === undefined) this.pausedProjects.delete(owner.projectId)
+    else this.pausedSessions.delete(this.sessionOwnerKey(owner.projectId, owner.sessionId))
+    void this.onJobCompleted()
   }
 
   // Runs `fn` while holding the admit lock, serializing it against every other runExclusive call.
@@ -195,31 +217,62 @@ export class ConcurrencyManager {
       const queuedJobs = await this.jobRepository.findQueuedJobs()
 
       for (const job of queuedJobs) {
-        // Reserve the slot atomically against admit() and other promotions: the re-check of both
-        // limits and the status flip to 'submitted' run inside the SAME admitLock as admit(), so a
-        // concurrent new submission cannot also claim this slot and overrun a provider ceiling /
-        // session limit. Without this shared lock the promotion and an admission each read the same
-        // active count and both become 'submitted' (the race admit() was added to close).
-        //
-        // The slow dispatchJob (SSH staging/launch) runs OUTSIDE the lock: once the row is
-        // 'submitted' it counts as active, so any later admit()/promotion sees it. Holding the lock
-        // across SSH work would serialize every submission behind network latency.
-        const reserved = await this.runExclusive(async () => {
-          if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
-          const promotion = await this.lifecycle.promoteQueued(job.job_id)
-          return promotion.kind === 'applied'
-        })
-        if (!reserved) continue // limits hit — leave queued for a future completion
+        const owner = { projectId: job.project_id, sessionId: job.session_id }
+        if (this.isOwnerPaused(owner)) continue
+        const operation = (async (): Promise<void> => {
+          // Reserve the slot atomically against admit() and other promotions: the re-check of both
+          // limits and the status flip to 'submitted' run inside the SAME admitLock as admit(), so a
+          // concurrent new submission cannot also claim this slot and overrun a provider ceiling /
+          // session limit. Without this shared lock the promotion and an admission each read the same
+          // active count and both become 'submitted' (the race admit() was added to close).
+          //
+          // The slow dispatchJob (SSH staging/launch) runs OUTSIDE the lock: once the row is
+          // 'submitted' it counts as active, so any later admit()/promotion sees it. Holding the lock
+          // across SSH work would serialize every submission behind network latency.
+          const reserved = await this.runExclusive(async () => {
+            if (this.isOwnerPaused(owner)) return false
+            if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
+            if (this.isOwnerPaused(owner)) return false
+            const promotion = await this.lifecycle.promoteQueued(job.job_id)
+            return promotion.kind === 'applied'
+          })
+          if (!reserved) return
 
+          try {
+            await this.dispatchJob(job.job_id, this.handleJobUpdated)
+          } catch {
+            // If dispatch fails, mark job as error and continue to next queued job.
+            await this.lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed' })
+          }
+        })()
+        this.ownerOperations.set(operation, owner)
         try {
-          await this.dispatchJob(job.job_id, this.handleJobUpdated)
-        } catch {
-          // If dispatch fails, mark job as error and continue to next queued job.
-          await this.lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed' })
+          await operation
+        } finally {
+          this.ownerOperations.delete(operation)
         }
       }
     } finally {
       this.dispatching = false
     }
+  }
+
+  private isOwnerPaused(owner: ComputeJobOwner): boolean {
+    return (
+      this.pausedProjects.has(owner.projectId) ||
+      (owner.sessionId !== undefined &&
+        this.pausedSessions.has(this.sessionOwnerKey(owner.projectId, owner.sessionId)))
+    )
+  }
+
+  private ownerMatches(scope: ComputeJobOwner, candidate: ComputeJobOwner): boolean {
+    return (
+      scope.projectId === candidate.projectId &&
+      (scope.sessionId === undefined || scope.sessionId === candidate.sessionId)
+    )
+  }
+
+  private sessionOwnerKey(projectId: string, sessionId: string): string {
+    return JSON.stringify([projectId, sessionId])
   }
 }

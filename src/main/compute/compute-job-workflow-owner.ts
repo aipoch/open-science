@@ -12,6 +12,7 @@ import type {
 import { getNotebookSessionRoot } from '../notebook/repository'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
+import { sharedDispatchTracker } from './dispatch-tracker'
 import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
 import type { StagedInputEntry } from './job-dispatcher'
 import type { ComputeJobRepository } from './job-repository'
@@ -269,7 +270,12 @@ export class ComputeJobWorkflowOwner {
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
     const jobRepository = this.jobRepository
+    let dispatchHandoffHeld = false
     const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
+      if (initialStatus === 'submitted') {
+        sharedDispatchTracker.begin(jobId)
+        dispatchHandoffHeld = true
+      }
       await jobRepository.create({
         id: jobId,
         providerId: host.providerId,
@@ -291,25 +297,29 @@ export class ComputeJobWorkflowOwner {
     }
 
     let initialStatus: 'submitted' | 'queued' = 'submitted'
-    if (this.concurrencyManager) {
-      const admitted = await this.concurrencyManager.admit(
-        { sessionId: context.sessionId, providerId },
-        createRow
-      )
-      if (admitted === 'queue_full') throw queueFullError()
-      initialStatus = admitted
-    } else {
-      await createRow('submitted')
-    }
+    try {
+      if (this.concurrencyManager) {
+        const admitted = await this.concurrencyManager.admit(
+          { sessionId: context.sessionId, providerId },
+          createRow
+        )
+        if (admitted === 'queue_full') throw queueFullError()
+        initialStatus = admitted
+      } else {
+        await createRow('submitted')
+      }
 
-    if (initialStatus === 'submitted') {
-      void dispatchJob(jobId, {
-        runner: this.runner,
-        scpRunner: this.scpRunner,
-        hostRepository: this.hostRepository,
-        jobRepository: this.jobRepository,
-        onJobUpdated: this.handleJobUpdated
-      })
+      if (initialStatus === 'submitted') {
+        void dispatchJob(jobId, {
+          runner: this.runner,
+          scpRunner: this.scpRunner,
+          hostRepository: this.hostRepository,
+          jobRepository: this.jobRepository,
+          onJobUpdated: this.handleJobUpdated
+        })
+      }
+    } finally {
+      if (dispatchHandoffHeld) sharedDispatchTracker.end(jobId)
     }
 
     return {

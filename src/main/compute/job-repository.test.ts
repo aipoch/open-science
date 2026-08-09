@@ -776,4 +776,54 @@ describe('ComputeJob schema migration (integration)', () => {
     expect(queuedJobs[0]!.created_at).toBeLessThan(queuedJobs[1]!.created_at)
     expect(queuedJobs[1]!.created_at).toBeLessThan(queuedJobs[2]!.created_at)
   })
+
+  it('blocks admission and deletes rows and notifications by owner scope', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-owner-delete-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const create = (
+      id: string,
+      projectId: string,
+      sessionId: string
+    ): ReturnType<ComputeJobRepository['create']> =>
+      repo.create({
+        id,
+        providerId: 'ssh:test',
+        shape: 'direct_ssh',
+        sessionId,
+        projectId,
+        intent: id,
+        command: 'echo ok',
+        commandHash: id
+      })
+
+    await create('owned-job', 'project-1', 'session-1')
+    await repo.update('owned-job', { notifiedAt: new Date() })
+    await create('survivor', 'project-1', 'session-2')
+    const owner = { projectId: 'project-1', sessionId: 'session-1' }
+
+    expect(await repo.listOwners()).toEqual([
+      { projectId: 'project-1', sessionId: 'session-1' },
+      { projectId: 'project-1', sessionId: 'session-2' }
+    ])
+
+    await repo.beginOwnerDeletion(owner)
+    await expect(create('late-job', 'project-1', 'session-1')).rejects.toThrow(/being deleted/i)
+    expect((await repo.findByOwner(owner)).map((item) => item.job_id)).toEqual(['owned-job'])
+    await repo.deleteByOwner(owner)
+
+    await expect(create('post-commit-job', 'project-1', 'session-1')).rejects.toThrow(
+      /being deleted/i
+    )
+    expect(await repo.get('owned-job')).toBeNull()
+    expect(await repo.findPendingNotifications('session-1')).toEqual([])
+    expect(await repo.get('survivor')).not.toBeNull()
+
+    await repo.abortOwnerDeletion(owner)
+    await expect(create('retry-job', 'project-1', 'session-1')).resolves.toMatchObject({
+      job_id: 'retry-job'
+    })
+  })
 })

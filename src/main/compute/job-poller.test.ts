@@ -110,6 +110,42 @@ const sampleHost = (): import('../../shared/compute').ComputeHost => ({
 // ---------------------------------------------------------------------------
 
 describe('JobPoller', () => {
+  it('pause waits for in-flight harvest work before deletion continues', async () => {
+    let finishHarvest!: () => void
+    const harvest = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishHarvest = resolve
+        })
+    )
+    const jobRepo = {
+      findTerminalUnharvested: vi.fn(async () => [makeJob({ status: 'success' })]),
+      findErrorUnnotified: vi.fn(async () => []),
+      findNonTerminal: vi.fn(async () => [])
+    } as unknown as ComputeJobRepository
+    const poller = new JobPoller({
+      runner: makeSshRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: jobRepo,
+      harvestFn: harvest
+    })
+
+    await poller.tick()
+    const paused = vi.fn()
+    const pausing = poller.pause().then(paused)
+    await Promise.resolve()
+    expect(paused).not.toHaveBeenCalled()
+    finishHarvest()
+    await pausing
+    expect(paused).toHaveBeenCalledOnce()
+  })
+
   it('transitions job to success when exit_code=0 is found', async () => {
     const job = makeJob()
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))

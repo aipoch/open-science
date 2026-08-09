@@ -89,6 +89,9 @@ type VanishState = { ticks: number }
 // bounded by a concurrency semaphore of 2 and an in-flight dedup Set (design §3).
 export class JobPoller {
   private handle: ReturnType<typeof setInterval> | undefined
+  private paused = false
+  private readonly activeTicks = new Set<Promise<void>>()
+  private readonly backgroundTasks = new Set<Promise<void>>()
   private readonly vanishCounters = new Map<string, VanishState>()
   private readonly pollResultChains = new Map<string, Promise<void>>()
 
@@ -128,15 +131,48 @@ export class JobPoller {
   start(): void {
     if (this.handle) return // already running
 
-    void this.tick() // first tick immediately (restart recovery)
-    this.handle = this.setIntervalFn(() => void this.tick(), POLL_INTERVAL_MS)
+    this.paused = false
+    this.runTick() // first tick immediately (restart recovery)
+    this.handle = this.setIntervalFn(() => this.runTick(), POLL_INTERVAL_MS)
   }
 
   stop(): void {
+    this.paused = true
     if (this.handle) {
       this.clearIntervalFn(this.handle)
       this.handle = undefined
     }
+  }
+
+  async pause(): Promise<void> {
+    this.paused = true
+    while (this.activeTicks.size > 0 || this.backgroundTasks.size > 0) {
+      await Promise.allSettled([...this.activeTicks, ...this.backgroundTasks])
+    }
+  }
+
+  resume(): void {
+    if (!this.paused) return
+    this.paused = false
+    if (this.handle) this.runTick()
+  }
+
+  private runTick(): void {
+    if (this.paused) return
+    const task = this.tick()
+    this.activeTicks.add(task)
+    void task.then(
+      () => this.activeTicks.delete(task),
+      () => this.activeTicks.delete(task)
+    )
+  }
+
+  private trackBackground(task: Promise<void>): void {
+    this.backgroundTasks.add(task)
+    void task.then(
+      () => this.backgroundTasks.delete(task),
+      () => this.backgroundTasks.delete(task)
+    )
   }
 
   // One poll cycle: group non-terminal jobs by provider, poll each provider's jobs.
@@ -166,7 +202,7 @@ export class JobPoller {
         // in-flight set closes that window (mirrors inFlightHarvests for the harvest scan).
         if (this.inFlightErrorNotifs.has(job.job_id)) continue
         this.inFlightErrorNotifs.add(job.job_id)
-        void emitJobNotification(job, {
+        const task = emitJobNotification(job, {
           jobRepository: this.deps.jobRepository,
           hostRepository: this.deps.hostRepository,
           storageRoot,
@@ -178,6 +214,7 @@ export class JobPoller {
           .finally(() => {
             this.inFlightErrorNotifs.delete(job.job_id)
           })
+        this.trackBackground(task)
       }
     }
 
@@ -230,7 +267,7 @@ export class JobPoller {
     this.harvestSemaphore--
 
     // Fire-and-forget: intentionally not awaited.
-    void this.harvestFn(job)
+    const task = this.harvestFn(job)
       .catch(() => {
         // Individual harvest failures must not propagate to the poller (design §3: error isolation).
       })
@@ -243,6 +280,7 @@ export class JobPoller {
           this._runHarvest(next)
         }
       })
+    this.trackBackground(task)
   }
 
   // Polls all jobs for one provider in a single SSH round-trip (where possible).
@@ -272,7 +310,7 @@ export class JobPoller {
       // Emit compute_done notification for execution-error jobs (design §8: error is a final
       // resting state). Fire-and-forget: notification failure must not break the poller tick.
       if (this.deps.broadcast && this.deps.storageRoot) {
-        void emitJobNotification(updated, {
+        const task = emitJobNotification(updated, {
           jobRepository: this.deps.jobRepository,
           hostRepository: this.deps.hostRepository,
           storageRoot: this.deps.storageRoot,
@@ -280,6 +318,7 @@ export class JobPoller {
         }).catch(() => {
           // Non-fatal: job status is already persisted.
         })
+        this.trackBackground(task)
       }
     }
 

@@ -147,7 +147,10 @@ import {
 } from './session-persistence/conversation-export'
 import { createProjectFilesHandlers, registerProjectFilesIpcHandlers } from './project-files/ipc'
 import { createManagedFileIndexRepository } from './project-files/repository'
-import { ProjectDeletionCoordinator } from './projects/deletion-coordinator'
+import {
+  ProjectDeletionCoordinator,
+  ProjectDeletionRecoveryLoop
+} from './projects/deletion-coordinator'
 import { getProjectDbClient } from './projects/prisma-client'
 import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
@@ -155,7 +158,10 @@ import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
 import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
 import { reconcilePermissionGrantOwners } from './permission-grants/reconciliation'
-import { SessionPersistenceCoordinator } from './session-persistence/coordinator'
+import {
+  SessionPersistenceCoordinator,
+  type ComputeJobDeletionParticipant
+} from './session-persistence/coordinator'
 import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
@@ -514,6 +520,51 @@ const createApplicationModules = async (
     configRoot,
     resolveDataRoot()
   )
+  const computeJobDeletionRef: { current?: Required<ComputeJobDeletionParticipant> } = {}
+  const computeJobDeletionPort = {
+    restoreProjectJobDeletion: (projectId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.restoreProjectJobDeletion(projectId)
+    },
+    prepareSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.prepareSessionJobDeletion(projectId, sessionId)
+    },
+    commitSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.commitSessionJobDeletion(projectId, sessionId)
+    },
+    prepareProjectJobDeletion: (projectId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.prepareProjectJobDeletion(projectId)
+    },
+    commitProjectJobDeletion: (projectId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.commitProjectJobDeletion(projectId)
+    },
+    abortSessionJobDeletion: (projectId: string, sessionId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.abortSessionJobDeletion(projectId, sessionId)
+    },
+    abortProjectJobDeletion: (projectId: string): Promise<void> => {
+      if (!computeJobDeletionRef.current) {
+        throw new Error('Compute Job deletion is not initialized.')
+      }
+      return computeJobDeletionRef.current.abortProjectJobDeletion(projectId)
+    }
+  }
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -524,7 +575,9 @@ const createApplicationModules = async (
     {
       reconcileSessions: (sessions) =>
         reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
-    }
+    },
+    undefined,
+    computeJobDeletionPort
   )
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
@@ -567,7 +620,9 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     {
       beforeProjectDelete: (projectId) =>
-        sideChatOwnerRef.current?.invalidateProject(projectId) ?? Promise.resolve()
+        sideChatOwnerRef.current?.invalidateProject(projectId) ?? Promise.resolve(),
+      restoreProjectDeletion: (projectId) =>
+        computeJobDeletionPort.restoreProjectJobDeletion(projectId)
     }
   )
   const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
@@ -1009,10 +1064,28 @@ const createApplicationModules = async (
   surfaceAdapters = beforeAcpAdapters
   const {
     computeService,
+    jobDeletionOwner,
     jobRepository,
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
+  computeJobDeletionRef.current = jobDeletionOwner
+  const isComputeJobOwnerLive = async ({
+    projectId,
+    sessionId
+  }: {
+    projectId: string
+    sessionId: string
+  }): Promise<boolean> => {
+    if (!(await projectRepository.get(projectId))) return false
+    const owner = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId)
+    if (owner.status === 'unreadable') {
+      throw new Error(`Cannot reconcile Compute Jobs for unreadable Session ${sessionId}.`)
+    }
+    return owner.status === 'found'
+  }
+  await projectDeletionCoordinator.restorePendingDeletionBarriers()
+  await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   const dataRoot = resolveDataRoot()
   // Start the JobPoller wired to the shared broadcaster so every state/tail change is pushed to all
   // renderer windows via 'compute:job-updated' (Phase 3d, design.md §9 + §15.3). The dispatcher
@@ -1020,7 +1093,13 @@ const createApplicationModules = async (
   // Phase 3b: harvestFn drives automatic harvest on terminal transitions; broadcast + storageRoot
   // wire the compute_done notification emitter for all three terminal outcomes (issue 06).
   await modules.add(
-    { computeService, hostRepository, jobRepository, storageRoot: dataRoot },
+    {
+      computeService,
+      jobDeletionOwner,
+      hostRepository,
+      jobRepository,
+      storageRoot: dataRoot
+    },
     (dependencies) => {
       const jobPoller = createComputeJobRuntime(dependencies)
       return {
@@ -1031,6 +1110,25 @@ const createApplicationModules = async (
       }
     }
   )
+  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
+    async () => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+    },
+    {
+      onError: (error) =>
+        createLogger('compute-job-deletion').error(
+          'background deletion recovery failed; retry scheduled',
+          diagnosticErrorFields(error)
+        )
+    }
+  )
+  await modules.add(projectDeletionRecovery, (recovery) => ({
+    name: 'project-deletion-recovery',
+    capability: undefined,
+    start: () => recovery.start(),
+    dispose: () => recovery.stop()
+  }))
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)

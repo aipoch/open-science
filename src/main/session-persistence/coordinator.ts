@@ -35,6 +35,7 @@ import {
 } from './side-chat-owner'
 import {
   SessionPersistenceDeletionOwner,
+  type ComputeJobDeletionParticipant,
   type ProjectSessionDeletionResult
 } from './deletion-owner'
 import {
@@ -141,7 +142,8 @@ class SessionPersistenceCoordinator {
     uploads?: SessionUploadPersistence,
     artifactStorage?: ArtifactStorageReconciler,
     permissionGrants?: SessionPermissionGrantReconciliation,
-    private readonly log: Logger = createLogger('session-persistence')
+    private readonly log: Logger = createLogger('session-persistence'),
+    private readonly computeJobs?: ComputeJobDeletionParticipant
   ) {
     const assertMutable = (
       projectId: string,
@@ -175,6 +177,7 @@ class SessionPersistenceCoordinator {
       stateOwner: this.stateOwner,
       provenance,
       uploads,
+      computeJobs,
       assertArchiveMutable: (projectId, sessionId) => {
         if (this.deletedProjects.has(projectId)) {
           throw new Error('Cannot archive a Session whose project has been deleted.')
@@ -533,6 +536,7 @@ class SessionPersistenceCoordinator {
           const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
           if (state === 'live' || state === 'absent') {
             this.deletedProjects.delete(projectId)
+            await this.computeJobs?.abortProjectJobDeletion?.(projectId)
           }
         } catch {
           // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
@@ -659,6 +663,7 @@ const sessionKey = (projectId: string, sessionId: string): string => `${projectI
 
 export { SessionPersistenceCoordinator, SessionRuntimeContextRevisionConflictError }
 export type {
+  ComputeJobDeletionParticipant,
   PatchSessionRuntimeContextCommand,
   ProjectSessionDeletionResult,
   SessionDeletionHandlers,

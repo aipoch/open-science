@@ -1,5 +1,5 @@
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
-import type { ComputeJobRepository, UpdateJobRequest } from './job-repository'
+import type { ComputeJobOwner, ComputeJobRepository, UpdateJobRequest } from './job-repository'
 
 export type ComputeJobTransitionResult = { kind: 'applied'; job: ComputeJob } | { kind: 'ignored' }
 
@@ -16,6 +16,18 @@ export class ComputeJobLifecycle {
     private readonly repository: ComputeJobRepository,
     private readonly onApplied: (job: ComputeJob) => void = () => undefined
   ) {}
+
+  beginOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    return this.repository.beginOwnerDeletion(owner)
+  }
+
+  deleteOwnerRows(owner: ComputeJobOwner): Promise<void> {
+    return this.repository.deleteByOwner(owner)
+  }
+
+  abortOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    return this.repository.abortOwnerDeletion(owner)
+  }
 
   async promoteQueued(jobId: string): Promise<ComputeJobTransitionResult> {
     return this.apply(jobId, ['queued'], {

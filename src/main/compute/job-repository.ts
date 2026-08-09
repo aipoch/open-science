@@ -5,6 +5,24 @@ import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
 
+export type ComputeJobOwner = Readonly<{
+  projectId: string
+  sessionId?: string
+}>
+
+export type ComputeJobSessionOwner = Readonly<{
+  projectId: string
+  sessionId: string
+}>
+
+const ownerWhere = (owner: ComputeJobOwner): { projectId: string; sessionId?: string } => ({
+  projectId: owner.projectId,
+  ...(owner.sessionId === undefined ? {} : { sessionId: owner.sessionId })
+})
+
+const sessionOwnerKey = (projectId: string, sessionId: string): string =>
+  JSON.stringify([projectId, sessionId])
+
 const asStatus = (value: string): ComputeJobStatus => {
   const valid: ComputeJobStatus[] = [
     'queued',
@@ -124,33 +142,79 @@ const toUpdateData = (updates: UpdateJobRequest): ComputeJobUpdateData => {
 
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
+  private mutationQueue: Promise<unknown> = Promise.resolve()
+  private readonly deletingProjects = new Set<string>()
+  private readonly deletingSessions = new Set<string>()
+
   constructor(private readonly getClient: ComputeJobClientProvider) {}
 
-  async create(request: CreateJobRequest): Promise<ComputeJob> {
-    const client = await this.getClient()
-    const initialStatus = request.initialStatus ?? 'submitted'
-    const row = await client.computeJob.create({
-      data: {
-        id: request.id,
-        providerId: request.providerId,
-        shape: request.shape,
-        sessionId: request.sessionId,
-        projectId: request.projectId,
-        status: initialStatus,
-        intent: request.intent,
-        command: request.command,
-        commandHash: request.commandHash,
-        environment: request.environment,
-        resourceRequest: request.resourceRequest,
-        inputManifest: request.inputManifest,
-        outputManifest: request.outputManifest,
-        harvestConfig: request.harvestConfig,
-        timeoutSeconds: request.timeoutSeconds,
-        remoteWorkdir: request.remoteWorkdir,
-        submittedAt: initialStatus === 'submitted' ? new Date() : undefined
-      }
+  async beginOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      if (owner.sessionId === undefined) this.deletingProjects.add(owner.projectId)
+      else this.deletingSessions.add(sessionOwnerKey(owner.projectId, owner.sessionId))
     })
-    return toJob(row)
+  }
+
+  async abortOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      if (owner.sessionId === undefined) this.deletingProjects.delete(owner.projectId)
+      else this.deletingSessions.delete(sessionOwnerKey(owner.projectId, owner.sessionId))
+    })
+  }
+
+  async findByOwner(owner: ComputeJobOwner): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: ownerWhere(owner),
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
+  }
+
+  async listOwners(): Promise<ComputeJobSessionOwner[]> {
+    const client = await this.getClient()
+    return client.computeJob.findMany({
+      select: { projectId: true, sessionId: true },
+      distinct: ['projectId', 'sessionId'],
+      orderBy: [{ projectId: 'asc' }, { sessionId: 'asc' }]
+    })
+  }
+
+  async deleteByOwner(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.computeJob.deleteMany({ where: ownerWhere(owner) })
+    })
+  }
+
+  async create(request: CreateJobRequest): Promise<ComputeJob> {
+    return this.runMutation(async () => {
+      this.assertOwnerMutable(request.projectId, request.sessionId)
+      const client = await this.getClient()
+      const initialStatus = request.initialStatus ?? 'submitted'
+      const row = await client.computeJob.create({
+        data: {
+          id: request.id,
+          providerId: request.providerId,
+          shape: request.shape,
+          sessionId: request.sessionId,
+          projectId: request.projectId,
+          status: initialStatus,
+          intent: request.intent,
+          command: request.command,
+          commandHash: request.commandHash,
+          environment: request.environment,
+          resourceRequest: request.resourceRequest,
+          inputManifest: request.inputManifest,
+          outputManifest: request.outputManifest,
+          harvestConfig: request.harvestConfig,
+          timeoutSeconds: request.timeoutSeconds,
+          remoteWorkdir: request.remoteWorkdir,
+          submittedAt: initialStatus === 'submitted' ? new Date() : undefined
+        }
+      })
+      return toJob(row)
+    })
   }
 
   async get(jobId: string): Promise<ComputeJob | null> {
@@ -224,16 +288,21 @@ export class ComputeJobRepository {
     expectedStatuses: readonly ComputeJobStatus[],
     updates: UpdateJobRequest
   ): Promise<ComputeJob | null> {
-    const client = await this.getClient()
-    return client.$transaction(async (transaction) => {
-      const applied = await transaction.computeJob.updateMany({
-        where: { id: jobId, status: { in: [...expectedStatuses] } },
-        data: toUpdateData(updates)
-      })
-      if (applied.count === 0) return null
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return null
 
-      const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
-      return row ? toJob(row) : null
+        const applied = await transaction.computeJob.updateMany({
+          where: { id: jobId, status: { in: [...expectedStatuses] } },
+          data: toUpdateData(updates)
+        })
+        if (applied.count === 0) return null
+
+        const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        return row ? toJob(row) : null
+      })
     })
   }
 
@@ -355,6 +424,28 @@ export class ComputeJobRepository {
       orderBy: { createdAt: 'asc' }
     })
     return rows.map(toJob)
+  }
+
+  private assertOwnerMutable(projectId: string, sessionId: string): void {
+    if (!this.isOwnerMutable(projectId, sessionId)) {
+      throw new Error('Cannot create a Compute Job while its owner is being deleted.')
+    }
+  }
+
+  private isOwnerMutable(projectId: string, sessionId: string): boolean {
+    return (
+      !this.deletingProjects.has(projectId) &&
+      !this.deletingSessions.has(sessionOwnerKey(projectId, sessionId))
+    )
+  }
+
+  private runMutation<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const run = this.mutationQueue.then(operation, operation)
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 }
 

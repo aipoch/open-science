@@ -90,6 +90,31 @@ describe('ComputeJobLifecycle', () => {
     expect(publish).toHaveBeenCalledOnce()
   })
 
+  it('blocks later transitions and retains rows until owner deletion commits', async () => {
+    const owner = { projectId: 'project-1', sessionId: 'session-1' }
+
+    await lifecycle.beginOwnerDeletion(owner)
+
+    await expect(lifecycle.promoteQueued('queued-job')).resolves.toEqual({ kind: 'ignored' })
+    await expect(repository.get('queued-job')).resolves.toMatchObject({ status: 'queued' })
+    await expect(repository.get('submitted-job')).resolves.not.toBeNull()
+
+    await lifecycle.deleteOwnerRows(owner)
+
+    await expect(repository.get('queued-job')).resolves.toBeNull()
+    await expect(repository.get('submitted-job')).resolves.toBeNull()
+    await expect(repository.get('running-job')).resolves.toBeNull()
+  })
+
+  it('reopens transitions when prepared owner deletion aborts', async () => {
+    const owner = { projectId: 'project-1', sessionId: 'session-1' }
+
+    await lifecycle.beginOwnerDeletion(owner)
+    await lifecycle.abortOwnerDeletion(owner)
+
+    await expect(lifecycle.promoteQueued('queued-job')).resolves.toMatchObject({ kind: 'applied' })
+  })
+
   it('keeps an applied promotion successful when its observer throws', async () => {
     publish.mockImplementation(() => {
       throw new Error('observer failed')

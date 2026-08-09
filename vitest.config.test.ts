@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import vitestConfig, { coverageThresholdsEnabled, VITEST_EXCLUDE_PATTERNS } from './vitest.config'
+import vitestConfig, {
+  coverageThresholdsEnabled,
+  VITEST_COVERAGE_EXCLUDE_PATTERNS,
+  VITEST_EXCLUDE_PATTERNS
+} from './vitest.config'
 
 describe('Vitest discovery boundaries', () => {
   it.each(['**/.pnpm-store/**', '**/tmp/**', '**/.worktrees/**', '**/.worktree/**'])(
@@ -9,6 +13,10 @@ describe('Vitest discovery boundaries', () => {
       expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)
     }
   )
+})
+
+it('excludes the Electron IPC composition root from coverage', () => {
+  expect(VITEST_COVERAGE_EXCLUDE_PATTERNS).toContain('src/main/ipc.ts')
 })
 
 it('defers coverage thresholds only for explicit shard collection', () => {
