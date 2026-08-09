@@ -38,6 +38,7 @@ const settingsRoot = resolve(projectRoot, 'src/main/settings')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 const settingsPaths = {
   repository: resolve(settingsRoot, 'repository.ts'),
+  recordCodec: resolve(settingsRoot, 'record-codec.ts'),
   providerAccounts: resolve(settingsRoot, 'provider-accounts.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
@@ -273,7 +274,8 @@ const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
   it('holds the current facade ceilings until their owner cutovers', () => {
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(1368)
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(1045)
+    expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1283)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1407)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(1423)
@@ -483,6 +485,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts'
     ])
+    expect(importersOf(settingsPaths.recordCodec)).toEqual(['src/main/settings/repository.ts'])
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/backend-resolver.ts',
@@ -599,7 +602,8 @@ describe('Settings backend ownership architecture', () => {
   it('locks dependency-aware impact owners and cross-surface evidence', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
-      'src/main/settings/repository.ts'
+      'src/main/settings/repository.ts',
+      'src/main/settings/record-codec.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
       'src/main/settings/provider-accounts.ts'

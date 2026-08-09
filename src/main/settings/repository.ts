@@ -5,13 +5,9 @@ import { isDeepStrictEqual } from 'node:util'
 import type {
   AgentFrameworkId,
   AppIconVariant,
-  ChatApiEndpoint,
   ClaudeSubscriptionProviderId,
   ClaudeInfo,
-  ProviderType,
-  ProviderValidationFailure,
-  ReasoningEffort,
-  ValidationCategory
+  ReasoningEffort
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
@@ -27,18 +23,12 @@ import {
   isCodexSubscriptionProviderId,
   isReasoningEffort
 } from '../../shared/settings'
-import { isOfficialVendorId } from '../../shared/provider-registry'
 import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
-import {
-  isCustomReasoningEffortTransport,
-  isReasoningEffortPresetSetting
-} from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
-import { customConnectorSlug, isCustomConnectorSlug } from '../../shared/custom-connector'
-import { createLogger } from '../logger'
+import { customConnectorSlug } from '../../shared/custom-connector'
 import {
   createEmptySettings,
   type StoredComputeGrant,
@@ -48,31 +38,16 @@ import {
   type StoredProvider,
   type StoredSettings
 } from './types'
+import {
+  sanitizeClaudeInfo,
+  sanitizeCodexInfo,
+  sanitizeComputeGrant,
+  sanitizeConnectors,
+  sanitizePackageMirror,
+  sanitizeProvider
+} from './record-codec'
 
 const SETTINGS_FILE = 'settings.json'
-
-const log = createLogger('settings.repository')
-
-const PROVIDER_TYPES = new Set<ProviderType>([
-  'custom',
-  'claude-shared',
-  'claude-isolated',
-  'official',
-  'codex-shared',
-  'codex-isolated'
-])
-
-const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
-  'ok',
-  'network',
-  'auth',
-  'model-not-found',
-  'bad-url',
-  'timeout',
-  'incompatible',
-  'server-error',
-  'unknown'
-])
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -90,18 +65,6 @@ const asStringArray = (value: unknown): string[] =>
 const asBoolean = (value: unknown): boolean | undefined =>
   typeof value === 'boolean' ? value : undefined
 
-// Rebuilds a record<string,string>, dropping any key whose value isn't a string. Returns undefined
-// for a non-record input or when nothing survives.
-const asStringRecord = (value: unknown): Record<string, string> | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const entries = Object.entries(value).filter(
-    (entry): entry is [string, string] => typeof entry[1] === 'string'
-  )
-
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined
-}
-
 // Rebuilds a record<string,boolean>, dropping any key whose value isn't a boolean. Returns an empty
 // record (never undefined) for a non-record input so callers get a stable, always-mergeable map.
 const asBooleanRecord = (value: unknown): Record<string, boolean> => {
@@ -112,293 +75,6 @@ const asBooleanRecord = (value: unknown): Record<string, boolean> => {
   )
 
   return Object.fromEntries(entries)
-}
-
-const CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport']>([
-  'stdio',
-  'streamable_http',
-  'sse'
-])
-
-// Rebuilds claude metadata from allowed fields only.
-const sanitizeClaudeInfo = (value: unknown): ClaudeInfo | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const info: ClaudeInfo = {}
-  const resolvedPath = asString(value.resolvedPath)
-  const version = asString(value.version)
-
-  if (resolvedPath) info.resolvedPath = resolvedPath
-  if (version) info.version = version
-
-  return Object.keys(info).length > 0 ? info : undefined
-}
-
-const sanitizeCodexInfo = (value: unknown): StoredCodexInfo | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const info: StoredCodexInfo = {}
-  const resolvedPath = asString(value.resolvedPath)
-  const version = asString(value.version)
-  const nativePath = asString(value.nativePath)
-  const nativeVersion = asString(value.nativeVersion)
-
-  if (resolvedPath) info.resolvedPath = resolvedPath
-  if (version) info.version = version
-  if (nativePath) info.nativePath = nativePath
-  if (nativeVersion) info.nativeVersion = nativeVersion
-
-  return Object.keys(info).length > 0 ? info : undefined
-}
-
-// Rebuilds a recorded validation failure, dropping it unless it has a numeric timestamp and a known
-// category (status/message are optional). Without this the field would be stripped on every read.
-const sanitizeValidationFailure = (value: unknown): ProviderValidationFailure | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const at = asNumber(value.at)
-  const category = asString(value.category) as ValidationCategory | undefined
-
-  if (at === undefined || !category || !VALIDATION_CATEGORIES.has(category)) return undefined
-
-  const failure: ProviderValidationFailure = { at, category }
-  const status = asNumber(value.status)
-  const message = asString(value.message)
-
-  if (status !== undefined) failure.status = status
-  if (message) failure.message = message
-
-  return failure
-}
-
-// Rebuilds one provider record, dropping unknown fields and records missing required identity.
-// An unknown `type` is dropped at load time and logged at WARN — usually a stale provider kind from a
-// prior version (e.g. the removed 'claude-default'). A bad value must never reach the active snapshot.
-const sanitizeProvider = (value: unknown): StoredProvider | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const id = asString(value.id)
-  const type = asString(value.type) as ProviderType | undefined
-  const name = asString(value.name)
-
-  if (!id || !type || name === undefined) return undefined
-
-  if (!PROVIDER_TYPES.has(type)) {
-    log.warn('dropping stored provider with unknown type', { id, type })
-
-    return undefined
-  }
-
-  // An official provider without a recognizable vendor is unusable (no base URL/catalog to resolve),
-  // so drop the corrupt record rather than keep a provider that can never spawn or validate.
-  const vendorId = isOfficialVendorId(value.vendorId) ? value.vendorId : undefined
-
-  if (type === 'official' && !vendorId) return undefined
-
-  const provider: StoredProvider = { id, type, name }
-  const baseUrl = asString(value.baseUrl)
-  const model = asString(value.model)
-  const rawContextWindow = asNumber(value.contextWindow)
-  const contextWindow =
-    rawContextWindow !== undefined && Number.isSafeInteger(rawContextWindow) && rawContextWindow > 0
-      ? rawContextWindow
-      : undefined
-  const supportsImageInput = asBoolean(value.supportsImageInput)
-  const reasoningEffortPreset = isReasoningEffortPresetSetting(value.reasoningEffortPreset)
-    ? value.reasoningEffortPreset
-    : undefined
-  const reasoningEffortTransport = isCustomReasoningEffortTransport(value.reasoningEffortTransport)
-    ? value.reasoningEffortTransport
-    : undefined
-  const region = asString(value.region)
-  const keyRef = asString(value.keyRef)
-  const keyMask = asString(value.keyMask)
-  const lastValidatedAt = asNumber(value.lastValidatedAt)
-  const lastValidationFailure = sanitizeValidationFailure(value.lastValidationFailure)
-  const expiresAt = asNumber(value.expiresAt)
-  const disconnectedAt = asNumber(value.disconnectedAt)
-  const codexAuthMode = asString(value.codexAuthMode)
-  // Keep only a clean list of non-empty string model ids.
-  const fetchedModels = Array.isArray(value.fetchedModels)
-    ? value.fetchedModels.filter(
-        (entry): entry is string => typeof entry === 'string' && entry !== ''
-      )
-    : undefined
-
-  // Resolve the provider's chat endpoints, migrating the removed scalar `apiType` on legacy records
-  // ('both' meant anthropic+openai) to the explicit array. Only known endpoint values survive.
-  const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
-  const knownEndpoints = rawEndpoints.filter(
-    (entry): entry is ChatApiEndpoint =>
-      entry === 'anthropic' || entry === 'openai' || entry === 'responses'
-  )
-  const legacyApiType = asString(value.apiType)
-  const apiEndpoints: ChatApiEndpoint[] =
-    knownEndpoints.length > 0
-      ? [...new Set(knownEndpoints)]
-      : legacyApiType === 'both'
-        ? ['anthropic', 'openai']
-        : legacyApiType === 'anthropic' ||
-            legacyApiType === 'openai' ||
-            legacyApiType === 'responses'
-          ? [legacyApiType]
-          : []
-
-  if (baseUrl) provider.baseUrl = baseUrl
-  if (model) provider.model = model
-  if (contextWindow !== undefined) provider.contextWindow = contextWindow
-  if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
-  if (reasoningEffortPreset !== undefined && type === 'custom') {
-    provider.reasoningEffortPreset = reasoningEffortPreset
-  }
-  if (reasoningEffortTransport !== undefined && type === 'custom') {
-    provider.reasoningEffortTransport = reasoningEffortTransport
-  }
-  if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
-  if (vendorId) provider.vendorId = vendorId
-  if (region) provider.region = region
-  if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
-  if (keyRef) provider.keyRef = keyRef
-  if (keyMask) provider.keyMask = keyMask
-  if (lastValidatedAt !== undefined) provider.lastValidatedAt = lastValidatedAt
-  if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
-  if (expiresAt !== undefined) provider.expiresAt = expiresAt
-  if (disconnectedAt !== undefined && type === 'claude-shared') {
-    provider.disconnectedAt = disconnectedAt
-  }
-  if (
-    isCodexSubscriptionProvider(type) &&
-    (codexAuthMode === 'imported' || codexAuthMode === 'isolated')
-  ) {
-    provider.codexAuthMode = codexAuthMode
-  }
-
-  return provider
-}
-
-// Rebuilds one custom MCP server, dropping unknown fields and records missing required identity.
-// Phase 1 only wires up the stdio transport end-to-end, so stdio additionally requires a non-empty
-// `command`; `url` is accepted (for the remote transports) but not yet validated further.
-export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const id = asString(value.id)
-  const name = asString(value.name)
-  const transport = asString(value.transport) as StoredCustomMcpServer['transport'] | undefined
-  const enabled = asBoolean(value.enabled)
-
-  if (
-    !id ||
-    !name ||
-    !transport ||
-    !CUSTOM_MCP_TRANSPORTS.has(transport) ||
-    enabled === undefined
-  ) {
-    return undefined
-  }
-
-  const command = asString(value.command)
-  const url = asString(value.url)
-
-  if (transport === 'stdio' && !command) return undefined
-  if ((transport === 'streamable_http' || transport === 'sse') && !url) return undefined
-
-  const storedSlug = asString(value.slug)
-  const server: StoredCustomMcpServer = { id, name, transport, enabled }
-  if (storedSlug && isCustomConnectorSlug(storedSlug)) server.slug = storedSlug
-
-  if (command) server.command = command
-  const args = asStringArray(value.args)
-  if (args.length) server.args = args
-  const env = asStringRecord(value.env)
-  if (env) server.env = env
-  const envRefs = asStringRecord(value.envRefs)
-  if (envRefs) server.envRefs = envRefs
-  if (url) server.url = url
-  const headers = asStringRecord(value.headers)
-  if (headers) server.headers = headers
-  const headerRefs = asStringRecord(value.headerRefs)
-  if (headerRefs) server.headerRefs = headerRefs
-  if (transport !== 'stdio' && isRecord(value.oauth)) {
-    const oauth: NonNullable<StoredCustomMcpServer['oauth']> = {}
-    const clientMetadataUrl = asString(value.oauth.clientMetadataUrl)
-    const authorizationServerUrl = asString(value.oauth.authorizationServerUrl)
-    const scopes = asStringArray(value.oauth.scopes)
-      .map((scope) => scope.trim())
-      .filter(Boolean)
-    if (clientMetadataUrl) oauth.clientMetadataUrl = clientMetadataUrl
-    if (authorizationServerUrl) oauth.authorizationServerUrl = authorizationServerUrl
-    if (scopes.length) oauth.scopes = [...new Set(scopes)]
-    server.oauth = oauth
-  }
-  const oauthRef = asString(value.oauthRef)
-  if (server.oauth) {
-    delete server.headers
-    delete server.headerRefs
-    if (oauthRef) server.oauthRef = oauthRef
-  }
-  const trustedAt = asNumber(value.trustedAt)
-  if (trustedAt !== undefined) server.trustedAt = trustedAt
-  const description = asString(value.description)
-  if (description) server.description = description
-
-  return server
-}
-
-// Rebuilds one compute grant, dropping records with missing required string fields.
-const sanitizeComputeGrant = (value: unknown): StoredComputeGrant | undefined => {
-  if (!isRecord(value)) return undefined
-  const projectId = asString(value.projectId)
-  const operation = asString(value.operation)
-  const providerId = asString(value.providerId)
-  if (!projectId || !operation || !providerId) return undefined
-  return { projectId, operation, providerId }
-}
-
-// Rebuilds the connectors block from allowed fields only.
-export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined => {
-  if (!isRecord(value)) return undefined
-  const connectors: StoredConnectors = {
-    enabledIds: asStringArray(value.enabledIds),
-    autoAllowIds: asStringArray(value.autoAllowIds)
-  }
-  const contactEmail = asString(value.contactEmail)
-  const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
-  if (contactEmail) connectors.contactEmail = contactEmail
-  if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef
-  const blockedToolIds = asStringArray(value.blockedToolIds)
-  if (blockedToolIds.length) connectors.blockedToolIds = blockedToolIds
-  const askToolIds = asStringArray(value.askToolIds)
-  if (askToolIds.length) connectors.askToolIds = askToolIds
-  const disabledConnectorIds = asStringArray(value.disabledConnectorIds)
-  if (disabledConnectorIds.length)
-    connectors.disabledConnectorIds = [...new Set(disabledConnectorIds)]
-  const customMcpServers = Array.isArray(value.customMcpServers)
-    ? value.customMcpServers
-        .map(sanitizeCustomMcpServer)
-        .filter((server): server is StoredCustomMcpServer => !!server)
-    : []
-  if (customMcpServers.length) connectors.customMcpServers = customMcpServers
-  return connectors
-}
-
-// Rebuilds a PackageMirror from untrusted JSON, keeping only string url/path fields. Returns
-// undefined when nothing valid remains (absent == public hosts default).
-export const sanitizePackageMirror = (value: unknown): PackageMirror | undefined => {
-  if (!isRecord(value)) return undefined
-
-  const condaChannel = asString(value.condaChannel)
-  const pypiIndex = asString(value.pypiIndex)
-  const cranMirror = asString(value.cranMirror)
-  const caBundle = asString(value.caBundle)
-  const result: PackageMirror = {}
-
-  if (condaChannel) result.condaChannel = condaChannel
-  if (pypiIndex) result.pypiIndex = pypiIndex
-  if (cranMirror) result.cranMirror = cranMirror
-  if (caBundle) result.caBundle = caBundle
-
-  return Object.keys(result).length > 0 ? result : undefined
 }
 
 // Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
@@ -1366,3 +1042,4 @@ class SettingsRepository {
 }
 
 export { SettingsRepository, sanitizeSettings }
+export { sanitizeConnectors, sanitizeCustomMcpServer, sanitizePackageMirror } from './record-codec'
