@@ -137,6 +137,9 @@ describe('ProviderTransportOwner generations', () => {
     const second = await owner.acquire(request)
     first.responsesBridge?.lease.setReasoningEffort?.('low')
     second.responsesBridge?.lease.setReasoningEffort?.('high')
+    first.responsesBridge?.lease.registerHostMessageSession?.('side-session', [], {
+      failClosedUnknownKeys: true
+    })
     await first.release()
     await first.release()
     await second.release()
@@ -145,8 +148,48 @@ describe('ProviderTransportOwner generations', () => {
     expect(bridges[0]?.setReasoningEffort).toHaveBeenCalledWith('low')
     expect(bridges[0]?.setReasoningEffort).not.toHaveBeenCalledWith('high')
     expect(bridges[1]?.setReasoningEffort).toHaveBeenCalledWith('high')
+    expect(bridges[0]?.registerHostMessageSession).toHaveBeenCalledWith('side-session', [], {
+      failClosedUnknownKeys: true
+    })
+    expect(bridges[1]?.registerHostMessageSession).not.toHaveBeenCalled()
     expect(bridges[0]?.close).toHaveBeenCalledTimes(1)
     expect(bridges[1]?.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates native compatibility host-message scopes between generations', async () => {
+    const proxies: NativeProxyStub[] = []
+    const owner = new ProviderTransportOwner({
+      createNativeResponsesProxy: () => {
+        const proxy = makeNativeProxy()
+        proxies.push(proxy)
+        return proxy
+      }
+    })
+    const request = {
+      activeTarget: {
+        ...makeTarget(),
+        needsChatResponsesBridge: false,
+        needsNativeResponsesCompatibility: true
+      },
+      plan: makePlan({ kind: 'codex-responses-compatibility' as const, targets: [] })
+    }
+
+    const first = await owner.acquire(request)
+    const second = await owner.acquire(request)
+    first.responsesBridge?.lease.registerHostMessageSession?.('side-session', [], {
+      failClosedUnknownKeys: true
+    })
+
+    expect(proxies).toHaveLength(2)
+    expect(proxies[0]?.registerHostMessageSession).toHaveBeenCalledWith('side-session', [], {
+      failClosedUnknownKeys: true
+    })
+    expect(proxies[1]?.registerHostMessageSession).not.toHaveBeenCalled()
+
+    await first.release()
+    await second.release()
+    expect(proxies[0]?.close).toHaveBeenCalledOnce()
+    expect(proxies[1]?.close).toHaveBeenCalledOnce()
   })
 
   it('closes a half-started native compatibility generation and preserves its start error', async () => {
