@@ -371,6 +371,56 @@ describe('HostSkillsService', () => {
     ).resolves.toMatchObject({ name: 'Foo', content: expect.stringContaining('Exact body.') })
   })
 
+  it('rejects an unqualified delete when a published display name matches a draft slug', async () => {
+    const { service, catalog, root, approveDelete } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'shared-name',
+        path: 'SKILL.md',
+        content: '---\nname: shared-name\ndescription: Draft.\n---\nDraft body.\n'
+      }
+    })
+    const listPublished = catalog.list
+    catalog.list = async () => [
+      ...(await listPublished()),
+      {
+        id: 'custom-package-id',
+        name: 'shared-name',
+        description: 'Published alias.',
+        source: 'imported',
+        updatedAt: '2026-08-09',
+        sourceDir: root
+      }
+    ]
+
+    await expect(
+      service.dispatch(
+        { op: 'delete', params: { name: 'shared-name' } },
+        { sessionId: 'session-1' }
+      )
+    ).rejects.toThrow('ambiguous')
+    expect(approveDelete).not.toHaveBeenCalled()
+  })
+
+  it('rejects reserved Skill slugs before creating a draft', async () => {
+    const { service } = await makeFixture()
+
+    for (const name of ['os-review', 'mcp-review']) {
+      await expect(
+        service.dispatch({
+          op: 'edit',
+          params: {
+            name,
+            path: 'SKILL.md',
+            content: `---\nname: ${name}\ndescription: Reserved.\n---\nBody.\n`
+          }
+        })
+      ).rejects.toThrow('os- or mcp-')
+    }
+    await expect(service.dispatch({ op: 'list' })).resolves.toHaveLength(1)
+  })
+
   it('requires approval for delete and reports a decline as a normal result', async () => {
     const { service, userSkills, approveDelete, reload } = await makeFixture()
     await userSkills.createPersonal({

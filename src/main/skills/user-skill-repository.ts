@@ -62,7 +62,7 @@ const nextGeneration = (): string => `${Date.now().toString().padStart(15, '0')}
 const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-'] as const
 
 // Validates a user-chosen slug, throwing a user-facing error for empty, unsafe, or reserved values.
-const assertUsableSlug = (slug: string): void => {
+export const assertUsableSlug = (slug: string): void => {
   if (!slug) throw new Error('Skill ID is required.')
   if (!SAFE_SLUG.test(slug)) {
     throw new Error('Skill ID may only contain lowercase letters, numbers, and hyphens.')

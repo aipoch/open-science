@@ -6,7 +6,7 @@ import type { TrustedCallingSession } from '../../shared/agents-contract'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
-import { SAFE_SLUG, parseUserSkillId } from './user-skill-repository'
+import { SAFE_SLUG, assertUsableSlug, parseUserSkillId } from './user-skill-repository'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
 export type HostSkillsCatalog = {
@@ -265,6 +265,7 @@ export class HostSkillsService {
         throw new Error('built-in and imported Skills are read-only')
       return this.seedPersonalDraft(existing, publicSlug(existing) ?? name)
     }
+    assertUsableSlug(name)
     await mkdir(path, { recursive: true })
     return { slug: name, path }
   }
@@ -431,7 +432,7 @@ export class HostSkillsService {
     const published = await this.resolvePublished(requestedName)
     const unqualifiedDraft =
       SAFE_SLUG.test(requestedName) && (await exists(this.draftDir(requestedName)))
-    if (published && publicSlug(published) === requestedName && unqualifiedDraft) {
+    if (published && published.id !== requestedName && unqualifiedDraft) {
       throw new Error(
         `ambiguous Skill name; use draft-${requestedName} or ${published.id} to choose what to delete`
       )
