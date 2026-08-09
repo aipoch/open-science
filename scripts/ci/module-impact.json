@@ -211,7 +211,11 @@
       "fallbackCapability": "main_runtime"
     },
     "settings_repository": {
-      "ownerPaths": ["src/main/settings/repository.ts", "src/main/settings/record-codec.ts"],
+      "ownerPaths": [
+        "src/main/settings/repository.ts",
+        "src/main/settings/record-codec.ts",
+        "src/main/settings/document-codec.ts"
+      ],
       "interfacePaths": ["src/main/settings/repository.ts"],
       "consumerModules": [
         "settings_provider_accounts",
@@ -221,6 +225,7 @@
       "testFiles": {
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/document-codec.test.ts",
           "src/main/settings/record-codec.test.ts",
           "src/main/settings/repository.test.ts",
           "src/main/settings/compute-grants.test.ts",

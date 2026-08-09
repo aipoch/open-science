@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, normalize, parse } from 'node:path'
+import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
@@ -12,18 +12,11 @@ import type {
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
-  CODEX_SUBSCRIPTION_PROVIDER_ID,
-  SETTINGS_FILE_VERSION,
   claudeIsolatedProviderIdentity,
-  codexSubscriptionProviderIdentity,
-  isAppIconVariant,
   isClaudeSubscriptionProvider,
-  isClaudeSubscriptionProviderId,
-  isCodexSubscriptionProvider,
-  isCodexSubscriptionProviderId,
-  isReasoningEffort
+  isClaudeSubscriptionProviderId
 } from '../../shared/settings'
-import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -38,365 +31,10 @@ import {
   type StoredProvider,
   type StoredSettings
 } from './types'
-import {
-  sanitizeClaudeInfo,
-  sanitizeCodexInfo,
-  sanitizeComputeGrant,
-  sanitizeConnectors,
-  sanitizePackageMirror,
-  sanitizeProvider
-} from './record-codec'
+import { sanitizePackageMirror } from './record-codec'
+import { sanitizeSettings } from './document-codec'
 
 const SETTINGS_FILE = 'settings.json'
-
-// Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const asString = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined
-
-const asNumber = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined
-
-const asStringArray = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
-
-const asBoolean = (value: unknown): boolean | undefined =>
-  typeof value === 'boolean' ? value : undefined
-
-// Rebuilds a record<string,boolean>, dropping any key whose value isn't a boolean. Returns an empty
-// record (never undefined) for a non-record input so callers get a stable, always-mergeable map.
-const asBooleanRecord = (value: unknown): Record<string, boolean> => {
-  if (!isRecord(value)) return {}
-
-  const entries = Object.entries(value).filter(
-    (entry): entry is [string, boolean] => typeof entry[1] === 'boolean'
-  )
-
-  return Object.fromEntries(entries)
-}
-
-// Rebuilds the whole settings document, keeping activeProviderId only when it points at a provider.
-const sanitizeSettings = (value: unknown): StoredSettings => {
-  if (!isRecord(value)) return createEmptySettings()
-
-  const sanitizedProviders = Array.isArray(value.providers)
-    ? value.providers
-        .map(sanitizeProvider)
-        .filter((provider): provider is StoredProvider => !!provider)
-    : []
-  const legacyActiveProviderId = asString(value.activeProviderId)
-  const codexProviders = sanitizedProviders.filter((provider) =>
-    isCodexSubscriptionProvider(provider.type)
-  )
-  const activeCodexProvider = codexProviders.find(
-    (provider) => provider.id === legacyActiveProviderId
-  )
-  const selectedCodexProvider = activeCodexProvider ?? codexProviders[0]
-  const migratedCodexProvider = selectedCodexProvider
-    ? {
-        ...selectedCodexProvider,
-        id: CODEX_SUBSCRIPTION_PROVIDER_ID,
-        // `codex-shared` is legacy setup input only. Runtime always uses the app-owned
-        // subscription home, so sanitized/newly persisted state has one isolated form.
-        type: 'codex-isolated' as const,
-        // Releases before codexAuthMode normalized both setup choices to the subscription id, so
-        // that shape is ambiguous. Prefer isolated to preserve the established runtime behavior;
-        // legacy shared users can explicitly re-import into the new app-owned profile.
-        codexAuthMode: selectedCodexProvider.codexAuthMode ?? 'isolated',
-        name: codexSubscriptionProviderIdentity().name
-      }
-    : undefined
-
-  // A legacy shared provider's validation describes credentials in the user's global Codex home,
-  // not the isolated home selected above. Do not present that stale state as an app-owned login;
-  // the Settings card will offer a fresh sign-in instead.
-  if (selectedCodexProvider?.type === 'codex-shared' && migratedCodexProvider) {
-    delete migratedCodexProvider.lastValidatedAt
-    delete migratedCodexProvider.lastValidationFailure
-    delete migratedCodexProvider.expiresAt
-  }
-
-  const providers = [
-    ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
-    ...(migratedCodexProvider ? [migratedCodexProvider] : [])
-  ]
-  const settings: StoredSettings = {
-    version: SETTINGS_FILE_VERSION,
-    providers
-  }
-  const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
-
-  if (
-    claudeSubscriptionProviderId &&
-    isClaudeSubscriptionProviderId(claudeSubscriptionProviderId) &&
-    providers.some(
-      (provider) =>
-        provider.id === claudeSubscriptionProviderId && isClaudeSubscriptionProvider(provider.type)
-    )
-  ) {
-    settings.claudeSubscriptionProviderId = claudeSubscriptionProviderId
-  }
-  const claude = sanitizeClaudeInfo(value.claude)
-  const codex = sanitizeCodexInfo(value.codex)
-  const activeProviderId =
-    legacyActiveProviderId && isCodexSubscriptionProviderId(legacyActiveProviderId)
-      ? CODEX_SUBSCRIPTION_PROVIDER_ID
-      : legacyActiveProviderId
-
-  if (claude) settings.claude = claude
-  if (codex) settings.codex = codex
-  if (activeProviderId && providers.some((provider) => provider.id === activeProviderId)) {
-    settings.activeProviderId = activeProviderId
-
-    // activeModel migration: v2 stores it explicitly; a pre-v2 file has none, so backfill from the
-    // active provider's own model (which was the only model it could run).
-    const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-    const activeModel = asString(value.activeModel) ?? activeProvider?.model
-
-    if (activeModel) settings.activeModel = activeModel
-  }
-
-  const onboardingCompletedAt = asNumber(value.onboardingCompletedAt)
-
-  if (onboardingCompletedAt !== undefined) {
-    settings.onboardingCompletedAt = onboardingCompletedAt
-  }
-
-  const disabledSkillIds = Array.isArray(value.disabledSkillIds)
-    ? [
-        ...new Set(
-          value.disabledSkillIds.filter(
-            (entry): entry is string => typeof entry === 'string' && entry !== ''
-          )
-        )
-      ]
-    : []
-
-  if (disabledSkillIds.length > 0) {
-    settings.disabledSkillIds = disabledSkillIds
-  }
-
-  const githubTokenRef = asString(value.githubTokenRef)
-  const githubTokenMask = asString(value.githubTokenMask)
-
-  if (githubTokenRef) settings.githubTokenRef = githubTokenRef
-  if (githubTokenMask) settings.githubTokenMask = githubTokenMask
-
-  const connectors = sanitizeConnectors(value.connectors)
-
-  if (connectors) settings.connectors = connectors
-
-  const packageMirror = sanitizePackageMirror(value.packageMirror)
-
-  if (packageMirror) settings.packageMirror = packageMirror
-
-  const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
-
-  if (pathsNormalizedAt !== undefined) {
-    settings.pathsNormalizedAt = pathsNormalizedAt
-  }
-
-  const legacyDataMovePromptDismissedAt = asNumber(value.legacyDataMovePromptDismissedAt)
-
-  if (legacyDataMovePromptDismissedAt !== undefined) {
-    settings.legacyDataMovePromptDismissedAt = legacyDataMovePromptDismissedAt
-  }
-
-  // Only accept an absolute, normalized dataRoot. A relative path (corrupt or hand-edited
-  // settings.json) would make the entire data tree resolve against process.cwd(); drop it so
-  // initDataRoot falls back to the default. Mirrors the OPEN_SCIENCE_STORAGE_ROOT absolute contract.
-  const dataRoot = asString(value.dataRoot)?.trim()
-
-  if (dataRoot && isAbsolute(dataRoot)) {
-    // normalize collapses redundant separators; strip any trailing separator so the stored form
-    // matches dataRootForPicked's canonical (no-trailing-slash) output — samePath() compares exact
-    // strings, so a stray trailing slash would wrongly fail the "is default" check. Never strip past a
-    // filesystem root, though: turning "C:\" into "C:" would make an absolute path drive-relative.
-    const normalized = normalize(dataRoot)
-    const { root } = parse(normalized)
-    settings.dataRoot =
-      normalized.length > root.length ? normalized.replace(/[\\/]+$/, '') : normalized
-  }
-
-  // Selected agent backend; only the known ids survive so a bad value can't leak through.
-  const agentFrameworkId = asString(value.agentFrameworkId)
-
-  if (
-    agentFrameworkId === 'claude-code' ||
-    agentFrameworkId === 'opencode' ||
-    agentFrameworkId === 'codex'
-  ) {
-    settings.agentFrameworkId = agentFrameworkId
-  }
-
-  // Reasoning-effort preference; only the known levels survive so a bad value can't leak through.
-  const reasoningEffort = asString(value.reasoningEffort)
-
-  if (isReasoningEffort(reasoningEffort)) {
-    settings.reasoningEffort = reasoningEffort
-  }
-
-  // Desktop-notification preference; only a real boolean survives.
-  const notificationsEnabled = asBoolean(value.notificationsEnabled)
-
-  if (notificationsEnabled !== undefined) {
-    settings.notificationsEnabled = notificationsEnabled
-  }
-
-  // Conversation Skill import preference; only a real boolean survives.
-  const conversationSkillImportEnabled = asBoolean(value.conversationSkillImportEnabled)
-
-  if (conversationSkillImportEnabled !== undefined) {
-    settings.conversationSkillImportEnabled = conversationSkillImportEnabled
-  }
-
-  const closePreference = asString(value.closePreference)
-
-  if (closePreference === 'minimize' || closePreference === 'quit') {
-    settings.closePreference = closePreference
-  }
-
-  // App-icon look; only a known variant survives so a bad value can't leak through.
-  const appIconVariant = value.appIconVariant
-
-  if (isAppIconVariant(appIconVariant)) {
-    settings.appIconVariant = appIconVariant
-  }
-
-  // New-conversation approval default; only known profiles survive hand-edited settings.json.
-  const defaultPermissionProfile = value.defaultPermissionProfile
-
-  if (isPermissionProfileId(defaultPermissionProfile)) {
-    settings.defaultPermissionProfile = defaultPermissionProfile
-  }
-
-  const opencodePath = asString(value.opencodePath)
-
-  if (opencodePath) {
-    settings.opencodePath = opencodePath
-
-    const opencodeVersion = asString(value.opencodeVersion)
-    if (opencodeVersion) settings.opencodeVersion = opencodeVersion
-  }
-
-  const notebookRuntimes = sanitizeNotebookRuntimes(value.notebookRuntimes)
-
-  if (notebookRuntimes) {
-    settings.notebookRuntimes = notebookRuntimes
-  }
-
-  const notebookRuntimeEnablement = sanitizeRuntimeEnablement(value.notebookRuntimeEnablement)
-
-  if (notebookRuntimeEnablement) {
-    settings.notebookRuntimeEnablement = notebookRuntimeEnablement
-  }
-
-  const notebookManualInterpreters = sanitizeManualInterpreters(value.notebookManualInterpreters)
-
-  if (notebookManualInterpreters) {
-    settings.notebookManualInterpreters = notebookManualInterpreters
-  }
-
-  // Persist project-scope compute grants. Unknown/corrupt entries are dropped; well-formed ones
-  // are preserved. Empty array is omitted (same as absent).
-  const computeGrants = Array.isArray(value.computeGrants)
-    ? value.computeGrants
-        .map(sanitizeComputeGrant)
-        .filter((g): g is StoredComputeGrant => g !== undefined)
-    : undefined
-
-  if (computeGrants && computeGrants.length > 0) {
-    settings.computeGrants = computeGrants
-  }
-
-  return settings
-}
-
-// Validates the per-language manual-interpreter catalog: a map of language -> array of non-empty,
-// de-duplicated absolute-ish path strings. Non-string / empty entries are dropped; an empty result for
-// a language is omitted, and an empty overall map returns undefined (so it is not persisted).
-const sanitizeManualInterpreters = (
-  value: unknown
-): Partial<Record<NotebookLanguage, string[]>> | undefined => {
-  if (!isRecord(value)) return undefined
-  const result: Partial<Record<NotebookLanguage, string[]>> = {}
-  for (const language of ['python', 'r'] as const) {
-    const paths = asStringArray(value[language])
-    const cleaned = [...new Set((paths ?? []).map((p) => p.trim()).filter((p) => p.length > 0))]
-    if (cleaned.length > 0) result[language] = cleaned
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
-// Validates one persisted RuntimeSelection. 'managed' carries no extra fields; 'external' requires a
-// non-empty interpreter path and coerces the two boolean flags (default false — a persisted external
-// env is read-only and not an app overlay unless explicitly recorded). Anything else -> undefined
-// (dropped), so a corrupt entry can never grant unexpected package-write authority.
-const sanitizeRuntimeSelection = (value: unknown): RuntimeSelection | undefined => {
-  if (!isRecord(value)) return undefined
-  if (value.source === 'managed') return { source: 'managed' }
-  if (value.source === 'external') {
-    const interpreterPath = asString(value.interpreterPath)
-    if (!interpreterPath) return undefined
-    const interpreterArgs = asStringArray(value.interpreterArgs)
-    return {
-      source: 'external',
-      interpreterPath,
-      ...(interpreterArgs.length > 0 ? { interpreterArgs } : {}),
-      appOwnedOverlay: value.appOwnedOverlay === true,
-      packageInstallAuthorized: value.packageInstallAuthorized === true
-    }
-  }
-  return undefined
-}
-
-// Per-language runtime selections; only the known languages are kept, invalid entries dropped. Returns
-// undefined when nothing valid is present so the field stays absent (== "use the managed default").
-const sanitizeNotebookRuntimes = (
-  value: unknown
-): Partial<Record<NotebookLanguage, RuntimeSelection>> | undefined => {
-  if (!isRecord(value)) return undefined
-  const result: Partial<Record<NotebookLanguage, RuntimeSelection>> = {}
-  for (const language of ['python', 'r'] as const) {
-    const selection = sanitizeRuntimeSelection(value[language])
-    // R is managed-only in v1 (the external resolver + overlay are Python-specific), so an external R
-    // selection is rejected here rather than reaching a broken code path from a hand-edited file.
-    if (!selection) continue
-    if (language === 'r' && selection.source === 'external') continue
-    result[language] = selection
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
-
-// Rebuilds one language's RuntimeEnablement, keeping only string->boolean entries in both maps and
-// dropping any non-object input. A hand-edited or corrupt entry can therefore never grant unexpected
-// enablement or package-write authority (a bad value simply falls back to the provenance default).
-const sanitizeRuntimeEnablementEntry = (value: unknown): RuntimeEnablement => ({
-  enabled: asBooleanRecord(isRecord(value) ? value.enabled : undefined),
-  installAuthorized: asBooleanRecord(isRecord(value) ? value.installAuthorized : undefined)
-})
-
-// Per-language v4 enablement; only the known languages are kept, empty entries dropped. Returns
-// undefined when nothing valid is present so the field stays absent (== "use the provenance default").
-const sanitizeRuntimeEnablement = (
-  value: unknown
-): Partial<Record<NotebookLanguage, RuntimeEnablement>> | undefined => {
-  if (!isRecord(value)) return undefined
-  const result: Partial<Record<NotebookLanguage, RuntimeEnablement>> = {}
-  for (const language of ['python', 'r'] as const) {
-    const entry = sanitizeRuntimeEnablementEntry(value[language])
-    if (
-      Object.keys(entry.enabled).length === 0 &&
-      Object.keys(entry.installAuthorized).length === 0
-    ) {
-      continue
-    }
-    result[language] = entry
-  }
-  return Object.keys(result).length > 0 ? result : undefined
-}
 
 // Owns durable reads/writes of the single settings.json document. Writes are serialized through a
 // queue and made atomic (temp + rename); an unreadable file falls back to empty settings so the app
@@ -743,7 +381,10 @@ class SettingsRepository {
     language: NotebookLanguage,
     selection: RuntimeSelection | null
   ): Promise<StoredSettings> {
-    const sanitized = selection === null ? null : sanitizeRuntimeSelection(selection)
+    const sanitized =
+      selection === null
+        ? null
+        : sanitizeSettings({ notebookRuntimes: { python: selection } }).notebookRuntimes?.python
 
     if (selection !== null && !sanitized) {
       throw new Error('Invalid runtime selection.')
@@ -775,7 +416,8 @@ class SettingsRepository {
     language: NotebookLanguage,
     enablement: RuntimeEnablement
   ): Promise<StoredSettings> {
-    const sanitized = sanitizeRuntimeEnablementEntry(enablement)
+    const sanitized = sanitizeSettings({ notebookRuntimeEnablement: { [language]: enablement } })
+      .notebookRuntimeEnablement?.[language] ?? { enabled: {}, installAuthorized: {} }
     const isEmpty =
       Object.keys(sanitized.enabled).length === 0 &&
       Object.keys(sanitized.installAuthorized).length === 0

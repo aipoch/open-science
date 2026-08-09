@@ -39,13 +39,13 @@ const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 const settingsPaths = {
   repository: resolve(settingsRoot, 'repository.ts'),
   recordCodec: resolve(settingsRoot, 'record-codec.ts'),
+  documentCodec: resolve(settingsRoot, 'document-codec.ts'),
   providerAccounts: resolve(settingsRoot, 'provider-accounts.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
   service: resolve(settingsRoot, 'service.ts'),
   types: resolve(settingsRoot, 'types.ts')
 } as const
-
 const sourceCache = new Map<string, string>()
 const readSource = (path: string): string => {
   const cached = sourceCache.get(path)
@@ -73,7 +73,6 @@ const sourceFileFor = (path: string): SourceFile => {
   sourceFileCache.set(path, sourceFile)
   return sourceFile
 }
-
 const productionSources = (): string[] => {
   const sources: string[] = []
   const visit = (directory: string): void => {
@@ -92,7 +91,6 @@ const productionSources = (): string[] => {
   visit(resolve(projectRoot, 'packages'))
   return sources.sort()
 }
-
 const importSpecifiersCache = new Map<string, string[]>()
 const importSpecifiersFrom = (sourcePath: string): string[] => {
   const cached = importSpecifiersCache.get(sourcePath)
@@ -124,10 +122,8 @@ const importSpecifiersFrom = (sourcePath: string): string[] => {
   importSpecifiersCache.set(sourcePath, specifiers)
   return specifiers
 }
-
 const resolveImportTarget = (sourcePath: string, specifier: string): string | undefined =>
   specifier.startsWith('.') ? modulePath(resolve(dirname(sourcePath), specifier)) : undefined
-
 const importersOf = (targetPath: string): string[] =>
   productionSourcePaths
     .filter((sourcePath) => readSource(sourcePath).includes(basename(modulePath(targetPath))))
@@ -137,7 +133,6 @@ const importersOf = (targetPath: string): string[] =>
       )
     )
     .map(portableProjectPath)
-
 const constructorSitesFor = (targetPath: string, className: string): string[] =>
   importersOf(targetPath).flatMap((portablePath) => {
     const sourcePath = resolve(projectRoot, portablePath)
@@ -155,7 +150,6 @@ const constructorSitesFor = (targetPath: string, className: string): string[] =>
     visit(sourceFileFor(sourcePath))
     return Array.from({ length: count }, () => portablePath)
   })
-
 const exportInventoryFrom = (path: string): string[] => {
   const names: string[] = []
   const sourceFile = sourceFileFor(path)
@@ -192,7 +186,6 @@ const exportInventoryFrom = (path: string): string[] => {
   }
   return names.sort()
 }
-
 const publicOperationsOf = (path: string, className: string): string[] => {
   const sourceFile = sourceFileFor(path)
   const declaration = sourceFile.statements.find(
@@ -274,8 +267,9 @@ const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
   it('holds the current facade ceilings until their owner cutovers', () => {
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(1045)
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(700)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1095)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1407)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(950)
@@ -484,7 +478,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts'
     ])
-    expect(importersOf(settingsPaths.recordCodec)).toEqual(['src/main/settings/repository.ts'])
+    expect(importersOf(settingsPaths.recordCodec)).toEqual([
+      'src/main/settings/document-codec.ts',
+      'src/main/settings/repository.ts'
+    ])
+    expect(importersOf(settingsPaths.documentCodec)).toEqual(['src/main/settings/repository.ts'])
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/backend-resolver.ts',
@@ -602,7 +600,8 @@ describe('Settings backend ownership architecture', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
-      'src/main/settings/record-codec.ts'
+      'src/main/settings/record-codec.ts',
+      'src/main/settings/document-codec.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',
