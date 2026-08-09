@@ -137,7 +137,7 @@
   --chart-4: rgb(178 132 229);
   --chart-5: rgb(225 113 91);
   --session-running: oklch(0.51 0.15 255);
-  --session-running-shimmer: color-mix(in oklch, var(--session-running) 32%, transparent);
+  --session-running-shimmer: rgb(255 255 255 / 78%);
   --session-waiting: oklch(0.62 0.16 68);
   --border: #dededa;
   --input: #dededa;
