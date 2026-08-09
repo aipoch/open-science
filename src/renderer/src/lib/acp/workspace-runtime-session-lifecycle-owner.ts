@@ -10,7 +10,7 @@ import { resolveHistoryReplayTarget, type HistoryReplayDescriptor } from './hist
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
   sendWorkspaceMessage,
-  type SendWorkspaceMessageInput
+  type SendWorkspaceMessageIntent
 } from './workspace-runtime-command-owner'
 
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
@@ -303,7 +303,7 @@ const recoverContextOverflowWorkspaceSession = async (
   supportsImageInput?: boolean,
   cancelledSessionIds?: Set<string>,
   historyReplayDescriptor?: HistoryReplayDescriptor,
-  planContinuation?: SendWorkspaceMessageInput['planContinuation']
+  planContinuation?: SendWorkspaceMessageIntent['planContinuation']
 ): Promise<boolean> => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
 
@@ -546,12 +546,12 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
   const cancelledOverflowRecoverySessionIds = new Set<string>()
   const planContinuationBySessionId = new Map<
     string,
-    NonNullable<SendWorkspaceMessageInput['planContinuation']>
+    NonNullable<SendWorkspaceMessageIntent['planContinuation']>
   >()
 
   return {
     recordPromptPlanAuthority(
-      input: Pick<SendWorkspaceMessageInput, 'sessionId' | 'planContinuation'>
+      input: Pick<SendWorkspaceMessageIntent, 'sessionId' | 'planContinuation'>
     ): void {
       if (input.sessionId && input.planContinuation) {
         planContinuationBySessionId.set(input.sessionId, input.planContinuation)

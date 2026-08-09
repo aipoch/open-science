@@ -26,7 +26,7 @@ import {
 } from './workspace-runtime-prompt-preparation-owner'
 import type { useAcpRuntime } from './useAcpRuntime'
 
-type SendWorkspaceMessageInput = {
+type SendWorkspaceMessageIntent = {
   sessionId?: string
   branchSourceSessionId?: string
   text: string
@@ -39,19 +39,22 @@ type SendWorkspaceMessageInput = {
   projectId?: string
   projectName?: string
   permissionProfile?: PermissionProfileId
+  forcedSkillIds?: string[]
+  referencedArtifacts?: FileReference[]
+  parts?: MessagePart[]
+  specialistId?: string | null
+}
+
+type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   agentFrameworkId?: AgentFrameworkId
   agentBackendId?: string
   agentModel?: string
   historyReplayDescriptor?: HistoryReplayDescriptor
-  forcedSkillIds?: string[]
-  referencedArtifacts?: FileReference[]
-  parts?: MessagePart[]
   forceHistoryReplay?: boolean
   supportsImageInput?: boolean
   truncateFromMessageId?: string
   allowCompactionRecovery?: boolean
   requireExistingSession?: boolean
-  specialistId?: string | null
 }
 
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
@@ -187,7 +190,7 @@ const reconcileBranchedAttachments = async (
 
 const replayHistory = (
   messages: ChatMessage[],
-  input: SendWorkspaceMessageInput,
+  input: SendWorkspaceMessageCommand,
   projectId?: string
 ): HistoryReplayContext | undefined =>
   buildWorkspaceHistoryReplay(
@@ -224,7 +227,7 @@ type PromptDispatch = {
     contextReset?: boolean
   }
   continuation?: Parameters<WorkspaceCommandRuntime['sendPrompt']>[11]
-  turnIntent?: SendWorkspaceMessageInput['turnIntent']
+  turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   accepted?: () => void
 }
 
@@ -256,7 +259,7 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     })
 }
 
-type PendingPromptRequest = SendWorkspaceMessageInput & {
+type PendingPromptRequest = SendWorkspaceMessageCommand & {
   pending: SendWorkspaceMessageResult
   content: string
   attachments: UploadedAttachment[]
@@ -340,7 +343,7 @@ const startPendingPrompt = (
 
 const sendWorkspaceMessage = async (
   runtime: WorkspaceCommandRuntime,
-  input: SendWorkspaceMessageInput,
+  input: SendWorkspaceMessageCommand,
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const content = input.text.trim()
@@ -622,4 +625,4 @@ const resendEditedWorkspaceMessage = async (
 }
 
 export { resendEditedWorkspaceMessage, sendWorkspaceMessage }
-export type { ResendEditedMessageInput, SendWorkspaceMessageInput, SendWorkspaceMessageResult }
+export type { ResendEditedMessageInput, SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

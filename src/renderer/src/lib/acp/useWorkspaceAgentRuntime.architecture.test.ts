@@ -457,6 +457,22 @@ const hookKeys = [
   'setPermissionProfile',
   'revokePermissionGrant'
 ] as const
+const sendIntentKeys = [
+  'sessionId',
+  'branchSourceSessionId',
+  'text',
+  'turnIntent',
+  'planContinuation',
+  'attachments',
+  'cwd',
+  'projectId',
+  'projectName',
+  'permissionProfile',
+  'forcedSkillIds',
+  'referencedArtifacts',
+  'parts',
+  'specialistId'
+] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))
   return ownerNames.filter((name) => targets.has(ownerTargets.get(name)!))
@@ -508,6 +524,23 @@ describe('workspace runtime architecture', () => {
     expect(owner.type?.getText()).toBe('WorkspaceAgentRuntime')
     expect(consumer.type?.getText()).toBe('WorkspaceAgentRuntime')
     expectSameNames(propertyNames(directReturnObject(owner)), hookKeys)
+  })
+  it('keeps replay and recovery mechanics behind the public send intent', () => {
+    const commandOwnerFile = sourceFileFor(
+      `${ownerTargets.get('workspace-runtime-command-owner')}.ts`
+    )
+    const sendIntent = typeLiteralAlias(commandOwnerFile, 'SendWorkspaceMessageIntent')
+    const declaredKeys = sendIntent.members.map((member) => {
+      if (!member.name) throw new Error('expected named send intent property')
+      return member.name.getText()
+    })
+    const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
+    const sendMessage = runtimeType.members.find(
+      (member) => member.name?.getText() === 'sendMessage'
+    )
+
+    expectSameNames(declaredKeys, sendIntentKeys)
+    expect(sendMessage?.getText()).toContain('SendWorkspaceMessageIntent')
   })
   it('keeps React composition in the facade and lifecycle state in its owner', () => {
     const calls = callCounts(facadeFile)
