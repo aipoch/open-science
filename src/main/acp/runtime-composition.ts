@@ -4,6 +4,7 @@ import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
+import { MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID } from '../../shared/lifecycle-events'
 import {
   filterSpecialistConnectorSkills,
   resolveEffectiveSpecialistSkills
@@ -208,7 +209,22 @@ const createAcpRuntime = ({
           authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
         ...(sessionPersistenceCoordinator
-          ? { permissionWait: { sessions: sessionPersistenceCoordinator } }
+          ? {
+              permissionWait: {
+                sessions: sessionPersistenceCoordinator,
+                onSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    // The durable commit remains authoritative when a renderer projection is gone.
+                    log.warn('permission wait Session publication failed', errorLogFields(error))
+                  }
+                }
+              }
+            }
           : {}),
         ...(sessionPersistenceCoordinator
           ? {

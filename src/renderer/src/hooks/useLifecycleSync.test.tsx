@@ -3,10 +3,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  ProjectDeletedEvent,
-  SessionDeletedEvent,
-  SessionUpsertEvent
+import {
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  type ProjectDeletedEvent,
+  type SessionDeletedEvent,
+  type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
 import { getActiveConversationContext } from '../../../shared/conversation-graph'
@@ -178,6 +179,79 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated session')
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('merges Main-owned permission authority without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([session])
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Run the verification'
+    })
+    const durableBeforeOutput = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: prompt?.messageId,
+      content: 'Preparing the command.'
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableBeforeOutput,
+          status: 'waiting-permission',
+          updatedAt: durableBeforeOutput.updatedAt + 1,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            permission: {
+              state: 'pending',
+              request: {
+                requestId: 'permission-1',
+                sessionId: session.id,
+                toolCallId: 'tool-1',
+                title: 'Run npm test',
+                options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+              },
+              originatingPromptMessageId: prompt!.messageId,
+              fingerprint: 'a'.repeat(64),
+              createdAt: 1
+            }
+          }
+        }
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.status).toBe('waiting-permission')
+    expect(projected.runtimeContext?.permission?.request.requestId).toBe('permission-1')
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+    expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableBeforeOutput,
+          status: 'running',
+          updatedAt: durableBeforeOutput.updatedAt + 2,
+          runtimeContext: { version: 1, revision: 2 }
+        }
+      })
+    })
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled.status).toBe('running')
+    expect(settled.runtimeContext?.permission).toBeUndefined()
+    expect(settled.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
   })
 
   it("does not roll back live conversation state from this renderer's save echo", async () => {

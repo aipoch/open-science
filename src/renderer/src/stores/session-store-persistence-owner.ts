@@ -99,7 +99,7 @@ export type SessionHydrationSelection = {
 export type ApplyDurableSessionProjectionInput = {
   source: ChatSession
   session: PersistedChatSession
-  mode?: 'merge-upload-identities' | 'replace-persisted-if-current'
+  mode?: 'merge-upload-identities' | 'replace-persisted-if-current' | 'permission-authority'
 }
 
 export type SessionPersistenceActions = {
@@ -417,6 +417,31 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
+
+      if (mode === 'permission-authority') {
+        const permissionPending = session.runtimeContext?.permission?.state === 'pending'
+        const status = permissionPending
+          ? current.status === 'waiting-for-user' || current.status === 'waiting-plan-approval'
+            ? current.status
+            : 'waiting-permission'
+          : current.status === 'waiting-permission'
+            ? current.activeRun || current.agentPromptInFlight
+              ? 'running'
+              : 'idle'
+            : current.status
+        const projected: ChatSession = {
+          ...current,
+          status,
+          runtimeContext: session.runtimeContext,
+          updatedAt: Math.max(current.updatedAt, session.updatedAt)
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
 
       let projected: ChatSession
       if (current === source && mode === 'replace-persisted-if-current') {

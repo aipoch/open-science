@@ -6,6 +6,7 @@ import {
 } from '../../shared/session-history-replay'
 import {
   sanitizeSessionPermissionRuntimeContext,
+  type PersistedChatSession,
   type SessionPermissionRuntimeContext,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
@@ -26,6 +27,8 @@ type RestoredPermissionDecision = Readonly<{
   denied: boolean
 }>
 
+type PublishPermissionWaitSession = (session: PersistedChatSession) => Promise<void> | void
+
 const isRevisionConflict = (error: unknown): boolean =>
   typeof error === 'object' &&
   error !== null &&
@@ -33,7 +36,10 @@ const isRevisionConflict = (error: unknown): boolean =>
   error.code === 'revision-conflict'
 
 class AcpPermissionWaitOwner {
-  constructor(private readonly sessions?: PermissionWaitSessions) {}
+  constructor(
+    private readonly sessions?: PermissionWaitSessions,
+    private readonly publishSessionUpdated?: PublishPermissionWaitSession
+  ) {}
 
   async persist(candidate: DurablePermissionWaitCandidate): Promise<boolean> {
     if (!this.sessions || !candidate.projectId || !candidate.promptMessageId) return false
@@ -286,6 +292,10 @@ class AcpPermissionWaitOwner {
           patch: { permission },
           sessionStatus
         })
+        if (this.publishSessionUpdated) {
+          const session = await this.sessions.loadSessionForPermissionReplay(projectId, sessionId)
+          await this.publishSessionUpdated(session)
+        }
         return
       } catch (error) {
         if (!isRevisionConflict(error) || attempt === 2) throw error
@@ -295,4 +305,4 @@ class AcpPermissionWaitOwner {
 }
 
 export { AcpPermissionWaitOwner }
-export type { PermissionWaitSessions, RestoredPermissionDecision }
+export type { PermissionWaitSessions, PublishPermissionWaitSession, RestoredPermissionDecision }

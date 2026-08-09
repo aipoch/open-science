@@ -1,6 +1,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import type { SessionUpsertEvent } from '../../../shared/lifecycle-events'
+import {
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  type SessionUpsertEvent
+} from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -115,7 +118,19 @@ const useLifecycleSync = ({
         // live projection here can discard a prompt and the Runtime Segment used by its artifact
         // claim. Events from other clients remain authoritative synchronization input; same-client
         // command results return through their direct IPC path.
-        if (originClientId !== lifecycleClientIdRef.current) {
+        if (originClientId === MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'permission-authority'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId !== lifecycleClientIdRef.current) {
           useSessionStore.getState().upsertPersistedSession(session)
         }
         useArchiveUndoStore.getState().reconcileSession(session)

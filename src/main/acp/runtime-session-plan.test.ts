@@ -153,7 +153,10 @@ const createRuntimeHarness = (options: {
       lookup: () => ({ attachment: { session: { sessionId: 'provider-session-1' } } })
     },
     sessionPlanWorkflow,
-    appContinuations: { delete: vi.fn(() => false) },
+    appContinuations: {
+      get: vi.fn(() => undefined),
+      delete: vi.fn(() => false)
+    },
     artifactTurns: {
       promptMessageIdFor: () => 'interaction-1'
     },

@@ -172,6 +172,7 @@ type AcpRuntimeOptions = {
       | 'containsMessageOnActiveBranch'
       | 'loadSessionForPermissionReplay'
     >
+    onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
