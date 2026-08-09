@@ -47,6 +47,7 @@ import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
 type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
@@ -443,6 +444,7 @@ const ArtifactProvenancePanel = ({
   onClose,
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
+  const tabScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
   const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
   const [lineageResult, setLineageResult] = useState<{
@@ -996,8 +998,9 @@ const ArtifactProvenancePanel = ({
       </div>
 
       <div
+        ref={tabScrollFadeRef}
         role="tablist"
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
+        className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
       >
         {tabs.map((tab) => (
           <button

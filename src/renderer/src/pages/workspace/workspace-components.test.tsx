@@ -216,6 +216,22 @@ describe('workspace page component boundaries', () => {
     expect(mainCssSource).toContain('--always-black:')
   })
 
+  it('uses one theme-aware fade treatment for horizontal workspace scrollers', () => {
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const horizontalScrollerSources = [
+      'PreviewPanel.tsx',
+      'NotebookPreview.tsx',
+      'NotebookInputDataStrip.tsx',
+      'ArtifactProvenancePanel.tsx'
+    ].map((fileName) => readFileSync(resolve(__dirname, fileName), 'utf8'))
+
+    expect(mainCssSource).toContain('.scroll-fade-x')
+    expect(mainCssSource).toContain(".scroll-fade-x[data-scroll-fade='both']")
+    expect(mainCssSource).toContain('-webkit-mask-image: var(--scroll-fade-x-mask, none)')
+    expect(mainCssSource).toContain('hsl(var(--always-black))')
+    for (const source of horizontalScrollerSources) expect(source).toContain('scroll-fade-x')
+  })
+
   it('registers the semantic chart tokens used by the response Usage breakdown', () => {
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')

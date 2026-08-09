@@ -271,6 +271,9 @@ describe('ConversationPanel header spacing', () => {
     )
     expect(messageButton).not.toBeNull()
     expect(messageButton?.className.split(' ')).toContain('md:hidden')
+    const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
+    expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
+    expect(surfaceFade?.classList.contains('h-12')).toBe(true)
   })
 })
 
@@ -431,8 +434,8 @@ describe('ConversationPanel composer intake', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
 
     const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
-    expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
-    expect(surfaceFade?.classList.contains('h-12')).toBe(true)
+    expect(surfaceFade?.classList.contains('-top-18')).toBe(true)
+    expect(surfaceFade?.classList.contains('h-18')).toBe(true)
     expect(surfaceFade?.classList.contains('bg-gradient-to-t')).toBe(true)
     expect(surfaceFade?.classList.contains('from-bg-10')).toBe(true)
     expect(surfaceFade?.classList.contains('to-bg-10/0')).toBe(true)

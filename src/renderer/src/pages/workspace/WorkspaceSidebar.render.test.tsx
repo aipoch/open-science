@@ -94,6 +94,13 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('aria-label="Messages, no unread messages"')
   })
 
+  it('softens the session list behind the footer controls', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+
+    expect(html).toContain('-top-12 h-12 bg-gradient-to-t from-rail-card-bg')
+    expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
+  })
+
   it('reserves header padding for the external panel toggle without spacer markup', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 

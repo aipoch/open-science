@@ -642,7 +642,7 @@ const ConversationPanel = ({
             data-testid="composer-surface-fade"
             className={cn(
               'pointer-events-none absolute inset-x-0 bg-gradient-to-t from-bg-10 to-bg-10/0',
-              pendingElicitation ? '-top-12 h-12' : '-top-6 h-6'
+              pendingElicitation ? '-top-18 h-18' : '-top-12 h-12'
             )}
           />
 

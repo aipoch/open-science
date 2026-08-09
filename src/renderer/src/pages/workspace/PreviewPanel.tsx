@@ -16,6 +16,7 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type PreviewPanelProps = {
   panelRef: React.Ref<PanelImperativeHandle>
@@ -162,7 +163,7 @@ const PreviewTabBar = ({
   onActivate: (id: string) => void
   onClose: (id: string) => void
 }): React.JSX.Element => {
-  const tabListRef = useRef<HTMLDivElement | null>(null)
+  const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
@@ -175,7 +176,7 @@ const PreviewTabBar = ({
       const activeTab = activeIndex === -1 ? null : tabContainerRefs.current[activeIndex]
       if (activeTab) scrollPreviewTabIntoView(tabList, activeTab, behavior)
     },
-    [activeItemId, tabs]
+    [activeItemId, tabListRef, tabs]
   )
 
   // External activation keeps the selected tab visible without moving keyboard focus.
@@ -200,7 +201,7 @@ const PreviewTabBar = ({
     observer.observe(tabList)
 
     return () => observer.disconnect()
-  }, [scrollActiveTabIntoView])
+  }, [scrollActiveTabIntoView, tabListRef])
 
   const moveToTab = (index: number): void => {
     const tab = tabs[index]
@@ -241,7 +242,7 @@ const PreviewTabBar = ({
       role="tablist"
       aria-label="Open previews"
       aria-orientation="horizontal"
-      className="flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
+      className="scroll-fade-x flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
     >
       {tabs.map((tab, index) => (
         <PreviewTab

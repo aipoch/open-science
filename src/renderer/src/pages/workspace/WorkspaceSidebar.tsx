@@ -417,7 +417,7 @@ const WorkspaceSidebar = ({
           <div className="relative flex shrink-0 items-center gap-1 p-2">
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
+              className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
             />
             <NotificationBell
               side="top"

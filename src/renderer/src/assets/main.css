@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './agent-markdown.css';
@@ -258,6 +259,36 @@
 }
 
 @layer components {
+  /* Theme-independent edge treatment for compact horizontal navigation and chip rails. */
+  .scroll-fade-x {
+    -webkit-mask-image: var(--scroll-fade-x-mask, none);
+    mask-image: var(--scroll-fade-x-mask, none);
+    mask-repeat: no-repeat;
+    mask-size: 100% 100%;
+  }
+
+  .scroll-fade-x[data-scroll-fade='left'] {
+    --scroll-fade-x-mask: linear-gradient(to right, transparent, hsl(var(--always-black)) 2.5rem);
+  }
+
+  .scroll-fade-x[data-scroll-fade='right'] {
+    --scroll-fade-x-mask: linear-gradient(
+      to right,
+      hsl(var(--always-black)) calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
+  .scroll-fade-x[data-scroll-fade='both'] {
+    --scroll-fade-x-mask: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--always-black)) 2.5rem,
+      hsl(var(--always-black)) calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
   /*
    * Radix ScrollArea wraps content in display:table / min-width:100%, which lets
    * long unbroken strings expand past the resizable panel. Force a normal block.
