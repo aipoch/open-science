@@ -243,6 +243,56 @@ describe('Side chat renderer controller', () => {
     act(() => root.unmount())
   })
 
+  it('restores the panel when durable cleanup fails so close can be retried', async () => {
+    const close = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Session file is busy'))
+      .mockResolvedValueOnce(undefined)
+    window.api = {
+      sideChat: {
+        start: vi.fn(async () => ({
+          sideSessionId: 'side-close-retry',
+          frameworkId: 'claude-code' as const
+        })),
+        send: vi.fn(async () => undefined),
+        cancel: vi.fn(async () => undefined),
+        close,
+        onEvent: vi.fn(() => () => undefined),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+
+    const root = createRoot(document.createElement('div'))
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useSideChatController>
+    }
+    const Harness = (): null => {
+      result.current = useSideChatController({ sessionId: 'main-retry', projectId: 'project-1' })
+      return null
+    }
+    act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+    await act(async () => expect(await result.current.start('Hello')).toBe(true))
+
+    await act(async () => {
+      result.current.close()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(result.current.view).toMatchObject({
+      sideSessionId: 'side-close-retry',
+      error: expect.stringContaining('Session file is busy')
+    })
+
+    await act(async () => {
+      result.current.close()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(result.current.view).toBeUndefined()
+    act(() => root.unmount())
+  })
+
   it('hydrates every live Side chat and routes background events by parent Session', async () => {
     let eventListener: ((event: never) => void) | undefined
     const list = vi.fn(async () => ({
@@ -328,7 +378,7 @@ describe('Side chat renderer controller', () => {
     act(() => root.unmount())
   })
 
-  it('drops the app-lifetime projection when the provider connection closes', async () => {
+  it('keeps the durable projection retryable when the provider connection closes', async () => {
     let eventListener: ((event: never) => void) | undefined
     window.api = {
       sideChat: {
@@ -365,7 +415,12 @@ describe('Side chat renderer controller', () => {
       } as never)
     })
 
-    expect(result.current.view).toBeUndefined()
+    expect(result.current.view).toMatchObject({
+      sideSessionId: 'side-closed',
+      running: false,
+      error: expect.stringContaining('reconnect')
+    })
+    await act(async () => expect(await result.current.send('Retry')).toBe(true))
     act(() => root.unmount())
   })
 })

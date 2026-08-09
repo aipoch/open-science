@@ -121,7 +121,20 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
 
       const event = envelope.event
       if (event.kind === 'closed') {
-        update(envelope.parentSessionId, undefined)
+        if (event.reason === 'closed') {
+          update(envelope.parentSessionId, undefined)
+        } else {
+          update(envelope.parentSessionId, (current) =>
+            current
+              ? {
+                  ...current,
+                  revision,
+                  running: false,
+                  error: 'Side chat connection ended. Send a Follow up to reconnect.'
+                }
+              : current
+          )
+        }
         return
       }
       update(envelope.parentSessionId, (current) => {
@@ -350,10 +363,20 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       update(parentSessionId, undefined)
       const request = current.sideSessionId
         ? { sideSessionId: current.sideSessionId }
-        : { parentSessionId: current.parentSessionId, discardRelays: false as const }
+        : { parentSessionId: current.parentSessionId }
       void window.api.sideChat
         .close(request)
-        .catch(() => undefined)
+        .catch((error) => {
+          update(
+            parentSessionId,
+            (latest) =>
+              latest ?? {
+                ...current,
+                running: false,
+                error: `Could not close Side chat: ${errorText(error)}`
+              }
+          )
+        })
         .finally(() => {
           const next = new Set(closingParentSessionIdsRef.current)
           next.delete(parentSessionId)

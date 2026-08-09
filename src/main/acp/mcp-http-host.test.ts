@@ -315,7 +315,7 @@ describe('AgentMcpHttpHost', () => {
       messageId: 'side-chat-message-1',
       targetState: 'idle',
       delivery: 'next-user-turn',
-      persisted: false,
+      persisted: true,
       systemHint: 'Wait for the next user turn.'
     })
     host.registerHostMessage('side-routing-1', { sendMessage })

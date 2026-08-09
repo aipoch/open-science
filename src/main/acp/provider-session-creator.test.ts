@@ -7,7 +7,10 @@ import { claudeCodeFramework } from '../agent-framework'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionCreator } from './provider-session-creator'
-import type { SessionCapabilityName } from './session-capability-owner'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityName
+} from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
 const permissionProfile: SessionPermissionProfileState = {
@@ -117,6 +120,7 @@ const createHarness = (options: {
         }
       })
     },
+    capabilityPolicy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: {
       configure:
         options.configure ??

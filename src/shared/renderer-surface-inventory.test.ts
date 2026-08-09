@@ -74,6 +74,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'settings.selectCustomServerTemplate',
   'sideChat.cancel',
   'sideChat.close',
+  'sideChat.list',
   'sideChat.onEvent',
   'sideChat.onRelayDelivered',
   'sideChat.send',

@@ -539,12 +539,18 @@ const createApplicationModules = async (
           : 'running'
       }
       return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
-    }
+    },
+    appendRelay: ({ projectId, parentSessionId, sideChatId, relay }) =>
+      sessionPersistenceCoordinator.appendSideChatRelay({
+        projectId,
+        sessionId: parentSessionId,
+        sideChatId,
+        relay
+      })
   })
   const mainPromptSideChatRelay = createMainPromptSideChatRelay({
     relay: sideChatRelay,
-    appendSideChatAdvisory: (command) =>
-      sessionPersistenceCoordinator.appendSideChatAdvisory(command),
+    commitSideChatRelays: (command) => sessionPersistenceCoordinator.commitSideChatRelays(command),
     onDelivered: (event) => broadcastToRenderers('side-chat:relay-delivered', event)
   })
   const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
@@ -1259,7 +1265,7 @@ const createApplicationModules = async (
       onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
       onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
       beforeSessionDelete: async (sessionId) => {
-        await sideChatOwnerRef.current?.closeForParent(sessionId)
+        await sideChatOwnerRef.current?.invalidateParents([sessionId])
         await notebookService.shutdownSession(sessionId)
       },
       initializationBarrier: initialConnectorSkillsReady,
@@ -1291,6 +1297,20 @@ const createApplicationModules = async (
       resolveTarget: (target, context) =>
         settingsService.resolveExplicitAgentBackend(target, context),
       relay: sideChatRelay,
+      persistence: {
+        save: ({ projectId, parentSessionId, sideChat }) =>
+          sessionPersistenceCoordinator.saveSideChatProjection({
+            projectId,
+            sessionId: parentSessionId,
+            sideChat
+          }),
+        clear: ({ projectId, parentSessionId, sideChatId }) =>
+          sessionPersistenceCoordinator.clearSideChat({
+            projectId,
+            sessionId: parentSessionId,
+            sideChatId
+          })
+      },
       onEvent: (event) => broadcastToRenderers('side-chat:event', event)
     },
     (options) => {
@@ -1303,17 +1323,24 @@ const createApplicationModules = async (
     }
   )
   sideChatOwnerRef.current = sideChatRuntime
-  await sideChatRuntime
-    .sweepStaleProfiles()
-    .catch((error) =>
-      sideChatLog.error('stale Side chat profile cleanup failed', diagnosticErrorFields(error))
+  try {
+    const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
+    sideChatRuntime.hydrate(persistedSideChats.sideChats)
+    sideChatRelay.hydrate(persistedSideChats.relays)
+    await sideChatRuntime.sweepStaleProfiles(
+      new Set(persistedSideChats.sideChats.map(({ sideChat }) => sideChat.id)),
+      persistedSideChats.isComplete
     )
+  } catch (error) {
+    sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
+  }
   declareElectronAdapter('side-chat', () =>
     registerSideChatIpcHandlers(sideChatRuntime, {
       loadParentSession: (projectId, sessionId) =>
         sessionRepository.loadSession(projectId, sessionId),
       hasLiveParentSession: (projectId, sessionId) => runtime.hasLiveSession(projectId, sessionId),
-      assertParentAvailable: (sessionId) => archiveCoordinator.assertSessionAvailableById(sessionId)
+      withParentAvailable: (sessionId, operation) =>
+        archiveCoordinator.withSessionAvailableById(sessionId, operation)
     })
   )
   // Archive availability is checked at the final admission point, rather than trusting renderer

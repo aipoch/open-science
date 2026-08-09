@@ -12,7 +12,7 @@ export type SideChatSendMessageResult = Readonly<{
   messageId: string
   targetState: SideChatTargetState
   delivery: 'next-user-turn'
-  persisted: false
+  persisted: true
   systemHint: string
 }>
 
@@ -37,8 +37,7 @@ export type SideChatSessionRequest = Readonly<{
   sideSessionId: string
 }>
 
-export type SideChatCloseRequest =
-  SideChatSessionRequest | Readonly<{ parentSessionId: string; discardRelays: boolean }>
+export type SideChatCloseRequest = SideChatSessionRequest | Readonly<{ parentSessionId: string }>
 
 export type SideChatEntry =
   | Readonly<{ id: string; kind: 'message'; role: 'user' | 'assistant'; text: string }>

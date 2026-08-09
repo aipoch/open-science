@@ -16,8 +16,8 @@ import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   type AcpSessionCapabilityOwner,
+  type SessionCapabilityPolicy,
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
@@ -58,6 +58,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   registry: AcpSessionRegistry
   reserveIdentity: (sessionId: string) => AcpPrimarySessionIdentityReservationResult
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure' | 'configurePermissionProfile'>
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   clearLivePermissionProfile: (sessionId: string) => void
@@ -228,7 +229,7 @@ export class AcpProviderSessionResumer {
         framework: backend.framework,
         nativeMcpEnabled: backend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
         projectName
       })

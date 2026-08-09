@@ -5,11 +5,15 @@ import {
   type SideChatSendMessageResult,
   type SideChatTargetState
 } from '../../shared/side-chat'
+import type { PersistedSideChatRelay } from '../../shared/session-persistence'
+import { createLogger } from '../logger'
 
 const MAX_SIDE_CHAT_MESSAGE_CHARS = SIDE_CHAT_MESSAGE_LIMIT
+const log = createLogger('side-chat-relay')
 
 type SideChatRelayBinding = Readonly<{
   sideSessionId: string
+  sideChatId: string
   parentSessionId: string
   projectId: string
 }>
@@ -17,9 +21,11 @@ type SideChatRelayBinding = Readonly<{
 type SideChatRelayMessage = Readonly<{
   id: string
   sideSessionId: string
+  sideChatId: string
   parentSessionId: string
   projectId: string
   text: string
+  createdAt: number
 }>
 
 type SideChatRelayClaim = Readonly<{
@@ -30,6 +36,12 @@ type SideChatRelayClaim = Readonly<{
 
 type SideChatRelayOwnerOptions = Readonly<{
   targetState: (parentSessionId: string) => SideChatTargetState
+  appendRelay: (input: {
+    projectId: string
+    parentSessionId: string
+    sideChatId: string
+    relay: Omit<PersistedSideChatRelay, 'sideChatId'>
+  }) => Promise<void>
 }>
 
 class SideChatRelayOwner {
@@ -46,7 +58,33 @@ class SideChatRelayOwner {
     this.bindings.set(binding.sideSessionId, binding)
   }
 
-  send(input: { sideSessionId: string; target: 'main'; text: string }): SideChatSendMessageResult {
+  hydrate(
+    records: readonly {
+      parentSessionId: string
+      projectId: string
+      relays: readonly PersistedSideChatRelay[]
+    }[]
+  ): void {
+    for (const record of records) {
+      if (record.relays.length === 0) continue
+      this.queued.set(
+        record.parentSessionId,
+        record.relays.map((relay) => ({
+          ...relay,
+          sideSessionId: relay.sideChatId,
+          sideChatId: relay.sideChatId,
+          parentSessionId: record.parentSessionId,
+          projectId: record.projectId
+        }))
+      )
+    }
+  }
+
+  async send(input: {
+    sideSessionId: string
+    target: 'main'
+    text: string
+  }): Promise<SideChatSendMessageResult> {
     const binding = this.bindings.get(input.sideSessionId)
     if (!binding) throw new Error('Side chat sender is not bound to a parent Session.')
     if (input.target !== 'main') throw new Error('Side chat may only target main.')
@@ -59,20 +97,33 @@ class SideChatRelayOwner {
     const message: SideChatRelayMessage = {
       id: `side-chat-message-${randomUUID()}`,
       ...binding,
-      text
+      text,
+      createdAt: Date.now()
     }
+    await this.options.appendRelay({
+      projectId: binding.projectId,
+      parentSessionId: binding.parentSessionId,
+      sideChatId: binding.sideChatId,
+      relay: { id: message.id, text: message.text, createdAt: message.createdAt }
+    })
     const messages = this.queued.get(binding.parentSessionId) ?? []
     messages.push(message)
     this.queued.set(binding.parentSessionId, messages)
     const targetState = this.options.targetState(binding.parentSessionId)
+    log.info('relay queued', {
+      messageId: message.id,
+      sideChatId: binding.sideChatId,
+      parentSessionId: binding.parentSessionId,
+      targetState
+    })
     return {
       status: 'queued',
       messageId: message.id,
       targetState,
       delivery: 'next-user-turn',
-      persisted: false,
+      persisted: true,
       systemHint:
-        'Main is not interrupted or awakened. This advisory will be delivered with its next user turn and is lost if the app exits first.'
+        'Main is not interrupted or awakened. This advisory is persisted and will be delivered with its next user turn.'
     }
   }
 

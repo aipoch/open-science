@@ -7,6 +7,11 @@ import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { claudeCodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityPolicy
+} from './session-capability-owner'
 import { AcpSessionRegistry, type AcpPrimarySessionIdentityReservation } from './session-registry'
 
 const permissionProfile: SessionPermissionProfileState = {
@@ -31,6 +36,7 @@ type AdopterHarness = {
   connection: ClientConnection
   order: string[]
   providerSession: ActiveSession
+  provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
   release: ReturnType<typeof vi.fn>
   reservation: AcpPrimarySessionIdentityReservation
@@ -48,6 +54,7 @@ const createHarness = (
     emitState?: () => void
     foreignIdentityCollision?: (sessionIds: readonly string[]) => Error | undefined
     handoffAppend?: string
+    capabilityPolicy?: SessionCapabilityPolicy
     specialistIdentity?: { append: string; prefix: string }
     specialistSkills?: EffectiveSpecialistSkills
   } = {}
@@ -108,30 +115,30 @@ const createHarness = (
         return { permissionProfile, appliedModel: undefined, configOptions: undefined }
       })
   )
+  const provision = vi.fn(async () => {
+    order.push('capability provision')
+    return {
+      mcpServers: [],
+      descriptor: {
+        role: 'primary' as const,
+        delegation: 'denied' as const,
+        transport: 'none' as const,
+        capabilities: [],
+        canonicalMcpServerNames: [],
+        modelFacingMcpServerNames: [],
+        controlRpcMethods: []
+      },
+      commit,
+      release
+    }
+  })
   const adopter = new AcpProviderSessionAdopter({
     currentBackend: () => backend,
     registry,
     reserveIdentity: (current, sessionIds) =>
       registry.reserve({ reservation: current, sessionIds }),
-    capabilities: {
-      provision: vi.fn(async () => {
-        order.push('capability provision')
-        return {
-          mcpServers: [],
-          descriptor: {
-            role: 'primary' as const,
-            delegation: 'denied' as const,
-            transport: 'none' as const,
-            capabilities: [],
-            canonicalMcpServerNames: [],
-            modelFacingMcpServerNames: [],
-            controlRpcMethods: []
-          },
-          commit,
-          release
-        }
-      })
-    },
+    capabilities: { provision },
+    capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure },
     resolveSpecialistIdentity: options.specialistIdentity
       ? vi.fn(async () => options.specialistIdentity)
@@ -164,6 +171,7 @@ const createHarness = (
     connection,
     order,
     providerSession,
+    provision,
     registry,
     release,
     reservation: reservation.reservation,
@@ -175,6 +183,16 @@ const createHarness = (
 }
 
 describe('AcpProviderSessionAdopter', () => {
+  it('preserves the runtime capability policy while adopting a fresh provider Session', async () => {
+    const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+
+    await harness.adopt()
+
+    expect(harness.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+    )
+  })
+
   it('publishes a fresh provider Session under the stable application Session id', async () => {
     const harness = createHarness()
 

@@ -1,15 +1,18 @@
 import type { PersistedChatMessage } from '../../shared/session-persistence'
 import type { SideChatRelayDeliveredEvent } from '../../shared/side-chat'
 import type { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
+import { createLogger } from '../logger'
+
+const log = createLogger('side-chat-relay')
 
 type MainPromptSideChatRelayOptions = Readonly<{
   relay: SideChatRelayOwner
-  appendSideChatAdvisory: (command: {
+  commitSideChatRelays: (command: {
     projectId: string
     sessionId: string
+    relayIds: readonly string[]
     promptMessageId: string
-    content: string
-  }) => Promise<PersistedChatMessage>
+  }) => Promise<readonly PersistedChatMessage[]>
   onDelivered: (event: SideChatRelayDeliveredEvent) => void
 }>
 
@@ -39,24 +42,37 @@ const createMainPromptSideChatRelay = (
       historyPreamble: formatAdvisories(claim.messages),
       restore: claim.restore,
       commit: async (promptMessageId?: string): Promise<void> => {
-        const messages = claim.commit()
+        const messages = claim.messages
         if (messages.length === 0) return
         if (!promptMessageId) {
+          claim.restore()
           throw new Error(
             'Main prompt message identity is required to deliver Side chat advisories.'
           )
         }
-        for (const message of messages) {
-          const persisted = await options.appendSideChatAdvisory({
-            projectId: message.projectId,
-            sessionId: message.parentSessionId,
-            promptMessageId,
-            content: message.text
+        let persisted: readonly PersistedChatMessage[]
+        try {
+          persisted = await options.commitSideChatRelays({
+            projectId: messages[0].projectId,
+            sessionId: messages[0].parentSessionId,
+            relayIds: messages.map((message) => message.id),
+            promptMessageId
           })
+        } catch (error) {
+          claim.restore()
+          throw error
+        }
+        claim.commit()
+        log.info('relays delivered', {
+          parentSessionId: messages[0].parentSessionId,
+          relayCount: messages.length,
+          persistedMessageCount: persisted.length
+        })
+        for (const message of persisted) {
           options.onDelivered({
-            parentSessionId: message.parentSessionId,
-            projectId: message.projectId,
-            message: persisted
+            parentSessionId: messages[0].parentSessionId,
+            projectId: messages[0].projectId,
+            message
           })
         }
       }

@@ -9,6 +9,7 @@ type RestrictedRuntimeProfile = Readonly<{
   systemPrompt: string
   openCodePermissions: Readonly<Record<string, 'allow' | 'deny'>>
   steps?: number
+  persistSession?: boolean
 }>
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -89,6 +90,9 @@ const prepareClaudeBackend = async (
   profile: RestrictedRuntimeProfile
 ): Promise<ResolvedAgentBackend> => {
   const env = { ...backend.env }
+  // Token-authenticated Claude backends can move into this runtime's durable profile because the
+  // credential is portable. claude-shared cannot: its OAuth state lives in the user's existing
+  // CLAUDE_CONFIG_DIR, so keep that directory while asking the SDK to persist the Side chat there.
   if (env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY) {
     env.CLAUDE_CONFIG_DIR = join(profileRoot, 'claude')
     await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true })
@@ -103,7 +107,7 @@ const prepareClaudeBackend = async (
       plugins: [],
       settings: {},
       settingSources: [],
-      persistSession: false
+      persistSession: profile.persistSession ?? false
     },
     systemPromptAppends: [profile.systemPrompt],
     persistentSystemPrompt: undefined

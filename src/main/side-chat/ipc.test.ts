@@ -12,7 +12,7 @@ vi.mock('../ipc-handler-registry', () => ({
 describe('Side chat IPC', () => {
   beforeEach(() => handlers.clear())
 
-  it('lists every live in-memory Side chat for renderer hydration', async () => {
+  it('lists every live or dormant Side chat for renderer hydration', async () => {
     const snapshot = { revision: 2, chats: [{ parentSessionId: 'main-1' }] }
     const runtime = { list: vi.fn(() => snapshot) }
     registerSideChatIpcHandlers(runtime as never, {} as never)
@@ -37,7 +37,7 @@ describe('Side chat IPC', () => {
         ]
       })),
       hasLiveParentSession: vi.fn(() => false),
-      assertParentAvailable: vi.fn(async () => undefined)
+      withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
     }
     registerSideChatIpcHandlers(runtime as never, dependencies as never)
 
@@ -67,7 +67,7 @@ describe('Side chat IPC', () => {
     registerSideChatIpcHandlers(runtime as never, {
       loadParentSession: vi.fn(async () => undefined),
       hasLiveParentSession: vi.fn(() => false),
-      assertParentAvailable: vi.fn(async () => undefined)
+      withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
     })
 
     await expect(
@@ -84,12 +84,20 @@ describe('Side chat IPC', () => {
     const runtime = {
       start: vi.fn(),
       send: vi.fn(),
+      parentFor: vi.fn(() => ({ parentSessionId: 'main-1', projectId: 'project-1' })),
       cancel: vi.fn(),
       close: vi.fn(),
       closeActiveForParent: vi.fn(),
       closeForParent: vi.fn()
     }
-    registerSideChatIpcHandlers(runtime as never, {} as never)
+    registerSideChatIpcHandlers(
+      runtime as never,
+      {
+        loadParentSession: vi.fn(async () => ({ messages: [] })),
+        hasLiveParentSession: vi.fn(() => false),
+        withParentAvailable: vi.fn(async (_sessionId, operation) => operation())
+      } as never
+    )
 
     await handlers.get('side-chat:send')?.(undefined, {
       sideSessionId: 'side-1',
@@ -101,6 +109,68 @@ describe('Side chat IPC', () => {
     expect(runtime.send).toHaveBeenCalledWith({ sideSessionId: 'side-1', text: 'Follow up' })
     expect(runtime.cancel).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
     expect(runtime.close).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
+  })
+
+  it('revalidates the parent before a restored follow-up can activate ACP', async () => {
+    const runtime = {
+      parentFor: vi.fn(() => ({ parentSessionId: 'main-1', projectId: 'project-1' })),
+      send: vi.fn()
+    }
+    registerSideChatIpcHandlers(
+      runtime as never,
+      {
+        loadParentSession: vi.fn(),
+        hasLiveParentSession: vi.fn(),
+        withParentAvailable: vi.fn(async () => {
+          throw new Error('Session is archived.')
+        })
+      } as never
+    )
+
+    await expect(
+      handlers.get('side-chat:send')?.(undefined, {
+        sideSessionId: 'side-1',
+        text: 'Do not resume'
+      } as never)
+    ).rejects.toThrow('archived')
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('holds parent availability until restored follow-up admission completes', async () => {
+    let finishSend!: () => void
+    const send = new Promise<void>((resolve) => {
+      finishSend = resolve
+    })
+    let gateReleased = false
+    const runtime = {
+      parentFor: vi.fn(() => ({ parentSessionId: 'main-1', projectId: 'project-1' })),
+      send: vi.fn(() => send)
+    }
+    const withParentAvailable = vi.fn(async (_sessionId, operation) => {
+      const result = await operation()
+      gateReleased = true
+      return result
+    })
+    registerSideChatIpcHandlers(
+      runtime as never,
+      {
+        loadParentSession: vi.fn(async () => ({ messages: [] })),
+        hasLiveParentSession: vi.fn(() => false),
+        withParentAvailable
+      } as never
+    )
+
+    const followUp = handlers.get('side-chat:send')?.(undefined, {
+      sideSessionId: 'side-1',
+      text: 'Resume slowly'
+    } as never) as Promise<void>
+    await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledOnce())
+    expect(withParentAvailable).toHaveBeenCalledWith('main-1', expect.any(Function))
+    expect(gateReleased).toBe(false)
+
+    finishSend()
+    await followUp
+    expect(gateReleased).toBe(true)
   })
 
   it('does not start a temporary runtime when the panel closes during parent preflight', async () => {
@@ -119,7 +189,10 @@ describe('Side chat IPC', () => {
     registerSideChatIpcHandlers(runtime as never, {
       loadParentSession: vi.fn(async () => undefined),
       hasLiveParentSession: vi.fn(() => true),
-      assertParentAvailable: vi.fn(() => preflight)
+      withParentAvailable: vi.fn(async (_sessionId, operation) => {
+        await preflight
+        return operation()
+      })
     })
 
     const start = handlers.get('side-chat:start')?.(undefined, {
@@ -128,14 +201,13 @@ describe('Side chat IPC', () => {
       text: 'Hello'
     } as never) as Promise<unknown>
     await handlers.get('side-chat:close')?.(undefined, {
-      parentSessionId: 'main-1',
-      discardRelays: false
+      parentSessionId: 'main-1'
     } as never)
     finishPreflight()
 
     await expect(start).rejects.toThrow('closed before startup completed')
     expect(runtime.start).not.toHaveBeenCalled()
-    expect(runtime.closeActiveForParent).toHaveBeenCalledWith('main-1')
+    expect(runtime.closeForParent).toHaveBeenCalledWith('main-1')
   })
 
   it('drops parent relay state when a workspace-scope close is requested', async () => {
@@ -150,8 +222,7 @@ describe('Side chat IPC', () => {
     registerSideChatIpcHandlers(runtime as never, {} as never)
 
     await handlers.get('side-chat:close')?.(undefined, {
-      parentSessionId: 'main-1',
-      discardRelays: true
+      parentSessionId: 'main-1'
     } as never)
 
     expect(runtime.closeForParent).toHaveBeenCalledWith('main-1')

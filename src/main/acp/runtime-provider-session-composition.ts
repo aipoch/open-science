@@ -64,6 +64,8 @@ const composeAcpRuntimeProviderSessionOwners = (
     if (barrier) return barrier.then(() => withOperation(work))
     return base.generationActivity.withOperation(work)
   }
+  const capabilityPolicy =
+    options.sessionCapabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
 
   const providerSessionCreator = new AcpProviderSessionCreator({
     defaultCwd: options.defaultCwd,
@@ -76,7 +78,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     reserveIdentity: (sessionId, startupGeneration) =>
       reserveIdentity(undefined, [sessionId], undefined, startupGeneration),
     capabilities: base.sessionCapabilities,
-    capabilityPolicy: options.sessionCapabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    capabilityPolicy,
     configurator: base.sessionConfigurator,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
@@ -91,6 +93,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     registry: session.sessionRegistry,
     reserveIdentity: (reservation, sessionIds) => reserveIdentity(reservation, sessionIds),
     capabilities: base.sessionCapabilities,
+    capabilityPolicy,
     configurator: base.sessionConfigurator,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
@@ -154,6 +157,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     registry: session.sessionRegistry,
     reserveIdentity: (sessionId) => reserveIdentity(undefined, [sessionId]),
     capabilities: base.sessionCapabilities,
+    capabilityPolicy,
     configurator: base.sessionConfigurator,
     adopter: providerSessionAdopter,
     clearLivePermissionProfile: (sessionId) =>

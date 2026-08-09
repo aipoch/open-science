@@ -16,7 +16,7 @@ type SideChatIpcDependencies = Readonly<{
     sessionId: string
   ) => Promise<PersistedChatSession | undefined>
   hasLiveParentSession: (projectId: string, sessionId: string) => boolean
-  assertParentAvailable: (sessionId: string) => Promise<void>
+  withParentAvailable<Result>(sessionId: string, operation: () => Promise<Result>): Promise<Result>
 }>
 
 const registerSideChatIpcHandlers = (
@@ -25,38 +25,47 @@ const registerSideChatIpcHandlers = (
 ): void => {
   const startingParents = new Set<string>()
   const closeRequestedParents = new Set<string>()
+  const loadAvailableParent = async (
+    projectId: string,
+    parentSessionId: string
+  ): Promise<PersistedChatSession | undefined> => {
+    const parent = await dependencies.loadParentSession(projectId, parentSessionId)
+    if (!parent && !dependencies.hasLiveParentSession(projectId, parentSessionId)) {
+      throw new Error('The parent Session is unavailable.')
+    }
+    return parent
+  }
 
   ipcMainHandle('side-chat:list', () => runtime.list())
   ipcMainHandle('side-chat:start', async (_event, request: SideChatStartRequest) => {
     startingParents.add(request.parentSessionId)
     try {
-      await dependencies.assertParentAvailable(request.parentSessionId)
-      const parent = await dependencies.loadParentSession(
-        request.projectId,
-        request.parentSessionId
-      )
-      if (
-        !parent &&
-        !dependencies.hasLiveParentSession(request.projectId, request.parentSessionId)
-      ) {
-        throw new Error('The parent Session is unavailable.')
-      }
-      if (closeRequestedParents.delete(request.parentSessionId)) {
-        throw new Error('Side chat closed before startup completed.')
-      }
-      const historyPreamble = parent
-        ? buildHistoryPreamble(parent.messages, {
-            target: 'codex-bridge',
-            budget: SIDE_CHAT_MESSAGE_LIMIT
-          })
-        : undefined
-      return await runtime.start({ ...request, historyPreamble })
+      return await dependencies.withParentAvailable(request.parentSessionId, async () => {
+        const parent = await loadAvailableParent(request.projectId, request.parentSessionId)
+        if (closeRequestedParents.delete(request.parentSessionId)) {
+          throw new Error('Side chat closed before startup completed.')
+        }
+        const historyPreamble = parent
+          ? buildHistoryPreamble(parent.messages, {
+              target: 'codex-bridge',
+              budget: SIDE_CHAT_MESSAGE_LIMIT
+            })
+          : undefined
+        return runtime.start({ ...request, historyPreamble })
+      })
     } finally {
       startingParents.delete(request.parentSessionId)
       closeRequestedParents.delete(request.parentSessionId)
     }
   })
-  ipcMainHandle('side-chat:send', (_event, request: SideChatPromptRequest) => runtime.send(request))
+  ipcMainHandle('side-chat:send', async (_event, request: SideChatPromptRequest) => {
+    const parent = runtime.parentFor(request.sideSessionId)
+    if (!parent) throw new Error('Side chat Session is not active.')
+    return dependencies.withParentAvailable(parent.parentSessionId, async () => {
+      await loadAvailableParent(parent.projectId, parent.parentSessionId)
+      return runtime.send(request)
+    })
+  })
   ipcMainHandle('side-chat:cancel', (_event, request: SideChatSessionRequest) =>
     runtime.cancel(request)
   )
@@ -65,9 +74,7 @@ const registerSideChatIpcHandlers = (
     if (startingParents.has(request.parentSessionId)) {
       closeRequestedParents.add(request.parentSessionId)
     }
-    return request.discardRelays
-      ? runtime.closeForParent(request.parentSessionId)
-      : runtime.closeActiveForParent(request.parentSessionId)
+    return runtime.closeForParent(request.parentSessionId)
   })
 }
 

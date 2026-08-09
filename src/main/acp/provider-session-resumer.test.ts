@@ -7,6 +7,11 @@ import type { SessionPermissionProfileState } from '../../shared/permission-prof
 import { claudeCodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityPolicy
+} from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
 const permissionProfile: SessionPermissionProfileState = {
@@ -30,6 +35,7 @@ type HarnessOptions = {
   attached?: boolean
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
+  capabilityPolicy?: SessionCapabilityPolicy
   configureError?: Error
   ensureConnected?: () => Promise<ClientConnection>
   foreignIdentityCollision?: (sessionIds: readonly string[]) => Error | undefined
@@ -53,6 +59,7 @@ type ResumerHarness = {
   identityClaimedAtAdoption: () => boolean
   order: string[]
   providerSession: ActiveSession
+  provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
   release: ReturnType<typeof vi.fn>
   request: ReturnType<typeof vi.fn>
@@ -175,6 +182,23 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const assertCurrentConnection = vi.fn()
   const clearLivePermissionProfile = vi.fn()
+  const provision = vi.fn(async () => {
+    order.push('capability provision')
+    return {
+      mcpServers: [],
+      descriptor: {
+        role: 'primary' as const,
+        delegation: 'denied' as const,
+        transport: 'none' as const,
+        capabilities: [],
+        canonicalMcpServerNames: [],
+        modelFacingMcpServerNames: [],
+        controlRpcMethods: []
+      },
+      commit,
+      release
+    }
+  })
   const resumer = new AcpProviderSessionResumer({
     defaultCwd: '/default',
     defaultProjectName: 'default-project',
@@ -197,25 +221,8 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         mayRenewAfterConnectionSetup: true,
         blockStartup: false
       }),
-    capabilities: {
-      provision: vi.fn(async () => {
-        order.push('capability provision')
-        return {
-          mcpServers: [],
-          descriptor: {
-            role: 'primary' as const,
-            delegation: 'denied' as const,
-            transport: 'none' as const,
-            capabilities: [],
-            canonicalMcpServerNames: [],
-            modelFacingMcpServerNames: [],
-            controlRpcMethods: []
-          },
-          commit,
-          release
-        }
-      })
-    },
+    capabilities: { provision },
+    capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
     clearLivePermissionProfile,
@@ -257,6 +264,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     identityClaimedAtAdoption: () => identityClaimedAtAdoption,
     order,
     providerSession,
+    provision,
     registry,
     release,
     request,
@@ -267,6 +275,16 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('preserves the runtime capability policy on compatible provider resume', async () => {
+    const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+
+    await harness.resume()
+
+    expect(harness.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+    )
+  })
+
   it('refreshes an attached Session without entering provider startup', async () => {
     const harness = createHarness({ attached: true })
 

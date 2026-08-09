@@ -34,6 +34,7 @@ import {
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
+import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 import { SkillRegistry } from '../skills/registry'
 import {
   claudeCodeFramework,
@@ -2362,6 +2363,164 @@ describe('ACP runtime restored permission continuation', () => {
 })
 
 describe('ACP runtime session management', () => {
+  const sideChatRecoveryCases = [
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    [
+      'Codex Responses compatibility',
+      codexFramework,
+      'codex-responses-compatibility',
+      'codex:provider-a'
+    ],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const
+
+  const createSideChatMcpHost = (): {
+    host: AgentMcpHttpHost
+    registerHostMessage: ReturnType<typeof vi.fn>
+  } => {
+    const registerHostMessage = vi.fn()
+    return {
+      host: {
+        ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+        registerHostMessage,
+        urlFor: vi.fn(
+          (kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn(async () => undefined)
+      } as unknown as AgentMcpHttpHost,
+      registerHostMessage
+    }
+  }
+
+  it.each(sideChatRecoveryCases)(
+    'keeps the host-message-only capability when a %s Side chat resumes',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, [], {
+        supportsResume: true,
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const { host, registerHostMessage } = createSideChatMcpHost()
+      const sendMessage = vi.fn()
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge' ? { providerContinuityToken: 'bridge-token' } : {})
+        }),
+        mcpHttpHost: host,
+        sessionCapabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+        sideChat: { sendMessage }
+      })
+
+      await runtime.resumeSession({
+        sessionId: 'side-chat-restored',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        cwd: '/workspace',
+        previousFrameworkId: framework.id,
+        previousBackendId: backendId,
+        ...(modelRoute === 'codex-bridge' ? { providerContinuityToken: 'bridge-token' } : {})
+      })
+
+      expect(fakeAgent.resumedSessions).toHaveLength(1)
+      expect(fakeAgent.resumedSessions[0].mcpServers).toEqual([
+        expect.objectContaining({
+          type: 'http',
+          name:
+            framework.id === 'opencode' ? 'open_science_host_message' : 'open-science-host-message'
+        })
+      ])
+      expect(registerHostMessage).toHaveBeenCalledWith(
+        'side-chat-restored',
+        expect.objectContaining({ sendMessage: expect.any(Function) })
+      )
+      await registerHostMessage.mock.lastCall?.[1].sendMessage({ target: 'main', text: 'relay' })
+      expect(sendMessage).toHaveBeenCalledWith('side-chat-restored', {
+        target: 'main',
+        text: 'relay'
+      })
+
+      await runtime.disconnect()
+    }
+  )
+
+  it.each(sideChatRecoveryCases)(
+    'keeps the host-message-only capability when a %s Side chat adopts after resume loss',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const freshProviderSessionId =
+        framework.id === 'codex' ? '019fb8c8-6c66-7f22-9653-17b5b287dbbc' : 'fresh-provider-session'
+      const fakeAgent = startFakeAgent(process, [freshProviderSessionId], {
+        supportsResume: true,
+        resumeNotFound: true,
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const { host, registerHostMessage } = createSideChatMcpHost()
+      const sendMessage = vi.fn()
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(modelRoute === 'codex-bridge' ? { providerContinuityToken: 'bridge-token' } : {})
+        }),
+        mcpHttpHost: host,
+        sessionCapabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+        sideChat: { sendMessage }
+      })
+
+      const restored = await runtime.resumeSession({
+        sessionId: 'side-chat-restored',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        cwd: '/workspace',
+        previousFrameworkId: framework.id,
+        previousBackendId: backendId,
+        ...(modelRoute === 'codex-bridge' ? { providerContinuityToken: 'bridge-token' } : {})
+      })
+
+      expect(restored).toMatchObject({
+        sessionId: 'side-chat-restored',
+        providerSessionId: freshProviderSessionId,
+        contextReset: true
+      })
+      expect(fakeAgent.newSessions).toHaveLength(1)
+      expect(fakeAgent.newSessions[0].mcpServers).toEqual([
+        expect.objectContaining({
+          type: 'http',
+          name:
+            framework.id === 'opencode' ? 'open_science_host_message' : 'open-science-host-message'
+        })
+      ])
+      expect(registerHostMessage).toHaveBeenLastCalledWith(
+        'side-chat-restored',
+        expect.objectContaining({ sendMessage: expect.any(Function) })
+      )
+      await registerHostMessage.mock.lastCall?.[1].sendMessage({ target: 'main', text: 'relay' })
+      expect(sendMessage).toHaveBeenCalledWith('side-chat-restored', {
+        target: 'main',
+        text: 'relay'
+      })
+
+      await runtime.disconnect()
+    }
+  )
+
   it('keeps the current primary capability set separate from reviewer-only authority', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()

@@ -9,8 +9,8 @@ import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   type AcpSessionCapabilityOwner,
+  type SessionCapabilityPolicy,
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
@@ -43,6 +43,7 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     sessionIds: string[]
   ) => AcpPrimarySessionIdentityReservationResult
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure'>
   resolveSpecialistIdentity?: (
     specialistId: string,
@@ -76,7 +77,7 @@ export class AcpProviderSessionAdopter {
         framework: startupBackend.framework,
         nativeMcpEnabled: startupBackend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        policy: this.deps.capabilityPolicy,
         sessionCwd: request.cwd,
         projectName: request.projectName
       })

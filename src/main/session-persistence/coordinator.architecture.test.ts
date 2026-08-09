@@ -55,6 +55,7 @@ const productionFiles = [
   'deletion-owner.ts',
   'legacy-upload.ts',
   'reconciliation-owner.ts',
+  'side-chat-owner.ts',
   'state-owner.ts'
 ] as const
 type ProductionFile = (typeof productionFiles)[number]
@@ -182,7 +183,7 @@ const calledOwnerMethods = (method: MethodDeclaration): string[] =>
       isPropertyAccessExpression(node.expression) &&
       isPropertyAccessExpression(node.expression.expression) &&
       node.expression.expression.expression.kind === SyntaxKind.ThisKeyword &&
-      ['stateOwner', 'deletionOwner', 'reconciliationOwner'].includes(
+      ['stateOwner', 'deletionOwner', 'reconciliationOwner', 'sideChatOwner'].includes(
         node.expression.expression.name.text
       )
   )
@@ -372,6 +373,7 @@ describe('Session persistence coordinator architecture', () => {
   const facadeFile = sourceFileFor('coordinator.ts')
   const facade = classFrom('coordinator.ts', 'SessionPersistenceCoordinator')
   const stateOwner = classFrom('state-owner.ts', 'SessionPersistenceStateOwner')
+  const sideChatOwner = classFrom('side-chat-owner.ts', 'SessionSideChatPersistenceOwner')
   const deletionOwner = classFrom('deletion-owner.ts', 'SessionPersistenceDeletionOwner')
   const reconciliationOwner = classFrom(
     'reconciliation-owner.ts',
@@ -388,10 +390,12 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps the established facade, constructor, and module exports', () => {
     expect(methods(facade, 'public')).toEqual(
       [
-        'appendSideChatAdvisory',
+        'appendSideChatRelay',
         'appendUserMessageToInteraction',
         'assertProjectArchivable',
         'assertSessionAvailable',
+        'clearSideChat',
+        'commitSideChatRelays',
         'completeProjectSessionDeletion',
         'containsMessageOnActiveBranch',
         'deleteProjectSessions',
@@ -401,6 +405,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadAll',
         'loadAllReadOnly',
         'loadSessionForPermissionReplay',
+        'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
         'patchSessionRuntimeContext',
         'readSessionRuntimeContext',
@@ -409,6 +414,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveManifest',
         'saveSession',
         'saveSessionSpecialistBinding',
+        'saveSideChatProjection',
         'sessionMetadataSnapshot',
         'sessionProjectId',
         'setSessionDeletionHandlers',
@@ -470,6 +476,7 @@ describe('Session persistence coordinator architecture', () => {
         'reconciliationOwner',
         'repository',
         'sessionDeletionHandlers',
+        'sideChatOwner',
         'stateOwner'
       ].sort()
     )
@@ -481,9 +488,11 @@ describe('Session persistence coordinator architecture', () => {
     )
     expect(mutableFields(deletionOwner)).toEqual([])
     expect(mutableFields(reconciliationOwner)).toEqual([])
+    expect(mutableFields(sideChatOwner)).toEqual([])
     expect(publicNonMethodMembers(stateOwner)).toEqual([])
     expect(publicNonMethodMembers(deletionOwner)).toEqual([])
     expect(publicNonMethodMembers(reconciliationOwner)).toEqual([])
+    expect(publicNonMethodMembers(sideChatOwner)).toEqual([])
     expect(fields(stateOwner)).toEqual(
       [
         'isSessionMetadataComplete',
@@ -514,6 +523,7 @@ describe('Session persistence coordinator architecture', () => {
         'uploads'
       ].sort()
     )
+    expect(fields(sideChatOwner)).toEqual(['options'])
     for (const file of productionFiles) {
       expect(statefulTopLevelVariables(file), file).toEqual(
         file === 'deletion-owner.ts' ? ['ARCHIVE_BLOCKING_SESSION_STATUSES'] : []
@@ -529,6 +539,9 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/coordinator.ts:constructor'
     ])
     expect(constructionSites('SessionPersistenceReconciliationOwner')).toEqual([
+      'src/main/session-persistence/coordinator.ts:constructor'
+    ])
+    expect(constructionSites('SessionSideChatPersistenceOwner')).toEqual([
       'src/main/session-persistence/coordinator.ts:constructor'
     ])
   })
@@ -560,7 +573,7 @@ describe('Session persistence coordinator architecture', () => {
       ).toBe(true)
     }
 
-    for (const owner of [stateOwner, deletionOwner, reconciliationOwner]) {
+    for (const owner of [stateOwner, deletionOwner, reconciliationOwner, sideChatOwner]) {
       expect(fields(owner)).not.toContain('queue')
       expect(methods(owner, 'public')).not.toContain('enqueue')
       expect(methods(owner, 'private')).not.toContain('enqueue')
@@ -682,7 +695,8 @@ describe('Session persistence coordinator architecture', () => {
     for (const file of [
       'state-owner.ts',
       'deletion-owner.ts',
-      'reconciliation-owner.ts'
+      'reconciliation-owner.ts',
+      'side-chat-owner.ts'
     ] as const) {
       expect(sources.get(file), file).not.toMatch(/deletedProjects|deletedSessions/)
     }
@@ -691,7 +705,6 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps owner interfaces narrow and facade routes explicit', () => {
     expect(methods(stateOwner, 'public')).toEqual(
       [
-        'appendSideChatAdvisory',
         'appendUserMessage',
         'beginHydration',
         'containsMessageOnActiveBranch',
@@ -732,12 +745,20 @@ describe('Session persistence coordinator architecture', () => {
       ['reconcileLoadedSessions', 'repairFileProjection'].sort()
     )
     expect(methods(reconciliationOwner, 'private')).toEqual([])
+    expect(methods(sideChatOwner, 'public')).toEqual(
+      ['appendRelay', 'clear', 'commitRelays', 'loadCatalog', 'saveProjection'].sort()
+    )
+    expect(methods(sideChatOwner, 'private')).toEqual(
+      ['loadMutable', 'requireSideChat', 'save'].sort()
+    )
 
     const expectedCalls: Record<string, string[]> = {
-      appendSideChatAdvisory: ['stateOwner.appendSideChatAdvisory'],
+      appendSideChatRelay: ['sideChatOwner.appendRelay'],
       appendUserMessageToInteraction: ['stateOwner.appendUserMessage'],
       assertProjectArchivable: ['deletionOwner.assertProjectArchivable'],
       assertSessionAvailable: ['deletionOwner.assertSessionAvailable'],
+      clearSideChat: ['sideChatOwner.clear'],
+      commitSideChatRelays: ['sideChatOwner.commitRelays'],
       completeProjectSessionDeletion: ['deletionOwner.completeProjectSessionDeletion'],
       containsMessageOnActiveBranch: ['stateOwner.containsMessageOnActiveBranch'],
       deleteProjectSessions: [
@@ -747,11 +768,13 @@ describe('Session persistence coordinator architecture', () => {
       deleteSession: ['deletionOwner.deleteSession'],
       getProjectSessionDeletionState: ['deletionOwner.getProjectSessionDeletionState'],
       listLegacyProjectSessionTombstones: ['deletionOwner.listLegacyProjectSessionTombstones'],
+      loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
       markCommittedProjectSessionsPrepared: ['deletionOwner.markCommittedProjectSessionsPrepared'],
       patchSessionRuntimeContext: ['stateOwner.patchRuntimeContext'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
       saveSession: ['stateOwner.saveSession'],
       saveSessionSpecialistBinding: ['stateOwner.saveSession'],
+      saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
       updateArchive: ['deletionOwner.updateArchive']
@@ -766,17 +789,24 @@ describe('Session persistence coordinator architecture', () => {
 
   it('keeps owner dependencies one-way and free of coordinator back-edges', () => {
     expect(sessionDependencies('coordinator.ts')).toEqual(
-      ['deletion-owner.ts', 'reconciliation-owner.ts', 'state-owner.ts'].sort()
+      [
+        'deletion-owner.ts',
+        'reconciliation-owner.ts',
+        'side-chat-owner.ts',
+        'state-owner.ts'
+      ].sort()
     )
     expect(sessionDependencies('state-owner.ts')).toEqual([])
     expect(sessionDependencies('deletion-owner.ts')).toEqual(
       ['legacy-upload.ts', 'state-owner.ts'].sort()
     )
     expect(sessionDependencies('reconciliation-owner.ts')).toEqual(['legacy-upload.ts'])
+    expect(sessionDependencies('side-chat-owner.ts')).toEqual([])
     for (const file of [
       'state-owner.ts',
       'deletion-owner.ts',
-      'reconciliation-owner.ts'
+      'reconciliation-owner.ts',
+      'side-chat-owner.ts'
     ] as const) {
       expect(sessionDependencies(file), file).not.toContain('coordinator.ts')
     }

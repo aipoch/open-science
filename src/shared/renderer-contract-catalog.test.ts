@@ -57,7 +57,7 @@ describe('renderer contract catalog', () => {
     })
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'unavailable')
-    ).toHaveLength(61)
+    ).toHaveLength(62)
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
     ).toHaveLength(62)

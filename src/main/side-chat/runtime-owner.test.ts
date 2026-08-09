@@ -4,13 +4,52 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { PersistedSideChat } from '../../shared/session-persistence'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { AgentModelChangeTarget, ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
+import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { SideChatRuntimeOwner, prepareSideChatBackend } from './runtime-owner'
+
+const createRelayOwner = (targetState: 'idle' | 'completed' = 'idle'): SideChatRelayOwner =>
+  new SideChatRelayOwner({
+    targetState: () => targetState,
+    appendRelay: async () => undefined
+  })
+
+type PersistenceSave = (input: {
+  projectId: string
+  parentSessionId: string
+  sideChat: PersistedSideChat
+}) => Promise<PersistedSideChat>
+
+type PersistenceClear = (input: {
+  projectId: string
+  parentSessionId: string
+  sideChatId: string
+}) => Promise<boolean>
+
+const createPersistence = (): {
+  save: ReturnType<typeof vi.fn<PersistenceSave>>
+  clear: ReturnType<typeof vi.fn<PersistenceClear>>
+} => ({
+  save: vi.fn<PersistenceSave>(async (input) => input.sideChat),
+  clear: vi.fn<PersistenceClear>(async () => true)
+})
+
+const deferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((accept) => {
+    resolve = accept
+  })
+  return { promise, resolve }
+}
 
 let temporaryRoot: string | undefined
 
@@ -36,6 +75,17 @@ const target: ExplicitAgentBackendTarget = {
   model: { kind: 'required', id: 'model-a' },
   reasoningEffort: 'medium'
 }
+
+const modelChangeTarget = (model: string): AgentModelChangeTarget => ({
+  frameworkId: 'claude-code',
+  backendId: 'claude-code:provider-a',
+  route: 'claude-anthropic',
+  model,
+  sessionModel: model,
+  sessionModelRequired: false,
+  reasoningEffort: 'medium',
+  supportsImageInput: false
+})
 
 describe('Side chat restricted backend profile', () => {
   it('uses an isolated OpenCode deny-all agent with one exact host-message allow', async () => {
@@ -69,9 +119,12 @@ describe('Side chat restricted backend profile', () => {
     })
   })
 
-  it('keeps Claude non-persistent with no built-in tool-loading surface', async () => {
+  it('keeps Claude resumable with no built-in tool-loading surface', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-claude-'))
-    const prepared = await prepareSideChatBackend(backend(claudeCodeFramework), temporaryRoot)
+    const prepared = await prepareSideChatBackend(
+      backend(claudeCodeFramework, { CLAUDE_CONFIG_DIR: '/profiles/shared-claude' }),
+      temporaryRoot
+    )
 
     expect(prepared.sessionOptions).toMatchObject({
       tools: [],
@@ -79,9 +132,35 @@ describe('Side chat restricted backend profile', () => {
       plugins: [],
       settings: {},
       settingSources: [],
-      persistSession: false
+      persistSession: true
     })
-    expect(prepared.systemPromptAppends?.join(' ')).toContain('ephemeral Side chat')
+    expect(prepared.env.CLAUDE_CONFIG_DIR).toBe('/profiles/shared-claude')
+    expect(prepared.systemPromptAppends?.join(' ')).toContain('Side chat')
+  })
+
+  it('persists token-authenticated Claude inside the Side chat profile', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-claude-token-'))
+    const prepared = await prepareSideChatBackend(
+      backend(claudeCodeFramework, {
+        CLAUDE_CONFIG_DIR: '/profiles/shared-claude',
+        CLAUDE_CODE_OAUTH_TOKEN: 'portable-token'
+      }),
+      temporaryRoot
+    )
+
+    expect(prepared.env.CLAUDE_CONFIG_DIR).toBe(join(temporaryRoot, 'claude'))
+    expect(prepared.sessionOptions).toMatchObject({ persistSession: true })
+  })
+
+  it('keeps Codex provider state in the Side chat-owned home', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-codex-'))
+    const prepared = await prepareSideChatBackend(backend(codexFramework), temporaryRoot)
+
+    expect(prepared.env.CODEX_HOME).toBe(join(temporaryRoot, 'codex'))
+    await expect(
+      readFile(join(prepared.env.CODEX_HOME!, 'config.toml'), 'utf8')
+    ).resolves.toContain('cli_auth_credentials_store = "ephemeral"')
+    expect(prepared.systemPromptAppends?.join(' ')).toContain('Side chat')
   })
 })
 
@@ -95,13 +174,40 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget: vi.fn(),
       resolveTarget: vi.fn(),
-      relay: new SideChatRelayOwner({ targetState: () => 'completed' }),
+      relay: createRelayOwner('completed'),
+      persistence: createPersistence(),
       onEvent: vi.fn()
     })
 
     await owner.sweepStaleProfiles()
 
     await expect(access(stale)).rejects.toThrow()
+  })
+
+  it('sweeps only unreferenced profiles after a complete durable catalog scan', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-safe-sweep-'))
+    const root = join(temporaryRoot, 'runtime-support', 'side-chat')
+    const retained = join(root, 'side-chat-retained')
+    const orphan = join(root, 'side-chat-orphan')
+    await Promise.all([mkdir(retained, { recursive: true }), mkdir(orphan, { recursive: true })])
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn()
+    })
+
+    await owner.sweepStaleProfiles(new Set(['side-chat-retained']), true)
+
+    await expect(access(retained)).resolves.toBeUndefined()
+    await expect(access(orphan)).rejects.toThrow()
+
+    await mkdir(orphan, { recursive: true })
+    await owner.sweepStaleProfiles(new Set(['side-chat-retained']), false)
+    await expect(access(orphan)).resolves.toBeUndefined()
   })
 
   it('admits a first turn, binds the trusted MCP sender, and destroys the runtime on close', async () => {
@@ -123,14 +229,38 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         release: vi.fn(async () => undefined)
       }
     }
-    const relay = new SideChatRelayOwner({ targetState: () => 'idle' })
+    const relay = createRelayOwner()
     let runtimeOptions: AcpRuntimeOptions | undefined
     const createSession = vi.fn(async () => ({
       sessionId: 'side-session-1',
       frameworkId: 'claude-code' as const
     }))
+    const permissionDecision = deferred<{
+      requestId: string
+      optionId?: string
+      cancelled?: boolean
+    }>()
+    const respondToPermission = vi.fn(async (decision) => {
+      permissionDecision.resolve(decision)
+      return true
+    })
     const sendPrompt = vi.fn(async (request: { sessionId: string }) => {
       runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      runtimeOptions!.callbacks?.onPermissionRequest?.({
+        requestId: 'host-message-permission',
+        sessionId: request.sessionId,
+        toolCallId: 'host-message-call',
+        title: 'mcp.open-science-host-message.send_message',
+        providerToolName: 'send_message',
+        isMcp: true,
+        mcpIdentity: 'open-science-host-message/send_message',
+        options: [
+          { optionId: 'allow-once', name: 'Allow', kind: 'allow_once', scope: 'once' },
+          { optionId: 'decline', name: 'Decline', kind: 'reject_once' }
+        ]
+      })
+      const decision = await permissionDecision.promise
+      if (decision.optionId !== 'allow-once') throw new Error('Host message permission was denied.')
       await runtimeOptions!.sideChat!.sendMessage('trusted-routing-1', {
         target: 'main',
         text: 'Use a black line.'
@@ -150,6 +280,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         return resolved
       }),
       relay,
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeOptions = options
@@ -158,7 +289,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           sendPrompt,
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
-          respondToPermission: vi.fn(async () => undefined),
+          respondToPermission,
           shutdownForQuit
         } as never
       }
@@ -172,7 +303,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     })
 
     expect(started).toMatchObject({
-      sideSessionId: 'side-session-1',
+      sideSessionId: expect.stringMatching(/^side-chat-/),
       frameworkId: 'claude-code',
       model: 'model-a'
     })
@@ -188,18 +319,93 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       [expect.objectContaining({ name: 'send_message' })],
       { failClosedUnknownKeys: true }
     )
-    expect(relay.claim('main-session-1')?.messages).toEqual([
+    expect(respondToPermission).toHaveBeenCalledWith({
+      requestId: 'host-message-permission',
+      optionId: 'allow-once'
+    })
+    const queuedRelay = relay.claim('main-session-1')
+    expect(queuedRelay?.messages).toEqual([
       expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' })
     ])
+    queuedRelay?.restore()
 
-    await owner.close({ sideSessionId: 'side-session-1' })
+    await owner.closeForParent('main-session-1')
 
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-1')
     expect(closeOrder).toEqual(['runtime', 'scope'])
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'side-session-1' })
     expect(shutdownForQuit).toHaveBeenCalledOnce()
     await expect(stat(join(temporaryRoot, 'runtime-support', 'side-chat'))).resolves.toBeDefined()
-    expect(relay.claim('main-session-1')).toBeUndefined()
+    expect(relay.claim('main-session-1')?.messages).toEqual([
+      expect.objectContaining({ text: 'Use a black line.', sideSessionId: 'trusted-routing-1' })
+    ])
+  })
+
+  it('coalesces streamed transcript chunks into the latest durable projection', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-coalesce-'))
+    const persistence = createPersistence()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-coalesce',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            for (let index = 0; index < 100; index += 1) {
+              runtimeOptions!.callbacks?.onEvent?.({
+                id: `event-${index}`,
+                messageId: 'assistant-coalesced',
+                timestamp: index,
+                sessionId: request.sessionId,
+                kind: 'message',
+                role: 'assistant',
+                text: 'x'
+              } as never)
+            }
+            runtimeOptions!.callbacks?.onEvent?.({
+              id: 'stop-coalesced',
+              timestamp: 101,
+              sessionId: request.sessionId,
+              kind: 'stop'
+            } as never)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+
+    const started = await owner.start({
+      parentSessionId: 'main-coalesce',
+      projectId: 'project-1',
+      text: 'Stream'
+    })
+    await vi.waitFor(() => expect(persistence.save).toHaveBeenCalledTimes(2))
+    expect(persistence.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sideChat: expect.objectContaining({
+          entries: expect.arrayContaining([
+            expect.objectContaining({ id: 'assistant-coalesced', text: 'x'.repeat(100) })
+          ])
+        })
+      })
+    )
+
+    await owner.close({ sideSessionId: started.sideSessionId })
   })
 
   it('honors a panel close requested while the temporary runtime is starting', async () => {
@@ -217,7 +423,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget,
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: () =>
         ({
@@ -258,7 +465,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget,
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn()
     })
 
@@ -274,7 +482,45 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(captureTarget).not.toHaveBeenCalled()
   })
 
-  it('publishes a terminal lifecycle event and destroys a disconnected runtime', async () => {
+  it('cleans a dormant provider profile after parent deletion without rewriting deleted JSON', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-parent-deleted-'))
+    const persistence = createPersistence()
+    const profile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-parent-deleted')
+    await mkdir(profile, { recursive: true })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn()
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-parent-deleted',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-parent-deleted',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: '',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await owner.invalidateParents(['main-parent-deleted'])
+
+    expect(persistence.clear).not.toHaveBeenCalled()
+    await expect(access(profile)).rejects.toThrow()
+    expect(owner.list().chats).toEqual([])
+  })
+
+  it('publishes a terminal lifecycle event and keeps a disconnected runtime dormant', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-disconnected-'))
     let runtimeOptions: AcpRuntimeOptions | undefined
     const onEvent = vi.fn()
@@ -284,7 +530,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent,
       createRuntime: (options) => {
         runtimeOptions = options
@@ -305,7 +552,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     })
 
-    await owner.start({
+    const started = await owner.start({
       parentSessionId: 'main-session-disconnected',
       projectId: 'project-1',
       text: 'Hello'
@@ -316,12 +563,445 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       revision: expect.any(Number),
       parentSessionId: 'main-session-disconnected',
       projectId: 'project-1',
-      sideSessionId: 'side-session-disconnected',
+      sideSessionId: started.sideSessionId,
       event: { kind: 'closed', reason: 'connection-error' }
     })
     await vi.waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'side-session-disconnected' })
+      expect(owner.list().chats).toContainEqual(
+        expect.objectContaining({
+          sideSessionId: started.sideSessionId,
+          running: false,
+          error: expect.stringContaining('reconnect')
+        })
+      )
     )
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('hydrates a dormant Side chat without starting ACP and resumes it on the next Follow up', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-resume-'))
+    const persistence = createPersistence()
+    const resumeSession = vi.fn(async () => ({
+      sessionId: 'side-chat-restored',
+      providerSessionId: 'provider-restored',
+      frameworkId: 'claude-code' as const,
+      backendId: 'claude-code:provider-a'
+    }))
+    const sendPrompt = vi.fn(async (request: { sessionId: string }) => {
+      runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      return { stopReason: 'end_turn' as const }
+    })
+    const createRuntime = vi.fn((options: AcpRuntimeOptions) => {
+      runtimeOptions = options
+      return {
+        createSession: vi.fn(),
+        resumeSession,
+        sendPrompt,
+        cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+        deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+        respondToPermission: vi.fn(async () => undefined),
+        shutdownForQuit: vi.fn(async () => undefined)
+      } as never
+    })
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => ({
+        ...backend(claudeCodeFramework),
+        backendId: 'claude-code:provider-a'
+      })),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-restored',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-restored',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          backendId: 'claude-code:provider-a',
+          providerSessionId: 'provider-restored',
+          historyPreamble: 'Original Main snapshot.',
+          entries: [
+            { id: 'user-1', kind: 'message', role: 'user', text: 'Earlier question' },
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Earlier answer' }
+          ],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    expect(createRuntime).not.toHaveBeenCalled()
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({
+        parentSessionId: 'main-restored',
+        sideSessionId: 'side-chat-restored',
+        running: false
+      })
+    ])
+
+    await owner.send({ sideSessionId: 'side-chat-restored', text: 'Continue' })
+
+    expect(resumeSession).toHaveBeenCalledWith({
+      sessionId: 'side-chat-restored',
+      providerSessionId: 'provider-restored',
+      cwd: expect.stringContaining('/side-chat-restored/cwd'),
+      projectName: 'project-1',
+      previousFrameworkId: 'claude-code',
+      previousBackendId: 'claude-code:provider-a'
+    })
+    expect(sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'side-chat-restored', text: 'Continue' })
+    )
+    expect(sendPrompt.mock.calls[0]?.[0]).not.toHaveProperty('historyPreamble')
+    expect(persistence.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentSessionId: 'main-restored',
+        sideChat: expect.objectContaining({
+          id: 'side-chat-restored',
+          entries: expect.arrayContaining([
+            expect.objectContaining({ role: 'user', text: 'Continue' })
+          ])
+        })
+      })
+    )
+  })
+
+  it('rolls back an unadmitted follow-up when its durable write fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-save-retry-'))
+    const persistence = createPersistence()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const sendPrompt = vi.fn(async (request: { sessionId: string }) => {
+      runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      return { stopReason: 'end_turn' as const }
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-save-retry',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    const started = await owner.start({
+      parentSessionId: 'main-save-retry',
+      projectId: 'project-1',
+      text: 'Initial turn'
+    })
+    await vi.waitFor(() => expect(persistence.save.mock.calls.length).toBeGreaterThanOrEqual(2))
+    persistence.save.mockRejectedValueOnce(new Error('Session file is busy'))
+
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Retry this exact turn' })
+    ).rejects.toThrow('Session file is busy')
+    expect(sendPrompt).toHaveBeenCalledTimes(1)
+    expect(owner.list().chats).toContainEqual(
+      expect.objectContaining({
+        sideSessionId: started.sideSessionId,
+        running: false,
+        entries: [expect.objectContaining({ kind: 'message', role: 'user', text: 'Initial turn' })]
+      })
+    )
+
+    await owner.send({ sideSessionId: started.sideSessionId, text: 'Retry this exact turn' })
+    expect(sendPrompt).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores dormant ownership when resumed identity persistence fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-resume-save-retry-'))
+    const persistence = createPersistence()
+    persistence.save.mockRejectedValueOnce(new Error('Session file is busy'))
+    let runtimeNumber = 0
+    const sendPrompt = vi.fn(async (request: { sessionId: string }) => {
+      runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      return { stopReason: 'end_turn' as const }
+    })
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        runtimeNumber += 1
+        return {
+          createSession: vi.fn(),
+          resumeSession: vi.fn(async () => ({
+            sessionId: `provider-resume-${runtimeNumber}`,
+            providerSessionId: `provider-resume-${runtimeNumber}`,
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-resume-save-retry',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-resume-save-retry',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          providerSessionId: 'provider-old',
+          historyPreamble: 'Main snapshot.',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await expect(
+      owner.send({ sideSessionId: 'side-chat-resume-save-retry', text: 'First attempt' })
+    ).rejects.toThrow('Session file is busy')
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(owner.list().chats).toContainEqual(
+      expect.objectContaining({
+        sideSessionId: 'side-chat-resume-save-retry',
+        running: false,
+        error: expect.stringContaining('reconnect')
+      })
+    )
+
+    await owner.send({ sideSessionId: 'side-chat-resume-save-retry', text: 'Second attempt' })
+    expect(runtimeNumber).toBe(2)
+    expect(sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('injects bounded replay only when dormant provider resume adopts fresh context', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-replay-'))
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const sent: Array<Record<string, unknown>> = []
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(),
+          resumeSession: vi.fn(async () => ({
+            sessionId: 'side-chat-reset',
+            providerSessionId: 'provider-new',
+            frameworkId: 'claude-code' as const,
+            contextReset: true
+          })),
+          sendPrompt: vi.fn(async (request: Record<string, unknown>) => {
+            sent.push(request)
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId as string)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-reset',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-reset',
+          lifecycle: 'interrupted',
+          frameworkId: 'claude-code',
+          providerSessionId: 'provider-old',
+          historyPreamble: 'Original Main snapshot.',
+          entries: [
+            { id: 'user-1', kind: 'message', role: 'user', text: 'Earlier question' },
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Earlier answer' }
+          ],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await owner.send({ sideSessionId: 'side-chat-reset', text: 'Continue after restart' })
+
+    expect(sent[0]).toMatchObject({
+      sessionId: 'side-chat-reset',
+      text: 'Continue after restart',
+      historyPreamble: expect.stringContaining('Original Main snapshot.'),
+      resumeFallback: { historyPreamble: expect.stringContaining('Earlier answer') }
+    })
+    expect(String(sent[0].historyPreamble)).not.toContain('Continue after restart')
+  })
+
+  it('retains context-reset replay until the provider admits a follow-up', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-replay-admission-'))
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const sent: Array<Record<string, unknown>> = []
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(),
+          resumeSession: vi.fn(async () => ({
+            sessionId: 'side-chat-replay-admission',
+            providerSessionId: 'provider-new',
+            frameworkId: 'claude-code' as const,
+            contextReset: true
+          })),
+          sendPrompt: vi.fn(async (request: Record<string, unknown>) => {
+            sent.push(request)
+            if (sent.length === 1) throw new Error('Provider rejected before admission')
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId as string)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-replay-admission',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-replay-admission',
+          lifecycle: 'interrupted',
+          frameworkId: 'claude-code',
+          providerSessionId: 'provider-old',
+          historyPreamble: 'Original Main snapshot.',
+          entries: [
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Earlier answer' }
+          ],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    await expect(
+      owner.send({ sideSessionId: 'side-chat-replay-admission', text: 'First attempt' })
+    ).rejects.toThrow('before admission')
+    await owner.send({ sideSessionId: 'side-chat-replay-admission', text: 'Retry attempt' })
+
+    expect(sent[0]).toMatchObject({
+      historyPreamble: expect.stringContaining('Earlier answer')
+    })
+    expect(sent[1]).toMatchObject({
+      historyPreamble: expect.stringContaining('First attempt')
+    })
+  })
+
+  it('lets close win while a dormant provider Session is reconnecting', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-resume-'))
+    const persistence = createPersistence()
+    const resumed = deferred<{
+      sessionId: string
+      providerSessionId: string
+      frameworkId: 'claude-code'
+    }>()
+    const resumeSession = vi.fn(() => resumed.promise)
+    const sendPrompt = vi.fn()
+    const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: () =>
+        ({
+          createSession: vi.fn(),
+          resumeSession,
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession,
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        }) as never
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-close-resume',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-close-resume',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          providerSessionId: 'provider-old',
+          historyPreamble: 'Main snapshot.',
+          entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Earlier' }],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    const send = owner.send({ sideSessionId: 'side-chat-close-resume', text: 'Continue' })
+    await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledOnce())
+    const close = owner.close({ sideSessionId: 'side-chat-close-resume' })
+    resumed.resolve({
+      sessionId: 'provider-restored',
+      providerSessionId: 'provider-restored',
+      frameworkId: 'claude-code'
+    })
+
+    await expect(send).rejects.toThrow('closed while reconnecting')
+    await close
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(persistence.clear).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      parentSessionId: 'main-close-resume',
+      sideChatId: 'side-chat-close-resume'
+    })
+    expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'provider-restored' })
+    expect(owner.list().chats).toEqual([])
   })
 
   it('hot-switches models in place and replays only after an incompatible reconnect', async () => {
@@ -333,15 +1013,35 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       ...target,
       frameworkId: selectedFramework.id
     }))
-    const resolveTarget = vi.fn(async (capturedTarget: ExplicitAgentBackendTarget) =>
-      backend(capturedTarget.frameworkId === 'opencode' ? opencodeFramework : claudeCodeFramework)
-    )
+    const registerHostMessageSession = vi.fn()
+    const unregisterHostMessageSession = vi.fn(() => true)
+    const resolveTarget = vi.fn(async (capturedTarget: ExplicitAgentBackendTarget) => {
+      const resolved = backend(
+        capturedTarget.frameworkId === 'opencode' ? opencodeFramework : claudeCodeFramework
+      )
+      return capturedTarget.frameworkId === 'opencode'
+        ? {
+            ...resolved,
+            responsesBridgeLease: {
+              selectSkills: vi.fn(async () => []),
+              registerReviewerSession: vi.fn(),
+              unregisterReviewerSession: vi.fn(() => false),
+              registerHostMessageSession,
+              unregisterHostMessageSession,
+              release: vi.fn(async () => undefined)
+            }
+          }
+        : resolved
+    })
     const applyModelChange = vi.fn(async () => true)
     const requestProviderReconnect = vi.fn(async () => {
       await runtimeOptions?.resolveBackend?.({ forcedSkillIds: [], systemPromptAppends: [] })
     })
     const resumeSession = vi.fn(async () => ({
-      sessionId: 'side-session-reconfigure',
+      sessionId:
+        selectedFramework.id === 'opencode'
+          ? 'side-session-reconfigured'
+          : 'side-session-reconfigure',
       frameworkId: selectedFramework.id,
       ...(selectedFramework.id === 'opencode' ? { contextReset: true } : {})
     }))
@@ -351,7 +1051,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget,
       resolveTarget,
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeOptions = options
@@ -393,41 +1094,377 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     })
 
-    await owner.start({
+    const started = await owner.start({
       parentSessionId: 'main-session-reconfigure',
       projectId: 'project-1',
       text: 'First question',
       historyPreamble: 'Main snapshot.'
     })
-    await expect(owner.applyModelChange({ model: 'model-b' } as never)).resolves.toBe(true)
+    await expect(owner.applyModelChange(modelChangeTarget('model-b'))).resolves.toBe(true)
     expect(applyModelChange).toHaveBeenCalledOnce()
     expect(requestProviderReconnect).not.toHaveBeenCalled()
     await Promise.resolve()
-    await owner.send({ sideSessionId: 'side-session-reconfigure', text: 'After model switch' })
+    await owner.send({ sideSessionId: started.sideSessionId, text: 'After model switch' })
     expect(sent[1]).not.toHaveProperty('historyPreamble')
+    expect(resumeSession).not.toHaveBeenCalled()
     await Promise.resolve()
 
     selectedFramework = opencodeFramework
     await owner.requestProviderReconnect()
-    await owner.send({ sideSessionId: 'side-session-reconfigure', text: 'Follow up' })
+    await owner.send({ sideSessionId: started.sideSessionId, text: 'Follow up' })
 
     expect(captureTarget).toHaveBeenCalledTimes(2)
     expect(resolveTarget.mock.calls[1]?.[0]).toMatchObject({ frameworkId: 'opencode' })
     expect(resumeSession).toHaveBeenLastCalledWith({
-      sessionId: 'side-session-reconfigure',
+      sessionId: started.sideSessionId,
+      providerSessionId: 'side-session-reconfigure',
       cwd: expect.stringContaining('/cwd'),
-      projectName: 'project-1'
+      projectName: 'project-1',
+      previousFrameworkId: 'claude-code',
+      previousBackendId: 'claude-code:provider-a'
     })
     expect(sent[2]).toMatchObject({
-      sessionId: 'side-session-reconfigure',
+      sessionId: 'side-session-reconfigured',
       text: 'Follow up',
       historyPreamble: expect.stringContaining('First answer.'),
       resumeFallback: { historyPreamble: expect.stringContaining('First question') }
     })
     expect(String(sent[2]?.historyPreamble)).not.toContain('User: Follow up')
+    expect(registerHostMessageSession).toHaveBeenCalledWith(
+      'side-session-reconfigure',
+      expect.any(Array),
+      { failClosedUnknownKeys: true }
+    )
+    expect(registerHostMessageSession).toHaveBeenCalledWith(
+      'side-session-reconfigured',
+      expect.any(Array),
+      { failClosedUnknownKeys: true }
+    )
+
+    await owner.close({ sideSessionId: started.sideSessionId })
+    expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigure')
+    expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigured')
   })
 
-  it('keeps independent temporary Sessions for different parent Sessions', async () => {
+  it('retains context-reset replay when reconnect identity persistence fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-reconnect-save-retry-'))
+    const persistence = createPersistence()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const sent: Array<Record<string, unknown>> = []
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => ({
+        ...backend(claudeCodeFramework),
+        backendId: 'claude-code:provider-a'
+      })),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-before-reset',
+            providerSessionId: 'provider-before-reset',
+            frameworkId: 'claude-code' as const,
+            backendId: 'claude-code:provider-a'
+          })),
+          resumeSession: vi.fn(async () => ({
+            sessionId: 'provider-after-reset',
+            providerSessionId: 'provider-after-reset',
+            frameworkId: 'claude-code' as const,
+            backendId: 'claude-code:provider-a',
+            contextReset: true
+          })),
+          sendPrompt: vi.fn(async (request: Record<string, unknown>) => {
+            sent.push(request)
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId as string)
+            if (sent.length === 1) {
+              runtimeOptions!.callbacks?.onEvent?.({
+                id: 'assistant-before-reset',
+                messageId: 'assistant-before-reset',
+                timestamp: 1,
+                sessionId: request.sessionId as string,
+                kind: 'message',
+                role: 'assistant',
+                text: 'Initial answer.'
+              } as never)
+            }
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          requestProviderReconnect: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    const started = await owner.start({
+      parentSessionId: 'main-reconnect-save-retry',
+      projectId: 'project-1',
+      text: 'Initial question'
+    })
+    await vi.waitFor(() => expect(persistence.save.mock.calls.length).toBeGreaterThanOrEqual(2))
+    await owner.requestProviderReconnect()
+    persistence.save.mockRejectedValueOnce(new Error('Session file is busy'))
+
+    await expect(
+      owner.send({ sideSessionId: started.sideSessionId, text: 'Failed follow-up' })
+    ).rejects.toThrow('Session file is busy')
+    expect(sent).toHaveLength(1)
+
+    await owner.send({ sideSessionId: started.sideSessionId, text: 'Retry follow-up' })
+    expect(sent[1]).toMatchObject({
+      sessionId: 'provider-after-reset',
+      text: 'Retry follow-up',
+      historyPreamble: expect.stringContaining('Initial answer.')
+    })
+    expect(String(sent[1]?.historyPreamble)).not.toContain('Failed follow-up')
+  })
+
+  it('keeps durable state and provider data when app shutdown interrupts a turn', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-'))
+    const persistence = createPersistence()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    let finishTurn!: () => void
+    const turn = new Promise<{ stopReason: 'cancelled' }>((resolve) => {
+      finishTurn = () => resolve({ stopReason: 'cancelled' })
+    })
+    const cancelPrompt = vi.fn(async () => {
+      finishTurn()
+      return { stopReason: 'cancelled' as const }
+    })
+    const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
+    const shutdownForQuit = vi.fn(async () => undefined)
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-shutdown',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn((request: { sessionId: string }) => {
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return turn
+          }),
+          cancelPrompt,
+          deleteSession,
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit
+        } as never
+      }
+    })
+
+    const started = await owner.start({
+      parentSessionId: 'main-shutdown',
+      projectId: 'project-1',
+      text: 'Still running'
+    })
+    await owner.shutdown()
+
+    expect(cancelPrompt).toHaveBeenCalledWith({ sessionId: 'provider-shutdown' })
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(persistence.clear).not.toHaveBeenCalled()
+    expect(shutdownForQuit).toHaveBeenCalledOnce()
+    expect(persistence.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sideChat: expect.objectContaining({
+          id: started.sideSessionId,
+          lifecycle: 'interrupted'
+        })
+      })
+    )
+    expect(owner.list().chats).toContainEqual(
+      expect.objectContaining({
+        sideSessionId: started.sideSessionId,
+        running: false,
+        error: expect.stringContaining('interrupted')
+      })
+    )
+    await expect(
+      stat(join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId))
+    ).resolves.toBeDefined()
+  })
+
+  it('waits for dormant activation and blocks prompt admission during app shutdown', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-resume-'))
+    const resumed = deferred<{
+      sessionId: string
+      providerSessionId: string
+      frameworkId: 'claude-code'
+    }>()
+    const resumeSession = vi.fn(() => resumed.promise)
+    const sendPrompt = vi.fn()
+    const shutdownForQuit = vi.fn(async () => undefined)
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: () =>
+        ({
+          createSession: vi.fn(),
+          resumeSession,
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit
+        }) as never
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-1',
+        parentSessionId: 'main-shutdown-resume',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-shutdown-resume',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          providerSessionId: 'provider-old',
+          historyPreamble: 'Main snapshot.',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+
+    const send = owner.send({ sideSessionId: 'side-chat-shutdown-resume', text: 'Continue' })
+    await vi.waitFor(() => expect(resumeSession).toHaveBeenCalledOnce())
+    let shutdownFinished = false
+    const shutdown = owner.shutdown().then(() => {
+      shutdownFinished = true
+    })
+    await Promise.resolve()
+    expect(shutdownFinished).toBe(false)
+    resumed.resolve({
+      sessionId: 'provider-restored',
+      providerSessionId: 'provider-restored',
+      frameworkId: 'claude-code'
+    })
+
+    await expect(send).rejects.toThrow('shutting down')
+    await shutdown
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(shutdownForQuit).toHaveBeenCalledOnce()
+  })
+
+  it('reports a final durable write failure while still shutting down the provider', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-save-fail-'))
+    const persistence = createPersistence()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const shutdownForQuit = vi.fn(async () => undefined)
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-shutdown-save-fail',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit
+        } as never
+      }
+    })
+    const started = await owner.start({
+      parentSessionId: 'main-shutdown-save-fail',
+      projectId: 'project-1',
+      text: 'Initial turn'
+    })
+    await vi.waitFor(() => expect(persistence.save.mock.calls.length).toBeGreaterThanOrEqual(2))
+    persistence.save.mockRejectedValueOnce(new Error('Session file is busy'))
+
+    await expect(owner.shutdown()).rejects.toThrow(
+      'Side chat shutdown did not persist every conversation.'
+    )
+    expect(shutdownForQuit).toHaveBeenCalledOnce()
+    expect(owner.list().chats).toContainEqual(
+      expect.objectContaining({
+        sideSessionId: started.sideSessionId,
+        running: false,
+        error: expect.stringContaining('reconnect')
+      })
+    )
+  })
+
+  it('keeps a Side chat retryable when durable close cleanup fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-retry-'))
+    const persistence = createPersistence()
+    persistence.clear.mockRejectedValueOnce(new Error('Session file is busy'))
+    const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent: vi.fn(),
+      createRuntime: (options) =>
+        ({
+          createSession: vi.fn(async () => ({
+            sessionId: 'provider-close-retry',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession,
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        }) as never
+    })
+    const started = await owner.start({
+      parentSessionId: 'main-close-retry',
+      projectId: 'project-1',
+      text: 'Hello'
+    })
+
+    await expect(owner.close({ sideSessionId: started.sideSessionId })).rejects.toThrow(
+      'Session file is busy'
+    )
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(owner.list().chats).toContainEqual(
+      expect.objectContaining({ sideSessionId: started.sideSessionId })
+    )
+
+    await owner.close({ sideSessionId: started.sideSessionId })
+    expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'provider-close-retry' })
+    expect(owner.list().chats).toEqual([])
+  })
+
+  it('keeps independent Side chat Sessions for different parent Sessions', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-concurrent-'))
     const shutdowns: Array<ReturnType<typeof vi.fn>> = []
     let runtimeNumber = 0
@@ -436,7 +1473,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeNumber += 1
@@ -513,7 +1551,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeNumber += 1
@@ -550,7 +1589,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     await owner.start({ parentSessionId: 'main-a', projectId: 'project-1', text: 'A' })
     await owner.start({ parentSessionId: 'main-b', projectId: 'project-1', text: 'B' })
 
-    await expect(owner.applyModelChange({ model: 'model-b' } as never)).resolves.toBe(true)
+    await expect(owner.applyModelChange(modelChangeTarget('model-b'))).resolves.toBe(true)
     await expect(owner.applyReasoningEffortChange('high')).resolves.toBe(true)
     await owner.requestProviderReconnect()
 
@@ -560,7 +1599,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     await owner.shutdown()
   })
 
-  it('does not admit another temporary Session until asynchronous teardown finishes', async () => {
+  it('does not admit another Side chat until asynchronous teardown finishes', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-drain-'))
     let finishShutdown!: () => void
     const shutdown = new Promise<void>((resolve) => {
@@ -572,7 +1611,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       configRoot: temporaryRoot,
       captureTarget: vi.fn(async () => target),
       resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
-      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
       onEvent: vi.fn(),
       createRuntime: (options) => {
         runtimeOptions = options

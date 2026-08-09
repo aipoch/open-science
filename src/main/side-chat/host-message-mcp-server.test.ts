@@ -15,7 +15,7 @@ describe('Side chat host-message MCP server', () => {
       messageId: 'side-chat-message-1',
       targetState: 'idle',
       delivery: 'next-user-turn',
-      persisted: false,
+      persisted: true,
       systemHint: 'Delivered with the next user turn.'
     })
     const server = createHostMessageMcpServer({ sendMessage })
@@ -37,7 +37,7 @@ describe('Side chat host-message MCP server', () => {
         structuredContent: expect.objectContaining({
           status: 'queued',
           messageId: 'side-chat-message-1',
-          persisted: false
+          persisted: true
         })
       })
       expect(HOST_MESSAGE_MCP_SERVER_NAME).toBe('open-science-host-message')

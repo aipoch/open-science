@@ -4,7 +4,7 @@ import type { SessionDeletionHandlers } from '../session-persistence/coordinator
 import { bindNotificationInboxDeletionRuntime } from './notification-inbox-runtime'
 
 describe('notification inbox deletion runtime', () => {
-  it('invalidates ephemeral Side chats at the authoritative Session deletion boundary', async () => {
+  it('invalidates durable Side chats at the authoritative Session deletion boundary', async () => {
     let handlers: SessionDeletionHandlers | undefined
     const deleteSessions = vi.fn(async () => undefined)
     const onSessionsDeleted = vi.fn(async () => undefined)
