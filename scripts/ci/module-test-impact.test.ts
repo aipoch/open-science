@@ -113,6 +113,21 @@ describe('module test impact commands', () => {
       ]
     ],
     [
+      'src/main/settings/compute-grant-port.ts',
+      [
+        'artifact_provenance',
+        'compute_service',
+        'reviewer_orchestrator',
+        'session_persistence',
+        'settings_backend_resolution',
+        'settings_provider_accounts',
+        'settings_repository',
+        'settings_service_facade',
+        'workspace_page',
+        'workspace_runtime'
+      ]
+    ],
+    [
       'src/main/settings/provider-accounts.ts',
       [
         'artifact_provenance',
@@ -186,7 +201,8 @@ describe('module test impact commands', () => {
     expect(plan.mode).toBe('selective')
     expect([...plan.modules].sort()).toEqual(expectedModules)
     const rootModule =
-      path === 'src/main/settings/repository.ts'
+      path === 'src/main/settings/repository.ts' ||
+      path === 'src/main/settings/compute-grant-port.ts'
         ? 'settings_repository'
         : path === 'src/main/settings/provider-accounts.ts'
           ? 'settings_provider_accounts'
@@ -208,6 +224,17 @@ describe('module test impact commands', () => {
               `${rootModule} -> settings_service_facade -> workspace_runtime`
             ]
       )
+    )
+    expect(plan.testFiles).toEqual(
+      expect.arrayContaining([
+        'src/shared/renderer-surface-inventory.test.ts',
+        'src/shared/renderer-surface-matrix.test.ts',
+        'src/shared/web-rpc-contract.test.ts',
+        'src/main/notebook/local-rpc-notebook-adapter.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts',
+        'src/main/notebook/mcp-server.test.ts',
+        'src/main/web-service/http-server.test.ts'
+      ])
     )
   })
 

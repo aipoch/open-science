@@ -220,7 +220,10 @@
         "src/main/settings/document-store.ts",
         "src/main/settings/compute-grant-port.ts"
       ],
-      "interfacePaths": ["src/main/settings/repository.ts"],
+      "interfacePaths": [
+        "src/main/settings/repository.ts",
+        "src/main/settings/compute-grant-port.ts"
+      ],
       "consumerModules": [
         "settings_provider_accounts",
         "settings_service_facade",
@@ -380,6 +383,9 @@
           "src/main/application-command-composition.test.ts",
           "src/main/application-command-wiring.test.ts",
           "src/shared/renderer-contract-catalog.test.ts",
+          "src/shared/renderer-surface-inventory.test.ts",
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/shared/web-rpc-contract.test.ts",
           "src/preload/electron-renderer-contract-adapter.test.ts",
           "src/renderer/web/api-installer.test.ts"
         ],
@@ -388,7 +394,10 @@
           "src/main/acp/backend-generation-owner.test.ts",
           "src/main/acp/runtime-provider-session-composition.test.ts",
           "src/main/acp/task-agent-port.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
           "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/mcp-server.test.ts",
+          "src/main/web-service/http-server.test.ts",
           "src/renderer/src/stores/settings-runtime-slice.test.ts",
           "src/renderer/src/stores/settings-store.test.ts"
         ]

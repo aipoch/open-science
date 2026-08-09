@@ -144,6 +144,24 @@ describe('notebook MCP server config', () => {
     expect(toolNames).not.toContain('notebook_run_cell')
   })
 
+  it('locks the complete Notebook MCP capability inventory', () => {
+    expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).toEqual([
+      'ask_user_question',
+      'notebook_execute',
+      'repl_execute',
+      'bash_execute',
+      'notebook_state',
+      'list_notebook_runtimes',
+      'notebook_bind_runtime',
+      'notebook_switch_runtime',
+      'notebook_restart',
+      'notebook_shutdown',
+      'inspect_packages',
+      'manage_packages',
+      'manage_environments'
+    ])
+  })
+
   it('exposes manage_environments and explains named environments are separate namespaces', () => {
     const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
     expect(toolNames).toContain('manage_environments')

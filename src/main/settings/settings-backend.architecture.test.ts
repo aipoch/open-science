@@ -6,6 +6,7 @@ import {
   createSourceFile,
   forEachChild,
   getModifiers,
+  isArrayLiteralExpression,
   isCallExpression,
   isClassDeclaration,
   isEnumDeclaration,
@@ -43,13 +44,19 @@ const settingsPaths = {
   documentStore: resolve(settingsRoot, 'document-store.ts'),
   computeGrantPort: resolve(settingsRoot, 'compute-grant-port.ts'),
   providerAccounts: resolve(settingsRoot, 'provider-accounts.ts'),
+  providerAuthLifecycle: resolve(settingsRoot, 'provider-auth-lifecycle.ts'),
+  providerRuntimeProjection: resolve(settingsRoot, 'provider-runtime-projection.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   backendSelection: resolve(settingsRoot, 'backend-selection-owner.ts'),
   backendRoutePlanner: resolve(settingsRoot, 'backend-route-planner.ts'),
   providerTransportOwner: resolve(settingsRoot, 'provider-transport-owner.ts'),
   responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
+  responsesProtocolTypes: resolve(settingsRoot, 'responses-protocol-types.ts'),
+  responsesRequestAdapter: resolve(settingsRoot, 'responses-request-adapter.ts'),
+  responsesResponseAdapter: resolve(settingsRoot, 'responses-response-adapter.ts'),
   service: resolve(settingsRoot, 'service.ts'),
-  types: resolve(settingsRoot, 'types.ts')
+  types: resolve(settingsRoot, 'types.ts'),
+  notebookLocalRpcServer: resolve(projectRoot, 'src/main/notebook/local-rpc-server.ts')
 } as const
 const sourceCache = new Map<string, string>()
 const readSource = (path: string): string => {
@@ -237,6 +244,22 @@ const typePropertyNames = (path: string, typeName: string): string[] => {
     .sort()
 }
 
+const stringSetValues = (path: string, variableName: string): string[] => {
+  const declaration = sourceFileFor(path)
+    .statements.filter(isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find((candidate) => isIdentifier(candidate.name) && candidate.name.text === variableName)
+  const initializer = declaration?.initializer
+  const [values] = initializer && isNewExpression(initializer) ? (initializer.arguments ?? []) : []
+  if (!values || !isArrayLiteralExpression(values)) {
+    throw new Error(`${variableName} is not initialized from an array`)
+  }
+  return values.elements.map((element) => {
+    if (!isStringLiteralLike(element)) throw new Error(`${variableName} contains a non-string`)
+    return element.text
+  })
+}
+
 type ModuleImpactManifest = {
   modules: Record<
     string,
@@ -254,17 +277,28 @@ type ModuleImpactManifest = {
 const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
-  it('holds the current facade ceilings until their owner cutovers', () => {
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(660)
+  it('locks the final facade ceilings and every internal owner below the hard limit', () => {
+    // D3 explicitly accepted 646 as the non-growing Repository facade baseline under the 660 gate.
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(646)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentStore))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.computeGrantPort))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(600)
+    expect(rawLineCount(readSource(settingsPaths.providerAuthLifecycle))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.providerRuntimeProjection))).toBeLessThanOrEqual(
+      660
+    )
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(600)
+    expect(rawLineCount(readSource(settingsPaths.backendSelection))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.backendRoutePlanner))).toBeLessThanOrEqual(500)
     expect(rawLineCount(readSource(settingsPaths.providerTransportOwner))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
+    expect(rawLineCount(readSource(settingsPaths.responsesProtocolTypes))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.responsesRequestAdapter))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(settingsPaths.responsesResponseAdapter))).toBeLessThanOrEqual(
+      660
+    )
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1003)
   })
 
@@ -531,6 +565,51 @@ describe('Settings backend ownership architecture', () => {
     ])
   })
 
+  it('keeps Issue #458 coordination code behind application-owned ports', () => {
+    const concreteSettingsOwners = new Set(
+      [
+        settingsPaths.repository,
+        settingsPaths.backendResolver,
+        settingsPaths.providerTransportOwner
+      ].map(modulePath)
+    )
+    const coordinationSources = productionSourcePaths.filter((sourcePath) =>
+      /(?:orchestrat|coordinat|delegat)/i.test(portableProjectPath(sourcePath))
+    )
+
+    expect(coordinationSources.length).toBeGreaterThan(0)
+    expect(
+      coordinationSources
+        .filter((sourcePath) =>
+          importSpecifiersFrom(sourcePath).some((specifier) => {
+            const target = resolveImportTarget(sourcePath, specifier)
+            return target ? concreteSettingsOwners.has(target) : false
+          })
+        )
+        .map(portableProjectPath)
+    ).toEqual([])
+  })
+
+  it('locks the complete Notebook local-RPC capability inventory', () => {
+    expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'ARTIFACT_RPC_METHODS')).toEqual([
+      'artifactCreateVersion',
+      'artifactReplayVersion'
+    ])
+    expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
+      'mcpCall',
+      'computeCall',
+      'agentsCall',
+      'skillsCall',
+      'requestUserInput'
+    ])
+    expect(
+      stringSetValues(settingsPaths.notebookLocalRpcServer, 'SKILL_IMPORT_RPC_METHODS')
+    ).toEqual(['skillImport'])
+    expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'PLAN_RPC_METHODS')).toEqual([
+      'planCall'
+    ])
+  })
+
   it('locks the durable Settings shape and secret-free explicit target seam', () => {
     expect(typePropertyNames(settingsPaths.types, 'StoredSettings')).toEqual([
       'activeModel',
@@ -617,6 +696,18 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/document-store.ts',
       'src/main/settings/compute-grant-port.ts'
     ])
+    expect(manifest.modules.settings_repository.interfacePaths).toEqual([
+      'src/main/settings/repository.ts',
+      'src/main/settings/compute-grant-port.ts'
+    ])
+    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
+      'src/main/settings/provider-accounts.ts',
+      'src/main/settings/provider-auth-lifecycle.ts',
+      'src/main/settings/provider-runtime-projection.ts'
+    ])
+    expect(manifest.modules.settings_provider_accounts.interfacePaths).toEqual([
+      'src/main/settings/provider-accounts.ts'
+    ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
@@ -626,6 +717,13 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/responses-protocol-types.ts',
       'src/main/settings/responses-request-adapter.ts',
       'src/main/settings/responses-response-adapter.ts'
+    ])
+    expect(manifest.modules.settings_backend_resolution.interfacePaths).toEqual([
+      'src/main/settings/backend-resolver.ts',
+      'src/main/settings/responses-bridge.ts'
+    ])
+    expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
+      'src/main/settings/service.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',
@@ -655,15 +753,34 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/runtime-application-commands.test.ts',
         'src/main/settings/integration-application-commands.test.ts',
         'src/main/settings/ipc.test.ts',
+        'src/main/settings/capabilities.test.ts',
         'src/shared/renderer-contract-catalog.test.ts',
+        'src/shared/renderer-surface-inventory.test.ts',
+        'src/shared/renderer-surface-matrix.test.ts',
+        'src/shared/web-rpc-contract.test.ts',
         'src/preload/electron-renderer-contract-adapter.test.ts',
         'src/renderer/web/api-installer.test.ts'
+      ])
+    )
+    expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'packages/open-science/cli.test.ts',
+        'src/main/acp/backend-generation-owner.test.ts',
+        'src/main/acp/runtime-provider-session-composition.test.ts',
+        'src/main/acp/task-agent-port.test.ts',
+        'src/main/notebook/local-rpc-notebook-adapter.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts',
+        'src/main/notebook/mcp-server.test.ts',
+        'src/main/web-service/http-server.test.ts',
+        'src/renderer/src/stores/settings-runtime-slice.test.ts',
+        'src/renderer/src/stores/settings-store.test.ts'
       ])
     )
     expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual(
       expect.arrayContaining([
         'packages/open-science/cli.test.ts',
         'src/main/acp/artifact-code-reconstruction-runner.test.ts',
+        'src/main/acp/backend-generation-owner.test.ts',
         'src/main/acp/task-agent-port.test.ts',
         'src/main/acp/turn-skill-owner.test.ts',
         'src/main/artifacts/code-reconstruction.test.ts',
@@ -671,5 +788,13 @@ describe('Settings backend ownership architecture', () => {
         'src/main/reviewer/mcp-server.test.ts'
       ])
     )
+    expect(
+      [
+        'settings_repository',
+        'settings_provider_accounts',
+        'settings_backend_resolution',
+        'settings_service_facade'
+      ].map((moduleName) => manifest.modules[moduleName].fallbackCapability)
+    ).toEqual(['main_runtime', 'main_runtime', 'main_runtime', 'main_runtime'])
   })
 })

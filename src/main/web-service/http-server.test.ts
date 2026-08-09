@@ -1479,7 +1479,12 @@ describe('startWebHttpServer', () => {
     for (const path of [
       '/api/v1/permissions/permission-1/approve',
       '/api/v1/specialists',
-      '/api/v1/compute'
+      '/api/v1/compute',
+      '/api/v1/settings',
+      '/api/v1/providers',
+      '/api/v1/runtime',
+      '/api/v1/notebook',
+      '/api/v1/reviewer'
     ]) {
       const absent = await fetch(`${base}${path}`, { method: 'POST', headers })
       expect(absent.status).toBe(404)
