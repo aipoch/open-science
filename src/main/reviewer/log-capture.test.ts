@@ -89,6 +89,69 @@ describe('driveReviewerToStop — log capture via onUpdate', () => {
     }
   })
 
+  it('flushes interleaved content before tools and lets terminal output override raw output', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'Trace the evidence.' }
+        }
+      },
+      {
+        kind: 'session_update',
+        update: { sessionUpdate: 'agent_message_chunk', content: 'Checking the result.' }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-order',
+          _meta: { claudeCode: { toolName: 'Bash' } },
+          title: 'check result',
+          rawInput: 'check result'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-order',
+          rawOutput: 'provider fallback',
+          status: 'completed',
+          _meta: {
+            terminal_output: { data: 'terminal result' },
+            terminal_exit: { exit_code: 0 }
+          }
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(
+      session,
+      { timeoutMs: 1000, maxUpdates: 100 },
+      { onUpdate: (entry) => log.push(entry) }
+    )
+
+    expect(log).toEqual([
+      { kind: 'thought', text: 'Trace the evidence.' },
+      { kind: 'message', text: 'Checking the result.' },
+      {
+        kind: 'tool',
+        toolName: 'Bash',
+        title: 'check result',
+        rawInput: 'check result',
+        rawOutput: 'terminal result',
+        status: 'ok',
+        exitCode: 0
+      }
+    ])
+  })
+
   it('produces ONE unified tool entry from tool_call + tool_call_update (not split tool_call/tool_result)', async () => {
     const updates: FakeUpdate[] = [
       {

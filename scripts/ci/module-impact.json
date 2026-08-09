@@ -122,13 +122,16 @@
       "fallbackCapability": "renderer_view"
     },
     "reviewer_orchestrator": {
-      "ownerPaths": ["src/main/reviewer/orchestrator.ts"],
+      "ownerPaths": [
+        "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/reviewer-session-driver.ts"
+      ],
       "interfacePaths": [
         "src/main/reviewer/orchestrator.ts",
         "src/main/reviewer/ipc.ts",
         "src/shared/reviewer.ts"
       ],
-      "consumerModules": [],
+      "consumerModules": ["workspace_runtime", "workspace_page", "artifact_provenance"],
       "testFiles": {
         "owner": [
           "src/main/reviewer/orchestrator.test.ts",
