@@ -230,8 +230,11 @@ describe('PreviewPanel', () => {
     expect(tabBar?.className).toContain('flex-1')
     expect(fileTabContainer?.className).toContain('max-w-[240px]')
     expect(fileTabContainer?.className.split(' ')).not.toContain('w-[240px]')
+    expect(fileTab?.className.split(' ')).not.toContain('flex-1')
     expect(tabBar?.querySelector('[role="tab"][aria-selected="true"]')).not.toBeNull()
-    expect(fileTab?.querySelector('[data-testid="file-name-head"]')?.textContent).toBe(
+    const tabFileName = fileTab?.querySelector('[data-testid="file-name-root"]')
+    expect(tabFileName?.className.split(' ')).not.toContain('flex-1')
+    expect(tabFileName?.querySelector('[data-testid="file-name-head"]')?.textContent).toBe(
       'global_climate_anomaly_analysis_1850'
     )
     expect(fileTab?.querySelector('[data-testid="file-name-ellipsis"]')).toBeNull()

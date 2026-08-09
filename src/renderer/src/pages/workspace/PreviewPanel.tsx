@@ -113,7 +113,7 @@ const PreviewTab = ({
       aria-selected={isActive}
       aria-keyshortcuts="Delete Backspace"
       tabIndex={isActive ? 0 : -1}
-      className="flex min-w-0 flex-1 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+      className="flex min-w-0 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
       onClick={(event) => {
         if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
           onClose(tab.id)
@@ -132,7 +132,7 @@ const PreviewTab = ({
         <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
       ) : null}
       {tab.type === 'file' ? (
-        <ExtensionPreservingFileName name={tab.name} className="flex-1" />
+        <ExtensionPreservingFileName name={tab.name} />
       ) : (
         <span className="min-w-0 truncate">{tab.title}</span>
       )}
