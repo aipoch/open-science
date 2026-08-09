@@ -248,7 +248,13 @@ const reviseWorkspaceElicitation = async (
     }
     const snapshot = await runtime.respondToElicitation(responseToSend)
     syncWorkspaceInteractionState(snapshot)
-    useSessionStore.getState().setElicitationPending(restoredRequest.sessionId, false)
+    if (
+      !snapshot.pendingElicitations?.some(
+        (request) => request.sessionId === restoredRequest.sessionId
+      )
+    ) {
+      useSessionStore.getState().setElicitationPending(restoredRequest.sessionId, false)
+    }
   } catch (error) {
     if (rollbackProjection) {
       restoreElicitationRevisionProjection(rollbackProjection)
@@ -359,7 +365,12 @@ const respondToWorkspaceElicitation = async (
     response.request?.sessionId ??
     runtime.state.pendingElicitations?.find((request) => request.requestId === response.requestId)
       ?.sessionId
-  if (sessionId) useSessionStore.getState().setElicitationPending(sessionId, false)
+  if (
+    sessionId &&
+    !snapshot.pendingElicitations?.some((request) => request.sessionId === sessionId)
+  ) {
+    useSessionStore.getState().setElicitationPending(sessionId, false)
+  }
   if (session && historyReplayRequired) {
     useSessionStore.getState().setElicitationHistoryReplayRequest(session.id)
   }

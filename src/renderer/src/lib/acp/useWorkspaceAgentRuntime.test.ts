@@ -675,6 +675,51 @@ describe('workspace durable elicitation', () => {
     })
   })
 
+  it('keeps waiting when another elicitation for the session remains pending', async () => {
+    useSessionStore.getState().setElicitationPending('session-choice-1', true)
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+      }
+    }
+    const continued = {
+      ...createSnapshot(['session-choice-1']),
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1'],
+      pendingElicitations: [
+        {
+          requestId: 'choice-2',
+          sessionId: 'session-choice-1',
+          toolCallId: 'tool-choice-2',
+          message: 'Choose a format',
+          fields: [{ id: 'question_0', label: 'Format', kind: 'text' as const }]
+        }
+      ]
+    }
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(continued)
+      },
+      response
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-for-user',
+      agentPromptInFlight: true
+    })
+  })
+
   it('reattaches a restored session before submitting its durable answer', async () => {
     const resumeSession = vi.fn().mockResolvedValue({
       sessionId: 'session-choice-1',

@@ -1253,6 +1253,9 @@ describe('session store', () => {
 
     useSessionStore.getState().setElicitationPending('transport-session-1', false)
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
+
+    useSessionStore.getState().setAgentPromptInFlight('transport-session-1', false)
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
   it('keeps permission waiting ahead of a simultaneous user-input wait', () => {

@@ -125,7 +125,12 @@ export const projectAgentPromptInFlight = (
   inFlight: boolean
 ): ChatSession => {
   const agentPromptInFlight = inFlight ? true : undefined
-  const status = inFlight && session.status === 'idle' ? 'running' : session.status
+  const status =
+    inFlight && session.status === 'idle'
+      ? 'running'
+      : !inFlight && session.status === 'running' && !session.activeRun
+        ? 'idle'
+        : session.status
   return session.agentPromptInFlight === agentPromptInFlight && session.status === status
     ? session
     : {
