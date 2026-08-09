@@ -1063,6 +1063,49 @@ describe('AgentBackendResolver runtime delegation', () => {
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
   })
 
+  it.each(['opencode', 'codex'] as const)(
+    'preserves %s executable error priority over route catalog projection',
+    async (frameworkId) => {
+      const harness = makeHarness()
+      const executableError = new Error(`${frameworkId} executable is unavailable`)
+      harness.resolveRuntimeModelCatalog.mockImplementation(() => {
+        throw new Error('catalog projection failed')
+      })
+      if (frameworkId === 'codex') {
+        harness.runtime.resolveCodexExecutable.mockRejectedValueOnce(executableError)
+      } else {
+        harness.runtime.resolveOpencodeExecutable.mockRejectedValueOnce(executableError)
+      }
+
+      await expect(
+        harness.resolver.resolveExplicitTarget({
+          frameworkId,
+          providerId: 'provider-a',
+          model: { kind: 'provider-default' },
+          reasoningEffort: 'high'
+        })
+      ).rejects.toBe(executableError)
+    }
+  )
+
+  it('preserves Codex native probe error priority over route catalog projection', async () => {
+    const harness = makeHarness()
+    const probeError = new Error('Codex native probe failed')
+    harness.resolveRuntimeModelCatalog.mockImplementation(() => {
+      throw new Error('catalog projection failed')
+    })
+    harness.runtime.probeCodexNativeVersion.mockRejectedValueOnce(probeError)
+
+    await expect(
+      harness.resolver.resolveExplicitTarget({
+        frameworkId: 'codex',
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+    ).rejects.toBe(probeError)
+  })
+
   it.each([
     { frameworkId: 'claude-code' as const, executableMethod: 'resolveClaudeExecutable' as const },
     { frameworkId: 'opencode' as const, executableMethod: 'resolveOpencodeExecutable' as const },

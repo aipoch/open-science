@@ -45,6 +45,7 @@ const settingsPaths = {
   providerAccounts: resolve(settingsRoot, 'provider-accounts.ts'),
   backendResolver: resolve(settingsRoot, 'backend-resolver.ts'),
   backendSelection: resolve(settingsRoot, 'backend-selection-owner.ts'),
+  backendRoutePlanner: resolve(settingsRoot, 'backend-route-planner.ts'),
   responsesBridge: resolve(settingsRoot, 'responses-bridge.ts'),
   service: resolve(settingsRoot, 'service.ts'),
   types: resolve(settingsRoot, 'types.ts')
@@ -259,7 +260,8 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.documentStore))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.computeGrantPort))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(600)
-    expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1357)
+    expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1010)
+    expect(rawLineCount(readSource(settingsPaths.backendRoutePlanner))).toBeLessThanOrEqual(500)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(600)
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1003)
   })
@@ -482,6 +484,7 @@ describe('Settings backend ownership architecture', () => {
     expect(importersOf(settingsPaths.providerAccounts)).toEqual([
       'src/main/settings/agent-runtime-manager.ts',
       'src/main/settings/backend-resolver.ts',
+      'src/main/settings/backend-route-planner.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/service.ts'
     ])
@@ -490,11 +493,15 @@ describe('Settings backend ownership architecture', () => {
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/settings/service.ts'
     ])
+    expect(importersOf(settingsPaths.backendRoutePlanner)).toEqual([
+      'src/main/settings/backend-resolver.ts'
+    ])
     expect(importersOf(settingsPaths.responsesBridge)).toEqual([
       'src/main/acp/turn-skill-owner.ts',
       'src/main/agent-framework/types.ts',
       'src/main/reviewer/bridge-tools.ts',
       'src/main/settings/backend-resolver.ts',
+      'src/main/settings/backend-route-planner.ts',
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/validate.ts'
     ])
@@ -599,6 +606,7 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
+      'src/main/settings/backend-route-planner.ts',
       'src/main/settings/responses-bridge.ts',
       'src/main/settings/responses-protocol-types.ts',
       'src/main/settings/responses-request-adapter.ts',

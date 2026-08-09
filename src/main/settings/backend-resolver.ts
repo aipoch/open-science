@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import { z } from 'zod'
-
 import type { ReasoningEffort } from '../../shared/settings'
 import {
-  CODEX_ISOLATED_PROVIDER_ID,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider
@@ -15,36 +12,21 @@ import {
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
 } from '../../shared/run-error-classification'
-import {
-  resolveReasoningEffortValue,
-  type ModelReasoningEffort,
-  type ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import {
   getAgentFramework,
   type AgentModelCatalogEntry,
   type AgentModelChangeTarget,
-  type AgentModelRoute,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { opencodeConfigDir, opencodeTransportProviderId } from '../agent-framework/opencode'
 import {
-  CODEX_BRIDGE_MODEL,
   codexStorageDir,
   codexSubscriptionStorageDir,
   normalizeResponsesBaseUrl
 } from '../agent-framework/codex'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
-import { NOTEBOOK_MCP_SERVER_NAME, NOTEBOOK_RPC_TOOLS } from '../notebook/mcp-server'
-import { ARTIFACT_MCP_SERVER_NAME, writeArtifactFileToolSchema } from '../artifacts/mcp-server'
-import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
-import { requestSkillImportToolSchema } from '../skills/mcp-server'
-import {
-  REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
-  REQUEST_SKILL_IMPORT_TOOL_NAME,
-  SKILL_IMPORT_MCP_SERVER_NAME
-} from '../../shared/skill-import'
 import {
   normalizeAnthropicBaseUrl,
   openAiChatCompletionsUrl,
@@ -84,6 +66,7 @@ import {
   type BackendSelectionResolution,
   type ExplicitAgentBackendTarget
 } from './backend-selection-owner'
+import { BackendRoutePlanner, type BackendTransportPlan } from './backend-route-planner'
 
 export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 
@@ -171,41 +154,6 @@ type NativeCodexProviderTransport = Readonly<{
   lease: NonNullable<ResolvedAgentBackend['providerTransportLease']>
 }>
 
-const modelRouteFor = (
-  frameworkId: AgentFrameworkId,
-  target: ProviderRuntimeTarget
-): AgentModelRoute => {
-  if (frameworkId === 'claude-code') return 'claude-anthropic'
-  if (frameworkId === 'opencode') {
-    return target.apiEndpoints.includes('openai') ? 'opencode-openai' : 'opencode-anthropic'
-  }
-  if (target.needsChatResponsesBridge) return 'codex-bridge'
-  if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
-  return 'codex-responses'
-}
-
-const resolvedModelEffort = (
-  intent: ReasoningEffort,
-  target: ProviderRuntimeTarget
-): ResolvedReasoningEffort =>
-  intent === DEFAULT_REASONING_EFFORT
-    ? DEFAULT_REASONING_EFFORT
-    : resolveReasoningEffortValue(intent, target.reasoningEffortProfile)
-
-const claudeBridgeTargetId = (providerId: string, model: string): string =>
-  JSON.stringify([providerId, model])
-
-const providerTransportTargetId = (
-  frameworkId: AgentFrameworkId,
-  providerId: string,
-  model: string
-): string => JSON.stringify([frameworkId, providerId, model])
-
-type ClaudeBridgeCatalog = Readonly<{
-  targets: readonly AnthropicProviderBridgeTarget[]
-  initialTargetId: string
-}>
-
 export type AgentBackendResolverOptions = {
   readSettings: () => Promise<StoredSettings>
   providers: AgentBackendProviderPort
@@ -228,55 +176,6 @@ export type AgentBackendResolverOptions = {
   nextGenerationId?: () => string
 }
 
-// Codex exposes local MCP tools as namespaced Responses functions. Chat Completions has no namespace
-// field, so the bridge receives the app-owned notebook schemas and aliases them for the upstream.
-const CODEX_NOTEBOOK_TOOL_NAMESPACE = `mcp__${NOTEBOOK_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_NOTEBOOK_TOOLS: ResponsesBridgeNamespacedTool[] = NOTEBOOK_RPC_TOOLS.map(
-  (tool) => ({
-    namespace: CODEX_NOTEBOOK_TOOL_NAMESPACE,
-    name: tool.name,
-    description:
-      tool.name === 'notebook_execute'
-        ? `${tool.description} For Open Science data connectors, the Python code MUST call host.mcp(server, method, arguments). Never use requests, urllib, httpx, curl, or a raw upstream API for connector data; those bypass app permissions, credentials, and rate limits. Codex MCP resource-list tools are not connector discovery.`
-        : tool.description,
-    parameters: z.toJSONSchema(z.object(tool.inputSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  })
-)
-const CODEX_ARTIFACT_TOOL_NAMESPACE = `mcp__${ARTIFACT_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_ARTIFACT_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_ARTIFACT_TOOL_NAMESPACE,
-    name: 'write_artifact_file',
-    description:
-      'Attach a generated image, chart, report, data export, or archive to the current Open Science response. The file must already exist before using a localPath source.',
-    parameters: z.toJSONSchema(z.object(writeArtifactFileToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-const CODEX_SKILL_IMPORT_TOOL_NAMESPACE = `mcp__${SKILL_IMPORT_MCP_SERVER_NAME.replace(
-  /[^a-zA-Z0-9_]/g,
-  '_'
-)}`
-const CODEX_BRIDGE_SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
-  {
-    namespace: CODEX_SKILL_IMPORT_TOOL_NAMESPACE,
-    name: REQUEST_SKILL_IMPORT_TOOL_NAME,
-    description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
-    parameters: z.toJSONSchema(z.object(requestSkillImportToolSchema), {
-      target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
-  }
-]
-
 // Owns backend resolution decisions and every live bridge/proxy generation created for them. The
 // constructor is intentionally side-effect free; runtime resources start only inside resolve calls.
 export class AgentBackendResolver {
@@ -287,6 +186,7 @@ export class AgentBackendResolver {
   private readonly storageRoot: string
   private readonly userClaudeDir: string
   private readonly selection: BackendSelectionOwner
+  private readonly planner: BackendRoutePlanner
   private readonly createResponsesBridge: (target: ResponsesBridgeTarget) => ResponsesBridgePort
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
@@ -321,6 +221,7 @@ export class AgentBackendResolver {
       resolveRuntimeReasoningEffortProfile: (provider, model) =>
         this.providers.resolveRuntimeReasoningEffortProfile(provider, model)
     })
+    this.planner = new BackendRoutePlanner({ providers: this.providers })
     this.createResponsesBridge =
       options.createResponsesBridge ?? ((target) => new ResponsesBridge(target))
     this.createNativeResponsesProxy =
@@ -344,11 +245,23 @@ export class AgentBackendResolver {
     const settings = await this.readSettings()
     const executablePath = await this.runtime.resolveClaudeExecutable(settings.claude?.resolvedPath)
     const target = this.resolveConfiguredProviderTarget(settings, getAgentFramework('claude-code'))
+    if (target.providerType === 'claude-shared' && target.disconnectedAt !== undefined) {
+      throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
+    }
+    const plan = this.planner.planBackend({
+      settings,
+      frameworkId: 'claude-code',
+      target,
+      effortIntent: settings.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+      conversationSkillImportEnabled:
+        settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED
+    })
     return this.resolveClaudeSpawnConfig(
       settings,
       target,
       new Set(context.forcedSkillIds ?? []),
-      executablePath
+      executablePath,
+      plan.claudeModelConfig
     )
   }
 
@@ -370,65 +283,11 @@ export class AgentBackendResolver {
     if (!target.frameworkCompatible || (frameworkId === 'codex' && !target.modelBridgeSupported)) {
       return undefined
     }
-
-    const model = target.effectiveModel ?? target.provider.model
-    if (!model) return undefined
-    const route = modelRouteFor(frameworkId, target)
-    const openCodeTransportTargets =
-      frameworkId === 'opencode' ? this.resolveOpenCodeApiTargets(settings, target, route) : []
-    const hasOpenCodeProviderTransport =
-      new Set(openCodeTransportTargets.map((candidate) => candidate.providerId)).size >= 2
-    const codexTransportTargets =
-      frameworkId === 'codex' ? this.resolveCodexApiTargets(settings, target, route) : []
-    const hasCodexProviderTransport =
-      new Set(codexTransportTargets.map((candidate) => candidate.providerId)).size >= 2
-    const hasClaudeProviderTransport =
-      frameworkId === 'claude-code' &&
-      this.resolveClaudeBridgeCatalog(settings, target) !== undefined
-    const backendProviderId =
-      frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type)
-        ? CODEX_ISOLATED_PROVIDER_ID
-        : target.providerId
-
-    return Object.freeze({
+    return this.planner.projectModelChange({
+      settings,
       frameworkId,
-      backendId: `${frameworkId}:${backendProviderId}`,
-      route,
-      model,
-      sessionModel:
-        route === 'codex-bridge'
-          ? CODEX_BRIDGE_MODEL
-          : hasOpenCodeProviderTransport
-            ? `${opencodeTransportProviderId(target.providerId, model)}/${model}`
-            : model,
-      sessionModelRequired:
-        frameworkId === 'codex' && isCodexSubscriptionProvider(target.provider.type),
-      supportsImageInput: target.provider.supportsImageInput === true,
-      reasoningEffort: resolvedModelEffort(reasoningEffort, target),
-      ...(hasClaudeProviderTransport
-        ? { anthropicBridgeTargetId: claudeBridgeTargetId(target.providerId, model) }
-        : {}),
-      ...(hasOpenCodeProviderTransport || hasCodexProviderTransport
-        ? {
-            providerTransportTargetId: providerTransportTargetId(
-              frameworkId,
-              target.providerId,
-              model
-            )
-          }
-        : {}),
-      ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
-      ...(route === 'codex-bridge' || route === 'codex-responses-compatibility'
-        ? {
-            bridge: Object.freeze({
-              model,
-              ...(target.provider.vendorId ? { vendorId: target.provider.vendorId } : {}),
-              ...(target.provider.reasoningEffortTransport
-                ? { reasoningEffortTransport: target.provider.reasoningEffortTransport }
-                : {})
-            })
-          }
-        : {})
+      target,
+      effortIntent: reasoningEffort
     })
   }
 
@@ -508,36 +367,68 @@ export class AgentBackendResolver {
     if (framework.id === 'codex' && !target.modelBridgeSupported) {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
-
-    const configuredModelRoute = modelRouteFor(frameworkId, target)
     const forceNativeResponsesCompatibility =
       context.forceCodexNativeResponsesCompatibility === true &&
       framework.id === 'codex' &&
-      configuredModelRoute === 'codex-responses'
+      !target.needsChatResponsesBridge &&
+      !target.needsNativeResponsesCompatibility
     if (forceNativeResponsesCompatibility && isCodexSubscriptionProvider(target.provider.type)) {
       throw new Error(
         'Artifact code reconstruction is unavailable with Codex subscription authentication.'
       )
     }
-    const modelRoute = forceNativeResponsesCompatibility
-      ? 'codex-responses-compatibility'
-      : configuredModelRoute
-    const resolvedEffort = resolvedModelEffort(effortIntent, target)
-    const sessionEffort: ModelReasoningEffort | undefined =
-      resolvedEffort === 'default' ? undefined : resolvedEffort
-    const supportedReasoningEfforts = target.reasoningEffortProfile.supported
-      ? [...new Set(target.reasoningEffortProfile.slots)]
-      : undefined
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const connectorSkillNames =
       framework.id === 'claude-code'
         ? await this.connectors.provisionedConnectorSkillNames()
         : this.connectors.enabledConnectorIds(settings.connectors).map((id) => `mcp-${id}`)
     const connectorInstructions = renderConnectorInstructions(connectorSkillNames)
+    const executablePath =
+      framework.id === 'claude-code'
+        ? await this.runtime.resolveClaudeExecutable(settings.claude?.resolvedPath)
+        : framework.id === 'codex'
+          ? await this.runtime.resolveCodexExecutable(
+              settings.codex?.resolvedPath,
+              settings.codex?.nativePath
+            )
+          : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+    const codexNativeVersion =
+      framework.id === 'codex'
+        ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
+        : undefined
+    if (
+      framework.id === 'claude-code' &&
+      target.providerType === 'claude-shared' &&
+      target.disconnectedAt !== undefined
+    ) {
+      throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
+    }
+    const plan = this.planner.planBackend({
+      settings,
+      frameworkId,
+      target,
+      effortIntent,
+      conversationSkillImportEnabled:
+        settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
+      forceNativeResponsesCompatibility
+    })
+    const modelRoute = plan.modelRoute
+    const sessionEffort = plan.sessionEffort
+    const supportedReasoningEfforts = plan.supportedReasoningEfforts
     if (framework.id === 'claude-code') {
-      const { envOverrides, executablePath, sessionOptions, contextWindow } =
-        await this.resolveClaudeSpawnConfig(settings, target, forcedSkillIds)
-      const bridgeCatalog = this.resolveClaudeBridgeCatalog(settings, target)
+      const {
+        envOverrides,
+        executablePath: claudeExecutablePath,
+        sessionOptions,
+        contextWindow
+      } = await this.resolveClaudeSpawnConfig(
+        settings,
+        target,
+        forcedSkillIds,
+        executablePath,
+        plan.claudeModelConfig
+      )
+      const bridgeCatalog = plan.transport.kind === 'claude-anthropic' ? plan.transport : undefined
       let bridge: AnthropicProviderBridgePort | undefined
       try {
         const bridgeConnection = bridgeCatalog
@@ -557,7 +448,7 @@ export class AgentBackendResolver {
           framework,
           backendId: `${framework.id}:${target.providerId}`,
           modelRoute,
-          executablePath,
+          executablePath: claudeExecutablePath,
           env: {
             ...envOverrides,
             ...(bridgeConnection
@@ -583,49 +474,12 @@ export class AgentBackendResolver {
       }
     }
 
-    const executablePath =
-      framework.id === 'codex'
-        ? await this.runtime.resolveCodexExecutable(
-            settings.codex?.resolvedPath,
-            settings.codex?.nativePath
-          )
-        : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
-    const codexNativeVersion =
-      framework.id === 'codex'
-        ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
-        : undefined
     let provider = target.provider
-    const codexProviderTargets =
-      framework.id === 'codex' ? this.resolveCodexApiTargets(settings, target, modelRoute) : []
-    const hasCodexProviderTransport =
-      new Set(codexProviderTargets.map((candidate) => candidate.providerId)).size >= 2
-    const catalogTargets = hasCodexProviderTransport
-      ? codexProviderTargets
-      : this.providers.resolveRuntimeModelCatalog(storedProvider, framework)
-    let providerModelCatalog: readonly AgentModelCatalogEntry[] = catalogTargets
-      .filter(
-        (candidate) =>
-          candidate.frameworkCompatible &&
-          (framework.id !== 'codex' || candidate.modelBridgeSupported) &&
-          modelRouteFor(framework.id, candidate) === modelRoute
-      )
-      .map((candidate) => {
-        const candidateEffort = resolvedModelEffort(effortIntent, candidate)
-        return Object.freeze({
-          provider: candidate.provider,
-          ...(candidateEffort === 'default' ? {} : { reasoningEffort: candidateEffort }),
-          ...(candidate.reasoningEffortProfile.supported
-            ? { reasoningEfforts: [...new Set(candidate.reasoningEffortProfile.slots)] }
-            : {})
-        })
-      })
+    let providerModelCatalog: readonly AgentModelCatalogEntry[] = plan.providerModelCatalog
     if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
       await this.ensureCodexSubscriptionHome()
     }
-    const backendProviderId =
-      framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)
-        ? CODEX_ISOLATED_PROVIDER_ID
-        : target.providerId
+    const backendProviderId = plan.backendProviderId
     const skillsRoot =
       framework.id === 'codex'
         ? isCodexSubscriptionProvider(provider.type)
@@ -636,15 +490,15 @@ export class AgentBackendResolver {
 
     const openCodeProviderTransport =
       framework.id === 'opencode'
-        ? await this.ensureOpenCodeProviderTransports(settings, target, modelRoute, effortIntent)
+        ? await this.ensureOpenCodeProviderTransports(target, plan.transport)
         : undefined
     if (openCodeProviderTransport) {
       provider = openCodeProviderTransport.provider
       providerModelCatalog = openCodeProviderTransport.providerModelCatalog
     }
     const nativeCodexProviderTransport =
-      framework.id === 'codex' && modelRoute === 'codex-responses' && hasCodexProviderTransport
-        ? await this.ensureNativeCodexProviderTransport(target, codexProviderTargets)
+      framework.id === 'codex' && plan.transport.kind === 'codex-native-responses'
+        ? await this.ensureNativeCodexProviderTransport(target, plan.transport)
         : undefined
     if (nativeCodexProviderTransport) provider = nativeCodexProviderTransport.provider
 
@@ -652,14 +506,16 @@ export class AgentBackendResolver {
       ? await this.ensureResponsesBridge(
           target,
           sessionEffort,
-          settings.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
-          hasCodexProviderTransport ? codexProviderTargets : undefined,
-          effortIntent
+          plan.transport,
+          plan.codexBridgeTools ?? [],
+          plan.reviewerBridgeTools ?? []
         )
-      : target.needsNativeResponsesCompatibility || forceNativeResponsesCompatibility
+      : target.needsNativeResponsesCompatibility ||
+          plan.modelRoute === 'codex-responses-compatibility'
         ? await this.ensureNativeResponsesCompatibility(
             target,
-            hasCodexProviderTransport ? codexProviderTargets : undefined
+            plan.transport,
+            plan.reviewerBridgeTools ?? []
           )
         : undefined
     const persistentSystemPromptAppends = [
@@ -766,7 +622,8 @@ export class AgentBackendResolver {
     settings: StoredSettings,
     target: ProviderRuntimeTarget,
     forcedSkillIds: ReadonlySet<string>,
-    resolvedExecutablePath?: string
+    resolvedExecutablePath?: string,
+    modelConfig?: ClaudeRuntimeModelConfig
   ): Promise<AgentSpawnConfig> {
     const executablePath =
       resolvedExecutablePath ??
@@ -775,7 +632,6 @@ export class AgentBackendResolver {
       throw new Error(CLAUDE_SHARED_DISCONNECTED_MESSAGE)
     }
     const provider = target.provider
-    const modelConfig = this.resolveClaudeModelConfig(settings, target)
     const appConfigDir = await this.runtime.provisionClaudeRuntimeConfig(
       settings,
       forcedSkillIds,
@@ -810,220 +666,14 @@ export class AgentBackendResolver {
     }
   }
 
-  private resolveClaudeModelConfig(
-    settings: StoredSettings,
-    target: ProviderRuntimeTarget
-  ): ClaudeRuntimeModelConfig | undefined {
-    if (target.provider.type !== 'custom') return undefined
-    const registered = [
-      ...new Set(
-        this.resolveClaudeApiTargets(settings, target).map(
-          (candidate) => candidate.effectiveModel ?? candidate.provider.model
-        )
-      )
-    ].filter((model): model is string => Boolean(model))
-    if (registered.length < 2) return undefined
-
-    return Object.freeze({
-      availableModels: Object.freeze([...registered]),
-      modelOverrides: Object.freeze(
-        // Identity overrides deliberately register opaque third-party ids with Claude's SDK. A real
-        // adapter spike verifies that this has no three-alias ceiling and setModel accepts every row.
-        Object.fromEntries(registered.map((model) => [model, model]))
-      )
-    })
-  }
-
-  private resolveClaudeBridgeCatalog(
-    settings: StoredSettings,
-    target: ProviderRuntimeTarget
-  ): ClaudeBridgeCatalog | undefined {
-    if (target.provider.type !== 'custom') return undefined
-    const apiTargets = this.resolveClaudeApiTargets(settings, target)
-    if (new Set(apiTargets.map((candidate) => candidate.providerId)).size < 2) return undefined
-    const targets = apiTargets.flatMap((candidate): AnthropicProviderBridgeTarget[] => {
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
-      if (!model || !baseUrl) return []
-      return [
-        Object.freeze({
-          id: claudeBridgeTargetId(candidate.providerId, model),
-          baseUrl,
-          ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-          model
-        })
-      ]
-    })
-    const initialModel = target.effectiveModel ?? target.provider.model
-    if (!initialModel) return undefined
-    const initialTargetId = claudeBridgeTargetId(target.providerId, initialModel)
-    if (!targets.some((candidate) => candidate.id === initialTargetId)) return undefined
-
-    return Object.freeze({ targets: Object.freeze(targets), initialTargetId })
-  }
-
-  private resolveClaudeApiTargets(
-    settings: StoredSettings,
-    activeTarget: ProviderRuntimeTarget
-  ): ProviderRuntimeTarget[] {
-    const framework = getAgentFramework('claude-code')
-    const candidates: ProviderRuntimeTarget[] = [activeTarget]
-
-    for (const storedProvider of settings.providers) {
-      try {
-        const configured =
-          storedProvider.id === activeTarget.providerId
-            ? activeTarget
-            : this.providers.resolveRuntimeTarget(
-                storedProvider,
-                { kind: 'configured', requestedModel: storedProvider.model },
-                framework
-              )
-        candidates.push(configured)
-        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
-      } catch {
-        // Another configured provider may have stale/missing credentials. It must not prevent the
-        // active backend from starting; selecting it later falls back to reconnect and validation.
-      }
-    }
-
-    const seen = new Set<string>()
-    return candidates.filter((candidate) => {
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      if (
-        !candidate.frameworkCompatible ||
-        candidate.provider.type !== 'custom' ||
-        !candidate.apiEndpoints.includes('anthropic') ||
-        !model ||
-        !candidate.provider.baseUrl ||
-        !candidate.provider.key
-      ) {
-        return false
-      }
-      const id = claudeBridgeTargetId(candidate.providerId, model)
-      if (seen.has(id)) return false
-      seen.add(id)
-      return true
-    })
-  }
-
-  private resolveOpenCodeApiTargets(
-    settings: StoredSettings,
-    activeTarget: ProviderRuntimeTarget,
-    route: AgentModelRoute
-  ): ProviderRuntimeTarget[] {
-    if (route !== 'opencode-anthropic' && route !== 'opencode-openai') return []
-    const framework = getAgentFramework('opencode')
-    const candidates: ProviderRuntimeTarget[] = [activeTarget]
-
-    for (const storedProvider of settings.providers) {
-      try {
-        const configured =
-          storedProvider.id === activeTarget.providerId
-            ? activeTarget
-            : this.providers.resolveRuntimeTarget(
-                storedProvider,
-                { kind: 'configured', requestedModel: storedProvider.model },
-                framework
-              )
-        candidates.push(configured)
-        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
-      } catch {
-        // A stale provider must not stop the active generation. If selected later it reconnects.
-      }
-    }
-
-    const seen = new Set<string>()
-    return candidates.filter((candidate) => {
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      const endpoint =
-        route === 'opencode-openai'
-          ? openAiChatCompletionsUrl(candidate.provider)
-          : normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
-      const id = model
-        ? providerTransportTargetId('opencode', candidate.providerId, model)
-        : undefined
-      if (
-        !candidate.frameworkCompatible ||
-        modelRouteFor('opencode', candidate) !== route ||
-        !model ||
-        !endpoint ||
-        !id ||
-        seen.has(id)
-      ) {
-        return false
-      }
-      seen.add(id)
-      return true
-    })
-  }
-
-  private resolveCodexApiTargets(
-    settings: StoredSettings,
-    activeTarget: ProviderRuntimeTarget,
-    route: AgentModelRoute
-  ): ProviderRuntimeTarget[] {
-    if (
-      route !== 'codex-bridge' &&
-      route !== 'codex-responses-compatibility' &&
-      route !== 'codex-responses'
-    ) {
-      return []
-    }
-    const framework = getAgentFramework('codex')
-    const candidates: ProviderRuntimeTarget[] = [activeTarget]
-
-    for (const storedProvider of settings.providers) {
-      try {
-        const configured =
-          storedProvider.id === activeTarget.providerId
-            ? activeTarget
-            : this.providers.resolveRuntimeTarget(
-                storedProvider,
-                { kind: 'configured', requestedModel: storedProvider.model },
-                framework
-              )
-        candidates.push(configured)
-        candidates.push(...this.providers.resolveRuntimeModelCatalog(storedProvider, framework))
-      } catch {
-        // A stale provider remains a reconnect-only target until it resolves successfully.
-      }
-    }
-
-    const seen = new Set<string>()
-    return candidates.filter((candidate) => {
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      const baseUrl =
-        route === 'codex-bridge'
-          ? openAiCompletionsBase(candidate.provider)
-          : normalizeResponsesBaseUrl(
-              candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-            )
-      const id = model ? providerTransportTargetId('codex', candidate.providerId, model) : undefined
-      if (
-        !candidate.frameworkCompatible ||
-        !candidate.modelBridgeSupported ||
-        modelRouteFor('codex', candidate) !== route ||
-        !model ||
-        !baseUrl ||
-        !id ||
-        seen.has(id)
-      ) {
-        return false
-      }
-      seen.add(id)
-      return true
-    })
-  }
-
   private async ensureOpenCodeProviderTransports(
-    settings: StoredSettings,
     activeTarget: ProviderRuntimeTarget,
-    route: AgentModelRoute,
-    effortIntent: ReasoningEffort
+    transport: BackendTransportPlan
   ): Promise<OpenCodeProviderTransport | undefined> {
-    const candidates = this.resolveOpenCodeApiTargets(settings, activeTarget, route)
-    if (new Set(candidates.map((candidate) => candidate.providerId)).size < 2) return undefined
+    if (transport.kind !== 'opencode-openai' && transport.kind !== 'opencode-anthropic') {
+      return undefined
+    }
+    const route = transport.kind
 
     const bridges: Array<AnthropicProviderBridgePort | OpenAiProviderBridgePort> = []
     const targetIds = new Set<string>()
@@ -1031,10 +681,11 @@ export class AgentBackendResolver {
     let activeProvider: ProviderRuntimeTarget['provider'] | undefined
 
     try {
-      for (const candidate of candidates) {
+      for (const planned of transport.targets) {
+        const candidate = planned.target
         const model = candidate.effectiveModel ?? candidate.provider.model
         if (!model) continue
-        const targetId = providerTransportTargetId('opencode', candidate.providerId, model)
+        const targetId = planned.id
         const bridge =
           route === 'opencode-openai'
             ? this.createOpenAiProviderBridge(
@@ -1076,14 +727,11 @@ export class AgentBackendResolver {
           key: connection.token,
           apiEndpoints
         })
-        const effort = resolvedModelEffort(effortIntent, candidate)
         catalog.push(
           Object.freeze({
             provider: localProvider,
-            ...(effort === 'default' ? {} : { reasoningEffort: effort }),
-            ...(candidate.reasoningEffortProfile.supported
-              ? { reasoningEfforts: [...new Set(candidate.reasoningEffortProfile.slots)] }
-              : {})
+            ...(planned.reasoningEffort ? { reasoningEffort: planned.reasoningEffort } : {}),
+            ...(planned.reasoningEfforts ? { reasoningEfforts: planned.reasoningEfforts } : {})
           })
         )
         targetIds.add(targetId)
@@ -1118,16 +766,17 @@ export class AgentBackendResolver {
 
   private async ensureNativeCodexProviderTransport(
     activeTarget: ProviderRuntimeTarget,
-    candidates: readonly ProviderRuntimeTarget[]
+    transport: Extract<BackendTransportPlan, { targets: readonly unknown[] }>
   ): Promise<NativeCodexProviderTransport> {
-    const targets = candidates.map((candidate): OpenAiProviderBridgeTarget => {
+    const targets = transport.targets.map((planned): OpenAiProviderBridgeTarget => {
+      const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
       const baseUrl = normalizeResponsesBaseUrl(
         candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
       )
       if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
       return Object.freeze({
-        id: providerTransportTargetId('codex', candidate.providerId, model),
+        id: planned.id,
         wire: 'responses',
         endpoint: `${baseUrl}/responses`,
         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
@@ -1136,7 +785,8 @@ export class AgentBackendResolver {
     })
     const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
     if (!activeModel) throw new Error('The active native Responses model is unavailable.')
-    const initialTargetId = providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+    const initialTargetId = transport.initialTargetId
+    if (!initialTargetId) throw new Error('The active native Responses model is unavailable.')
     const bridge = this.createOpenAiProviderBridge(targets, initialTargetId)
 
     try {
@@ -1169,9 +819,9 @@ export class AgentBackendResolver {
   private async ensureResponsesBridge(
     activeTarget: ProviderRuntimeTarget,
     reasoningEffort: ModelReasoningEffort | undefined,
-    conversationSkillImportEnabled: boolean,
-    providerTargets?: readonly ProviderRuntimeTarget[],
-    effortIntent: ReasoningEffort = DEFAULT_REASONING_EFFORT
+    transport: BackendTransportPlan,
+    namespacedTools: readonly ResponsesBridgeNamespacedTool[],
+    reviewerTools: readonly ResponsesBridgeNamespacedTool[]
   ): Promise<LeasedResponsesBridgeConnection> {
     const createTarget = (
       candidate: ProviderRuntimeTarget,
@@ -1186,27 +836,25 @@ export class AgentBackendResolver {
         reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
         model: candidate.effectiveModel ?? candidate.provider.model,
         reasoningEffort: effort,
-        namespacedTools: [
-          ...CODEX_BRIDGE_NOTEBOOK_TOOLS,
-          ...CODEX_BRIDGE_ARTIFACT_TOOLS,
-          ...(conversationSkillImportEnabled ? CODEX_BRIDGE_SKILL_IMPORT_TOOLS : [])
-        ],
-        reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
+        namespacedTools: [...namespacedTools],
+        reviewerScope: { namespacedTools: [...reviewerTools] }
       }
     }
     const targets = new Map<string, ResponsesBridgeTarget>()
-    for (const candidate of providerTargets ?? []) {
+    const plannedTargets = transport.kind === 'codex-chat' ? transport.targets : []
+    for (const planned of plannedTargets) {
+      const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
       if (!model) continue
-      const resolvedEffort = resolvedModelEffort(effortIntent, candidate)
-      targets.set(
-        providerTransportTargetId('codex', candidate.providerId, model),
-        createTarget(candidate, resolvedEffort === 'default' ? undefined : resolvedEffort)
-      )
+      targets.set(planned.id, createTarget(candidate, planned.reasoningEffort))
     }
     const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
     const initialTargetId = activeModel
-      ? providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+      ? plannedTargets.find(
+          ({ target }) =>
+            target.providerId === activeTarget.providerId &&
+            (target.effectiveModel ?? target.provider.model) === activeModel
+        )?.id
       : undefined
     const target =
       (initialTargetId ? targets.get(initialTargetId) : undefined) ??
@@ -1269,7 +917,8 @@ export class AgentBackendResolver {
 
   private async ensureNativeResponsesCompatibility(
     activeTarget: ProviderRuntimeTarget,
-    providerTargets?: readonly ProviderRuntimeTarget[]
+    transport: BackendTransportPlan,
+    reviewerTools: readonly ResponsesBridgeNamespacedTool[]
   ): Promise<LeasedResponsesBridgeConnection> {
     const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
       const targetBaseUrl = normalizeResponsesBaseUrl(
@@ -1280,21 +929,25 @@ export class AgentBackendResolver {
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
         model: candidate.effectiveModel ?? candidate.provider.model,
-        reviewerScope: { namespacedTools: REVIEWER_BRIDGE_NAMESPACED_TOOLS }
+        reviewerScope: { namespacedTools: [...reviewerTools] }
       }
     }
     const targets = new Map<string, NativeResponsesProxyTarget>()
-    for (const candidate of providerTargets ?? []) {
+    const plannedTargets =
+      transport.kind === 'codex-responses-compatibility' ? transport.targets : []
+    for (const planned of plannedTargets) {
+      const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
       if (!model) continue
-      targets.set(
-        providerTransportTargetId('codex', candidate.providerId, model),
-        createTarget(candidate)
-      )
+      targets.set(planned.id, createTarget(candidate))
     }
     const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
     const initialTargetId = activeModel
-      ? providerTransportTargetId('codex', activeTarget.providerId, activeModel)
+      ? plannedTargets.find(
+          ({ target }) =>
+            target.providerId === activeTarget.providerId &&
+            (target.effectiveModel ?? target.provider.model) === activeModel
+        )?.id
       : undefined
     const proxyId = this.nextGenerationId()
     const proxy = this.createNativeResponsesProxy(
