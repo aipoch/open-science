@@ -32,6 +32,7 @@ const projectRoot = resolve(__dirname, '../../..')
 const skillsRoot = resolve(projectRoot, 'src/main/skills')
 const repositoryPath = resolve(skillsRoot, 'user-skill-repository.ts')
 const mutationOwnerPath = resolve(skillsRoot, 'skill-mutation-owner.ts')
+const transactionOwnerPath = resolve(skillsRoot, 'skill-package-transaction-owner.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
@@ -211,10 +212,15 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/host-skills-service.ts'
     ])
     expect(importersOf(mutationOwnerPath)).toEqual([
-      'src/main/skills/specialist-package-adapter.ts',
-      'src/main/skills/user-skill-repository.ts'
+      'src/main/skills/skill-package-transaction-owner.ts',
+      'src/main/skills/specialist-package-adapter.ts'
     ])
-    expect(readSource(repositoryPath).match(/skillMutationOwnerFor\(/g)).toHaveLength(1)
+    expect(importersOf(transactionOwnerPath)).toEqual(['src/main/skills/user-skill-repository.ts'])
+    expect(readSource(repositoryPath)).not.toContain('skillMutationOwnerFor(')
+    expect(readSource(repositoryPath)).toContain('mutationOwner?: SkillMutationOwner')
+    expect(readSource(repositoryPath)).toContain(
+      'new SkillPackageTransactionOwner(storageRoot, mutationOwner)'
+    )
   })
 
   it('declares complete ownership and downstream test impact', () => {
@@ -222,7 +228,8 @@ describe('User Skill repository architecture', () => {
     expect(manifest.modules.user_skills_repository).toEqual({
       ownerPaths: [
         'src/main/skills/user-skill-repository.ts',
-        'src/main/skills/skill-mutation-owner.ts'
+        'src/main/skills/skill-mutation-owner.ts',
+        'src/main/skills/skill-package-transaction-owner.ts'
       ],
       interfacePaths: ['src/main/skills/user-skill-repository.ts'],
       consumerModules: ['settings_service_facade'],

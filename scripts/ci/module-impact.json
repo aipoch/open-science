@@ -215,7 +215,8 @@
     "user_skills_repository": {
       "ownerPaths": [
         "src/main/skills/user-skill-repository.ts",
-        "src/main/skills/skill-mutation-owner.ts"
+        "src/main/skills/skill-mutation-owner.ts",
+        "src/main/skills/skill-package-transaction-owner.ts"
       ],
       "interfacePaths": ["src/main/skills/user-skill-repository.ts"],
       "consumerModules": ["settings_service_facade"],

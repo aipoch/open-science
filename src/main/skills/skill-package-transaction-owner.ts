@@ -1,0 +1,217 @@
+import { randomUUID } from 'node:crypto'
+import { readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
+
+import type { AgentHomeSkillRef, AgentHomeSkillSource, SkillSource } from '../../shared/settings'
+import { createLogger } from '../logger'
+import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
+
+export type { SkillMutationOwner } from './skill-mutation-owner'
+
+const log = createLogger('skills')
+
+type WritableSkillSource = Extract<SkillSource, 'imported' | 'personal'>
+
+const WRITABLE_SOURCES: readonly WritableSkillSource[] = ['imported', 'personal']
+const TRANSACTION_DIR = /^\.([a-z0-9-]+)\.(import|backup)-(.+)$/
+const SAFE_SOURCE_SLUG = /^[a-z0-9-]+$/
+
+const nextGeneration = (): string => `${Date.now().toString().padStart(15, '0')}-${randomUUID()}`
+
+const isAgentHomeSkillSource = (value: unknown): value is AgentHomeSkillSource =>
+  value === 'agents' || value === 'claude' || value === 'codex'
+
+export const SOURCE_MANIFEST = '.source.json'
+
+export type ImportedSourceManifest = {
+  url?: string
+  signature?: string
+  agentHome?: AgentHomeSkillRef
+}
+
+export type StagedSkillPackage = Readonly<{
+  source: WritableSkillSource
+  slug: string
+  staging: string
+  generation: string
+}>
+
+// Owns the one writable-Skill transaction protocol: shared locking, crash recovery, sibling staging,
+// atomic promotion/rollback, cleanup, and the private source manifest. Callers decide what package
+// bytes mean; this owner decides when they become live and how an interrupted replace is recovered.
+export class SkillPackageTransactionOwner {
+  private readonly mutationOwner: SkillMutationOwner
+
+  constructor(
+    private readonly storageRoot: string,
+    mutationOwner: SkillMutationOwner = skillMutationOwnerFor(storageRoot)
+  ) {
+    this.mutationOwner = mutationOwner
+  }
+
+  runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.mutationOwner.runExclusive(operation)
+  }
+
+  runRecovered<T>(
+    operation: () => Promise<T>,
+    sources: readonly WritableSkillSource[] = WRITABLE_SOURCES
+  ): Promise<T> {
+    return this.runExclusive(async () => {
+      for (const source of sources) await this.recover(source)
+      return operation()
+    })
+  }
+
+  async stage(
+    source: WritableSkillSource,
+    slug: string,
+    build: (staging: string) => Promise<void>
+  ): Promise<StagedSkillPackage> {
+    const live = this.skillDir(source, slug)
+    const generation = nextGeneration()
+    const staging = join(dirname(live), `.${basename(live)}.import-${generation}`)
+    try {
+      await build(staging)
+      return { source, slug, staging, generation }
+    } catch (error) {
+      await this.discard({ source, slug, staging, generation })
+      throw error
+    }
+  }
+
+  async promote(staged: StagedSkillPackage): Promise<void> {
+    const live = this.skillDir(staged.source, staged.slug)
+    const backup = join(dirname(live), `.${basename(live)}.backup-${staged.generation}`)
+    try {
+      const hadExisting = await stat(live).then(
+        () => true,
+        () => false
+      )
+      if (hadExisting) await rename(live, backup)
+
+      try {
+        await rename(staged.staging, live)
+      } catch (swapError) {
+        if (hadExisting) {
+          try {
+            await rename(backup, live)
+          } catch (rollbackError) {
+            throw new Error(
+              `Skill replace failed to swap and could not roll back; the previous copy is preserved at ${basename(backup)} and will be restored on the next operation. swap error: ${String(swapError)}; rollback error: ${String(rollbackError)}`
+            )
+          }
+        }
+        throw swapError
+      }
+
+      if (hadExisting) await rm(backup, { recursive: true, force: true }).catch(() => {})
+    } catch (error) {
+      await this.discard(staged)
+      throw error
+    }
+  }
+
+  async discard(staged: StagedSkillPackage): Promise<void> {
+    await rm(staged.staging, { recursive: true, force: true }).catch(() => undefined)
+  }
+
+  async readImportedSource(slug: string): Promise<ImportedSourceManifest | null> {
+    try {
+      const raw = await readFile(join(this.skillDir('imported', slug), SOURCE_MANIFEST), 'utf8')
+      const parsed = JSON.parse(raw) as unknown
+      if (typeof parsed !== 'object' || parsed === null) return null
+
+      const record = parsed as Record<string, unknown>
+      const manifest: ImportedSourceManifest = {}
+      if (typeof record.url === 'string') manifest.url = record.url
+      if (typeof record.signature === 'string') manifest.signature = record.signature
+
+      if (typeof record.agentHome === 'object' && record.agentHome !== null) {
+        const agentHome = record.agentHome as Record<string, unknown>
+        if (
+          isAgentHomeSkillSource(agentHome.source) &&
+          typeof agentHome.slug === 'string' &&
+          SAFE_SOURCE_SLUG.test(agentHome.slug)
+        ) {
+          manifest.agentHome = { source: agentHome.source, slug: agentHome.slug }
+        }
+      }
+      return manifest
+    } catch {
+      return null
+    }
+  }
+
+  writeSourceManifest(staging: string, manifest: ImportedSourceManifest): Promise<void> {
+    return writeFile(join(staging, SOURCE_MANIFEST), JSON.stringify(manifest, null, 2), {
+      flag: 'wx'
+    })
+  }
+
+  private sourceDir(source: WritableSkillSource): string {
+    return join(this.storageRoot, 'skills', source)
+  }
+
+  private skillDir(source: WritableSkillSource, slug: string): string {
+    return join(this.sourceDir(source), slug)
+  }
+
+  private async recover(source: WritableSkillSource): Promise<void> {
+    const dir = this.sourceDir(source)
+    let entries: string[]
+    try {
+      entries = await readdir(dir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+
+    const backupsBySlug = new Map<string, { entry: string; generation: string }[]>()
+    const stagings: string[] = []
+    for (const entry of entries) {
+      const match = TRANSACTION_DIR.exec(entry)
+      if (!match) continue
+      if (match[2] === 'backup') {
+        const backups = backupsBySlug.get(match[1]) ?? []
+        backups.push({ entry, generation: match[3] })
+        backupsBySlug.set(match[1], backups)
+      } else {
+        stagings.push(entry)
+      }
+    }
+
+    for (const [slug, backups] of backupsBySlug) {
+      const live = join(dir, slug)
+      const liveExists = await stat(live).then(
+        () => true,
+        () => false
+      )
+      backups.sort((left, right) => right.generation.localeCompare(left.generation))
+      for (let index = 0; index < backups.length; index += 1) {
+        const path = join(dir, backups[index].entry)
+        if (index === 0 && !liveExists) {
+          try {
+            await rename(path, live)
+          } catch (error) {
+            throw new Error(
+              `Failed to recover interrupted skill import for "${slug}" from backup ${backups[index].entry}: ${String(error)}`
+            )
+          }
+          log.warn('recovered interrupted skill import from backup', { slug })
+        } else {
+          await rm(path, { recursive: true, force: true }).catch((error) =>
+            log.warn('failed to remove leftover skill backup', {
+              entry: backups[index].entry,
+              error
+            })
+          )
+        }
+      }
+    }
+
+    for (const entry of stagings) {
+      await rm(join(dir, entry), { recursive: true, force: true }).catch(() => {})
+    }
+  }
+}
