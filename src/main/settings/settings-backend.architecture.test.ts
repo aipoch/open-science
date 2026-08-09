@@ -276,7 +276,7 @@ describe('Settings backend ownership architecture', () => {
   it('holds the current facade ceilings until their owner cutovers', () => {
     expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(1045)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
-    expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1283)
+    expect(rawLineCount(readSource(settingsPaths.providerAccounts))).toBeLessThanOrEqual(1095)
     expect(rawLineCount(readSource(settingsPaths.backendResolver))).toBeLessThanOrEqual(1407)
     expect(rawLineCount(readSource(settingsPaths.responsesBridge))).toBeLessThanOrEqual(950)
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1003)
@@ -603,9 +603,6 @@ describe('Settings backend ownership architecture', () => {
     expect(manifest.modules.settings_repository.ownerPaths).toEqual([
       'src/main/settings/repository.ts',
       'src/main/settings/record-codec.ts'
-    ])
-    expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
-      'src/main/settings/provider-accounts.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
       'src/main/settings/backend-resolver.ts',

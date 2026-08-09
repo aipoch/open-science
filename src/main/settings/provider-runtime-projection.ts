@@ -1,0 +1,262 @@
+import type { ChatApiEndpoint, ProviderView } from '../../shared/settings'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
+  providerEndpoints,
+  requiresChatCompletionsBridge
+} from '../../shared/settings'
+import {
+  defaultVendorModel,
+  getOfficialVendorModelIds,
+  isModelBridgeSupported,
+  isVendorModelMultimodal,
+  isVendorModelResponsesSupported,
+  resolveCustomModelContextWindow,
+  resolveModelContextWindow,
+  resolveVendorApiEndpoints,
+  resolveVendorBaseUrl,
+  resolveVendorOpenAiBaseUrl
+} from '../../shared/provider-registry'
+import {
+  resolveProviderEffectiveModel,
+  resolveProviderReasoningEffortProfile
+} from '../../shared/provider-reasoning-effort'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import type { AgentFrameworkId } from '../agent-framework'
+import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
+import { tryDecryptKey } from './crypto'
+import type { ResolvedProvider } from './provider-env'
+import type { StoredProvider } from './types'
+
+type RuntimeProviderModelSelection =
+  | { kind: 'configured'; requestedModel?: string }
+  | { kind: 'required'; model: string }
+  | { kind: 'provider-default' }
+
+type ProviderRuntimeTarget = {
+  providerId: string
+  providerType: StoredProvider['type']
+  disconnectedAt?: number
+  effectiveModel?: string
+  apiEndpoints: ChatApiEndpoint[]
+  provider: ResolvedProvider
+  reasoningEffortProfile: ReasoningEffortProfile
+  frameworkCompatible: boolean
+  modelBridgeSupported: boolean
+  needsChatResponsesBridge: boolean
+  needsNativeResponsesCompatibility: boolean
+}
+
+// Native Responses vendors other than OpenAI require the same namespace compatibility proxy during
+// validation and runtime. Export one predicate so both paths prove the same protocol contract.
+const requiresNativeResponsesCompatibility = (
+  provider: ResolvedProvider,
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+): boolean =>
+  framework.id === 'codex' &&
+  framework.supportedApiTypes.includes('responses') &&
+  providerEndpoints(provider).includes('responses') &&
+  !isCodexSubscriptionProvider(provider.type) &&
+  provider.vendorId !== 'openai' &&
+  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
+
+// Owns secret-aware provider projection inside main. It derives views, catalogs, effective models,
+// and ephemeral runtime targets without mutating durable selection or entering account lifecycles.
+class ProviderRuntimeProjectionOwner {
+  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
+    if (provider.type === 'official' && provider.vendorId) {
+      const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
+      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
+      if (
+        !vendorEndpoints.includes('responses') &&
+        isVendorModelResponsesSupported(provider.vendorId, modelToCheck)
+      ) {
+        return [...vendorEndpoints, 'responses']
+      }
+      return vendorEndpoints
+    }
+
+    return provider.apiEndpoints && provider.apiEndpoints.length > 0
+      ? [...provider.apiEndpoints]
+      : ['anthropic']
+  }
+
+  toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
+    const hasKey = Boolean(provider.keyRef)
+    const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
+
+    return {
+      id: provider.id,
+      type: provider.type,
+      codexAuthMode: provider.codexAuthMode,
+      name: provider.name,
+      apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      contextWindow: provider.contextWindow,
+      supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
+      reasoningEffortPreset:
+        provider.type === 'custom' ? provider.reasoningEffortPreset : undefined,
+      reasoningEffortTransport:
+        provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
+      vendorId: provider.vendorId,
+      region: provider.region,
+      models: this.availableModels(provider),
+      maskedKey: provider.keyMask,
+      hasKey,
+      needsKey,
+      lastValidatedAt: provider.lastValidatedAt,
+      lastValidationFailure: provider.lastValidationFailure,
+      ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
+    }
+  }
+
+  resolveActiveModel(provider: StoredProvider | undefined, requested?: string): string | undefined {
+    return resolveProviderEffectiveModel(
+      provider ? { ...provider, models: this.availableModels(provider) } : undefined,
+      requested
+    )
+  }
+
+  resolveRuntimeTarget(
+    storedProvider: StoredProvider,
+    selection: RuntimeProviderModelSelection,
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): ProviderRuntimeTarget {
+    const availableModels = this.availableModels(storedProvider)
+    if (
+      selection.kind === 'required' &&
+      availableModels.length > 0 &&
+      !availableModels.includes(selection.model)
+    ) {
+      throw new Error(
+        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
+      )
+    }
+
+    const effectiveModel =
+      selection.kind === 'required'
+        ? this.resolveActiveModel(storedProvider, selection.model)
+        : this.resolveActiveModel(
+            storedProvider,
+            selection.kind === 'configured' ? selection.requestedModel : undefined
+          )
+
+    if (selection.kind === 'required' && effectiveModel !== selection.model) {
+      throw new Error(
+        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
+      )
+    }
+
+    const apiEndpoints = this.resolveProviderApiEndpoints(storedProvider, effectiveModel)
+    const provider = this.resolveProvider(storedProvider, effectiveModel)
+
+    return {
+      providerId: storedProvider.id,
+      providerType: storedProvider.type,
+      ...(storedProvider.disconnectedAt === undefined
+        ? {}
+        : { disconnectedAt: storedProvider.disconnectedAt }),
+      effectiveModel,
+      apiEndpoints,
+      provider,
+      reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
+      frameworkCompatible: isProviderUsableByFramework(
+        { apiEndpoints, type: storedProvider.type },
+        framework
+      ),
+      modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
+      needsChatResponsesBridge: requiresChatCompletionsBridge(provider, framework),
+      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
+    }
+  }
+
+  resolveRuntimeModelCatalog(
+    storedProvider: StoredProvider,
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  ): ProviderRuntimeTarget[] {
+    return this.availableModels(storedProvider).map((model) =>
+      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+    )
+  }
+
+  resolveRuntimeReasoningEffortProfile(
+    storedProvider: StoredProvider,
+    requestedModel?: string
+  ): ReasoningEffortProfile {
+    return resolveProviderReasoningEffortProfile(
+      storedProvider,
+      this.resolveActiveModel(storedProvider, requestedModel)
+    )
+  }
+
+  resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+    const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
+    if (provider.type === 'official' && provider.vendorId) {
+      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
+      const contextWindow = resolveModelContextWindow(provider.vendorId, model)
+      return {
+        type: 'custom',
+        vendorId: provider.vendorId,
+        baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
+        openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
+        model,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+        key,
+        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
+        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
+      }
+    }
+
+    const model = modelOverride ?? provider.model
+    const contextWindow =
+      provider.type === 'custom'
+        ? resolveCustomModelContextWindow(provider.contextWindow)
+        : isClaudeSubscriptionProvider(provider.type)
+          ? resolveModelContextWindow('anthropic', model)
+          : undefined
+    return {
+      type: provider.type,
+      ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
+      baseUrl: provider.baseUrl,
+      model,
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      key,
+      apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
+      supportsImageInput: this.providerSupportsImageInput(provider, modelOverride),
+      ...(provider.type === 'custom'
+        ? { reasoningEffortTransport: provider.reasoningEffortTransport }
+        : {})
+    }
+  }
+
+  private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
+    if (isCodexSubscriptionProvider(provider.type)) return true
+    if (isClaudeSubscriptionProvider(provider.type)) return true
+    if (provider.type === 'custom') return provider.supportsImageInput === true
+    if (provider.type === 'official' && provider.vendorId) {
+      return isVendorModelMultimodal(
+        provider.vendorId,
+        activeModel ?? defaultVendorModel(provider.vendorId)
+      )
+    }
+    return false
+  }
+
+  private availableModels(provider: StoredProvider): string[] {
+    if (isCodexSubscriptionProvider(provider.type)) {
+      return getOfficialVendorModelIds('openai')
+    }
+    if (provider.type === 'official' && provider.vendorId) {
+      if (provider.fetchedModels && provider.fetchedModels.length > 0) {
+        return provider.fetchedModels
+      }
+      return getOfficialVendorModelIds(provider.vendorId)
+    }
+    return provider.model ? [provider.model] : []
+  }
+}
+
+export { ProviderRuntimeProjectionOwner, requiresNativeResponsesCompatibility }
+export type { ProviderRuntimeTarget, RuntimeProviderModelSelection }

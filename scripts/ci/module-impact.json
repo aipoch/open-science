@@ -243,13 +243,18 @@
       "fallbackCapability": "main_runtime"
     },
     "settings_provider_accounts": {
-      "ownerPaths": ["src/main/settings/provider-accounts.ts"],
+      "ownerPaths": [
+        "src/main/settings/provider-accounts.ts",
+        "src/main/settings/provider-runtime-projection.ts"
+      ],
       "interfacePaths": ["src/main/settings/provider-accounts.ts"],
       "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
       "testFiles": {
         "owner": [
           "src/main/settings/settings-backend.architecture.test.ts",
           "src/main/settings/provider-accounts.test.ts",
+          "src/main/settings/provider-runtime-projection.test.ts",
+          "src/main/settings/provider-runtime-projection.architecture.test.ts",
           "src/main/settings/codex-auth.test.ts",
           "src/main/settings/claude-isolated-auth.test.ts",
           "src/main/settings/claude-shared-auth.test.ts",
