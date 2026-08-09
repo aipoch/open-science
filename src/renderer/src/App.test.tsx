@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
+  const sideChatRelayBox: { current: ((event: unknown) => void) | undefined } = {
+    current: undefined
+  }
   type NavigationState = { view: 'home' | 'workspace'; userNavigationRevision: number }
   const navigationListeners = new Set<
     (state: NavigationState, previousState: NavigationState) => void
@@ -30,6 +33,8 @@ const mocks = vi.hoisted(() => {
     compute: { enqueueApproval: vi.fn(), pendingApprovals: [] as unknown[] },
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
+    appendRoutedUserMessage: vi.fn(),
+    sideChatRelayBox,
     environment: {
       ui: { state: 'idle' },
       init: vi.fn().mockResolvedValue(undefined),
@@ -130,7 +135,12 @@ vi.mock('@/stores/navigation-store', () => ({
   )
 }))
 vi.mock('@/stores/session-store', () => ({
-  useSessionStore: { getState: () => ({ sessions: mocks.sessions }) }
+  useSessionStore: {
+    getState: () => ({
+      sessions: mocks.sessions,
+      appendRoutedUserMessage: mocks.appendRoutedUserMessage
+    })
+  }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
@@ -336,7 +346,13 @@ describe('App startup routing', () => {
         onJobUpdated: vi.fn(() => vi.fn()),
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
-      permissions: { onChanged: vi.fn(() => vi.fn()) }
+      permissions: { onChanged: vi.fn(() => vi.fn()) },
+      sideChat: {
+        onRelayDelivered: vi.fn((listener: (event: unknown) => void) => {
+          mocks.sideChatRelayBox.current = listener
+          return vi.fn()
+        })
+      }
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
     mocks.sessions = []
@@ -347,6 +363,8 @@ describe('App startup routing', () => {
     mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
+    mocks.sideChatRelayBox.current = undefined
+    mocks.appendRoutedUserMessage.mockClear()
     mocks.globalSearch.props = undefined
     mocks.homePage.props = undefined
     mocks.closeActiveModal.handler = undefined
@@ -825,6 +843,35 @@ describe('App startup routing', () => {
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getInfo).toHaveBeenCalled()
     expect(window.api.permissions.onChanged).toHaveBeenCalledOnce()
+  })
+
+  it('projects delivered Side chat relays even while Home owns the route', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    act(() => {
+      mocks.sideChatRelayBox.current?.({
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        message: {
+          id: 'relay-1',
+          content: 'Use black.',
+          createdAt: 10,
+          responseToMessageId: 'prompt-1',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+        }
+      })
+    })
+
+    expect(mocks.appendRoutedUserMessage).toHaveBeenCalledWith({
+      sessionId: 'main-1',
+      messageId: 'relay-1',
+      eventId: 'side-chat-delivered:relay-1',
+      content: 'Use black.',
+      createdAt: 10,
+      responseToMessageId: 'prompt-1',
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+    })
   })
 
   it('surfaces a session load failure with a retry action', async () => {

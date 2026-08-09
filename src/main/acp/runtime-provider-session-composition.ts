@@ -12,6 +12,7 @@ import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
 import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 import type { AcpPrimarySessionIdentityReservation } from './session-registry'
+import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 
 // Composes the five workflows that create, adopt, replace, delete, and resume Provider Sessions.
 // Stable app identity remains Registry-owned; operation admission and timeout teardown derive from
@@ -75,6 +76,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     reserveIdentity: (sessionId, startupGeneration) =>
       reserveIdentity(undefined, [sessionId], undefined, startupGeneration),
     capabilities: base.sessionCapabilities,
+    capabilityPolicy: options.sessionCapabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: base.sessionConfigurator,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,

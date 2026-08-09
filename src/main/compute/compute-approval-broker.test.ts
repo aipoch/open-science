@@ -158,6 +158,31 @@ describe('ComputeApprovalBroker', () => {
     expect(broker.getPending('id-1')).toBeNull()
   })
 
+  it('retains the renderer Session owner when replaying a contextual approval', async () => {
+    const timer = makeTimer()
+    const broker = new ComputeApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+    const request = makeRequest()
+    const decision = broker.request(request, {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command'
+    })
+
+    expect(broker.getPending('id-1')).toEqual({
+      id: 'id-1',
+      ...request,
+      session_id: 'session-1'
+    })
+
+    broker.respond('id-1', 'deny')
+    await decision
+  })
+
   it('denies a pending approval when its compute provider is invalidated', async () => {
     const timer = makeTimer()
     const remember = vi.fn()

@@ -165,6 +165,8 @@ export type PersistedChatMessage = {
   // Closed user intent needed to reconstruct an interrupted turn after an app restart. Ordinary
   // messages omit it; unknown values are discarded by the persistence sanitizer.
   turnIntent?: 'plan-first'
+  // A side-chat relay is durable context, but remains advisory rather than a direct user turn.
+  relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
   turnUsage?: AcpTurnTokenUsage
   // Marks the final Agent message for a turn whose provider did not report usable totals.
@@ -1544,6 +1546,14 @@ const sanitizeMessage = (
   if (uploads.length > 0) sanitized.uploads = uploads
   if (parts.length > 0) sanitized.parts = parts
   if (role === 'user' && message.turnIntent === 'plan-first') sanitized.turnIntent = 'plan-first'
+  if (
+    role === 'user' &&
+    isRecord(message.relayedFrom) &&
+    message.relayedFrom.kind === 'side-chat' &&
+    message.relayedFrom.direction === 'to-main'
+  ) {
+    sanitized.relayedFrom = { kind: 'side-chat', direction: 'to-main' }
+  }
   if (images) sanitized.images = images
   if (turnUsage) sanitized.turnUsage = turnUsage
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true

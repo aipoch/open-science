@@ -221,6 +221,50 @@ describe('interrupted turn intent persistence', () => {
   })
 })
 
+describe('side chat relay persistence', () => {
+  it('preserves only the closed side-chat advisory marker on user messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'side-chat-advisory',
+          role: 'user',
+          content: 'Please use a black line.',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'unknown-relay',
+          role: 'user',
+          content: 'Do not restore arbitrary routing metadata.',
+          relayedFrom: { kind: 'external-agent', direction: 'to-main' },
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'agent-relay',
+          role: 'agent',
+          content: 'No relay marker on agent messages.',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({
+        id: 'side-chat-advisory',
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+      }),
+      expect.not.objectContaining({ relayedFrom: expect.anything() }),
+      expect.not.objectContaining({ relayedFrom: expect.anything() })
+    ])
+  })
+})
+
 describe('message terminal time persistence', () => {
   it('backfills stable terminal timestamps for legacy agent messages', () => {
     const restored = normalizeSessionFile({

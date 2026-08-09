@@ -26,6 +26,7 @@ const ownerPaths = {
   layout: resolve(workspaceDirectory, 'workspace-panel-layout.tsx'),
   composer: resolve(workspaceDirectory, 'workspace-composer-controller.ts'),
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
+  sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts')
 } as const
 
@@ -121,6 +122,7 @@ describe('workspace page architecture', () => {
       ownerPaths.layout,
       ownerPaths.composer,
       ownerPaths.conversation,
+      ownerPaths.sideChat,
       ownerPaths.session
     ]) {
       expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(660)
@@ -137,6 +139,14 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-conversation-controller.ts'
     ])
     expect(importersOf(ownerPaths.conversation)).toEqual(['pages/workspace/WorkspacePage.tsx'])
+    expect(importersOf(ownerPaths.sideChat)).toEqual([
+      'App.tsx',
+      'pages/workspace/ConversationPanel.tsx',
+      'pages/workspace/SideChatPanel.tsx',
+      'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/previews/PreviewToolContent.tsx',
+      'pages/workspace/workspace-conversation-controller.ts'
+    ])
   })
 
   it('keeps conversation command calls out of the page and behind injected ports', () => {

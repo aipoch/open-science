@@ -55,6 +55,12 @@ import type {
   ReviewSuppressionEvent
 } from '../shared/reviewer'
 import type { HandoffEventsRequest, HandoffRetryRequest } from '../shared/handoff-lifecycle'
+import type {
+  SideChatCloseRequest,
+  SideChatPromptRequest,
+  SideChatSessionRequest,
+  SideChatStartRequest
+} from '../shared/side-chat'
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -127,6 +133,19 @@ const api: OpenScienceAPI = {
     onEvent: (listener) => electronRendererContracts.subscribe('acp.onEvent', listener),
     onPermissionRequest: (listener) =>
       electronRendererContracts.subscribe('acp.onPermissionRequest', listener)
+  },
+  sideChat: {
+    start: (request: SideChatStartRequest) =>
+      electronRendererContracts.invoke('sideChat.start', request),
+    send: (request: SideChatPromptRequest) =>
+      electronRendererContracts.invoke('sideChat.send', request),
+    cancel: (request: SideChatSessionRequest) =>
+      electronRendererContracts.invoke('sideChat.cancel', request),
+    close: (request: SideChatCloseRequest) =>
+      electronRendererContracts.invoke('sideChat.close', request),
+    onEvent: (listener) => electronRendererContracts.subscribe('sideChat.onEvent', listener),
+    onRelayDelivered: (listener) =>
+      electronRendererContracts.subscribe('sideChat.onRelayDelivered', listener)
   },
   permissions: {
     list: () => electronRendererContracts.invoke('permissions.list'),

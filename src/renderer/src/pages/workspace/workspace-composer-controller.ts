@@ -81,7 +81,7 @@ type WorkspaceComposerController = {
   }
   lifecycle: {
     captureSend: () => ComposerSendSnapshot
-    clearDraft: (draftKey: string) => void
+    clearDraft: (draftKey: string, expectedVersion?: number) => boolean
     restoreFailedSend: (snapshot: ComposerSendSnapshot) => void
     hasUnfinishedTransfers: (draftKey: string) => boolean
     beginSessionDeletion: (draftKey: string) => boolean
@@ -545,7 +545,6 @@ const useWorkspaceComposerController = ({
     },
     [markChanged, uploads]
   )
-
   const captureSend = useCallback(
     (): ComposerSendSnapshot => ({
       draftKey: activeDraftKeyRef.current,
@@ -555,19 +554,20 @@ const useWorkspaceComposerController = ({
     }),
     [attachments, doc]
   )
-
   const clearDraft = useCallback(
-    (draftKey: string): void => {
+    (draftKey: string, expectedVersion?: number): boolean => {
+      const currentVersion = versionsRef.current[draftKey] ?? 0
+      if (expectedVersion !== undefined && currentVersion !== expectedVersion) return false
       clearHistory(draftKey)
       delete draftsRef.current[draftKey]
-      if (activeDraftKeyRef.current !== draftKey) return
+      if (activeDraftKeyRef.current !== draftKey) return true
       setDoc(emptyDoc)
       setAttachments([])
       setError(null)
+      return true
     },
     [clearHistory]
   )
-
   const restoreFailedSend = useCallback(
     (snapshot: ComposerSendSnapshot): void => {
       if ((versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version) {

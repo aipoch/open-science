@@ -53,6 +53,21 @@ const importCandidate = (subPath: string, name: string): SkillBundlePreview => (
 })
 
 describe('SkillImportApprovalDialog', () => {
+  it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
+    useSkillImportStore.getState().enqueue({
+      id: 'approval-side',
+      sessionId: 'session-side',
+      source: { kind: 'attachment', label: 'paper-finder.skill' },
+      previews: [importCandidate('paper-finder', 'Paper Finder')],
+      skipped: []
+    })
+
+    act(() => root.render(<SkillImportApprovalDialog blockedSessionId="session-side" />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSkillImportStore.getState().pending).toHaveLength(1)
+  })
+
   it('preselects one candidate and returns the confirmed import target', () => {
     useSkillImportStore.getState().enqueue({
       id: 'approval-1',

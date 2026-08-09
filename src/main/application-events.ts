@@ -24,6 +24,7 @@ import type {
 } from '../shared/settings'
 import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '../shared/specialist'
 import type { MigrationProgress } from '../shared/storage'
+import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../shared/side-chat'
 import type { UpdateStatus } from '../shared/update'
 
 // This catalog describes only events that already flow through renderer-broadcast. Window-only
@@ -33,6 +34,8 @@ export type ApplicationEventMap = {
   'acp:state': AcpStateSnapshot
   'acp:event': AcpRuntimeEvent
   'acp:permission-request': AcpPermissionRequest
+  'side-chat:event': SideChatRuntimeEvent
+  'side-chat:relay-delivered': SideChatRelayDeliveredEvent
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
   'notifications:changed': NotificationInboxChanged

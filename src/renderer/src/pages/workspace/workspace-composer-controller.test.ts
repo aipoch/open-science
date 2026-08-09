@@ -145,6 +145,30 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
   })
 
+  it('clears a Side chat first prompt only when the captured draft is still current', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('first prompt')))
+    const admitted = hook.result.current.lifecycle.captureSend()
+    act(() =>
+      expect(hook.result.current.lifecycle.clearDraft(admitted.draftKey, admitted.version)).toBe(
+        true
+      )
+    )
+    expect(hook.result.current.view.doc).toEqual({ nodes: [] })
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('captured')))
+    const superseded = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.actions.changeDoc(textDoc('new intent')))
+    act(() =>
+      expect(
+        hook.result.current.lifecycle.clearDraft(superseded.draftKey, superseded.version)
+      ).toBe(false)
+    )
+    expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
+  })
+
   it('refreshes a cached Skill catalog when the settings bridge is available', async () => {
     window.api = { settings: { listSkills: vi.fn() } } as unknown as Window['api']
     const loadSkills = vi.fn().mockResolvedValue(undefined)

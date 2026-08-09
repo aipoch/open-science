@@ -122,6 +122,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     presentation: base.sessionPresentationPolicy,
     registry: sessionRegistry,
     defaultProjectName: options.artifacts?.projectName,
+    ...(options.sessionCapabilityPolicy
+      ? { capabilityPolicy: options.sessionCapabilityPolicy }
+      : {}),
     ...(base.planService ? { planSystemPromptAppend: SESSION_PLAN_SYSTEM_PROMPT_APPEND } : {})
   })
   const contextUsagePolicy = new AcpContextUsagePolicy({

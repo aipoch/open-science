@@ -39,7 +39,7 @@ import { opencodeConfigDir } from '../agent-framework/opencode'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
-import { ComputeApprovalBroker } from './compute-approval-broker'
+import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
@@ -235,10 +235,13 @@ const createComputeHandlers = (
             onNotificationError: (error) =>
               log.warn('compute approval notification failed', errorLogFields(error))
           })
-        : (request: ComputeApprovalRequest) => {
+        : (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => {
             // Tests and isolated registrations without the notification service still receive cards.
             for (const win of BrowserWindow.getAllWindows()) {
-              win.webContents.send('compute:approval-request', request)
+              win.webContents.send('compute:approval-request', {
+                ...request,
+                ...(context?.sessionId ? { session_id: context.sessionId } : {})
+              })
             }
           },
       onSettled: taskNotifications

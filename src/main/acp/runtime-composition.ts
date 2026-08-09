@@ -90,6 +90,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'loadSessionForPermissionReplay'
     | 'sessionProjectId'
   >
+  sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -116,7 +117,8 @@ const createAcpRuntime = ({
   onDisconnected,
   beforeSessionDelete,
   profileService,
-  sessionPersistenceCoordinator
+  sessionPersistenceCoordinator,
+  sideChatRelays
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -280,6 +282,7 @@ const createAcpRuntime = ({
             }
           : {}),
         callbacks: runtimeCallbacks,
+        sideChatRelays,
         permissionGrantStore,
         permissionGrantRegistry,
         resolveSpecialistIdentity: profileService

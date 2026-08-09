@@ -25,6 +25,10 @@ import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalD
 import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
+import {
+  SideChatProvider,
+  useOpenSideChatParentSessionId
+} from '@/pages/workspace/use-side-chat-controller'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
@@ -48,10 +52,26 @@ type NotificationOpenIntent = {
   userNavigationRevision: number
 }
 
-const App = (): React.JSX.Element | null => {
+const AppContent = (): React.JSX.Element | null => {
+  const openSideChatParentSessionId = useOpenSideChatParentSessionId()
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
   useQuitPersistenceFlush()
+  useEffect(() => {
+    const api = window.api?.sideChat
+    if (!api) return
+    return api.onRelayDelivered(({ parentSessionId, message }) => {
+      useSessionStore.getState().appendRoutedUserMessage({
+        sessionId: parentSessionId,
+        messageId: message.id,
+        eventId: `side-chat-delivered:${message.id}`,
+        content: message.content,
+        createdAt: message.createdAt,
+        responseToMessageId: message.responseToMessageId,
+        relayedFrom: message.relayedFrom
+      })
+    })
+  }, [])
   const isSessionPersistenceHydrated = sessionPersistence.isHydrated
   const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady
@@ -562,15 +582,15 @@ const App = (): React.JSX.Element | null => {
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
       />
-      <ConnectorApprovalDialog />
-      <SkillImportApprovalDialog />
+      <ConnectorApprovalDialog blockedSessionId={openSideChatParentSessionId} />
+      <SkillImportApprovalDialog blockedSessionId={openSideChatParentSessionId} />
       <LifecycleToast
         notice={lifecycleSync.notice}
         onDismiss={lifecycleSync.dismissNotice}
         onView={lifecycleSync.viewNotice}
       />
       <PermissionUndoSnackbar />
-      <ComputeApprovalDialog />
+      <ComputeApprovalDialog blockedSessionId={openSideChatParentSessionId} />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
       <GlobalSearchDialog
@@ -594,5 +614,11 @@ const App = (): React.JSX.Element | null => {
     </>
   )
 }
+
+const App = (): React.JSX.Element => (
+  <SideChatProvider>
+    <AppContent />
+  </SideChatProvider>
+)
 
 export default App

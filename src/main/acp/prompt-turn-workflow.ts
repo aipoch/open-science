@@ -65,6 +65,15 @@ type AcpPromptTurnEnvironment = Readonly<{
   ) => void
   onSkillImportAttachmentEligible?: (sessionId: string, turnToken: string, uri: string) => void
   onProviderPromptAccepted?: (sessionId: string, promptAttemptId?: string) => void
+  sideChatRelays?: Readonly<{
+    claim: (parentSessionId: string) =>
+      | Readonly<{
+          historyPreamble: string
+          commit: (promptMessageId?: string) => void | Promise<void>
+          restore: () => void
+        }>
+      | undefined
+  }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
   diagnosticContext: () => Record<string, unknown>
   pushUserMessage: (input: { sessionId: string; promptMessageId?: string; text: string }) => void
@@ -275,6 +284,8 @@ class AcpPromptTurnWorkflow {
     let skillStarted = false
     let skillFinalized = false
     let userMessageEmitted = false
+    let sideChatRelay: ReturnType<NonNullable<typeof env.sideChatRelays>['claim']>
+    let sideChatRelaySettled = false
     const emitUserMessage = (): void => {
       if (
         turn.mode.kind !== 'user' ||
@@ -295,11 +306,22 @@ class AcpPromptTurnWorkflow {
       if ((await this.checkpoint(interaction)) === 'cancelled') {
         return Object.freeze({ kind: 'not-dispatched' })
       }
+      if (turn.mode.kind === 'user' && !request.continuation && !request.suppressUserMessage) {
+        sideChatRelay = env.sideChatRelays?.claim(sessionId)
+      }
+      const preparationRequest = sideChatRelay
+        ? {
+            ...request,
+            historyPreamble: [request.historyPreamble, sideChatRelay.historyPreamble]
+              .filter((value): value is string => Boolean(value))
+              .join('\n\n')
+          }
+        : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
       const planContext = turn.plan.authorized ?? turn.plan.protectedPending
       prepared = await preparation.prepare({
-        request,
+        request: preparationRequest,
         backend,
         tooling: env.tooling(),
         specialistPrefix: snapshot?.specialistPrefix,
@@ -356,7 +378,18 @@ class AcpPromptTurnWorkflow {
           return 'active'
         },
         captureStop: () => interactions.captureTerminal(interaction, 'stop'),
-        onAccepted: () => {
+        onAccepted: async () => {
+          if (sideChatRelay && !sideChatRelaySettled) {
+            sideChatRelaySettled = true
+            try {
+              await sideChatRelay.commit(request.provenanceContext?.promptMessageId)
+            } catch (error) {
+              log.warn('side chat advisory persistence failed after provider admission', {
+                sessionId,
+                ...errorLogFields(error)
+              })
+            }
+          }
           this.safeCallback('provider-prompt-accepted callback failed', () =>
             env.onProviderPromptAccepted?.(sessionId, turn.mode.promptAttemptId)
           )
@@ -379,6 +412,10 @@ class AcpPromptTurnWorkflow {
       outcome = await execute()
     } catch (error) {
       outcome = Object.freeze({ kind: 'failed', error })
+    }
+    if (sideChatRelay && !sideChatRelaySettled) {
+      sideChatRelaySettled = true
+      sideChatRelay.restore()
     }
     const model = env.backend().session.model
     return finalizer.finalize(

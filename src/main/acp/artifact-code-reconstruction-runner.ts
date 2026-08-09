@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -8,6 +8,7 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 import { AcpRuntime, type AcpRuntimeOptions } from './runtime'
+import { prepareRestrictedBackend } from './restricted-runtime-profile'
 
 const RECONSTRUCTION_SYSTEM_PROMPT = [
   'You reconstruct a standalone script from immutable Artifact Execution Log evidence.',
@@ -36,11 +37,6 @@ type ArtifactCodeReconstructionRunnerOptions = {
   now?: () => number
 }
 
-const record = (value: unknown): Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-
 const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<void> => {
   const owned: Array<{ release: () => Promise<void> }> = []
   if (backend.responsesBridgeLease) owned.push(backend.responsesBridgeLease)
@@ -50,105 +46,17 @@ const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<
   await Promise.all([...leases].map((lease) => lease.release().catch(() => undefined)))
 }
 
-const prepareOpenCodeBackend = async (
-  backend: ResolvedAgentBackend,
-  profileRoot: string
-): Promise<ResolvedAgentBackend> => {
-  const configHome = join(profileRoot, 'opencode', 'config')
-  const dataHome = join(profileRoot, 'opencode', 'data')
-  const home = join(profileRoot, 'opencode', 'home')
-  const configDir = join(configHome, 'opencode')
-  await Promise.all([
-    mkdir(configDir, { recursive: true }),
-    mkdir(dataHome, { recursive: true }),
-    mkdir(home, { recursive: true })
-  ])
-
-  const configured = record(JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT ?? '{}'))
-  const restricted = {
-    ...configured,
-    default_agent: RECONSTRUCTION_AGENT_NAME,
-    permission: { '*': 'deny' },
-    agent: {
-      [RECONSTRUCTION_AGENT_NAME]: {
-        description: 'One-shot Artifact code reconstruction without tools.',
-        mode: 'primary',
-        steps: 1,
-        permission: { '*': 'deny' }
-      }
-    }
-  }
-  const serialized = `${JSON.stringify(restricted, null, 2)}\n`
-  await writeFile(join(configDir, 'opencode.json'), serialized, { encoding: 'utf8', mode: 0o600 })
-
-  return {
-    ...backend,
-    env: {
-      ...backend.env,
-      XDG_CONFIG_HOME: configHome,
-      XDG_DATA_HOME: dataHome,
-      OPENCODE_TEST_HOME: home,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(restricted)
-    },
-    systemPromptAppends: [RECONSTRUCTION_SYSTEM_PROMPT],
-    persistentSystemPrompt: undefined
-  }
-}
-
-const prepareCodexBackend = async (
-  backend: ResolvedAgentBackend,
-  profileRoot: string
-): Promise<ResolvedAgentBackend> => {
-  const codexHome = join(profileRoot, 'codex')
-  await mkdir(codexHome, { recursive: true })
-  await writeFile(join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "ephemeral"\n', {
-    encoding: 'utf8',
-    mode: 0o600
-  })
-  const codexConfig = record(JSON.parse(backend.env.CODEX_CONFIG ?? '{}'))
-  delete codexConfig.developer_instructions
-  return {
-    ...backend,
-    env: { ...backend.env, CODEX_HOME: codexHome, CODEX_CONFIG: JSON.stringify(codexConfig) },
-    systemPromptAppends: [RECONSTRUCTION_SYSTEM_PROMPT],
-    persistentSystemPrompt: undefined
-  }
-}
-
-const prepareClaudeBackend = async (
-  backend: ResolvedAgentBackend,
-  profileRoot: string
-): Promise<ResolvedAgentBackend> => {
-  const env = { ...backend.env }
-  if (env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY) {
-    env.CLAUDE_CONFIG_DIR = join(profileRoot, 'claude')
-    await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true })
-  }
-  return {
-    ...backend,
-    env,
-    sessionOptions: {
-      ...backend.sessionOptions,
-      tools: [],
-      skills: [],
-      plugins: [],
-      settings: {},
-      settingSources: [],
-      persistSession: false
-    },
-    systemPromptAppends: [RECONSTRUCTION_SYSTEM_PROMPT],
-    persistentSystemPrompt: undefined
-  }
-}
-
 export const prepareBackend = (
   backend: ResolvedAgentBackend,
   profileRoot: string
-): Promise<ResolvedAgentBackend> => {
-  if (backend.framework.id === 'opencode') return prepareOpenCodeBackend(backend, profileRoot)
-  if (backend.framework.id === 'codex') return prepareCodexBackend(backend, profileRoot)
-  return prepareClaudeBackend(backend, profileRoot)
-}
+): Promise<ResolvedAgentBackend> =>
+  prepareRestrictedBackend(backend, profileRoot, {
+    agentName: RECONSTRUCTION_AGENT_NAME,
+    description: 'One-shot Artifact code reconstruction without tools.',
+    systemPrompt: RECONSTRUCTION_SYSTEM_PROMPT,
+    openCodePermissions: { '*': 'deny' },
+    steps: 1
+  })
 
 export const resolveReconstructionModel = (
   backend: Pick<ResolvedAgentBackend, 'contextUsageModel' | 'sessionModel'>,

@@ -31,6 +31,7 @@ import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
+import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
 import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
@@ -155,6 +156,9 @@ import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
 import { createPermissionGrantProjectionController } from './permission-grants/projection-controller'
 import { reconcilePermissionGrantOwners } from './permission-grants/reconciliation'
 import { SessionPersistenceCoordinator } from './session-persistence/coordinator'
+import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
+import { registerSideChatIpcHandlers } from './side-chat/ipc'
+import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
@@ -378,6 +382,9 @@ const createApplicationModules = async (
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
   }
+  const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
+    current: undefined
+  }
   const sessionRepository = createDefaultSessionRepository((projectId, sessionId) =>
     (runtimeRef.current?.getActivePromptSessions() ?? []).some(
       (session) => session.projectName === projectId && session.sessionId === sessionId
@@ -519,6 +526,27 @@ const createApplicationModules = async (
         reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
     }
   )
+  const sideChatRelay = new SideChatRelayOwner({
+    targetState: (parentSessionId) => {
+      const runtime = runtimeRef.current
+      if (!runtime) return 'completed'
+      const snapshot = runtime.getSnapshot()
+      if (snapshot.promptInFlightSessionIds.includes(parentSessionId)) {
+        return snapshot.pendingPermissions.some(
+          (permission) => permission.sessionId === parentSessionId
+        )
+          ? 'waiting'
+          : 'running'
+      }
+      return runtime.liveSessionProjectId(parentSessionId) ? 'idle' : 'completed'
+    }
+  })
+  const mainPromptSideChatRelay = createMainPromptSideChatRelay({
+    relay: sideChatRelay,
+    appendSideChatAdvisory: (command) =>
+      sessionPersistenceCoordinator.appendSideChatAdvisory(command),
+    onDelivered: (event) => broadcastToRenderers('side-chat:relay-delivered', event)
+  })
   const uploadCommandOwner = createUploadCommandOwner(uploadRepository, {
     withSessionMutation: (projectId, sessionId, mutation) =>
       sessionPersistenceCoordinator.runSessionMutation(projectId, sessionId, mutation)
@@ -563,7 +591,9 @@ const createApplicationModules = async (
   )
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
-    sessionPersistenceCoordinator
+    sessionPersistenceCoordinator,
+    onSessionsDeleted: (sessionIds) =>
+      sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve()
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
@@ -1228,11 +1258,14 @@ const createApplicationModules = async (
         skillImportApprovalBroker.cancelSession(sessionId),
       onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
       onAllSessionsCancellationRequested: () => skillImportApprovalBroker.cancelAll(),
-      beforeSessionDelete: (sessionId) =>
-        notebookService.shutdownSession(sessionId).then(() => undefined),
+      beforeSessionDelete: async (sessionId) => {
+        await sideChatOwnerRef.current?.closeForParent(sessionId)
+        await notebookService.shutdownSession(sessionId)
+      },
       initializationBarrier: initialConnectorSkillsReady,
       profileService,
-      sessionPersistenceCoordinator
+      sessionPersistenceCoordinator,
+      sideChatRelays: mainPromptSideChatRelay
     },
     (options) => {
       const runtime = createAcpRuntime(options)
@@ -1249,6 +1282,40 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  const sideChatLog = createLogger('side-chat')
+  const sideChatRuntime = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      configRoot,
+      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context),
+      relay: sideChatRelay,
+      onEvent: (event) => broadcastToRenderers('side-chat:event', event)
+    },
+    (options) => {
+      const owner = new SideChatRuntimeOwner(options)
+      return {
+        name: 'side-chat-runtime',
+        capability: owner,
+        dispose: () => owner.shutdown()
+      }
+    }
+  )
+  sideChatOwnerRef.current = sideChatRuntime
+  await sideChatRuntime
+    .sweepStaleProfiles()
+    .catch((error) =>
+      sideChatLog.error('stale Side chat profile cleanup failed', diagnosticErrorFields(error))
+    )
+  declareElectronAdapter('side-chat', () =>
+    registerSideChatIpcHandlers(sideChatRuntime, {
+      loadParentSession: (projectId, sessionId) =>
+        sessionRepository.loadSession(projectId, sessionId),
+      hasLiveParentSession: (projectId, sessionId) => runtime.hasLiveSession(projectId, sessionId),
+      assertParentAvailable: (sessionId) => archiveCoordinator.assertSessionAvailableById(sessionId)
+    })
+  )
   // Archive availability is checked at the final admission point, rather than trusting renderer
   // visibility, so an archived Project/Session cannot restart work through another surface.
   runtime.setPromptAdmissionGuard((sessionId) =>
@@ -1436,10 +1503,28 @@ const createApplicationModules = async (
   // their owning runtime, so a framework/provider switch cannot interrupt an in-flight turn.
   const settingsWorkflows = createSettingsWorkflows(settingsService, {
     runtime: {
-      requestProviderReconnect: () => void runtime.requestProviderReconnect(),
-      requestAgentFrameworkSwitch: () => void runtime.requestAgentFrameworkSwitch(),
-      applyReasoningEffort: (effort) => runtime.applyReasoningEffortChange(effort),
-      applyModelChange: (target) => runtime.applyModelChange(target)
+      requestProviderReconnect: () => {
+        void runtime.requestProviderReconnect()
+        void sideChatRuntime.requestProviderReconnect()
+      },
+      requestAgentFrameworkSwitch: () => {
+        void runtime.requestAgentFrameworkSwitch()
+        void sideChatRuntime.requestProviderReconnect()
+      },
+      applyReasoningEffort: async (effort) => {
+        const [mainApplied, sideChatApplied] = await Promise.all([
+          runtime.applyReasoningEffortChange(effort),
+          sideChatRuntime.applyReasoningEffortChange(effort)
+        ])
+        return mainApplied && sideChatApplied
+      },
+      applyModelChange: async (target) => {
+        const [mainApplied, sideChatApplied] = await Promise.all([
+          runtime.applyModelChange(target),
+          sideChatRuntime.applyModelChange(target)
+        ])
+        return mainApplied && sideChatApplied
+      }
     },
     skills: { requestSkillsReload: () => void runtime.requestSkillsReload() },
     connectors: {

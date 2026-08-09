@@ -1091,6 +1091,131 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it('replaces Codex declarations with the registered host-message-only scope', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          id: 'chat-host-message',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'queued' } }]
+        })
+      })
+    )
+    const connection = await bridge.start()
+    const scope = [
+      {
+        namespace: 'mcp__open_science_host_message',
+        name: 'send_message',
+        parameters: { type: 'object' }
+      }
+    ]
+
+    try {
+      bridge.registerHostMessageSession('side-session', scope)
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'send it',
+          prompt_cache_key: 'side-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequest).toMatchObject({
+        tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'mcp__open_science_host_message__send_message' }
+          }
+        ]
+      })
+      expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
+
+      const ordinaryResponse = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'ordinary turn',
+          prompt_cache_key: 'ordinary-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+      expect(ordinaryResponse.ok).toBe(true)
+      expect(JSON.stringify(upstreamRequest)).toContain('exec_command')
+      expect(bridge.unregisterHostMessageSession('side-session')).toBe(true)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('removes every tool when a strict host-message boundary sees an unexpected Session key', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          id: 'chat-host-message-mismatch',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'safe' } }]
+        })
+      })
+    )
+    const connection = await bridge.start()
+    try {
+      bridge.registerHostMessageSession(
+        'expected-side-session',
+        [
+          {
+            namespace: 'mcp__open_science_host_message',
+            name: 'send_message',
+            parameters: { type: 'object' }
+          }
+        ],
+        { failClosedUnknownKeys: true }
+      )
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'send it',
+          prompt_cache_key: 'unexpected-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequest).not.toHaveProperty('tools')
+      expect(upstreamRequest).not.toHaveProperty('tool_choice')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('send_message')
+      expect(bridge.unregisterHostMessageSession('expected-side-session')).toBe(false)
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it('streams a clean, fully-readable body when the upstream emits reasoning_content', async () => {
     // Regression: a reasoning-model upstream interleaves reasoning_content deltas. The bridge must
     // drop them and finish the SSE stream instead of resetting the socket (which reaches the agent

@@ -90,6 +90,8 @@ const makeResponsesBridgeDouble = (
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setReasoningEffort: vi.fn(),
   setModelTarget: vi.fn()
@@ -117,6 +119,8 @@ const makeNativeResponsesProxyDouble = (
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setModelTarget: vi.fn()
 })

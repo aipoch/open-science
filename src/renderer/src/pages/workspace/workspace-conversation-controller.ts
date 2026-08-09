@@ -17,6 +17,7 @@ import {
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
+import { hasMainConversation } from './use-side-chat-controller'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,
@@ -69,6 +70,8 @@ type WorkspaceConversationControllerOptions = {
   composer: ConversationComposer
   session: ConversationSession
   runtime: WorkspaceConversationRuntime
+  sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
+  sideChatOpen: boolean
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
   setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
   resetNewConversationSettings: () => void
@@ -89,6 +92,7 @@ type WorkspaceConversationController = {
       restoredPlan: (response: RestoredPlanResponse) => Promise<void>
     }
     revise: (messageId: string, doc: ComposerDoc) => void
+    sideChat: { start: () => void }
     resume: () => Promise<void>
     cancel: () => void
     delete: () => void
@@ -111,6 +115,7 @@ const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => 
   const { activeSession, composer, session } = options
   return (
     options.isPersistenceReady &&
+    !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
     activeSession?.status !== 'running' &&
@@ -128,6 +133,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
   const { activeSession, composer, session } = options
   return (
     options.isPersistenceReady &&
+    !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-for-user' &&
@@ -140,6 +146,18 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     !session.view.deletingIds.has(activeSession?.id ?? '')
   )
 }
+
+const canStartSideChat = (options: WorkspaceConversationControllerOptions): boolean =>
+  Boolean(
+    options.sideChat &&
+    options.activeSession &&
+    hasMainConversation(options.activeSession) &&
+    !options.sideChatOpen &&
+    options.isPersistenceReady &&
+    options.composer.view.transfers.length === 0 &&
+    options.composer.view.attachments.length === 0 &&
+    docToText(options.composer.view.doc).trim()
+  )
 
 const useWorkspaceConversationController = (
   options: WorkspaceConversationControllerOptions
@@ -245,10 +263,10 @@ const useWorkspaceConversationController = (
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
-      const { activeSession, runtime } = optionsRef.current
+      const { activeSession, runtime, sideChatOpen } = optionsRef.current
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
-      if (!session || session.activeRun || plan?.approval !== 'pending') {
+      if (sideChatOpen || !session || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
       }
       const pendingAction =
@@ -293,13 +311,29 @@ const useWorkspaceConversationController = (
           referencedArtifacts: docToArtifactRefs(doc)
         })
       },
+      sideChat: {
+        start: (): void => {
+          const current = optionsRef.current
+          if (!canStartSideChat(current) || !current.sideChat) return
+          const snapshot = current.composer.lifecycle.captureSend()
+          void current.sideChat
+            .start(docToText(snapshot.doc))
+            .then((admitted) => {
+              if (admitted) {
+                current.composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+              }
+            })
+            .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
+        }
+      },
       resume: async (): Promise<void> => {
         const current = optionsRef.current
-        if (!current.isPersistenceReady || !current.activeSession) return
+        if (!current.isPersistenceReady || !current.activeSession || current.sideChatOpen) return
         await current.runtime.resumeInterruptedSession(current.activeSession.id)
       },
       cancel: (): void => {
         const current = optionsRef.current
+        if (current.sideChatOpen) return
         const session = current.activeSession
         if (!session) return
         if (session.fixLoopActive) {
@@ -317,7 +351,7 @@ const useWorkspaceConversationController = (
     availability: {
       submit: canSubmit(options),
       revise: canRevise(options),
-      resume: options.isPersistenceReady
+      resume: options.isPersistenceReady && !options.sideChatOpen
     },
     actions
   }

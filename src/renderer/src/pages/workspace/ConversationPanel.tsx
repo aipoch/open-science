@@ -30,13 +30,14 @@ import {
   Loader2,
   ListChecks,
   Menu,
+  MessageCircleMore,
   PanelRight,
   Plus,
   ScanEye,
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { useRef, useState, type SetStateAction } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -82,6 +83,9 @@ import {
 } from '@/stores/preview-workbench-store'
 import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
+import { ResizableBottomPanel } from './ResizableBottomPanel'
+import { SideChatPanel } from './SideChatPanel'
+import { hasMainConversation, type SideChatView } from './use-side-chat-controller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -117,125 +121,17 @@ const attachmentRemoveButtonClassName = cn(
   composerInteractiveTransitionClassName
 )
 
-const ELICITATION_MIN_HEIGHT_PX = 288
-const ELICITATION_MAX_HEIGHT_PX = 704
-const ELICITATION_MAX_VIEWPORT_RATIO = 0.7
-const ELICITATION_RESIZE_STEP_PX = 32
-
-type ElicitationResizeBounds = { min: number; max: number }
-type ElicitationDragState = {
-  pointerId: number
-  startHeight: number
-  startY: number
-}
-
-const ResizableElicitationComposer = ({ children }: { children: ReactNode }): React.JSX.Element => {
-  const surfaceRef = useRef<HTMLDivElement>(null)
-  const dragStateRef = useRef<ElicitationDragState | undefined>(undefined)
-  const [height, setHeight] = useState<number>()
-
-  const resizeBounds = (): ElicitationResizeBounds => {
-    const surface = surfaceRef.current
-    const max = Math.round(
-      Math.min(window.innerHeight * ELICITATION_MAX_VIEWPORT_RATIO, ELICITATION_MAX_HEIGHT_PX)
-    )
-    const scrollSurface = surface?.querySelector<HTMLElement>(
-      '[data-testid="elicitation-composer-scroll"]'
-    )
-    const secondOption = surface?.querySelectorAll<HTMLElement>(
-      '[data-elicitation-option-row="true"]'
-    )[1]
-    const measuredMinimum =
-      scrollSurface && secondOption
-        ? Math.ceil(
-            secondOption.getBoundingClientRect().bottom -
-              scrollSurface.getBoundingClientRect().top +
-              ELICITATION_RESIZE_STEP_PX
-          )
-        : 0
-
-    return {
-      min: Math.min(max, Math.max(ELICITATION_MIN_HEIGHT_PX, measuredMinimum)),
-      max
-    }
-  }
-
-  const resizeTo = (nextHeight: number): void => {
-    const bounds = resizeBounds()
-    setHeight(Math.min(bounds.max, Math.max(bounds.min, Math.round(nextHeight))))
-  }
-
-  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>): void => {
-    if (
-      !surfaceRef.current ||
-      event.isPrimary === false ||
-      (event.button !== 0 && event.pointerType === 'mouse')
-    )
-      return
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-    dragStateRef.current = {
-      pointerId: event.pointerId,
-      startHeight: surfaceRef.current.getBoundingClientRect().height,
-      startY: event.clientY
-    }
-  }
-
-  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>): void => {
-    const dragState = dragStateRef.current
-    if (!dragState || dragState.pointerId !== event.pointerId) return
-    resizeTo(dragState.startHeight - (event.clientY - dragState.startY))
-  }
-
-  const endPointerDrag = (event: PointerEvent<HTMLButtonElement>): void => {
-    if (dragStateRef.current?.pointerId !== event.pointerId) return
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    dragStateRef.current = undefined
-  }
-
-  const handleResizeKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-    event.preventDefault()
-    const currentHeight = surfaceRef.current?.getBoundingClientRect().height
-    if (!currentHeight) return
-    resizeTo(
-      currentHeight +
-        (event.key === 'ArrowUp' ? ELICITATION_RESIZE_STEP_PX : -ELICITATION_RESIZE_STEP_PX)
-    )
-  }
-
-  return (
-    <div
-      ref={surfaceRef}
-      className="relative z-10 flex min-h-0 w-full min-w-0 max-h-[min(70dvh,44rem)] flex-col overflow-visible px-px pb-px pt-8 [@media(pointer:coarse)]:pt-11"
-      data-testid="elicitation-composer"
-      style={height === undefined ? undefined : { height }}
-    >
-      <button
-        type="button"
-        aria-label="Resize question panel"
-        className="group absolute inset-x-0 top-0 grid h-8 cursor-ns-resize touch-none select-none place-items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 active:bg-bg-200 [@media(pointer:coarse)]:h-11"
-        onKeyDown={handleResizeKeyDown}
-        onPointerCancel={endPointerDrag}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endPointerDrag}
-      >
-        <span
-          aria-hidden="true"
-          className="h-1 w-12 rounded-full bg-text-300/70 transition-colors duration-200 group-hover:bg-text-100 group-focus-visible:bg-text-100"
-        />
-      </button>
-      <div
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-border-200 bg-bg-000 shadow-sm"
-        data-testid="elicitation-composer-scroll"
-      >
-        {children}
-      </div>
-    </div>
-  )
-}
+const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize question panel"
+    testId="elicitation-composer"
+    scrollTestId="elicitation-composer-scroll"
+    minimumContentSelector='[data-elicitation-option-row="true"]'
+    minimumContentIndex={1}
+  >
+    {children}
+  </ResizableBottomPanel>
+)
 
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
@@ -284,6 +180,13 @@ type ConversationPanelProps = {
   onSendMessage: (forcedSkillIds: string[]) => void
   // Sends this draft as a one-turn request to plan before execution.
   onPlanFirst?: (forcedSkillIds: string[]) => void
+  sideChat?: SideChatView
+  onStartSideChat?: () => void
+  sideChatDisabledReason?: string
+  onSendSideChat?: (text: string) => Promise<boolean>
+  onSideChatDraftChange?: (value: SetStateAction<string>) => void
+  onCancelSideChat?: () => void
+  onCloseSideChat?: () => void
   // A restored pending Plan has no live tool-call waiter. Every card action starts a fresh,
   // identity-bound Plan interaction instead of trying to resume the expired one.
   onRespondToRestoredPlan: (
@@ -367,6 +270,13 @@ const ConversationPanel = ({
   onNavigateHistory,
   onSendMessage,
   onPlanFirst,
+  sideChat,
+  onStartSideChat,
+  sideChatDisabledReason,
+  onSendSideChat,
+  onSideChatDraftChange,
+  onCancelSideChat,
+  onCloseSideChat,
   onRespondToRestoredPlan,
   onBranchInNewSession,
   onStageAttachmentFiles,
@@ -410,6 +320,7 @@ const ConversationPanel = ({
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
+  const [composerFocusRequest, setComposerFocusRequest] = useState<number>()
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -557,10 +468,28 @@ const ConversationPanel = ({
     (node) => node.type === 'text' && node.text.trim().length > 0
   )
   const canPlanFirst = canSendMessage && hasTextDraft && onPlanFirst !== undefined
+  const canStartSideChat =
+    Boolean(activeSession) &&
+    hasMainConversation(activeSession) &&
+    canEditDraft &&
+    hasTextDraft &&
+    attachments.length === 0 &&
+    attachmentTransfers.length === 0 &&
+    !sideChatDisabledReason &&
+    onStartSideChat !== undefined
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst || !onPlanFirst) return
     onPlanFirst(docToSkillIds(draftDoc))
+  }
+
+  const handleSideChat = (): void => {
+    if (canStartSideChat) onStartSideChat?.()
+  }
+
+  const handleCloseSideChat = (): void => {
+    onCloseSideChat?.()
+    setComposerFocusRequest((request) => (request ?? 0) + 1)
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -624,13 +553,13 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
           <WorkspaceMessageScroller
             activeSession={activeSession}
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
-            pendingElicitations={pendingElicitations}
+            pendingElicitations={sideChat ? [] : pendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />
@@ -652,7 +581,7 @@ const ConversationPanel = ({
               <div className="px-1 md:px-3">
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
                     red error box, so the user can re-attach and continue the interrupted turn. */}
-                {activeSession?.interrupted ? (
+                {!sideChat && activeSession?.interrupted ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? 'This session was interrupted.'}
                     isDisabled={!canResumeSession}
@@ -697,25 +626,28 @@ const ConversationPanel = ({
                 ) : null}
 
                 {/* Permission controls are already filtered to the visible session by the page. */}
-                <PermissionApprovalControls
-                  requests={pendingPermissions}
-                  onRespond={onRespondToPermission}
-                  notebookLookup={
-                    activeSession
-                      ? {
-                          sessionId: activeSession.id,
-                          workspaceCwd: activeSession.cwd ?? '',
-                          projectName: activeSession.projectId
-                        }
-                      : undefined
-                  }
-                />
+                {!sideChat ? (
+                  <PermissionApprovalControls
+                    requests={pendingPermissions}
+                    onRespond={onRespondToPermission}
+                    notebookLookup={
+                      activeSession
+                        ? {
+                            sessionId: activeSession.id,
+                            workspaceCwd: activeSession.cwd ?? '',
+                            projectName: activeSession.projectId
+                          }
+                        : undefined
+                    }
+                  />
+                ) : null}
 
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
-                {notebookReference ||
-                hasAnyJobs ||
-                (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
+                {!sideChat &&
+                (notebookReference ||
+                  hasAnyJobs ||
+                  (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
                   <div
                     key={notebookReference ? `notebook-${notebookReference.sessionId}` : 'jobs'}
                     className={cn(
@@ -773,13 +705,13 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      pendingElicitation && 'hidden'
+                      (sideChat || pendingElicitation) && 'hidden'
                     )}
                   />
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {reconfigureError ? (
+                  {!sideChat && reconfigureError ? (
                     <div
                       className="relative z-10 mb-2 flex items-start gap-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5"
                       role="alert"
@@ -825,7 +757,42 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {pendingElicitation ? (
+                  {sideChat &&
+                  onSendSideChat &&
+                  onSideChatDraftChange &&
+                  onCancelSideChat &&
+                  onCloseSideChat ? (
+                    <SideChatPanel
+                      view={sideChat}
+                      onSend={onSendSideChat}
+                      onDraftChange={onSideChatDraftChange}
+                      onCancel={onCancelSideChat}
+                      onClose={handleCloseSideChat}
+                      controls={
+                        <ComposerAgentControlsMenu
+                          profile={permissionProfile}
+                          profileState={permissionProfileState}
+                          grants={permissionGrants}
+                          autoReviewEnabled={autoReviewEnabled}
+                          readOnly
+                          permissionProfileReadOnly
+                          grantActionsReadOnly
+                          autoReviewDisabled
+                          enabledComputeHosts={enabledComputeHosts}
+                          onComputeHostToggle={onComputeHostToggle}
+                          onProfileChange={onPermissionProfileChange}
+                          onAutoReviewChange={onAutoReviewToggle}
+                          onRevokeGrant={onRevokePermissionGrant}
+                          onClearGrants={onClearPermissionGrants}
+                          showSpecialist={activeSession !== undefined}
+                          specialistId={specialistId}
+                          specialistUnavailable={specialistUnavailable}
+                          specialistReadOnly
+                          onSpecialistChange={onSpecialistChange}
+                        />
+                      }
+                    />
+                  ) : pendingElicitation ? (
                     <ResizableElicitationComposer>
                       <WorkspaceElicitationCard
                         key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
@@ -857,10 +824,10 @@ const ConversationPanel = ({
                   {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
                       owns the lane and makes the ordinary controls unreachable. */}
                   <form
-                    hidden={Boolean(pendingElicitation || pendingPlan)}
+                    hidden={Boolean(sideChat || pendingElicitation || pendingPlan)}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      (pendingElicitation || pendingPlan) && 'hidden'
+                      (sideChat || pendingElicitation || pendingPlan) && 'hidden'
                     )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
@@ -997,6 +964,7 @@ const ConversationPanel = ({
                           isHistoryBrowsing={isHistoryBrowsing}
                           historyStatus={historyStatus}
                           onNavigateHistory={onNavigateHistory}
+                          focusRequest={composerFocusRequest}
                         />
                       </div>
 
@@ -1167,7 +1135,7 @@ const ConversationPanel = ({
                             data-testid="composer-running-control-slot"
                             className={cn(
                               'flex shrink-0 justify-end',
-                              onPlanFirst || onBranchInNewSession
+                              onPlanFirst || onStartSideChat || onBranchInNewSession
                                 ? 'w-16 [@media(pointer:coarse)]:mx-3'
                                 : 'w-8'
                             )}
@@ -1180,8 +1148,45 @@ const ConversationPanel = ({
                             >
                               <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                             </button>
+                            {onStartSideChat ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className={composerIconButtonClassName}
+                                    disabled={!canStartSideChat}
+                                    aria-label="More send options"
+                                    data-testid="running-side-chat-menu-trigger"
+                                    title={sideChatDisabledReason}
+                                  >
+                                    <ChevronDown className="size-3.5" aria-hidden="true" />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent side="top" align="end" className="w-64">
+                                  <DropdownMenuItem
+                                    data-testid="menu-side-chat"
+                                    disabled={!canStartSideChat}
+                                    onSelect={handleSideChat}
+                                    title={sideChatDisabledReason}
+                                  >
+                                    <MessageCircleMore
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    <span>
+                                      Side chat
+                                      {sideChatDisabledReason ? (
+                                        <span className="block text-[11px] text-text-300">
+                                          {sideChatDisabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : null}
                           </div>
-                        ) : onPlanFirst || onBranchInNewSession ? (
+                        ) : onPlanFirst || onStartSideChat || onBranchInNewSession ? (
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
@@ -1221,6 +1226,7 @@ const ConversationPanel = ({
                                         size="icon"
                                         disabled={
                                           !canPlanFirst &&
+                                          !canStartSideChat &&
                                           (!canSendMessage || !onBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
@@ -1250,6 +1256,26 @@ const ConversationPanel = ({
                                       aria-hidden="true"
                                     />
                                     Plan first
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    data-testid="menu-side-chat"
+                                    disabled={!canStartSideChat}
+                                    onSelect={handleSideChat}
+                                    title={sideChatDisabledReason}
+                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                  >
+                                    <MessageCircleMore
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    <span>
+                                      Side chat
+                                      {sideChatDisabledReason ? (
+                                        <span className="block text-[11px] text-text-300">
+                                          {sideChatDisabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"

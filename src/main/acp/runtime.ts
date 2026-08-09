@@ -40,6 +40,7 @@ import {
   type PendingElicitationRequest
 } from '../../shared/elicitation'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
@@ -53,6 +54,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -175,6 +177,22 @@ type AcpRuntimeOptions = {
       Partial<Pick<SessionPersistenceCoordinator, 'sessionProjectId'>>
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
+  sideChat?: Readonly<{
+    sendMessage: (
+      routingId: string,
+      request: SideChatSendMessageRequest
+    ) => Promise<SideChatSendMessageResult>
+  }>
+  sideChatRelays?: Readonly<{
+    claim: (parentSessionId: string) =>
+      | Readonly<{
+          historyPreamble: string
+          commit: (promptMessageId?: string) => void | Promise<void>
+          restore: () => void
+        }>
+      | undefined
+  }>
+  sessionCapabilityPolicy?: SessionCapabilityPolicy
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework

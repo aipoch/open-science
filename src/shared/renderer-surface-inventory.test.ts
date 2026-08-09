@@ -72,6 +72,12 @@ const GENERATED_SOURCE_OMISSIONS = [
   'settings.exportSkill',
   'settings.previewCustomServerTemplateExport',
   'settings.selectCustomServerTemplate',
+  'sideChat.cancel',
+  'sideChat.close',
+  'sideChat.onEvent',
+  'sideChat.onRelayDelivered',
+  'sideChat.send',
+  'sideChat.start',
   'specialist.cancelHandoff',
   'specialist.cancelPackage',
   'specialist.create',
@@ -218,7 +224,7 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(327)
+    expect(electronPaths).toHaveLength(333)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)

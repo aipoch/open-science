@@ -180,6 +180,22 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
   })
 
+  it('renders a delivered Side chat advisory as context instead of an editable user prompt', async () => {
+    await renderItem(
+      createMessage({
+        content: 'Use a black line.',
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+      })
+    )
+
+    expect(container.querySelector('[data-testid="side-chat-advisory"]')?.textContent).toContain(
+      'Side chat'
+    )
+    expect(container.textContent).toContain('Use a black line.')
+    expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+  })
+
   it('keeps hover actions left of the bubble and Branch navigation in its footer', async () => {
     await renderItem(createMessage(), {
       canEditMessage: true,

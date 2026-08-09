@@ -79,6 +79,7 @@ export type AppendRoutedUserMessageInput = {
   content: string
   createdAt: number
   responseToMessageId?: string
+  relayedFrom?: PersistedChatMessage['relayedFrom']
 }
 
 export type SessionMessageGraphActions = {

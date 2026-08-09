@@ -4,6 +4,7 @@ type AppMcpServerDefinition = {
   canonicalName: string
   openCodeName: string
   tools: readonly string[]
+  rememberedPermission?: false
 }
 
 // App-owned MCP identity stays canonical inside Open Science. Framework-specific names are projected
@@ -47,6 +48,13 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
     canonicalName: 'open-science-plan',
     openCodeName: 'open_science_plan',
     tools: ['generate_plan', 'update_step_status']
+  },
+  {
+    canonicalName: 'open-science-host-message',
+    openCodeName: 'open_science_host_message',
+    tools: ['send_message'],
+    // Side chat owns this fixed relationship scope; it is never a user-grantable primary capability.
+    rememberedPermission: false
   }
 ]
 
@@ -85,8 +93,8 @@ const appMcpServerAliases = (name: string): readonly string[] => {
 // Canonical inventory used at cross-module policy seams. Callers receive identities only, keeping
 // framework aliases and rendering details owned by this module.
 const appMcpToolIdentities = (): readonly string[] =>
-  APP_MCP_SERVERS.flatMap(({ canonicalName, tools }) =>
-    tools.map((tool) => `${canonicalName}/${tool}`)
+  APP_MCP_SERVERS.flatMap(({ canonicalName, tools, rememberedPermission }) =>
+    rememberedPermission === false ? [] : tools.map((tool) => `${canonicalName}/${tool}`)
   )
 
 const resolveCanonicalMcpToolIdentity = (

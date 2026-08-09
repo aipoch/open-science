@@ -342,6 +342,36 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.status).toBe('waiting-plan-approval')
   })
 
+  it('persists an admitted side-chat relay as a neutral advisory bound to the main prompt', async () => {
+    let durable = createSession()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const message = await coordinator.appendSideChatAdvisory({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      promptMessageId: 'main-prompt-1',
+      content: 'Use a black line.'
+    })
+
+    expect(message).toMatchObject({
+      role: 'user',
+      content: 'Use a black line.',
+      responseToMessageId: 'main-prompt-1',
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+      status: 'complete'
+    })
+    expect(durable.messages).toContainEqual(message)
+  })
+
   it('does not persist Plan feedback when its interaction commit precondition fails', async () => {
     const durable = createSession({
       status: 'waiting-plan-approval',

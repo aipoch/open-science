@@ -49,6 +49,25 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r1',
+          sessionId: 'session-side',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}'
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorApprovalDialog blockedSessionId="session-side" />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
+  })
+
   it('shows the oldest request with the resolved connector name and tool', () => {
     useSettingsStore.setState({
       pendingApprovals: [

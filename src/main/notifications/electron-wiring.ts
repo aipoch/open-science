@@ -83,12 +83,15 @@ export type BuildComputeApprovalBroadcastDeps = {
   onNotificationError?: (error: unknown) => void
 }
 
-// Compute's grant check owns the session context, so preserve it through the broker broadcast while
-// keeping the renderer payload unchanged.
+// Compute's grant check owns the session context. Add it only to the renderer projection so the UI
+// can defer a Session-owned modal without changing the broker's authoritative pending request.
 export const buildComputeApprovalBroadcast =
   (deps: BuildComputeApprovalBroadcastDeps) =>
   (request: ComputeApprovalRequest, context?: ComputeApprovalContext): void => {
-    deps.broadcastToRenderers('compute:approval-request', request)
+    deps.broadcastToRenderers('compute:approval-request', {
+      ...request,
+      ...(context?.sessionId ? { session_id: context.sessionId } : {})
+    })
     runTaskNotificationInBackground(
       () => deps.taskNotifications.handleComputeApproval(request, context?.sessionId),
       deps.onNotificationError

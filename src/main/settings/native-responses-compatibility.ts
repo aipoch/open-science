@@ -313,6 +313,9 @@ export class NativeResponsesCompatibilityProxy {
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
   private readonly scopedToolLessSessionKeys = new Set<string>()
+  private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly scopedHostMessageSessionKeys = new Set<string>()
+  private readonly strictHostMessageSessionKeys = new Set<string>()
 
   constructor(
     private target: NativeResponsesCompatibilityTarget,
@@ -474,11 +477,31 @@ export class NativeResponsesCompatibilityProxy {
     return this.scopedToolLessSessionKeys.delete(promptCacheKey)
   }
 
+  registerHostMessageSession(
+    promptCacheKey: string,
+    namespacedTools: ResponsesBridgeNamespacedTool[],
+    options?: Readonly<{ failClosedUnknownKeys?: boolean }>
+  ): void {
+    this.hostMessageSessionScopes.set(promptCacheKey, namespacedTools)
+    this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+    if (options?.failClosedUnknownKeys) this.strictHostMessageSessionKeys.add(promptCacheKey)
+    else this.strictHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterHostMessageSession(promptCacheKey: string): boolean {
+    this.hostMessageSessionScopes.delete(promptCacheKey)
+    this.strictHostMessageSessionKeys.delete(promptCacheKey)
+    return this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
   async close(): Promise<void> {
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
     this.scopedToolLessSessionKeys.clear()
+    this.hostMessageSessionScopes.clear()
+    this.scopedHostMessageSessionKeys.clear()
+    this.strictHostMessageSessionKeys.clear()
     await this.host.close()
   }
 
@@ -503,17 +526,26 @@ export class NativeResponsesCompatibilityProxy {
         promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
       const toolLessScoped =
         promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
+      const hostMessageTools =
+        promptCacheKey === undefined ? undefined : this.hostMessageSessionScopes.get(promptCacheKey)
+      const hostMessageScoped = hostMessageTools !== undefined
+      const hostMessageBoundaryActive = this.strictHostMessageSessionKeys.size > 0
       if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
       if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
+      if (hostMessageScoped) this.scopedHostMessageSessionKeys.add(promptCacheKey!)
       // Codex currently advertises built-in tools even when reviewer session metadata disables them.
       // Replace the full declaration set at this boundary so reviewer turns can reach only their
       // scope-bounded reviewer MCP, matching the Chat bridge's fail-closed contract.
       const scopedBody =
-        reviewerScoped || toolLessScoped
+        reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
           ? {
               ...body,
               tools: namespaceToolDeclarations(
-                reviewerScoped ? (this.target.reviewerScope?.namespacedTools ?? []) : []
+                reviewerScoped
+                  ? (this.target.reviewerScope?.namespacedTools ?? [])
+                  : hostMessageScoped
+                    ? hostMessageTools
+                    : []
               ),
               tool_choice: 'auto'
             }

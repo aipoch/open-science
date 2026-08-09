@@ -485,6 +485,12 @@ describe('preload bridge — public surface inventory', () => {
       'settings.updateSkill',
       'settings.upsertProvider',
       'settings.validateProvider',
+      'sideChat.cancel',
+      'sideChat.close',
+      'sideChat.onEvent',
+      'sideChat.onRelayDelivered',
+      'sideChat.send',
+      'sideChat.start',
       'specialist.cancelHandoff',
       'specialist.cancelPackage',
       'specialist.create',
@@ -639,7 +645,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 22-group, 140-callable T1d complement', () => {
+  it('pins the exact 23-group, 146-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -659,12 +665,13 @@ describe('preload bridge — core renderer contract catalog', () => {
       'remote-access',
       'reviewer',
       'sessions',
+      'side-chat',
       'storage',
       'update',
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(140)
+    expect(coreContracts).toHaveLength(146)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -676,16 +683,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 103, events: 26, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 107, events: 28, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 103 request methods through their cataloged Electron channels', async () => {
+  it('routes all 107 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(103)
+    expect(requestContracts).toHaveLength(107)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -708,8 +715,8 @@ describe('preload bridge — core renderer contract catalog', () => {
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
 
-    expect(eventContracts).toHaveLength(26)
-    expect(genericEventContracts).toHaveLength(25)
+    expect(eventContracts).toHaveLength(28)
+    expect(genericEventContracts).toHaveLength(27)
 
     for (const contract of genericEventContracts) {
       onMock.mockClear()

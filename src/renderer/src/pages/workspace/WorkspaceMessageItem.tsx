@@ -17,6 +17,7 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  MessageCircleMore,
   Pencil
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
@@ -770,6 +771,8 @@ const WorkspaceMessageItem = ({
   staticParts
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
+  const isSideChatAdvisory =
+    message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const uploads = message.uploads ?? []
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
   const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
@@ -856,7 +859,16 @@ const WorkspaceMessageItem = ({
     >
       <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isUserMessage ? (
+        {isSideChatAdvisory ? (
+          <div
+            data-testid="side-chat-advisory"
+            className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
+          >
+            <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
+            <span className="shrink-0 font-medium">Side chat</span>
+            <span className="min-w-0 truncate">{message.content}</span>
+          </div>
+        ) : isUserMessage ? (
           isEditing ? (
             <div className="flex justify-end">
               {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}

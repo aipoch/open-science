@@ -18,6 +18,15 @@ import type {
 } from '../shared/acp'
 import type { ActivePlanProjection, PlanResponseCommand } from '../shared/session-plan/contract'
 import type {
+  SideChatCloseRequest,
+  SideChatPromptRequest,
+  SideChatRelayDeliveredEvent,
+  SideChatRuntimeEvent,
+  SideChatSessionRequest,
+  SideChatStartRequest,
+  SideChatStartResponse
+} from '../shared/side-chat'
+import type {
   ArtifactFile,
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
@@ -364,6 +373,14 @@ export interface OpenScienceAPI {
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
     onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
+  }
+  sideChat: {
+    start(request: SideChatStartRequest): Promise<SideChatStartResponse>
+    send(request: SideChatPromptRequest): Promise<void>
+    cancel(request: SideChatSessionRequest): Promise<void>
+    close(request: SideChatCloseRequest): Promise<void>
+    onEvent(listener: AcpListener<SideChatRuntimeEvent>): RemoveListener
+    onRelayDelivered(listener: AcpListener<SideChatRelayDeliveredEvent>): RemoveListener
   }
   permissions: {
     list(): Promise<PermissionGrantSnapshot>

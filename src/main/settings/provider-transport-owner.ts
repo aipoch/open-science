@@ -37,6 +37,8 @@ type ResponsesBridgePort = Pick<
   | 'unregisterReviewerSession'
   | 'registerToolLessSession'
   | 'unregisterToolLessSession'
+  | 'registerHostMessageSession'
+  | 'unregisterHostMessageSession'
   | 'setReasoningEffort'
   | 'setModelTarget'
   | 'setTarget'
@@ -58,6 +60,8 @@ type NativeResponsesProxyPort = Pick<
   | 'unregisterReviewerSession'
   | 'registerToolLessSession'
   | 'unregisterToolLessSession'
+  | 'registerHostMessageSession'
+  | 'unregisterHostMessageSession'
   | 'setModelTarget'
   | 'setTarget'
 >
@@ -434,6 +438,9 @@ class ProviderTransportOwner {
         unregisterReviewerSession: (key) => entry.proxy.unregisterReviewerSession(key),
         registerToolLessSession: (key) => entry.proxy.registerToolLessSession(key),
         unregisterToolLessSession: (key) => entry.proxy.unregisterToolLessSession(key),
+        registerHostMessageSession: (key, tools, options) =>
+          entry.proxy.registerHostMessageSession(key, tools, options),
+        unregisterHostMessageSession: (key) => entry.proxy.unregisterHostMessageSession(key),
         setModelTarget: (target) => entry.proxy.setModelTarget(target),
         release
       },
@@ -525,6 +532,9 @@ class ProviderTransportOwner {
         unregisterReviewerSession: (key) => entry.bridge.unregisterReviewerSession(key),
         registerToolLessSession: (key) => entry.bridge.registerToolLessSession(key),
         unregisterToolLessSession: (key) => entry.bridge.unregisterToolLessSession(key),
+        registerHostMessageSession: (key, tools, options) =>
+          entry.bridge.registerHostMessageSession(key, tools, options),
+        unregisterHostMessageSession: (key) => entry.bridge.unregisterHostMessageSession(key),
         setReasoningEffort: (effort) => entry.bridge.setReasoningEffort(effort),
         setModelTarget: (target) => entry.bridge.setModelTarget(target),
         release

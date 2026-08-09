@@ -381,6 +381,12 @@ class SessionPersistenceCoordinator {
     return this.enqueue(() => this.stateOwner.appendUserMessage(command))
   }
 
+  appendSideChatAdvisory(
+    command: Parameters<SessionPersistenceStateOwner['appendSideChatAdvisory']>[0]
+  ): Promise<PersistedChatMessage> {
+    return this.enqueue(() => this.stateOwner.appendSideChatAdvisory(command))
+  }
+
   // Project archive must fail closed when even one child Session cannot be read. A partial catalog
   // cannot prove that an omitted Session is idle, so it is unsafe to hide the whole Project.
   assertProjectArchivable(

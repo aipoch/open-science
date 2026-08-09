@@ -103,6 +103,9 @@ export class ResponsesBridge {
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
   private readonly scopedToolLessSessionKeys = new Set<string>()
+  private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly scopedHostMessageSessionKeys = new Set<string>()
+  private readonly strictHostMessageSessionKeys = new Set<string>()
 
   constructor(
     target: ResponsesBridgeTarget,
@@ -290,6 +293,23 @@ export class ResponsesBridge {
     return this.scopedToolLessSessionKeys.delete(promptCacheKey)
   }
 
+  registerHostMessageSession(
+    promptCacheKey: string,
+    namespacedTools: ResponsesBridgeNamespacedTool[],
+    options?: Readonly<{ failClosedUnknownKeys?: boolean }>
+  ): void {
+    this.hostMessageSessionScopes.set(promptCacheKey, namespacedTools)
+    this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+    if (options?.failClosedUnknownKeys) this.strictHostMessageSessionKeys.add(promptCacheKey)
+    else this.strictHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterHostMessageSession(promptCacheKey: string): boolean {
+    this.hostMessageSessionScopes.delete(promptCacheKey)
+    this.strictHostMessageSessionKeys.delete(promptCacheKey)
+    return this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
   async start(): Promise<ResponsesBridgeConnection> {
     return this.host.start()
   }
@@ -300,6 +320,9 @@ export class ResponsesBridge {
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
     this.scopedToolLessSessionKeys.clear()
+    this.hostMessageSessionScopes.clear()
+    this.scopedHostMessageSessionKeys.clear()
+    this.strictHostMessageSessionKeys.clear()
     await this.host.close()
   }
 
@@ -326,18 +349,29 @@ export class ResponsesBridge {
       promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
     const toolLessScoped =
       promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
+    const hostMessageTools =
+      promptCacheKey === undefined ? undefined : this.hostMessageSessionScopes.get(promptCacheKey)
+    const hostMessageScoped = hostMessageTools !== undefined
+    const hostMessageBoundaryActive = this.strictHostMessageSessionKeys.size > 0
     if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
     if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
+    if (hostMessageScoped) this.scopedHostMessageSessionKeys.add(promptCacheKey!)
     const namespacedTools = reviewerScoped
       ? (this.target.reviewerScope?.namespacedTools ?? [])
       : toolLessScoped
         ? []
-        : (this.target.namespacedTools ?? [])
+        : hostMessageScoped
+          ? hostMessageTools
+          : hostMessageBoundaryActive
+            ? []
+            : (this.target.namespacedTools ?? [])
     // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
     // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
     // can call only the scope-bounded reviewer HTTP MCP functions.
     const scopedBody =
-      reviewerScoped || toolLessScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
+      reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
+        ? { ...body, tools: [], tool_choice: 'auto' }
+        : body
     const chatRequest = responsesToChatRequest(
       scopedBody,
       this.target.model,
@@ -370,6 +404,7 @@ export class ResponsesBridge {
       incomingToolCount: incomingTools.length,
       outgoingToolNames,
       reviewerScoped,
+      hostMessageScoped,
       toolChoice: chatRequest.tool_choice ?? null
     })
 

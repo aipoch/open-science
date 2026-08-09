@@ -28,7 +28,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: () => boolean
-  onAccepted: () => void
+  onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
   reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
 }>
@@ -163,7 +163,7 @@ class AcpProviderPromptExecutor {
         if (!accepted) {
           accepted = true
           try {
-            input.onAccepted()
+            await input.onAccepted()
           } catch (error) {
             reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
           }

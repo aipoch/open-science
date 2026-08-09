@@ -40,6 +40,7 @@ type ComposerEditorProps = {
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
+  focusRequest?: number
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -159,7 +160,8 @@ export const ComposerEditor = ({
   allowedSkillIds,
   isHistoryBrowsing = false,
   historyStatus = '',
-  onNavigateHistory
+  onNavigateHistory,
+  focusRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
@@ -202,6 +204,10 @@ export const ComposerEditor = ({
       moveCaretToEnd(root)
     }
   }, [doc])
+
+  useLayoutEffect(() => {
+    if (focusRequest !== undefined && editorRef.current) moveCaretToEnd(editorRef.current)
+  }, [focusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 

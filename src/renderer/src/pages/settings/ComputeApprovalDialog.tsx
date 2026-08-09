@@ -27,8 +27,16 @@ import { useComputeStore } from '@/stores/compute-store'
 //   This session      — approve for (provider, operation) for this persisted session
 //   This project      — approve for (provider, operation) for all future calls in this project
 //   Always            — approve for (provider, operation) across projects
-export function ComputeApprovalDialog(): React.JSX.Element | null {
-  const request = useComputeStore((state) => state.pendingApprovals[0])
+export function ComputeApprovalDialog({
+  blockedSessionId
+}: {
+  blockedSessionId?: string
+}): React.JSX.Element | null {
+  const request = useComputeStore((state) =>
+    state.pendingApprovals.find(
+      (candidate) => !blockedSessionId || candidate.session_id !== blockedSessionId
+    )
+  )
   const respondApproval = useComputeStore((state) => state.respondApproval)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
   const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()

@@ -1,5 +1,6 @@
 import type { McpServer } from '@agentclientprotocol/sdk'
 
+import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { AgentFramework } from '../agent-framework'
 import {
   canonicalAppMcpServerName,
@@ -29,6 +30,7 @@ import {
   createPlanMcpServerConfig,
   type PlanMcpEnvironment
 } from '../session-plan/plan-mcp-server'
+import { HOST_MESSAGE_MCP_SERVER_NAME } from '../side-chat/host-message-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 
 const log = createLogger('acp')
@@ -39,14 +41,15 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'skill-import',
   'plan',
   'host-agents',
-  'host-skills'
+  'host-skills',
+  'host-message'
 ] as const
 const NOTEBOOK_CONTROL_RPC_METHODS = ['mcpCall', 'computeCall', 'agentsCall', 'skillsCall'] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 
 export type SessionCapabilityPolicy = Readonly<{
-  role: 'primary' | 'reviewer'
+  role: 'primary' | 'reviewer' | 'side-chat'
   // Delegation is deliberately explicit and denied for every currently shipped Session. Issue #458
   // can extend this input later without making prompts, identity text, or provider metadata authoritative.
   delegation: 'denied'
@@ -62,13 +65,20 @@ export const REVIEWER_SESSION_CAPABILITY_POLICY: SessionCapabilityPolicy = Objec
   delegation: 'denied'
 })
 
+export const SIDE_CHAT_SESSION_CAPABILITY_POLICY: SessionCapabilityPolicy = Object.freeze({
+  role: 'side-chat',
+  delegation: 'denied'
+})
+
 export const policyAllowsSessionCapability = (
   policy: SessionCapabilityPolicy,
   capability: string
 ): capability is SessionCapabilityName =>
-  policy.role === 'primary' &&
   policy.delegation === 'denied' &&
-  (CURRENT_PRIMARY_CAPABILITIES as readonly string[]).includes(capability)
+  ((policy.role === 'primary' &&
+    capability !== 'host-message' &&
+    (CURRENT_PRIMARY_CAPABILITIES as readonly string[]).includes(capability)) ||
+    (policy.role === 'side-chat' && capability === 'host-message'))
 
 export type EffectiveSessionCapabilityDescriptor = Readonly<{
   role: SessionCapabilityPolicy['role']
@@ -85,6 +95,7 @@ type SessionCapabilityRoutingIds = Readonly<{
   notebook: string
   skillImport: string
   plan: string
+  sideChat: string
 }>
 
 export type SessionCapabilityArtifactOptions = {
@@ -193,6 +204,12 @@ type SessionCapabilityOwnerOptions = {
   notebook?: SessionCapabilityNotebookOptions
   skillImport?: SessionCapabilitySkillImportOptions
   plan?: SessionCapabilityPlanOptions
+  sideChat?: Readonly<{
+    sendMessage: (
+      routingId: string,
+      request: SideChatSendMessageRequest
+    ) => Promise<SideChatSendMessageResult>
+  }>
   mcpHttpHost?: AgentMcpHttpHost
 }
 
@@ -231,6 +248,7 @@ export class AcpSessionCapabilityOwner {
   private readonly skillImportCapabilityReleases = new Map<string, () => void>()
   private readonly planRoutingIds = new Map<string, string>()
   private readonly planCapabilityReleases = new Map<string, () => void>()
+  private readonly sideChatRoutingIds = new Map<string, string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly committedSessionIds = new Set<string>()
   private readonly provisionalRoutingOwners = new Map<string, object>()
@@ -239,6 +257,7 @@ export class AcpSessionCapabilityOwner {
   private notebookSessionSequence = 0
   private skillImportSessionSequence = 0
   private planSessionSequence = 0
+  private sideChatSessionSequence = 0
   private skillImportEnabled = true
 
   constructor(private readonly options: SessionCapabilityOwnerOptions) {}
@@ -281,9 +300,12 @@ export class AcpSessionCapabilityOwner {
           routingIds.artifact,
           routingIds.notebook,
           routingIds.skillImport,
-          routingIds.plan
+          routingIds.plan,
+          routingIds.sideChat
         ],
-        usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
+        usedHttpTransport:
+          ownsStableIdentity &&
+          (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
         notebookSessionId: routingIds.notebook || undefined,
         notebookRelease,
         skillImportRelease,
@@ -307,9 +329,12 @@ export class AcpSessionCapabilityOwner {
               routingIds.artifact,
               routingIds.notebook,
               routingIds.skillImport,
-              routingIds.plan
+              routingIds.plan,
+              routingIds.sideChat
             ],
-            usedHttpTransport: ownsRoutingIds && !request.framework.acceptsStdioMcp,
+            usedHttpTransport:
+              ownsRoutingIds &&
+              (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
             notebookSessionId: routingIds.notebook || undefined,
             notebookRelease,
             skillImportRelease,
@@ -353,9 +378,12 @@ export class AcpSessionCapabilityOwner {
             routingIds.artifact,
             routingIds.notebook,
             routingIds.skillImport,
-            routingIds.plan
+            routingIds.plan,
+            routingIds.sideChat
           ],
-          usedHttpTransport: ownsStableIdentity && !request.framework.acceptsStdioMcp,
+          usedHttpTransport:
+            ownsStableIdentity &&
+            (request.policy.role === 'side-chat' || !request.framework.acceptsStdioMcp),
           notebookSessionId: routingIds.notebook || undefined,
           notebookRelease,
           skillImportRelease,
@@ -373,7 +401,8 @@ export class AcpSessionCapabilityOwner {
         artifact: this.options.artifacts ? stableAppSessionId : '',
         notebook: this.options.notebook ? stableAppSessionId : '',
         skillImport: this.options.skillImport ? stableAppSessionId : '',
-        plan: this.options.plan ? stableAppSessionId : ''
+        plan: this.options.plan ? stableAppSessionId : '',
+        sideChat: this.options.sideChat ? stableAppSessionId : ''
       })
     }
 
@@ -382,6 +411,7 @@ export class AcpSessionCapabilityOwner {
     if (this.options.notebook) this.notebookSessionSequence += 1
     if (this.options.skillImport) this.skillImportSessionSequence += 1
     if (this.options.plan) this.planSessionSequence += 1
+    if (this.options.sideChat) this.sideChatSessionSequence += 1
 
     return Object.freeze({
       artifact: this.options.artifacts
@@ -393,22 +423,31 @@ export class AcpSessionCapabilityOwner {
       skillImport: this.options.skillImport
         ? `skill-import-session-${timestamp}-${this.skillImportSessionSequence}`
         : '',
-      plan: this.options.plan ? `plan-session-${timestamp}-${this.planSessionSequence}` : ''
+      plan: this.options.plan ? `plan-session-${timestamp}-${this.planSessionSequence}` : '',
+      sideChat: this.options.sideChat
+        ? `side-chat-session-${timestamp}-${this.sideChatSessionSequence}`
+        : ''
     })
   }
 
   private async build(request: BuildSessionCapabilitiesRequest): Promise<BuiltSessionCapabilities> {
-    const transport = request.framework.acceptsStdioMcp
-      ? 'stdio'
-      : this.options.mcpHttpHost
-        ? 'http'
-        : 'none'
+    const transport =
+      request.policy.role === 'side-chat'
+        ? this.options.mcpHttpHost
+          ? 'http'
+          : 'none'
+        : request.framework.acceptsStdioMcp
+          ? 'stdio'
+          : this.options.mcpHttpHost
+            ? 'http'
+            : 'none'
     const artifactsAllowed =
       policyAllowsSessionCapability(request.policy, 'artifacts') &&
       (request.nativeMcpEnabled || request.bridgeMcpAliasesEnabled)
     const notebookAllowed = policyAllowsSessionCapability(request.policy, 'notebook')
     const skillImportAllowed = policyAllowsSessionCapability(request.policy, 'skill-import')
     const planAllowed = policyAllowsSessionCapability(request.policy, 'plan')
+    const hostMessageAllowed = policyAllowsSessionCapability(request.policy, 'host-message')
 
     const servers =
       transport === 'stdio'
@@ -416,14 +455,16 @@ export class AcpSessionCapabilityOwner {
             artifacts: artifactsAllowed,
             notebook: notebookAllowed,
             skillImport: skillImportAllowed,
-            plan: planAllowed
+            plan: planAllowed,
+            hostMessage: hostMessageAllowed
           })
         : transport === 'http'
           ? await this.buildHttpServers(request, {
               artifacts: artifactsAllowed,
               notebook: notebookAllowed,
               skillImport: skillImportAllowed,
-              plan: planAllowed
+              plan: planAllowed,
+              hostMessage: hostMessageAllowed
             })
           : []
     const modelFacingServers = servers.map((server) => {
@@ -444,6 +485,9 @@ export class AcpSessionCapabilityOwner {
       capabilities.push('skill-import')
     }
     if (canonicalMcpServerNames.includes(PLAN_MCP_SERVER_NAME)) capabilities.push('plan')
+    if (canonicalMcpServerNames.includes(HOST_MESSAGE_MCP_SERVER_NAME)) {
+      capabilities.push('host-message')
+    }
     if (
       capabilities.includes('notebook') &&
       policyAllowsSessionCapability(request.policy, 'host-agents')
@@ -510,6 +554,7 @@ export class AcpSessionCapabilityOwner {
         this.options.plan?.registerSessionAlias
       )
     }
+    if (routingIds.sideChat) this.sideChatRoutingIds.set(appSessionId, routingIds.sideChat)
     this.descriptors.set(appSessionId, descriptor)
     this.committedSessionIds.add(appSessionId)
     this.commitNotebookRelease(appSessionId, request.notebookRelease)
@@ -573,7 +618,8 @@ export class AcpSessionCapabilityOwner {
         this.artifactRoutingIds.get(appSessionId),
         this.notebookRoutingIds.get(appSessionId),
         this.skillImportRoutingIds.get(appSessionId),
-        this.planRoutingIds.get(appSessionId)
+        this.planRoutingIds.get(appSessionId),
+        this.sideChatRoutingIds.get(appSessionId)
       ]
       for (const routingId of routingIds) {
         if (!routingId) continue
@@ -593,6 +639,7 @@ export class AcpSessionCapabilityOwner {
     this.notebookRoutingIds.delete(appSessionId)
     this.skillImportRoutingIds.delete(appSessionId)
     this.planRoutingIds.delete(appSessionId)
+    this.sideChatRoutingIds.delete(appSessionId)
     this.descriptors.delete(appSessionId)
     this.committedSessionIds.delete(appSessionId)
     this.releaseCommittedNotebookCapability(appSessionId)
@@ -609,6 +656,7 @@ export class AcpSessionCapabilityOwner {
       ...this.notebookRoutingIds.keys(),
       ...this.skillImportRoutingIds.keys(),
       ...this.planRoutingIds.keys(),
+      ...this.sideChatRoutingIds.keys(),
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
       ...this.planCapabilityReleases.keys(),
@@ -625,6 +673,7 @@ export class AcpSessionCapabilityOwner {
     this.notebookRoutingIds.clear()
     this.skillImportRoutingIds.clear()
     this.planRoutingIds.clear()
+    this.sideChatRoutingIds.clear()
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
     this.planCapabilityReleases.clear()
@@ -769,7 +818,13 @@ export class AcpSessionCapabilityOwner {
 
   private async buildStdioServers(
     request: BuildSessionCapabilitiesRequest,
-    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean; plan: boolean }
+    enabled: {
+      artifacts: boolean
+      notebook: boolean
+      skillImport: boolean
+      plan: boolean
+      hostMessage: boolean
+    }
   ): Promise<McpServer[]> {
     const servers: McpServer[] = []
     if (enabled.artifacts) {
@@ -841,7 +896,13 @@ export class AcpSessionCapabilityOwner {
 
   private async buildHttpServers(
     request: BuildSessionCapabilitiesRequest,
-    enabled: { artifacts: boolean; notebook: boolean; skillImport: boolean; plan: boolean }
+    enabled: {
+      artifacts: boolean
+      notebook: boolean
+      skillImport: boolean
+      plan: boolean
+      hostMessage: boolean
+    }
   ): Promise<McpServer[]> {
     const host = this.options.mcpHttpHost
     if (!host) return []
@@ -912,6 +973,18 @@ export class AcpSessionCapabilityOwner {
           headers: [authHeader]
         })
       }
+    }
+    if (enabled.hostMessage && this.options.sideChat && this.canPublishHttpRoute(request)) {
+      const routingId = request.routingIds.sideChat
+      host.registerHostMessage(routingId, {
+        sendMessage: (input) => this.options.sideChat!.sendMessage(routingId, input)
+      })
+      servers.push({
+        type: 'http',
+        name: HOST_MESSAGE_MCP_SERVER_NAME,
+        url: host.urlFor('host-message', routingId),
+        headers: [authHeader]
+      })
     }
     return servers
   }

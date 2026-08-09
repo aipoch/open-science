@@ -516,6 +516,115 @@ describe('native Responses compatibility', () => {
     }
   })
 
+  it('replaces native declarations with the registered host-message-only scope', async () => {
+    const upstreamRequests: Record<string, unknown>[] = []
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Response.json({ id: 'host-message-response', output: [] })
+      })
+    )
+    const connection = await proxy.start()
+    try {
+      proxy.registerHostMessageSession('side-session', [
+        {
+          namespace: 'mcp__open_science_host_message',
+          name: 'send_message',
+          parameters: { type: 'object' }
+        }
+      ])
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: 'side-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'shell_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequests[0]).toMatchObject({
+        tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            name: 'mcp__open_science_host_message__send_message'
+          }
+        ]
+      })
+      expect(JSON.stringify(upstreamRequests[0])).not.toContain('shell_command')
+
+      const ordinaryResponse = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: 'ordinary-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'shell_command', parameters: { type: 'object' } }]
+        })
+      })
+      expect(ordinaryResponse.ok).toBe(true)
+      expect(JSON.stringify(upstreamRequests[1])).toContain('shell_command')
+      expect(proxy.unregisterHostMessageSession('side-session')).toBe(true)
+    } finally {
+      await proxy.close()
+    }
+  })
+
+  it('removes every native tool when a strict host-message boundary sees an unexpected Session key', async () => {
+    const upstreamRequests: Record<string, unknown>[] = []
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://api.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return Response.json({ id: 'host-message-mismatch', output: [] })
+      })
+    )
+    const connection = await proxy.start()
+    try {
+      proxy.registerHostMessageSession(
+        'expected-side-session',
+        [
+          {
+            namespace: 'mcp__open_science_host_message',
+            name: 'send_message',
+            parameters: { type: 'object' }
+          }
+        ],
+        { failClosedUnknownKeys: true }
+      )
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          prompt_cache_key: 'unexpected-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'shell_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequests[0]).toMatchObject({ tools: [], tool_choice: 'auto' })
+      expect(proxy.unregisterHostMessageSession('expected-side-session')).toBe(false)
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('forwards loopback requests without browser-controlled Fetch Metadata headers', async () => {
     const fetchImpl = vi.fn(
       async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {

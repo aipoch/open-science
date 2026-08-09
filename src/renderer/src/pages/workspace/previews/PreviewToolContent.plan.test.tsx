@@ -8,9 +8,14 @@ import { normalizeSessionFile } from '../../../../../shared/session-persistence'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useSessionStore } from '@/stores/session-store'
 
+const sideChatState = vi.hoisted(() => ({ parentSessionId: undefined as string | undefined }))
+
 vi.mock('../NotebookPreview', () => ({ NotebookPreview: () => null }))
 vi.mock('../ProjectFilesView', () => ({ ProjectFilesView: () => null }))
 vi.mock('../SessionReviewerPanel', () => ({ SessionReviewerPanel: () => null }))
+vi.mock('../use-side-chat-controller', () => ({
+  useOpenSideChatParentSessionId: () => sideChatState.parentSessionId
+}))
 
 import { PreviewToolContent } from './PreviewToolContent'
 
@@ -56,6 +61,7 @@ const getPlanProjection = vi.fn()
 const saveBlobFile = vi.fn()
 
 beforeEach(() => {
+  sideChatState.parentSessionId = undefined
   respondPlan.mockReset().mockResolvedValue({ projection: approvedProjection, changed: true })
   getPlanProjection.mockReset().mockResolvedValue(approvedProjection)
   saveBlobFile.mockReset().mockResolvedValue({ saved: true })
@@ -202,5 +208,25 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
+  })
+
+  it('keeps the parent Plan read-only while its Side chat is open', () => {
+    sideChatState.parentSessionId = 'session-1'
+
+    render(
+      <PreviewToolContent
+        item={{
+          id: 'tool:session-1:plan',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          type: 'tool',
+          toolKind: 'plan',
+          title: 'Session Plan'
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
   })
 })

@@ -388,6 +388,7 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps the established facade, constructor, and module exports', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'appendSideChatAdvisory',
         'appendUserMessageToInteraction',
         'assertProjectArchivable',
         'assertSessionAvailable',
@@ -690,6 +691,7 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps owner interfaces narrow and facade routes explicit', () => {
     expect(methods(stateOwner, 'public')).toEqual(
       [
+        'appendSideChatAdvisory',
         'appendUserMessage',
         'beginHydration',
         'containsMessageOnActiveBranch',
@@ -732,6 +734,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(methods(reconciliationOwner, 'private')).toEqual([])
 
     const expectedCalls: Record<string, string[]> = {
+      appendSideChatAdvisory: ['stateOwner.appendSideChatAdvisory'],
       appendUserMessageToInteraction: ['stateOwner.appendUserMessage'],
       assertProjectArchivable: ['deletionOwner.assertProjectArchivable'],
       assertSessionAvailable: ['deletionOwner.assertSessionAvailable'],

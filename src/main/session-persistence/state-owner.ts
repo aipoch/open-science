@@ -39,6 +39,13 @@ type AppendUserMessageToInteractionCommand = Readonly<{
   beforePersist?: () => void
 }>
 
+type AppendSideChatAdvisoryCommand = Readonly<{
+  projectId: string
+  sessionId: string
+  promptMessageId: string
+  content: string
+}>
+
 type SessionStateRepository = {
   loadSessionWithDiagnostics(
     projectId: string,
@@ -336,6 +343,39 @@ class SessionPersistenceStateOwner {
       status: 'complete',
       eventIds: [],
       responseToMessageId: interactionId,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }
+    const durable = materializeSessionConversationGraph({
+      ...session,
+      messages: [...session.messages, message],
+      updatedAt: timestamp
+    })
+    await this.options.repository.saveSession(durable)
+    this.recordSession(durable)
+    return message
+  }
+
+  async appendSideChatAdvisory(
+    command: AppendSideChatAdvisoryCommand
+  ): Promise<PersistedChatMessage> {
+    const content = command.content.trim()
+    if (!content) throw new Error('Side chat advisory content must be non-empty.')
+    this.options.assertMutable(command.projectId, command.sessionId, 'mutate')
+    const session = await this.loadRuntimeContextSession(
+      command.projectId,
+      command.sessionId,
+      'patch'
+    )
+    const timestamp = Math.max(session.updatedAt + 1, Date.now())
+    const message: PersistedChatMessage = {
+      id: `message-${randomUUID()}`,
+      role: 'user',
+      content,
+      status: 'complete',
+      eventIds: [],
+      responseToMessageId: command.promptMessageId,
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' },
       createdAt: timestamp,
       updatedAt: timestamp
     }

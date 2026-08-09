@@ -14,6 +14,7 @@ import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
+  ResponsesBridgeNamespacedTool,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge'
@@ -299,6 +300,12 @@ export type ResolvedAgentBackend = {
     unregisterReviewerSession: (promptCacheKey: string) => boolean
     registerToolLessSession?: (promptCacheKey: string) => void
     unregisterToolLessSession?: (promptCacheKey: string) => boolean
+    registerHostMessageSession?: (
+      promptCacheKey: string,
+      namespacedTools: ResponsesBridgeNamespacedTool[],
+      options?: Readonly<{ failClosedUnknownKeys?: boolean }>
+    ) => void
+    unregisterHostMessageSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void

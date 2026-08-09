@@ -100,7 +100,8 @@ export const createSessionMessageGraphOwner = <
     eventId,
     content,
     createdAt,
-    responseToMessageId
+    responseToMessageId,
+    relayedFrom
   }) => {
     const trimmedContent = content.trim()
     const session = get().sessions.find((candidate) => candidate.id === sessionId)
@@ -108,7 +109,6 @@ export const createSessionMessageGraphOwner = <
     if (session.messages.some((message) => message.id === messageId)) {
       return { sessionId, messageId }
     }
-
     const matchingFeedbackIndex = session.messages.findIndex(
       (message) =>
         message.role === 'user' &&
@@ -124,7 +124,6 @@ export const createSessionMessageGraphOwner = <
     ) {
       return { sessionId, messageId: matchingFeedback.id }
     }
-
     const message: ChatMessage = {
       id: messageId,
       role: 'user',
@@ -134,6 +133,7 @@ export const createSessionMessageGraphOwner = <
       sortIndex: createSortIndex(),
       createdAt,
       updatedAt: createdAt,
+      ...(relayedFrom ? { relayedFrom } : {}),
       ...(responseToMessageId ? { responseToMessageId } : {})
     }
     const messages = matchingFeedback

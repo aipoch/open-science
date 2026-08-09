@@ -1,7 +1,10 @@
 import { DEFAULT_UPLOAD_PROJECT_NAME } from '../../shared/uploads'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpSessionCapabilityOwner } from './session-capability-owner'
-import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityPolicy
+} from './session-capability-owner'
 import type { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { AcpSessionRegistry } from './session-registry'
 
@@ -15,6 +18,7 @@ type AcpSessionEnvironmentPolicyOptions = Readonly<{
   registry: Pick<AcpSessionRegistry, 'lookup'>
   defaultProjectName?: string
   planSystemPromptAppend?: string
+  capabilityPolicy?: SessionCapabilityPolicy
 }>
 
 // Derives current Session environment facts directly from their owners; no framework, tooling, or
@@ -28,7 +32,7 @@ class AcpSessionEnvironmentPolicy {
       framework: backend.framework,
       nativeMcpEnabled: backend.adapter.nativeMcpEnabled,
       bridgeMcpAliasesEnabled: backend.adapter.bridgeMcpAliasesEnabled,
-      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+      policy: this.options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
     })
   }
 

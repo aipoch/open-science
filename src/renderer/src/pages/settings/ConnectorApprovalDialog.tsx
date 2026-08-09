@@ -12,8 +12,16 @@ import { useSettingsStore } from '@/stores/settings-store'
 // A modal approval card for an un-trusted connector call. A connector tool sends data to an external
 // service, so a call that isn't pre-allowed or skip-approved is held until the user decides here.
 // Requests are answered one at a time (oldest first); the card can't be dismissed without a decision.
-export function ConnectorApprovalDialog(): React.JSX.Element | null {
-  const request = useSettingsStore((state) => state.pendingApprovals[0])
+export function ConnectorApprovalDialog({
+  blockedSessionId
+}: {
+  blockedSessionId?: string
+}): React.JSX.Element | null {
+  const request = useSettingsStore((state) =>
+    state.pendingApprovals.find(
+      (candidate) => !blockedSessionId || candidate.sessionId !== blockedSessionId
+    )
+  )
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const respondApproval = useSettingsStore((state) => state.respondApproval)

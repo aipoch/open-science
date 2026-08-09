@@ -22,7 +22,17 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   title: 'Session A',
   cwd: '/workspace/project-a',
   status: 'idle',
-  messages: [],
+  messages: [
+    {
+      id: 'message-user-a',
+      role: 'user',
+      content: 'First main prompt',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+  ],
   createdAt: 1,
   updatedAt: 1,
   ...overrides
@@ -82,6 +92,7 @@ const options = (
       cancelRun: vi.fn(() => Promise.resolve()),
       resumeInterruptedSession: vi.fn(() => Promise.resolve())
     },
+    sideChatOpen: false,
     setAutoReviewEnabled: vi.fn(),
     setEnabledComputeHosts: vi.fn(),
     resetNewConversationSettings: vi.fn(),
@@ -139,6 +150,63 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
 
+  it('moves the captured draft into Side chat and clears only its admitted version', async () => {
+    const input = options({ sideChat: { start: vi.fn(async () => true) } })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.sideChat.start())
+    await vi.waitFor(() => expect(input.sideChat?.start).toHaveBeenCalledWith('hello'))
+
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+  })
+
+  it('keeps the draft when Side chat is unavailable or not admitted', async () => {
+    const input = options({ sideChat: { start: vi.fn(async () => false) } })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.sideChat.start())
+    await vi.waitFor(() => expect(input.sideChat?.start).toHaveBeenCalledOnce())
+
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it('does not start Side chat for a Session without a prior main user message', () => {
+    const input = options({
+      activeSession: session({ messages: [] }),
+      sideChat: { start: vi.fn(async () => true) }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.sideChat.start())
+
+    expect(input.sideChat?.start).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it('blocks main submit, revise, resume, and cancel while Side chat owns the Session', async () => {
+    const input = options({ sideChatOpen: true })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
+    await act(async () => hook.result.current.actions.resume())
+    act(() => hook.result.current.actions.cancel())
+
+    expect(hook.result.current.availability).toMatchObject({
+      submit: false,
+      revise: false,
+      resume: false
+    })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+    expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
+    expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+  })
+
   it('orders Specialist preparation before draft clear and runtime submit', async () => {
     const order: string[] = []
     const input = options()
@@ -151,7 +219,10 @@ describe('workspace conversation controller', () => {
       order.push('barrier')
       return true
     })
-    input.composer.lifecycle.clearDraft = vi.fn(() => order.push('clear'))
+    input.composer.lifecycle.clearDraft = vi.fn(() => {
+      order.push('clear')
+      return true
+    })
     input.runtime.sendMessage = vi.fn(async () => {
       order.push('send')
       return { sessionId: 'session-a', messageId: 'message-a' }
