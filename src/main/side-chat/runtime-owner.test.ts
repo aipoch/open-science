@@ -531,6 +531,65 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     await owner.close({ sideSessionId: started.sideSessionId })
   })
 
+  it('keeps send_message-like assistant text in the transcript without relaying it', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-text-tool-call-'))
+    const relay = createRelayOwner()
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay,
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'side-session-text-tool-call',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            runtimeOptions!.callbacks?.onEvent?.({
+              id: 'assistant-text-tool-call',
+              messageId: 'assistant-text-tool-call',
+              timestamp: 1,
+              sessionId: request.sessionId,
+              kind: 'message',
+              role: 'assistant',
+              text: '<send_message>draw a cosine curve</send_message>'
+            } as never)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+
+    const started = await owner.start({
+      parentSessionId: 'main-text-tool-call',
+      projectId: 'project-1',
+      text: 'Draw a cosine curve.'
+    })
+
+    expect(owner.list().chats[0]?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          text: '<send_message>draw a cosine curve</send_message>'
+        })
+      ])
+    )
+    expect(relay.claim('main-text-tool-call')).toBeUndefined()
+
+    await owner.close({ sideSessionId: started.sideSessionId })
+  })
+
   it('honors a panel close requested while the temporary runtime is starting', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-starting-'))
     let releaseTarget!: (value: ExplicitAgentBackendTarget) => void
