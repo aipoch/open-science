@@ -410,13 +410,22 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         }
         await runtime.respondToPermission(requestId, optionId, restored)
         if (request && restored) {
-          useSessionStore.getState().clearPermissionPending(request.sessionId)
+          useSessionStore.getState().clearPermissionPending(request.sessionId, {
+            authority: 'continuing',
+            requestId
+          })
         }
       } catch (error) {
         if (request && isRestoredRequest) {
           // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
           // the transient action error separately for the active Session to display.
-          useSessionStore.getState().setPermissionPending(request.sessionId)
+          const permission = useSessionStore
+            .getState()
+            .sessions.find((session) => session.id === request.sessionId)
+            ?.runtimeContext?.permission
+          if (permission?.state === 'pending') {
+            useSessionStore.getState().setPermissionPending(request.sessionId)
+          }
         } else if (request) {
           useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
         }

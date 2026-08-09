@@ -163,6 +163,58 @@ export const projectElicitationPending = (session: ChatSession, pending: boolean
   }
 }
 
+export const projectPermissionPending = (
+  session: ChatSession,
+  rearmAuthority = false
+): ChatSession => {
+  const runtimeContext = session.runtimeContext
+  const permission = runtimeContext?.permission
+  if (rearmAuthority && (!runtimeContext || permission?.state !== 'continuing')) return session
+  let nextRuntimeContext = runtimeContext
+  if (rearmAuthority && runtimeContext && permission) {
+    nextRuntimeContext = { ...runtimeContext, permission: { ...permission, state: 'pending' } }
+  }
+  const status =
+    session.status === 'waiting-for-user' || session.status === 'waiting-plan-approval'
+      ? session.status
+      : 'waiting-permission'
+  if (nextRuntimeContext === runtimeContext && status === session.status) return session
+  return { ...session, runtimeContext: nextRuntimeContext, status, updatedAt: Date.now() }
+}
+
+export const projectPermissionCleared = (
+  session: ChatSession,
+  authority?: 'continuing' | 'settled',
+  requestId?: string
+): ChatSession => {
+  const runtimeContext = session.runtimeContext
+  const permission = runtimeContext?.permission
+  if (
+    authority === 'continuing' &&
+    (!runtimeContext ||
+      permission?.state !== 'pending' ||
+      permission.request.requestId !== requestId)
+  ) {
+    return session
+  }
+  let nextRuntimeContext = runtimeContext
+  if (authority === 'continuing' && runtimeContext && permission) {
+    nextRuntimeContext = { ...runtimeContext, permission: { ...permission, state: 'continuing' } }
+  } else if (authority === 'settled' && runtimeContext && permission) {
+    const settledRuntimeContext = { ...runtimeContext }
+    delete settledRuntimeContext.permission
+    nextRuntimeContext = settledRuntimeContext
+  }
+  const status =
+    session.status === 'waiting-permission'
+      ? session.activeRun || session.agentPromptInFlight
+        ? 'running'
+        : 'idle'
+      : session.status
+  if (nextRuntimeContext === runtimeContext && status === session.status) return session
+  return { ...session, runtimeContext: nextRuntimeContext, status, updatedAt: Date.now() }
+}
+
 export const projectArtifactError = (session: ChatSession, error: string): ChatSession => ({
   ...session,
   status: 'error',

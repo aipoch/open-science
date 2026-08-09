@@ -107,6 +107,23 @@ class AcpPermissionWaitOwner {
     )
   }
 
+  async cancelContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
+    if (!this.sessions) return
+    await this.patch(
+      projectId,
+      sessionId,
+      (context) => {
+        const permission = context.permission
+        if (!permission) return undefined
+        if (permission.request.requestId !== requestId) {
+          throw new Error('A different permission request now owns this Session.')
+        }
+        return undefined
+      },
+      'idle'
+    )
+  }
+
   async beginContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
     await this.transitionContinuation(
       projectId,

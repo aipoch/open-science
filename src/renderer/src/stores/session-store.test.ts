@@ -1361,6 +1361,58 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
   })
 
+  it('mirrors restored permission authority through continuing, rearm, and settlement', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Run npm test'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-restored',
+              sessionId: session.id,
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+
+    useSessionStore.getState().clearPermissionPending('transport-session-1', {
+      authority: 'continuing',
+      requestId: 'permission-restored'
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      runtimeContext: { permission: { state: 'continuing' } }
+    })
+
+    useSessionStore.getState().setPermissionPending('transport-session-1', { rearmAuthority: true })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: { permission: { state: 'pending' } }
+    })
+
+    useSessionStore
+      .getState()
+      .clearPermissionPending('transport-session-1', { authority: 'settled' })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission).toBeUndefined()
+  })
+
   it('tracks user-input waiting and resumes a runtime-owned continuation immediately', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

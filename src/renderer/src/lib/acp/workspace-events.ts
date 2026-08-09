@@ -1,5 +1,9 @@
 import {
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   type AcpRuntimeEvent,
   type AcpTurnTokenUsage
 } from '../../../../shared/acp'
@@ -479,6 +483,21 @@ const applyWorkspaceRuntimeEvent = async (
   dependencies: WorkspaceRuntimeEventDependencies = {}
 ): Promise<boolean> => {
   const store = useSessionStore.getState()
+
+  if (event.kind === 'permission' && event.sessionId) {
+    if (event.title === ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE) {
+      store.setPermissionPending(event.sessionId, { rearmAuthority: true })
+      return true
+    }
+    if (
+      event.title === ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE ||
+      event.title === ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE ||
+      event.title === ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE
+    ) {
+      store.clearPermissionPending(event.sessionId, { authority: 'settled' })
+      return true
+    }
+  }
 
   // A routed user Message is persisted by main before broadcast. Project that same Message locally
   // without treating it as a fresh prompt or starting another run.

@@ -47,8 +47,6 @@ type SessionStore = SessionStoreData &
     clearBranchContextReset: (sessionId: string) => void
     markSpecialistSwitchResetRequired: (sessionId: string) => void
     clearSpecialistSwitchResetRequired: (sessionId: string) => void
-    setPermissionPending: (sessionId: string) => void
-    clearPermissionPending: (sessionId: string) => void
     setContextUsage: (sessionId: string, contextUsage: AcpContextUsage | undefined) => void
     setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
@@ -142,39 +140,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
           ? { ...session, specialistSwitchResetRequired: undefined }
-          : session
-      )
-    }))
-  },
-
-  // Marks a session as blocked on a user permission decision.
-  setPermissionPending: (sessionId) => {
-    set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId &&
-        session.status !== 'waiting-permission' &&
-        session.status !== 'waiting-for-user' &&
-        session.status !== 'waiting-plan-approval'
-          ? {
-              ...session,
-              status: 'waiting-permission',
-              updatedAt: Date.now()
-            }
-          : session
-      )
-    }))
-  },
-
-  // Restores a permission-blocked session to running or idle state.
-  clearPermissionPending: (sessionId) => {
-    set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === sessionId && session.status === 'waiting-permission'
-          ? {
-              ...session,
-              status: session.activeRun || session.agentPromptInFlight ? 'running' : 'idle',
-              updatedAt: Date.now()
-            }
           : session
       )
     }))

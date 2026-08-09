@@ -145,6 +145,26 @@ describe('ACP durable permission wait owner', () => {
     expect(fixture.patches).not.toHaveBeenCalled()
   })
 
+  it('cancels matching pending and continuing authority idempotently', async () => {
+    const fixture = createSessions()
+    const owner = new AcpPermissionWaitOwner(fixture.sessions)
+    const candidate = createCandidate()
+
+    await owner.persist(candidate)
+    await owner.cancelContinuation('project-1', 'session-1', 'permission-1')
+    expect(fixture.context().permission).toBeUndefined()
+
+    await owner.persist(candidate)
+    await owner.beginContinuation('project-1', 'session-1', 'permission-1')
+    await owner.cancelContinuation('project-1', 'session-1', 'permission-1')
+    await owner.cancelContinuation('project-1', 'session-1', 'permission-1')
+
+    expect(fixture.context().permission).toBeUndefined()
+    expect(fixture.patches).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionStatus: 'idle', patch: { permission: undefined } })
+    )
+  })
+
   it('rejects a restored locator that does not match the durable Session', async () => {
     const fixture = createSessions()
     const owner = new AcpPermissionWaitOwner(fixture.sessions)

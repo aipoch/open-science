@@ -9,23 +9,27 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import type {
-  AcpCancelPromptRequest,
-  AcpCompactSessionRequest,
-  AcpConnectRequest,
-  AcpCreateSessionRequest,
-  AcpCreateSessionResponse,
-  AcpRuntimeEvent,
-  AcpDeleteSessionRequest,
-  AcpPermissionRequest,
-  AcpPermissionResponse,
-  AcpPermissionSettlementState,
-  ElicitationResponse,
-  AcpPromptRequest,
-  AcpResumeSessionRequest,
-  AcpRevokePermissionGrantRequest,
-  AcpSetPermissionProfileRequest,
-  AcpStateSnapshot
+import {
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpCancelPromptRequest,
+  type AcpCompactSessionRequest,
+  type AcpConnectRequest,
+  type AcpCreateSessionRequest,
+  type AcpCreateSessionResponse,
+  type AcpRuntimeEvent,
+  type AcpDeleteSessionRequest,
+  type AcpPermissionRequest,
+  type AcpPermissionResponse,
+  type AcpPermissionSettlementState,
+  type ElicitationResponse,
+  type AcpPromptRequest,
+  type AcpResumeSessionRequest,
+  type AcpRevokePermissionGrantRequest,
+  type AcpSetPermissionProfileRequest,
+  type AcpStateSnapshot
 } from '../../shared/acp'
 import { type AgentFrameworkId } from '../../shared/settings'
 import {
@@ -333,7 +337,10 @@ class AcpRuntime {
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
-  private durablePermissionContinuations?: Map<string, { projectId: string; requestId: string }>
+  private durablePermissionContinuations?: Map<
+    string,
+    { projectId: string; requestId: string; cancellationRequested?: boolean }
+  >
   private restoredPermissionContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -982,13 +989,18 @@ class AcpRuntime {
       request.sessionId
     )
     const interactionInFlight = this.sessionInteractions.current(request.sessionId) !== undefined
-    const cancelledPendingContinuation = this.appContinuations.delete(request.sessionId)
+    const durablePermission = this.durablePermissionContinuations?.get(request.sessionId)
+    if (durablePermission) durablePermission.cancellationRequested = true
+    const continuationWasPending = this.appContinuations.get(request.sessionId) !== undefined
+    const cancelledContinuation = this.appContinuations.delete(request.sessionId)
 
-    if (cancelledPendingContinuation && !interactionInFlight) {
+    if (continuationWasPending && cancelledContinuation && !interactionInFlight) {
+      await this.settleCancelledDurablePermissionContinuation(request.sessionId)
       this.emitState()
       return this.getSnapshot()
     }
 
+    let cancellationAccepted = false
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
         sessionId: request.sessionId,
@@ -997,6 +1009,7 @@ class AcpRuntime {
             sessionId: activeSession.sessionId
           }),
         onAccepted: () => {
+          cancellationAccepted = true
           cancelPlanInteraction()
           this.cancelPermissionFlowForSession(request.sessionId)
           this.pushEvent({
@@ -1018,6 +1031,10 @@ class AcpRuntime {
           void this.disconnect()
         }
       })
+    }
+    if (cancellationAccepted) {
+      await this.settleCancelledDurablePermissionContinuation(request.sessionId)
+      this.emitState()
     }
 
     return this.getSnapshot()
@@ -1124,7 +1141,7 @@ class AcpRuntime {
       : undefined
     const durablePermissionContinuations =
       this.durablePermissionContinuations ??
-      new Map<string, { projectId: string; requestId: string }>()
+      new Map<string, { projectId: string; requestId: string; cancellationRequested?: boolean }>()
     this.durablePermissionContinuations = durablePermissionContinuations
     if (durablePermissionContinuations.has(restored.sessionId)) {
       throw new Error('The restored permission request is already being continued.')
@@ -1133,21 +1150,47 @@ class AcpRuntime {
       projectId,
       requestId: response.requestId
     })
+    let continuationBegan = false
     try {
-      await this.permissionContext.prepareRestoredDecision(
-        decision.permission,
-        decision.option,
-        projectId
-      )
       // Persist the consumed/non-replayable marker before starting provider work. A process loss or
-      // later clear failure must never restore the accepted approval as an actionable card.
+      // grant failure must never leave a reusable approval without consuming its authority first.
       await this.permissionWaitOwner.beginContinuation(
         projectId,
         restored.sessionId,
         response.requestId
       )
+      continuationBegan = true
+      await this.permissionContext.prepareRestoredDecision(
+        decision.permission,
+        decision.option,
+        projectId
+      )
     } catch (error) {
       this.permissionContext.clearRestoredDecision(restored.sessionId)
+      if (continuationBegan) {
+        try {
+          await this.permissionWaitOwner.rearmContinuation(
+            projectId,
+            restored.sessionId,
+            response.requestId
+          )
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId: restored.sessionId,
+            title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+          })
+        } catch (rearmError) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId: restored.sessionId,
+            title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+            text: errorMessage(rearmError)
+          })
+        }
+        this.emitState()
+      }
       durablePermissionContinuations.delete(restored.sessionId)
       throw error
     }
@@ -1418,7 +1461,9 @@ class AcpRuntime {
     } finally {
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)
-      if (completed && durablePermission) {
+      if (durablePermission?.cancellationRequested) {
+        await this.settleCancelledDurablePermissionContinuation(sessionId)
+      } else if (completed && durablePermission) {
         this.restoredPermissionContextResetSessionIds?.delete(sessionId)
         try {
           await this.permissionWaitOwner.clearAfterContinuation(
@@ -1426,12 +1471,19 @@ class AcpRuntime {
             sessionId,
             durablePermission.requestId
           )
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId,
+            title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+            text: 'completed'
+          })
         } catch (error) {
           this.pushEvent({
             kind: 'permission',
             level: 'error',
             sessionId,
-            title: 'Permission continuation completed but its wait could not be cleared',
+            title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
             text: errorMessage(error)
           })
         } finally {
@@ -1446,12 +1498,18 @@ class AcpRuntime {
             sessionId,
             durablePermission.requestId
           )
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId,
+            title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+          })
         } catch (error) {
           this.pushEvent({
             kind: 'permission',
             level: 'error',
             sessionId,
-            title: 'Permission continuation failed and its wait could not be restored',
+            title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
             text: errorMessage(error)
           })
         } finally {
@@ -1599,8 +1657,38 @@ class AcpRuntime {
     this.permissionContext.cancelForSession(sessionId)
     this.elicitationOwner.cancelForSession(sessionId)
     this.appContinuations.delete(sessionId)
-    this.durablePermissionContinuations?.delete(sessionId)
+  }
+
+  private async settleCancelledDurablePermissionContinuation(sessionId: string): Promise<void> {
+    const durablePermission = this.durablePermissionContinuations?.get(sessionId)
+    if (!durablePermission) return
+    try {
+      await this.permissionWaitOwner.cancelContinuation(
+        durablePermission.projectId,
+        sessionId,
+        durablePermission.requestId
+      )
+    } catch (error) {
+      this.pushEvent({
+        kind: 'permission',
+        level: 'error',
+        sessionId,
+        title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+        text: errorMessage(error)
+      })
+      return
+    }
+    if (this.durablePermissionContinuations?.get(sessionId) !== durablePermission) return
+    this.durablePermissionContinuations.delete(sessionId)
     this.restoredPermissionContextResetSessionIds?.delete(sessionId)
+    this.permissionContext.clearRestoredDecision(sessionId)
+    this.pushEvent({
+      kind: 'permission',
+      level: 'info',
+      sessionId,
+      title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+      text: 'cancelled'
+    })
   }
 
   private restoredPermissionHistoryReplayDescriptor(): HistoryReplayDescriptor {

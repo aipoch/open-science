@@ -1,4 +1,9 @@
-import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
+import {
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpRuntimeEvent,
+  type AcpPermissionRequest
+} from '../../../../shared/acp'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
@@ -805,6 +810,48 @@ describe('workspace runtime events', () => {
     syncWorkspacePermissionState([])
 
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
+  })
+
+  it('mirrors restored permission rearm and clear events into the local authority projection', async () => {
+    const request = createPermissionRequest()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'idle',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'continuing',
+            request,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-rearmed',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+      })
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: { permission: { state: 'pending' } }
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-settled',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission).toBeUndefined()
   })
 
   it('syncs first-output waiting only for known foreground workspace sessions', () => {

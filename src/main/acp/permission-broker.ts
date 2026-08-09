@@ -1216,9 +1216,9 @@ class AcpPermissionBroker {
                 sessionId: pending.request.sessionId
               }
       try {
-        await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
         const persistence = this.persistLiveSettlement(pending)
         if (persistence) await persistence
+        await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
         this.settlePending(
           pending,
           { outcome: { outcome: 'selected', optionId: providerOptionId } },

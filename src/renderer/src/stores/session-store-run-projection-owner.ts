@@ -42,7 +42,9 @@ import {
   projectElicitationPending,
   projectFailedRun,
   projectFinishedRun,
-  projectInterruptedRun
+  projectInterruptedRun,
+  projectPermissionCleared,
+  projectPermissionPending
 } from './session-store-run-terminal-helpers'
 import type { ChatSession, SessionStoreData } from './session-store-persistence-owner'
 
@@ -53,6 +55,11 @@ export type SessionRunProjectionActions = {
   setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
   setElicitationPending: (sessionId: string, pending: boolean) => void
+  setPermissionPending: (sessionId: string, options?: { rearmAuthority?: boolean }) => void
+  clearPermissionPending: (
+    sessionId: string,
+    options?: { authority?: 'continuing' | 'settled'; requestId?: string }
+  ) => void
   attachRunArtifacts: (input: AttachRunArtifactsInput) => AppendMessageResult | undefined
   replaceMessageArtifacts: (input: ReplaceMessageArtifactsInput) => void
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
@@ -162,6 +169,22 @@ export const createSessionRunProjectionOwner = <
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
           projectElicitationPending(session, pending)
+        )
+      }))
+    },
+
+    setPermissionPending: (sessionId, options) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectPermissionPending(session, options?.rearmAuthority)
+        )
+      }))
+    },
+
+    clearPermissionPending: (sessionId, options) => {
+      setSessionState((state) => ({
+        sessions: projectSession(state.sessions, sessionId, (session) =>
+          projectPermissionCleared(session, options?.authority, options?.requestId)
         )
       }))
     },

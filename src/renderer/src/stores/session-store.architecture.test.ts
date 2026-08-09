@@ -896,7 +896,6 @@ describe('Session Store architecture', () => {
     ])
     expect(facadeActionNames(facadeSource)).toEqual([
       'clearBranchContextReset',
-      'clearPermissionPending',
       'clearSelection',
       'clearSpecialistSwitchResetRequired',
       'deleteSession',
@@ -910,7 +909,6 @@ describe('Session Store architecture', () => {
       'setContextUsage',
       'setEnabledComputeHosts',
       'setFixLoopActive',
-      'setPermissionPending',
       'setPermissionProfile',
       'setSessionSpecialistId',
       'togglePinned',
@@ -947,6 +945,7 @@ describe('Session Store architecture', () => {
       'beginCompaction',
       'clearArtifactError',
       'clearPendingHistoryReplay',
+      'clearPermissionPending',
       'completeActivityGroup',
       'completeInterruptedTurnResume',
       'failCompaction',
@@ -965,6 +964,7 @@ describe('Session Store architecture', () => {
       'setAwaitingFirstAgentOutput',
       'setElicitationDraftAnswers',
       'setElicitationPending',
+      'setPermissionPending',
       'upsertToolActivity'
     ])
   })

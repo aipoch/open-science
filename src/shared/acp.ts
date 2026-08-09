@@ -133,6 +133,17 @@ export type AcpHandoffFailure = {
 // both sides at once.
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 
+// Main owns restored permission authority. These lifecycle events let renderer projections follow
+// durable settlement without making the renderer part of the persistence protocol.
+export const ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE =
+  'Restored permission continuation re-armed'
+export const ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE =
+  'Restored permission continuation settled'
+export const ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE =
+  'Permission continuation completed but its wait could not be cleared'
+export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
+  'Permission continuation failed and its wait could not be restored'
+
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit; the renderer tries framework-native
 // compaction first, then falls back to a fresh context plus text replay. Absent on ordinary events.

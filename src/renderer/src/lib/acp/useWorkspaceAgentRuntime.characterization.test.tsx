@@ -422,7 +422,7 @@ describe('workspace Agent Runtime hook contract', () => {
     })
   })
 
-  it('refreshes a re-armed restored permission card after an asynchronous continuation failure', async () => {
+  it('mirrors restored continuation settlement before re-arming an asynchronous failure', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Run the verification',
@@ -463,11 +463,18 @@ describe('workspace Agent Runtime hook contract', () => {
       await latest.respondToPermission('permission-restored', 'allow-once')
     })
     expect(latest.pendingPermissions).toEqual([])
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe(
+      'continuing'
+    )
 
-    act(() => useSessionStore.getState().failRun('session-1', 'Continuation failed'))
+    act(() => useSessionStore.getState().failRun('session-1', 'Unrelated later failure'))
     await act(async () => Promise.resolve())
+    expect(latest.pendingPermissions).toEqual([])
 
-    // Re-projecting the durable pending authority moves the Session back to its actionable wait.
+    act(() =>
+      useSessionStore.getState().setPermissionPending('session-1', { rearmAuthority: true })
+    )
+    await act(async () => Promise.resolve())
     expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
     expect(latest.pendingPermissions).toEqual([request])
   })
