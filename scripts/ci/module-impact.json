@@ -125,6 +125,7 @@
       "ownerPaths": [
         "src/main/reviewer/orchestrator.ts",
         "src/main/reviewer/review-assessment-owner.ts",
+        "src/main/reviewer/reviewer-fix-loop-owner.ts",
         "src/main/reviewer/reviewer-session-driver.ts"
       ],
       "interfacePaths": [
@@ -143,6 +144,7 @@
           "src/main/reviewer/orchestrator-prompt-prefix.test.ts",
           "src/main/reviewer/orchestrator.start-contract.test.ts",
           "src/main/reviewer/fix-loop.test.ts",
+          "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
           "src/main/reviewer/correction.test.ts"
         ],
         "contract": [
