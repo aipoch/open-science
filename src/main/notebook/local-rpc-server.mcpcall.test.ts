@@ -553,6 +553,126 @@ describe('computeCall RPC', () => {
     expect(body.error).toMatch(/unknown details mode/i)
   })
 
+  it('routes computeCall op=submit_job with canonical arguments and trusted context', async () => {
+    const captured: unknown[] = []
+    const fakeJob = { job_id: 'job-42', status: 'queued' }
+    const fakeCompute = {
+      submitJob: async (...args: unknown[]) => {
+        captured.push(...args)
+        return fakeJob
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: {
+          op: 'submit_job',
+          provider_id: 'ssh:biowulf',
+          intent: 'analyze data',
+          command: 'python analyze.py',
+          environment: 'module load python',
+          resources: { cpus: 4, memory_gb: 16 },
+          inputs: ['data/input.csv'],
+          outputs: [{ path: 'results.csv', featured: true }],
+          harvest: { mode: 'manifest' },
+          timeout_seconds: 600,
+          workspace_cwd: 'workspace/project',
+          session_id: 'forged-session',
+          project_id: 'forged-project'
+        }
+      })
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({ result: fakeJob })
+    expect(captured).toEqual([
+      'ssh:biowulf',
+      'analyze data',
+      'python analyze.py',
+      {
+        environment: 'module load python',
+        resourceRequest: JSON.stringify({ cpus: 4, memory_gb: 16 }),
+        inputs: ['data/input.csv'],
+        outputManifest: JSON.stringify([{ path: 'results.csv', featured: true }]),
+        harvestConfig: JSON.stringify({ mode: 'manifest' }),
+        timeoutSeconds: 600,
+        workspaceCwd: 'workspace/project'
+      },
+      { sessionId: 's-42', projectId: 'project-1' }
+    ])
+  })
+
+  it('serializes submit_job compute call errors', async () => {
+    const submitErr = new Error('approval denied') as Error & { computeCallError: unknown }
+    submitErr.computeCallError = {
+      error_code: 'approval_denied',
+      message: 'Approval denied.',
+      retry_after_user_action: false
+    }
+    const fakeCompute = {
+      submitJob: async () => {
+        throw submitErr
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: {
+          op: 'submit_job',
+          provider_id: 'ssh:biowulf',
+          intent: 'analyze data',
+          command: 'python analyze.py'
+        }
+      })
+    })
+
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: string }
+    expect(JSON.parse(body.error)).toEqual(submitErr.computeCallError)
+  })
+
+  it('routes computeCall op=job_status to the compute service', async () => {
+    const fakeStatus = { job_id: 'job-42', status: 'running' }
+    const seenJobIds: string[] = []
+    const fakeCompute = {
+      getJobStatus: async (jobId: string) => {
+        seenJobIds.push(jobId)
+        return fakeStatus
+      }
+    }
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      computeService: fakeCompute as never
+    })
+    const { endpoint, token } = await sessionConnection(server)
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        method: 'computeCall',
+        params: { op: 'job_status', job_id: 'job-42' }
+      })
+    })
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({ result: fakeStatus })
+    expect(seenJobIds).toEqual(['job-42'])
+  })
+
   it('routes computeCall op=job_result to getJobResult', async () => {
     const fakeResult = {
       job_id: 'job-42',

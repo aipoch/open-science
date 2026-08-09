@@ -35,6 +35,21 @@ describe('module test impact commands', () => {
     expect(() => createModuleTestPlan('unknown_module')).toThrow('Unknown module: unknown_module')
   })
 
+  it('builds the Compute service contract and fallback plan', () => {
+    const plan = createModuleTestPlan('compute_service')
+
+    expect(plan.testFiles).toEqual(
+      expect.arrayContaining([
+        'src/main/compute/compute-service.test.ts',
+        'src/main/compute/ssh-runner.test.ts',
+        'src/main/compute/ipc.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts'
+      ])
+    )
+    expect(plan.capabilityOverlays).toEqual(['windows_sensitive'])
+    expect(plan.fallbackCapabilities).toEqual(['main_runtime'])
+  })
+
   it('expands changed owners through consumer modules and graph candidates', () => {
     const plan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],

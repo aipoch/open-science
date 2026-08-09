@@ -121,6 +121,31 @@
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
     },
+    "compute_service": {
+      "ownerPaths": ["src/main/compute/compute-service.ts"],
+      "interfacePaths": ["src/main/compute/compute-service.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/compute/compute-service.test.ts",
+          "src/main/compute/compute-jobs.integration.test.ts",
+          "src/main/compute/concurrency-integration.test.ts"
+        ],
+        "contract": [
+          "src/main/compute/ssh-runner.test.ts",
+          "src/main/compute/ipc.test.ts",
+          "src/main/compute/application-commands.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts"
+        ],
+        "consumer": [
+          "src/main/compute/job-runtime.test.ts",
+          "src/main/compute/enabled-hosts-registry.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
     "artifact_storage": {
       "ownerPaths": [
         "src/main/artifacts/compatibility-owner.ts",
