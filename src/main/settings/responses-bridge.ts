@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { ServerResponse } from 'node:http'
 
 import { createLogger } from '../logger'
 import { appendChatCompletions } from './base-url'
@@ -22,6 +22,11 @@ import {
   resolveSelectedSkills,
   selectExplicitConnectorSkills
 } from './skill-selector-routing'
+import {
+  ProviderLoopbackHttpHost,
+  writeProviderLoopbackJson as json,
+  type ProviderLoopbackHttpRequest
+} from './provider-loopback-http-host'
 
 // The bridge deliberately keeps protocol payloads open-ended; validation rejects unsupported shapes
 // at the boundary before values reach the upstream request.
@@ -82,25 +87,13 @@ type ResponsesBridgeOptions = {
 
 type BridgeFetch = typeof fetch
 
-const json = (response: ServerResponse, status: number, body: unknown): void => {
-  response.writeHead(status, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(body))
-}
-
-const readBody = async (request: IncomingMessage): Promise<JsonObject> => {
-  const chunks: Buffer[] = []
-  for await (const chunk of request) chunks.push(Buffer.from(chunk))
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as JsonObject
-}
-
 // The upstream Chat Completions endpoint. `target.baseUrl` is already the resolved OpenAI base (an
 // official vendor's exact versioned base, or a custom root normalized to `<root>/v1`), so this only
 // appends `/chat/completions` — preserving any query/hash on the base.
 const chatUrl = (value: string): string => appendChatCompletions(value)
 
 export class ResponsesBridge {
-  private server: Server | undefined
-  private connection: ResponsesBridgeConnection | undefined
+  private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
   private target: ResponsesBridgeTarget
   // reasoning_content produced with each tool call, keyed by call_id, so a follow-up request can pass
   // it back to thinking-mode providers that require it. Grows within a session; cleared on close (a
@@ -117,6 +110,30 @@ export class ResponsesBridge {
     private readonly options: ResponsesBridgeOptions = {}
   ) {
     this.target = target
+    this.host = new ProviderLoopbackHttpHost({
+      credentialMode: 'bearer',
+      createConnection: (origin, token) => ({
+        baseUrl: origin + '/v1',
+        token,
+        continuityToken: randomBytes(16).toString('hex')
+      }),
+      onUnauthorized: (response) =>
+        json(response, 401, { error: { message: 'Invalid Responses bridge token' } }),
+      onError: (error, response) => {
+        if (response.headersSent) {
+          response.destroy()
+          return
+        }
+        const bridgeError = error instanceof ResponsesProtocolError ? error : undefined
+        json(response, bridgeError?.status ?? 400, {
+          error: {
+            type: bridgeError?.type ?? 'invalid_request_error',
+            message: error instanceof Error ? error.message : String(error)
+          }
+        })
+      },
+      handle: (request, response) => this.handle(request, response)
+    })
   }
 
   async selectSkills(
@@ -274,62 +291,16 @@ export class ResponsesBridge {
   }
 
   async start(): Promise<ResponsesBridgeConnection> {
-    if (this.connection) return this.connection
-    const token = randomBytes(24).toString('hex')
-    const server = createServer((request, response) => {
-      void this.handle(request, response).catch((error: unknown) => {
-        if (response.destroyed || response.writableEnded) return
-        if (!response.headersSent) {
-          const bridgeError = error instanceof ResponsesProtocolError ? error : undefined
-          json(response, bridgeError?.status ?? 400, {
-            error: {
-              type: bridgeError?.type ?? 'invalid_request_error',
-              message: error instanceof Error ? error.message : String(error)
-            }
-          })
-        } else {
-          response.destroy()
-        }
-      })
-    })
-    // Own the server before listen resolves so every partial-start failure remains closeable.
-    this.server = server
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-      server.unref()
-      const address = server.address()
-      if (!address || typeof address === 'string')
-        throw new Error('Responses bridge did not bind a port')
-      this.connection = {
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        token,
-        continuityToken: randomBytes(16).toString('hex')
-      }
-      return this.connection
-    } catch (error) {
-      await this.close().catch(() => undefined)
-      throw error
-    }
+    return this.host.start()
   }
 
   async close(): Promise<void> {
-    const server = this.server
-    this.server = undefined
-    this.connection = undefined
     this.reasoningByCallId.clear()
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
     this.scopedToolLessSessionKeys.clear()
-    if (!server) return
-    const closing = new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    )
-    server.closeAllConnections()
-    await closing
+    await this.host.close()
   }
 
   // Records this turn's reasoning against its tool-call ids so the next request can pass it back to
@@ -339,139 +310,121 @@ export class ResponsesBridge {
     for (const callId of callIds) this.reasoningByCallId.set(callId, reasoning)
   }
 
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== 'POST' || request.url !== '/v1/responses') {
+  private async handle(
+    request: ProviderLoopbackHttpRequest,
+    response: ServerResponse
+  ): Promise<void> {
+    if (request.method !== 'POST' || request.path !== '/v1/responses') {
       json(response, 404, { error: { message: 'Unknown Responses bridge route' } })
       return
     }
-    if (request.headers.authorization !== `Bearer ${this.connection?.token}`) {
-      json(response, 401, { error: { message: 'Invalid Responses bridge token' } })
+
+    const body = (await request.readJsonObject()) as JsonObject
+    const promptCacheKey =
+      typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
+    const reviewerScoped =
+      promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
+    const toolLessScoped =
+      promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
+    if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
+    if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
+    const namespacedTools = reviewerScoped
+      ? (this.target.reviewerScope?.namespacedTools ?? [])
+      : toolLessScoped
+        ? []
+        : (this.target.namespacedTools ?? [])
+    // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
+    // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
+    // can call only the scope-bounded reviewer HTTP MCP functions.
+    const scopedBody =
+      reviewerScoped || toolLessScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
+    const chatRequest = responsesToChatRequest(
+      scopedBody,
+      this.target.model,
+      this.reasoningByCallId,
+      namespacedTools,
+      {
+        reasoningEffortOverride: this.target.reasoningEffort,
+        vendorId: this.target.vendorId,
+        reasoningEffortTransport: this.target.reasoningEffortTransport
+      }
+    )
+
+    // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
+    // model, not the upstream) and whether Codex's advertised tools survived translation into Chat
+    // function tools. An empty incomingToolCount means Codex advertised nothing (e.g. a code_mode_only
+    // catalog model); an empty outgoingToolNames with a non-empty incoming set means the bridge
+    // filtered them.
+    const incomingTools = Array.isArray(body.tools) ? (body.tools as JsonObject[]) : []
+    const outgoingTools = Array.isArray(chatRequest.tools)
+      ? (chatRequest.tools as JsonObject[])
+      : []
+    const outgoingToolNames = outgoingTools.map((tool) => tool?.function?.name)
+    log.info('bridge request', {
+      catalogModel: body.model,
+      upstreamModel: chatRequest.model,
+      stream: chatRequest.stream === true,
+      incomingToolTypes: [
+        ...new Set(incomingTools.map((tool) => String(tool?.type ?? '(missing)')))
+      ],
+      incomingToolCount: incomingTools.length,
+      outgoingToolNames,
+      reviewerScoped,
+      toolChoice: chatRequest.tool_choice ?? null
+    })
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
+    }
+    const upstream = await this.fetchImpl(chatUrl(this.target.baseUrl), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(chatRequest),
+      signal: request.signal
+    })
+    if (!upstream.ok) {
+      const errorBody = await upstream.text()
+      log.warn('bridge upstream error', {
+        upstreamModel: chatRequest.model,
+        status: upstream.status
+      })
+      json(response, upstream.status, {
+        error: {
+          type: 'upstream_error',
+          message: upstreamErrorMessage(errorBody, upstream.status),
+          status: upstream.status
+        }
+      })
       return
     }
-    const abortController = new AbortController()
-    const abortUpstream = (): void => abortController.abort()
-    const abortOnRequestClose = (): void => {
-      if (request.aborted || !request.complete) abortUpstream()
-    }
-    const abortOnResponseClose = (): void => {
-      if (!response.writableEnded) abortUpstream()
-    }
-    request.once('aborted', abortUpstream)
-    request.once('close', abortOnRequestClose)
-    response.once('close', abortOnResponseClose)
-
-    try {
-      const body = await readBody(request)
-      const promptCacheKey =
-        typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
-      const reviewerScoped =
-        promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
-      const toolLessScoped =
-        promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
-      if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
-      if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
-      const namespacedTools = reviewerScoped
-        ? (this.target.reviewerScope?.namespacedTools ?? [])
-        : toolLessScoped
-          ? []
-          : (this.target.namespacedTools ?? [])
-      // codex-acp ignores disableBuiltInTools metadata and still advertises shell/filesystem tools.
-      // For reviewer turns, replace the entire declaration set at the protocol boundary so the model
-      // can call only the scope-bounded reviewer HTTP MCP functions.
-      const scopedBody =
-        reviewerScoped || toolLessScoped ? { ...body, tools: [], tool_choice: 'auto' } : body
-      const chatRequest = responsesToChatRequest(
-        scopedBody,
-        this.target.model,
-        this.reasoningByCallId,
-        namespacedTools,
-        {
-          reasoningEffortOverride: this.target.reasoningEffort,
-          vendorId: this.target.vendorId,
-          reasoningEffortTransport: this.target.reasoningEffortTransport
-        }
+    if (chatRequest.stream) {
+      const { reasoning, callIds } = await streamChatToResponses(
+        upstream,
+        response,
+        String(body.model ?? ''),
+        namespacedTools
       )
-
-      // Reveals which real model actually serves the turn (Codex only ever sees the internal catalog
-      // model, not the upstream) and whether Codex's advertised tools survived translation into Chat
-      // function tools. An empty incomingToolCount means Codex advertised nothing (e.g. a code_mode_only
-      // catalog model); an empty outgoingToolNames with a non-empty incoming set means the bridge
-      // filtered them.
-      const incomingTools = Array.isArray(body.tools) ? (body.tools as JsonObject[]) : []
-      const outgoingTools = Array.isArray(chatRequest.tools)
-        ? (chatRequest.tools as JsonObject[])
-        : []
-      const outgoingToolNames = outgoingTools.map((tool) => tool?.function?.name)
-      log.info('bridge request', {
-        catalogModel: body.model,
-        upstreamModel: chatRequest.model,
-        stream: chatRequest.stream === true,
-        incomingToolTypes: [
-          ...new Set(incomingTools.map((tool) => String(tool?.type ?? '(missing)')))
-        ],
-        incomingToolCount: incomingTools.length,
-        outgoingToolNames,
-        reviewerScoped,
-        toolChoice: chatRequest.tool_choice ?? null
-      })
-
-      const headers: Record<string, string> = {
-        'content-type': 'application/json',
-        ...(this.target.key ? { authorization: `Bearer ${this.target.key}` } : {})
-      }
-      const upstream = await this.fetchImpl(chatUrl(this.target.baseUrl), {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(chatRequest),
-        signal: abortController.signal
-      })
-      if (!upstream.ok) {
-        const errorBody = await upstream.text()
-        log.warn('bridge upstream error', {
-          upstreamModel: chatRequest.model,
-          status: upstream.status
-        })
-        json(response, upstream.status, {
-          error: {
-            type: 'upstream_error',
-            message: upstreamErrorMessage(errorBody, upstream.status),
-            status: upstream.status
-          }
-        })
-        return
-      }
-      if (chatRequest.stream) {
-        const { reasoning, callIds } = await streamChatToResponses(
-          upstream,
-          response,
-          String(body.model ?? ''),
-          namespacedTools
-        )
-        this.cacheReasoning(reasoning, callIds)
-        return
-      }
-      const completion = (await upstream.json()) as JsonObject
-      const message = (completion.choices?.[0]?.message ?? {}) as JsonObject
-      const result = completionToResponse(completion, namespacedTools)
-      const outputItems = Array.isArray(result.output) ? (result.output as JsonObject[]) : []
-      const toolCalls = outputItems.filter((item) => item.type === 'function_call')
-      this.cacheReasoning(
-        typeof message.reasoning_content === 'string' ? message.reasoning_content : '',
-        toolCalls.map((item) => String(item.call_id))
-      )
-      log.info('bridge turn completed (json)', {
-        model: chatRequest.model,
-        textItems: outputItems.filter((item) => item.type === 'message').length,
-        toolCalls: toolCalls.length,
-        toolNames: toolCalls.map((item) => item.name)
-      })
-      response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify(result))
-    } finally {
-      request.off('aborted', abortUpstream)
-      request.off('close', abortOnRequestClose)
-      response.off('close', abortOnResponseClose)
+      this.cacheReasoning(reasoning, callIds)
+      return
     }
+    const completion = (await upstream.json()) as JsonObject
+    const message = (completion.choices?.[0]?.message ?? {}) as JsonObject
+    const result = completionToResponse(completion, namespacedTools)
+    const outputItems = Array.isArray(result.output) ? (result.output as JsonObject[]) : []
+    const toolCalls = outputItems.filter((item) => item.type === 'function_call')
+    this.cacheReasoning(
+      typeof message.reasoning_content === 'string' ? message.reasoning_content : '',
+      toolCalls.map((item) => String(item.call_id))
+    )
+    log.info('bridge turn completed (json)', {
+      model: chatRequest.model,
+      textItems: outputItems.filter((item) => item.type === 'message').length,
+      toolCalls: toolCalls.length,
+      toolNames: toolCalls.map((item) => item.name)
+    })
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(result))
   }
 }
 

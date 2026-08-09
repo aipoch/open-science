@@ -31,6 +31,7 @@ import { describe, expect, it } from 'vitest'
 const projectRoot = resolve(__dirname, '../../..')
 const adapterPath = resolve(__dirname, 'responses-request-adapter.ts')
 const bridgePath = resolve(__dirname, 'responses-bridge.ts')
+const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const rawLineCount = (source: string): number =>
   source.split(/\r?\n/).length - Number(source.endsWith('\n'))
@@ -155,11 +156,14 @@ describe('Responses request adapter ownership', () => {
   it('excludes response projection and HTTP/session lifecycle', () => {
     const adapter = readSource(adapterPath)
     const bridge = readSource(bridgePath)
+    const host = readSource(hostPath)
 
     expect(adapter).not.toMatch(/from ['"]node:(?:crypto|http|net)['"]/)
     expect(adapter).not.toContain('fetch(')
     expect(adapter).not.toMatch(/completionToResponse|streamChatToResponses|responseEnvelope/)
-    expect(bridge).toContain('createServer(')
+    expect(bridge).not.toContain('createServer(')
+    expect(bridge).toContain('new ProviderLoopbackHttpHost')
+    expect(host).toContain('createServer(')
     expect(bridge).toContain('reviewerSessionKeys')
     expect(bridge).toContain('reasoningByCallId')
     expect(bridge).toContain('streamChatToResponses(')

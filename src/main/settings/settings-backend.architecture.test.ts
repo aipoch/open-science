@@ -712,6 +712,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/backend-route-planner.ts',
+      'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/responses-bridge.ts',
       'src/main/settings/responses-protocol-types.ts',

@@ -31,6 +31,7 @@ import { describe, expect, it } from 'vitest'
 const projectRoot = resolve(__dirname, '../../..')
 const adapterPath = resolve(__dirname, 'responses-response-adapter.ts')
 const bridgePath = resolve(__dirname, 'responses-bridge.ts')
+const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
 const readSource = (path: string): string => readFileSync(path, 'utf8')
 const rawLineCount = (source: string): number =>
   source.split(/\r?\n/).length - Number(source.endsWith('\n'))
@@ -157,6 +158,7 @@ describe('Responses result adapter ownership', () => {
   it('keeps result/SSE projection out of HTTP and trusted-session lifecycle', () => {
     const adapter = readSource(adapterPath)
     const bridge = readSource(bridgePath)
+    const host = readSource(hostPath)
 
     expect(adapter).not.toMatch(/from ['"]node:(?:http|net)['"]/)
     expect(adapter).not.toContain('createServer(')
@@ -165,7 +167,9 @@ describe('Responses result adapter ownership', () => {
     expect(adapter).toContain('terminalFinishReason')
     expect(adapter).toContain('response.function_call_arguments.delta')
     expect(bridge).not.toMatch(/const (?:responseEnvelope|writeEvent|chatUsageToResponsesUsage)/)
-    expect(bridge).toContain('createServer(')
+    expect(bridge).not.toContain('createServer(')
+    expect(bridge).toContain('new ProviderLoopbackHttpHost')
+    expect(host).toContain('createServer(')
     expect(bridge).toContain('reviewerSessionKeys')
     expect(bridge).toContain('selectSkills(')
   })
