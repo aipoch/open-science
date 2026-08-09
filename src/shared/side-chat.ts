@@ -40,13 +40,34 @@ export type SideChatSessionRequest = Readonly<{
 export type SideChatCloseRequest =
   SideChatSessionRequest | Readonly<{ parentSessionId: string; discardRelays: boolean }>
 
+export type SideChatEntry =
+  | Readonly<{ id: string; kind: 'message'; role: 'user' | 'assistant'; text: string }>
+  | Readonly<{ id: string; kind: 'tool'; title: string; status?: string }>
+
+export type SideChatSnapshot = Readonly<{
+  revision: number
+  parentSessionId: string
+  projectId: string
+  sideSessionId?: string
+  entries: readonly SideChatEntry[]
+  running: boolean
+  error?: string
+}>
+
+export type SideChatSnapshotList = Readonly<{
+  revision: number
+  chats: readonly SideChatSnapshot[]
+}>
+
 export type SideChatLifecycleEvent = Readonly<{
   kind: 'closed'
-  reason: 'connection-error' | 'connection-closed'
+  reason: 'closed' | 'connection-error' | 'connection-closed'
 }>
 
 export type SideChatRuntimeEvent = Readonly<{
+  revision: number
   parentSessionId: string
+  projectId: string
   sideSessionId: string
   event: import('./acp').AcpRuntimeEvent | SideChatLifecycleEvent
 }>

@@ -118,14 +118,15 @@ describe('Side chat renderer controller', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
-  it('retains one Side chat across Session navigation and app routes', async () => {
+  it('retains independent Side chats across Session navigation and app routes', async () => {
     const close = vi.fn(async () => undefined)
     const send = vi.fn(async () => undefined)
     let eventListener: ((event: never) => void) | undefined
+    let startNumber = 0
     window.api = {
       sideChat: {
         start: vi.fn(async () => ({
-          sideSessionId: 'side-scope',
+          sideSessionId: `side-scope-${++startNumber}`,
           frameworkId: 'claude-code' as const
         })),
         send,
@@ -154,19 +155,20 @@ describe('Side chat renderer controller', () => {
     await act(async () => {
       expect(await result.current.start('Hello')).toBe(true)
     })
-    expect(result.current.view?.sideSessionId).toBe('side-scope')
+    expect(result.current.view?.sideSessionId).toBe('side-scope-1')
     act(() => result.current.setDraft('Unsent follow up'))
 
     parent = { sessionId: 'main-other', projectId: 'project-1' }
     render()
     expect(result.current.view).toBeUndefined()
-    expect(result.current.unavailableReason).toContain('Another Side chat is open')
-    expect(await result.current.start('Another')).toBe(false)
+    expect(result.current.unavailableReason).toBeUndefined()
+    await act(async () => expect(await result.current.start('Another')).toBe(true))
+    expect(result.current.view?.sideSessionId).toBe('side-scope-2')
     expect(close).not.toHaveBeenCalled()
     act(() => {
       eventListener?.({
         parentSessionId: 'main-scope',
-        sideSessionId: 'side-scope',
+        sideSessionId: 'side-scope-1',
         event: { id: 'stop-scope', timestamp: 2, kind: 'stop', level: 'info' }
       } as never)
     })
@@ -176,10 +178,154 @@ describe('Side chat renderer controller', () => {
     expect(result.current.view?.entries[0]).toMatchObject({ text: 'Hello' })
     expect(result.current.view?.draft).toBe('Unsent follow up')
     await act(async () => expect(await result.current.send('Continue')).toBe(true))
-    expect(send).toHaveBeenCalledWith({ sideSessionId: 'side-scope', text: 'Continue' })
+    expect(send).toHaveBeenCalledWith({ sideSessionId: 'side-scope-1', text: 'Continue' })
+
+    parent = { sessionId: 'main-other', projectId: 'project-1' }
+    render()
+    expect(result.current.view?.entries[0]).toMatchObject({ text: 'Another' })
 
     act(() => root.unmount())
     expect(close).not.toHaveBeenCalled()
+  })
+
+  it('blocks only the closing parent until cleanup finishes', async () => {
+    const closed = deferred<void>()
+    const start = vi.fn(async ({ parentSessionId }: { parentSessionId: string }) => ({
+      sideSessionId: `side-${parentSessionId}-${start.mock.calls.length}`,
+      frameworkId: 'claude-code' as const
+    }))
+    window.api = {
+      sideChat: {
+        start,
+        send: vi.fn(async () => undefined),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(() => closed.promise),
+        onEvent: vi.fn(() => () => undefined),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+
+    const root = createRoot(document.createElement('div'))
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useSideChatController>
+    }
+    let parent = { sessionId: 'main-closing', projectId: 'project-1' }
+    const Harness = (): null => {
+      result.current = useSideChatController(parent)
+      return null
+    }
+    const render = (): void =>
+      act(() => root.render(createElement(SideChatProvider, null, createElement(Harness))))
+
+    render()
+    await act(async () => expect(await result.current.start('First')).toBe(true))
+    act(() => result.current.close())
+    expect(result.current.view).toBeUndefined()
+    expect(result.current.unavailableReason).toBe('Closing Side chat…')
+    await act(async () => expect(await result.current.start('Too soon')).toBe(false))
+    expect(start).toHaveBeenCalledOnce()
+
+    parent = { sessionId: 'main-other', projectId: 'project-1' }
+    render()
+    expect(result.current.unavailableReason).toBeUndefined()
+    await act(async () => expect(await result.current.start('Other')).toBe(true))
+
+    parent = { sessionId: 'main-closing', projectId: 'project-1' }
+    render()
+    expect(result.current.unavailableReason).toBe('Closing Side chat…')
+    await act(async () => {
+      closed.resolve()
+      await closed.promise
+    })
+    expect(result.current.unavailableReason).toBeUndefined()
+    await act(async () => expect(await result.current.start('Fresh')).toBe(true))
+    expect(start).toHaveBeenCalledTimes(3)
+    act(() => root.unmount())
+  })
+
+  it('hydrates every live Side chat and routes background events by parent Session', async () => {
+    let eventListener: ((event: never) => void) | undefined
+    const list = vi.fn(async () => ({
+      revision: 4,
+      chats: [
+        {
+          revision: 3,
+          parentSessionId: 'main-a',
+          projectId: 'project-1',
+          sideSessionId: 'side-a',
+          entries: [{ id: 'user-a', kind: 'message' as const, role: 'user' as const, text: 'A' }],
+          running: true
+        },
+        {
+          revision: 4,
+          parentSessionId: 'main-b',
+          projectId: 'project-1',
+          sideSessionId: 'side-b',
+          entries: [{ id: 'user-b', kind: 'message' as const, role: 'user' as const, text: 'B' }],
+          running: false
+        }
+      ]
+    }))
+    window.api = {
+      sideChat: {
+        list,
+        start: vi.fn(),
+        send: vi.fn(async () => undefined),
+        cancel: vi.fn(async () => undefined),
+        close: vi.fn(async () => undefined),
+        onEvent: vi.fn((listener) => {
+          eventListener = listener as never
+          return () => undefined
+        }),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+
+    const root = createRoot(document.createElement('div'))
+    const result = {
+      current: undefined as unknown as ReturnType<typeof useSideChatController>
+    }
+    let parent = { sessionId: 'main-b', projectId: 'project-1' }
+    const Harness = (): null => {
+      result.current = useSideChatController(parent)
+      return null
+    }
+    const render = async (): Promise<void> => {
+      await act(async () => {
+        root.render(createElement(SideChatProvider, null, createElement(Harness)))
+        await Promise.resolve()
+      })
+    }
+
+    await render()
+    expect(list).toHaveBeenCalledOnce()
+    expect(result.current.view?.entries[0]).toMatchObject({ text: 'B' })
+
+    act(() => {
+      eventListener?.({
+        revision: 5,
+        parentSessionId: 'main-a',
+        projectId: 'project-1',
+        sideSessionId: 'side-a',
+        event: {
+          id: 'assistant-a',
+          timestamp: 2,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          text: 'A answer'
+        }
+      } as never)
+    })
+    expect(result.current.view?.entries).toHaveLength(1)
+
+    parent = { sessionId: 'main-a', projectId: 'project-1' }
+    await render()
+    expect(result.current.view?.entries).toEqual([
+      expect.objectContaining({ text: 'A' }),
+      expect.objectContaining({ text: 'A answer' })
+    ])
+    act(() => root.unmount())
   })
 
   it('drops the app-lifetime projection when the provider connection closes', async () => {

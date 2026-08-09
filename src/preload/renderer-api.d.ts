@@ -23,6 +23,7 @@ import type {
   SideChatRelayDeliveredEvent,
   SideChatRuntimeEvent,
   SideChatSessionRequest,
+  SideChatSnapshotList,
   SideChatStartRequest,
   SideChatStartResponse
 } from '../shared/side-chat'
@@ -375,6 +376,7 @@ export interface OpenScienceAPI {
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
   }
   sideChat: {
+    list(): Promise<SideChatSnapshotList>
     start(request: SideChatStartRequest): Promise<SideChatStartResponse>
     send(request: SideChatPromptRequest): Promise<void>
     cancel(request: SideChatSessionRequest): Promise<void>

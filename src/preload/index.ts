@@ -135,6 +135,7 @@ const api: OpenScienceAPI = {
       electronRendererContracts.subscribe('acp.onPermissionRequest', listener)
   },
   sideChat: {
+    list: () => electronRendererContracts.invoke('sideChat.list'),
     start: (request: SideChatStartRequest) =>
       electronRendererContracts.invoke('sideChat.start', request),
     send: (request: SideChatPromptRequest) =>

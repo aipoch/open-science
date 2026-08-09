@@ -342,7 +342,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('side-chat', 'sideChat', [
     ['onEvent', 'side-chat:event', ELECTRON_EVENT], ['onRelayDelivered', 'side-chat:relay-delivered', ELECTRON_EVENT],
-    ['cancel', 'side-chat:cancel', ELECTRON], ['close', 'side-chat:close', ELECTRON], ['send', 'side-chat:send', ELECTRON], ['start', 'side-chat:start', ELECTRON],
+    ['cancel', 'side-chat:cancel', ELECTRON], ['close', 'side-chat:close', ELECTRON], ['list', 'side-chat:list', ELECTRON], ['send', 'side-chat:send', ELECTRON], ['start', 'side-chat:start', ELECTRON],
   ]),
   group('specialist', 'specialist', [
     ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],

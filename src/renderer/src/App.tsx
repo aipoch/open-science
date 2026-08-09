@@ -27,7 +27,7 @@ import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import {
   SideChatProvider,
-  useOpenSideChatParentSessionId
+  useOpenSideChatParentSessionIds
 } from '@/pages/workspace/use-side-chat-controller'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
@@ -53,7 +53,7 @@ type NotificationOpenIntent = {
 }
 
 const AppContent = (): React.JSX.Element | null => {
-  const openSideChatParentSessionId = useOpenSideChatParentSessionId()
+  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
   useQuitPersistenceFlush()
@@ -582,15 +582,15 @@ const AppContent = (): React.JSX.Element | null => {
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
       />
-      <ConnectorApprovalDialog blockedSessionId={openSideChatParentSessionId} />
-      <SkillImportApprovalDialog blockedSessionId={openSideChatParentSessionId} />
+      <ConnectorApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
+      <SkillImportApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
       <LifecycleToast
         notice={lifecycleSync.notice}
         onDismiss={lifecycleSync.dismissNotice}
         onView={lifecycleSync.viewNotice}
       />
       <PermissionUndoSnackbar />
-      <ComputeApprovalDialog blockedSessionId={openSideChatParentSessionId} />
+      <ComputeApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
       <GlobalSearchDialog

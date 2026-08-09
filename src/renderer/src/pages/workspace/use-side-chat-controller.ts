@@ -13,14 +13,12 @@ import {
 } from 'react'
 
 import { getAcpRuntimeEventText } from '../../../../shared/acp'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
-
-type SideChatEntry =
-  | Readonly<{ id: string; kind: 'message'; role: 'user' | 'assistant'; text: string }>
-  | Readonly<{ id: string; kind: 'tool'; title: string; status?: string }>
+import type { SideChatEntry, SideChatSnapshot } from '../../../../shared/side-chat'
+import type { ChatSession } from '@/stores/session-store'
 
 type SideChatView = Readonly<{
   generation: number
+  revision?: number
   parentSessionId: string
   projectId: string
   sideSessionId?: string
@@ -41,7 +39,10 @@ type SideChatController = Readonly<{
 }>
 
 type SideChatRuntimeController = Readonly<{
-  view: SideChatView | undefined
+  views: ReadonlyMap<string, SideChatView>
+  closingParentSessionIds: ReadonlySet<string>
+  hydrated: boolean
+  hydrationError?: string
   start: (
     parent: Readonly<{ sessionId: string; projectId: string }>,
     text: string
@@ -61,86 +62,169 @@ const hasMainConversation = (session: ChatSession | undefined): boolean =>
   Boolean(session?.messages.some((message) => message.role === 'user' && !message.relayedFrom))
 
 const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
-  const [view, setView] = useState<SideChatView>()
-  const activeRef = useRef<SideChatView | undefined>(undefined)
+  const [views, setViews] = useState<ReadonlyMap<string, SideChatView>>(() => new Map())
+  const [hydrated, setHydrated] = useState(() => !window.api?.sideChat?.list)
+  const [hydrationError, setHydrationError] = useState<string>()
+  const viewsRef = useRef<ReadonlyMap<string, SideChatView>>(views)
+  const [closingParentSessionIds, setClosingParentSessionIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const closingParentSessionIdsRef = useRef<ReadonlySet<string>>(closingParentSessionIds)
+  const revisionByParentRef = useRef(new Map<string, number>())
   const sequenceRef = useRef(0)
 
-  const update = useCallback((next: SideChatView | undefined): void => {
-    activeRef.current = next
-    setView(next)
-  }, [])
+  const update = useCallback(
+    (
+      parentSessionId: string,
+      value:
+        SideChatView | undefined | ((current: SideChatView | undefined) => SideChatView | undefined)
+    ): void => {
+      const current = viewsRef.current.get(parentSessionId)
+      const next = typeof value === 'function' ? value(current) : value
+      if (next === current) return
+      const updated = new Map(viewsRef.current)
+      if (next) updated.set(parentSessionId, next)
+      else updated.delete(parentSessionId)
+      viewsRef.current = updated
+      setViews(updated)
+    },
+    []
+  )
+
+  const viewFromSnapshot = useCallback(
+    (snapshot: SideChatSnapshot, current?: SideChatView): SideChatView => ({
+      generation: current?.generation ?? ++sequenceRef.current,
+      revision: snapshot.revision,
+      parentSessionId: snapshot.parentSessionId,
+      projectId: snapshot.projectId,
+      sideSessionId: snapshot.sideSessionId,
+      entries: snapshot.entries,
+      draft: current?.draft ?? '',
+      running: snapshot.running,
+      error: snapshot.error
+    }),
+    []
+  )
 
   useEffect(() => {
     const api = window.api?.sideChat
-    if (!api?.onEvent) return
-    return api.onEvent((envelope) => {
-      const current = activeRef.current
-      if (
-        !current ||
-        envelope.parentSessionId !== current.parentSessionId ||
-        (current.sideSessionId && envelope.sideSessionId !== current.sideSessionId)
-      ) {
-        return
-      }
+    if (!api?.onEvent) {
+      setHydrated(true)
+      return
+    }
+    let disposed = false
+    const removeListener = api.onEvent((envelope) => {
+      const lastRevision = revisionByParentRef.current.get(envelope.parentSessionId) ?? 0
+      const revision = envelope.revision ?? lastRevision + 1
+      if (revision < lastRevision) return
+      revisionByParentRef.current.set(envelope.parentSessionId, revision)
+
       const event = envelope.event
       if (event.kind === 'closed') {
-        update(undefined)
+        update(envelope.parentSessionId, undefined)
         return
       }
-      let next = current.sideSessionId
-        ? current
-        : { ...current, sideSessionId: envelope.sideSessionId }
-      if (event.kind === 'message' && event.role === 'assistant') {
-        const text = getAcpRuntimeEventText(event)
-        if (text) {
-          const streamId = event.messageId ?? event.id
-          const existing = next.entries.findIndex(
-            (entry) =>
-              entry.kind === 'message' && entry.role === 'assistant' && entry.id === streamId
-          )
-          const entries = [...next.entries]
-          if (existing >= 0) {
-            const entry = entries[existing]
-            if (entry?.kind === 'message') entries[existing] = { ...entry, text: entry.text + text }
-          } else {
-            entries.push({ id: streamId, kind: 'message', role: 'assistant', text })
+      update(envelope.parentSessionId, (current) => {
+        if (current?.sideSessionId && envelope.sideSessionId !== current.sideSessionId) {
+          return current
+        }
+        let next: SideChatView = current
+          ? { ...current, revision, sideSessionId: current.sideSessionId ?? envelope.sideSessionId }
+          : {
+              generation: ++sequenceRef.current,
+              revision,
+              parentSessionId: envelope.parentSessionId,
+              projectId: envelope.projectId,
+              sideSessionId: envelope.sideSessionId,
+              entries: [],
+              draft: '',
+              running: true
+            }
+        if (event.kind === 'message' && event.role === 'assistant') {
+          const text = getAcpRuntimeEventText(event)
+          if (text) {
+            const streamId = event.messageId ?? event.id
+            const existing = next.entries.findIndex(
+              (entry) =>
+                entry.kind === 'message' && entry.role === 'assistant' && entry.id === streamId
+            )
+            const entries = [...next.entries]
+            if (existing >= 0) {
+              const entry = entries[existing]
+              if (entry?.kind === 'message') {
+                entries[existing] = { ...entry, text: entry.text + text }
+              }
+            } else {
+              entries.push({ id: streamId, kind: 'message', role: 'assistant', text })
+            }
+            next = { ...next, entries }
           }
+        } else if (event.kind === 'tool' && event.toolCallId) {
+          const existing = next.entries.findIndex(
+            (entry) => entry.kind === 'tool' && entry.id === event.toolCallId
+          )
+          const tool: SideChatEntry = {
+            id: event.toolCallId,
+            kind: 'tool',
+            title: event.title ?? event.providerToolName ?? 'Tool',
+            status: event.status
+          }
+          const entries = [...next.entries]
+          if (existing >= 0) entries[existing] = tool
+          else entries.push(tool)
           next = { ...next, entries }
+        } else if (event.kind === 'error') {
+          next = {
+            ...next,
+            running: false,
+            error: event.text ?? event.title ?? 'Side chat failed.'
+          }
+        } else if (event.kind === 'stop') {
+          next = { ...next, running: false }
         }
-      } else if (event.kind === 'tool' && event.toolCallId) {
-        const existing = next.entries.findIndex(
-          (entry) => entry.kind === 'tool' && entry.id === event.toolCallId
-        )
-        const tool: SideChatEntry = {
-          id: event.toolCallId,
-          kind: 'tool',
-          title: event.title ?? event.providerToolName ?? 'Tool',
-          status: event.status
-        }
-        const entries = [...next.entries]
-        if (existing >= 0) entries[existing] = tool
-        else entries.push(tool)
-        next = { ...next, entries }
-      } else if (event.kind === 'error') {
-        next = { ...next, running: false, error: event.text ?? event.title ?? 'Side chat failed.' }
-      } else if (event.kind === 'stop') {
-        next = { ...next, running: false }
-      }
-      update(next)
+        return next
+      })
     })
-  }, [update])
 
-  // Session navigation does not touch Side chat. Deleting its parent does: main owns runtime
-  // teardown, while this app-lifetime projection only drops the now-unreachable panel state.
-  useEffect(() => {
-    if (typeof useSessionStore.subscribe !== 'function') return
-    return useSessionStore.subscribe((state) => {
-      const current = activeRef.current
-      if (current && !state.sessions.some((session) => session.id === current.parentSessionId)) {
-        update(undefined)
+    if (!api.list) {
+      setHydrated(true)
+      return removeListener
+    }
+    void api.list().then(
+      (snapshotList) => {
+        if (disposed) return
+        const next = new Map(viewsRef.current)
+        const liveParents = new Set(snapshotList.chats.map((chat) => chat.parentSessionId))
+        for (const [parentSessionId, view] of next) {
+          if (!liveParents.has(parentSessionId) && (view.revision ?? 0) <= snapshotList.revision) {
+            next.delete(parentSessionId)
+          }
+        }
+        for (const snapshot of snapshotList.chats) {
+          const lastRevision = revisionByParentRef.current.get(snapshot.parentSessionId) ?? 0
+          if (snapshot.revision < lastRevision) continue
+          revisionByParentRef.current.set(snapshot.parentSessionId, snapshot.revision)
+          next.set(
+            snapshot.parentSessionId,
+            viewFromSnapshot(snapshot, next.get(snapshot.parentSessionId))
+          )
+        }
+        viewsRef.current = next
+        setViews(next)
+        setHydrationError(undefined)
+        setHydrated(true)
+      },
+      (error) => {
+        if (disposed) return
+        setHydrationError(`Could not restore Side chats: ${errorText(error)}`)
+        setHydrated(false)
       }
-    })
-  }, [update])
+    )
+    return () => {
+      disposed = true
+      removeListener()
+    }
+  }, [update, viewFromSnapshot])
 
   const start = useCallback(
     async (
@@ -148,56 +232,57 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       rawText: string
     ): Promise<boolean> => {
       const text = rawText.trim()
-      const alreadyOpen = activeRef.current !== undefined
-      if (!text || alreadyOpen || !window.api?.sideChat) return false
+      if (
+        !text ||
+        !hydrated ||
+        viewsRef.current.has(parent.sessionId) ||
+        closingParentSessionIdsRef.current.has(parent.sessionId) ||
+        !window.api?.sideChat
+      ) {
+        return false
+      }
       sequenceRef.current += 1
       const generation = sequenceRef.current
       const next: SideChatView = {
         generation,
+        revision: 0,
         parentSessionId: parent.sessionId,
         projectId: parent.projectId,
         entries: [{ id: `side-user-${generation}-1`, kind: 'message', role: 'user', text }],
         draft: '',
         running: true
       }
-      update(next)
+      update(parent.sessionId, next)
       try {
         const started = await window.api.sideChat.start({
           parentSessionId: parent.sessionId,
           projectId: parent.projectId,
           text
         })
-        const current = activeRef.current
+        const current = viewsRef.current.get(parent.sessionId)
         if (!current || current.generation !== generation) {
           await window.api.sideChat.close({ sideSessionId: started.sideSessionId })
           return false
         }
-        update({ ...current, sideSessionId: started.sideSessionId })
+        update(parent.sessionId, { ...current, sideSessionId: started.sideSessionId })
         return true
       } catch (error) {
-        const current = activeRef.current
+        const current = viewsRef.current.get(parent.sessionId)
         if (current?.generation === generation) {
-          update(undefined)
+          update(parent.sessionId, undefined)
           throw error
         }
         return false
       }
     },
-    [update]
+    [hydrated, update]
   )
 
   const send = useCallback(
     async (parentSessionId: string, rawText: string): Promise<boolean> => {
       const text = rawText.trim()
-      const current = activeRef.current
-      if (
-        current?.parentSessionId !== parentSessionId ||
-        !current.sideSessionId ||
-        current.running ||
-        !text
-      ) {
-        return false
-      }
+      const current = viewsRef.current.get(parentSessionId)
+      if (!current?.sideSessionId || current.running || !text) return false
       sequenceRef.current += 1
       const next = {
         ...current,
@@ -213,15 +298,16 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
         running: true,
         error: undefined
       }
-      update(next)
+      update(parentSessionId, next)
       try {
         await window.api.sideChat.send({ sideSessionId: current.sideSessionId, text })
         return true
       } catch (error) {
-        const latest = activeRef.current
-        if (latest?.generation === current.generation) {
-          update({ ...latest, running: false, error: errorText(error) })
-        }
+        update(parentSessionId, (latest) =>
+          latest?.generation === current.generation
+            ? { ...latest, running: false, error: errorText(error) }
+            : latest
+        )
         return false
       }
     },
@@ -230,19 +316,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
 
   const cancel = useCallback(
     (parentSessionId: string): void => {
-      const current = activeRef.current
-      if (
-        current?.parentSessionId !== parentSessionId ||
-        !current.sideSessionId ||
-        !current.running
-      ) {
-        return
-      }
+      const current = viewsRef.current.get(parentSessionId)
+      if (!current?.sideSessionId || !current.running) return
       void window.api.sideChat.cancel({ sideSessionId: current.sideSessionId }).catch((error) => {
-        const latest = activeRef.current
-        if (latest?.generation === current.generation) {
-          update({ ...latest, error: errorText(error) })
-        }
+        update(parentSessionId, (latest) =>
+          latest?.generation === current.generation
+            ? { ...latest, error: errorText(error) }
+            : latest
+        )
       })
     },
     [update]
@@ -250,38 +331,53 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
 
   const setDraft = useCallback(
     (parentSessionId: string, value: SetStateAction<string>): void => {
-      const current = activeRef.current
-      if (current?.parentSessionId !== parentSessionId) return
-      const draft = typeof value === 'function' ? value(current.draft) : value
-      update({ ...current, draft })
+      update(parentSessionId, (current) => {
+        if (!current) return current
+        const draft = typeof value === 'function' ? value(current.draft) : value
+        return { ...current, draft }
+      })
     },
     [update]
   )
 
   const close = useCallback(
     (parentSessionId: string): void => {
-      const current = activeRef.current
-      if (current?.parentSessionId !== parentSessionId) return
-      update(undefined)
-      if (current.sideSessionId) {
-        void window.api.sideChat
-          .close({ sideSessionId: current.sideSessionId })
-          .catch(() => undefined)
-      } else {
-        void window.api.sideChat
-          .close({ parentSessionId: current.parentSessionId, discardRelays: false })
-          .catch(() => undefined)
-      }
+      const current = viewsRef.current.get(parentSessionId)
+      if (!current) return
+      const closing = new Set(closingParentSessionIdsRef.current).add(parentSessionId)
+      closingParentSessionIdsRef.current = closing
+      setClosingParentSessionIds(closing)
+      update(parentSessionId, undefined)
+      const request = current.sideSessionId
+        ? { sideSessionId: current.sideSessionId }
+        : { parentSessionId: current.parentSessionId, discardRelays: false as const }
+      void window.api.sideChat
+        .close(request)
+        .catch(() => undefined)
+        .finally(() => {
+          const next = new Set(closingParentSessionIdsRef.current)
+          next.delete(parentSessionId)
+          closingParentSessionIdsRef.current = next
+          setClosingParentSessionIds(next)
+        })
     },
     [update]
   )
 
-  const controller = useMemo<SideChatRuntimeController>(
-    () => ({ view, start, send, setDraft, cancel, close }),
-    [cancel, close, send, setDraft, start, view]
+  return useMemo<SideChatRuntimeController>(
+    () => ({
+      views,
+      closingParentSessionIds,
+      hydrated,
+      hydrationError,
+      start,
+      send,
+      setDraft,
+      cancel,
+      close
+    }),
+    [cancel, close, closingParentSessionIds, hydrated, hydrationError, send, setDraft, start, views]
   )
-
-  return controller
 }
 
 const SideChatProvider = ({ children }: PropsWithChildren): ReactElement =>
@@ -291,16 +387,15 @@ const useSideChatController = (
   parent: Readonly<{ sessionId: string; projectId: string }> | undefined
 ): SideChatController => {
   const runtime = useContext(SideChatContext)
-  const belongsToParent = Boolean(
-    parent &&
-    runtime?.view?.parentSessionId === parent.sessionId &&
-    runtime.view.projectId === parent.projectId
-  )
-  const view = belongsToParent ? runtime?.view : undefined
-  const unavailableReason =
-    runtime?.view && !belongsToParent
-      ? 'Another Side chat is open. Return to that conversation or close it first.'
-      : undefined
+  const candidate = parent ? runtime?.views.get(parent.sessionId) : undefined
+  const view = candidate?.projectId === parent?.projectId ? candidate : undefined
+  const unavailableReason = runtime?.hydrationError
+    ? runtime.hydrationError
+    : runtime && !runtime.hydrated
+      ? 'Restoring Side chats…'
+      : parent && runtime?.closingParentSessionIds.has(parent.sessionId)
+        ? 'Closing Side chat…'
+        : undefined
 
   return {
     view,
@@ -320,13 +415,19 @@ const useSideChatController = (
   }
 }
 
-const useOpenSideChatParentSessionId = (): string | undefined =>
-  useContext(SideChatContext)?.view?.parentSessionId
+const useOpenSideChatParentSessionIds = (): ReadonlySet<string> => {
+  const runtime = useContext(SideChatContext)
+  return useMemo(() => new Set(runtime?.views.keys() ?? []), [runtime?.views])
+}
+
+const useIsSideChatOpenForSession = (sessionId: string): boolean =>
+  useContext(SideChatContext)?.views.has(sessionId) ?? false
 
 export {
   hasMainConversation,
   SideChatProvider,
-  useOpenSideChatParentSessionId,
+  useIsSideChatOpenForSession,
+  useOpenSideChatParentSessionIds,
   useSideChatController
 }
 export type { SideChatController, SideChatEntry, SideChatView }

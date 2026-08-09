@@ -10,10 +10,13 @@ import {
 } from '../../shared/acp'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type {
+  SideChatEntry,
   SideChatPromptRequest,
   SideChatRuntimeEvent,
   SideChatSendMessageRequest,
   SideChatSessionRequest,
+  SideChatSnapshot,
+  SideChatSnapshotList,
   SideChatStartRequest,
   SideChatStartResponse
 } from '../../shared/side-chat'
@@ -81,6 +84,7 @@ type Deferred = Readonly<{
 }>
 
 type ActiveSideChat = {
+  revision: number
   parentSessionId: string
   projectId: string
   sideSessionId: string
@@ -89,17 +93,23 @@ type ActiveSideChat = {
   jobRoot: string
   bridgeScopes: Set<NonNullable<ResolvedAgentBackend['responsesBridgeLease']>>
   historyPreamble?: string
-  transcript: Array<{ id: string; role: 'user' | 'assistant'; text: string }>
+  entries: SideChatEntry[]
+  entrySequence: number
+  running: boolean
+  error?: string
   reconnect?: Promise<void>
   turn?: Promise<PromptResponse>
   turnAccepted?: Deferred
   closing: boolean
 }
 
-type StartingSideChat = Readonly<{
+type StartingSideChat = {
+  revision: number
   parentSessionId: string
+  projectId: string
+  text: string
   done: Deferred
-}>
+}
 
 const deferred = (): Deferred => {
   let resolve!: () => void
@@ -141,7 +151,10 @@ const prepareSideChatBackend = (
   })
 
 const buildResumeFallback = (active: ActiveSideChat): string | undefined => {
-  const transcript = active.transcript
+  const transcript = active.entries
+    .filter(
+      (entry): entry is Extract<SideChatEntry, { kind: 'message' }> => entry.kind === 'message'
+    )
     .map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}`)
     .join('\n\n')
   const full = [
@@ -158,11 +171,12 @@ const buildResumeFallback = (active: ActiveSideChat): string | undefined => {
 class SideChatRuntimeOwner {
   private readonly root: string
   private readonly createRuntime: (options: AcpRuntimeOptions) => SideChatRuntimePort
-  private active: ActiveSideChat | undefined
-  private starting: StartingSideChat | undefined
-  private closing: Promise<void> | undefined
+  private readonly activeByParent = new Map<string, ActiveSideChat>()
+  private readonly startingByParent = new Map<string, StartingSideChat>()
+  private readonly closingByParent = new Map<string, Promise<void>>()
   private readonly closeRequestedParents = new Set<string>()
   private readonly invalidatedParents = new Set<string>()
+  private revision = 0
   private shuttingDown = false
 
   constructor(private readonly options: SideChatRuntimeOwnerOptions) {
@@ -191,12 +205,28 @@ class SideChatRuntimeOwner {
     )
   }
 
+  list(): SideChatSnapshotList {
+    return {
+      revision: this.revision,
+      chats: [
+        ...[...this.startingByParent.values()]
+          .filter((starting) => !this.activeByParent.has(starting.parentSessionId))
+          .map((starting) => this.snapshotStarting(starting)),
+        ...[...this.activeByParent.values()].map((active) => this.snapshotActive(active))
+      ]
+    }
+  }
+
   async start(request: SideChatRuntimeStartRequest): Promise<SideChatStartResponse> {
     if (this.shuttingDown) throw new Error('Side chat is shutting down.')
     if (this.invalidatedParents.has(request.parentSessionId)) {
       throw new Error('The parent Session is unavailable.')
     }
-    if (this.active || this.starting || this.closing) {
+    if (
+      this.activeByParent.has(request.parentSessionId) ||
+      this.startingByParent.has(request.parentSessionId) ||
+      this.closingByParent.has(request.parentSessionId)
+    ) {
       throw new Error('A Side chat is already open.')
     }
     const text = request.text.trim()
@@ -208,10 +238,13 @@ class SideChatRuntimeOwner {
     let runtime: SideChatRuntimePort | undefined
     let activeChat: ActiveSideChat | undefined
     const starting: StartingSideChat = {
+      revision: ++this.revision,
       parentSessionId: request.parentSessionId,
+      projectId: request.projectId,
+      text,
       done: deferred()
     }
-    this.starting = starting
+    this.startingByParent.set(request.parentSessionId, starting)
     try {
       await mkdir(this.root, { recursive: true })
       jobRoot = await mkdtemp(join(this.root, 'chat-'))
@@ -264,23 +297,28 @@ class SideChatRuntimeOwner {
         mcpHttpHost: new AgentMcpHttpHost(),
         sessionCapabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
         sideChat: {
-          sendMessage: (routingId, input) => Promise.resolve(this.sendToMain(routingId, input))
+          sendMessage: (routingId, input) => {
+            if (!activeChat) throw new Error('Side chat sender is not active yet.')
+            return Promise.resolve(this.sendToMain(activeChat, routingId, input))
+          }
         },
         callbacks: {
-          onEvent: (event) => this.handleRuntimeEvent(event),
+          onEvent: (event) => {
+            if (activeChat) this.handleRuntimeEvent(activeChat, event)
+          },
           onStateChanged: (state) => {
-            if (state.status === 'error' || state.status === 'closed') {
+            if (activeChat && (state.status === 'error' || state.status === 'closed')) {
               this.handleRuntimeClosed(
+                activeChat,
                 state.status === 'error' ? 'connection-error' : 'connection-closed'
               )
-              void this.closeActive().catch(() => undefined)
+              void this.closeActive(activeChat, false).catch(() => undefined)
             }
           },
           onPermissionRequest: (permission) =>
             this.handlePermission(runtimeRef.current, permission),
           onProviderPromptAccepted: (sideSessionId) => {
-            const active = this.active
-            if (active?.sideSessionId === sideSessionId) active.turnAccepted?.resolve()
+            if (activeChat?.sideSessionId === sideSessionId) activeChat.turnAccepted?.resolve()
           }
         }
       }
@@ -295,6 +333,7 @@ class SideChatRuntimeOwner {
         )
       }
       activeChat = {
+        revision: 0,
         parentSessionId: request.parentSessionId,
         projectId: request.projectId,
         sideSessionId: created.sessionId,
@@ -302,13 +341,16 @@ class SideChatRuntimeOwner {
         jobRoot,
         bridgeScopes: new Set(),
         historyPreamble: request.historyPreamble,
-        transcript: [],
+        entries: [],
+        entrySequence: 0,
+        running: false,
         closing: false
       }
       if (bridge) activeChat.bridgeScopes.add(bridge)
-      this.active = activeChat
+      this.activeByParent.set(request.parentSessionId, activeChat)
+      this.touch(activeChat)
       if (this.closeRequestedParents.delete(request.parentSessionId)) {
-        await this.closeActive()
+        await this.closeActive(activeChat)
         throw new Error('Side chat closed before startup completed.')
       }
       await this.dispatch({
@@ -324,16 +366,17 @@ class SideChatRuntimeOwner {
           : {})
       }
     } catch (error) {
-      if (this.active?.runtime === runtime) await this.closeActive().catch(() => undefined)
-      else if (!activeChat?.closing) {
+      if (activeChat && this.activeByParent.get(request.parentSessionId) === activeChat) {
+        await this.closeActive(activeChat).catch(() => undefined)
+      } else if (!activeChat?.closing) {
         await runtime?.shutdownForQuit().catch(() => undefined)
         if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
         if (jobRoot) await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
       }
       throw error
     } finally {
-      if (this.starting === starting) {
-        this.starting = undefined
+      if (this.startingByParent.get(request.parentSessionId) === starting) {
+        this.startingByParent.delete(request.parentSessionId)
         starting.done.resolve()
       }
       this.closeRequestedParents.delete(request.parentSessionId)
@@ -345,32 +388,41 @@ class SideChatRuntimeOwner {
   }
 
   async requestProviderReconnect(): Promise<void> {
-    const active = this.active
-    if (!active || active.closing) return
-    const previous = active.reconnect?.catch(() => undefined) ?? Promise.resolve()
-    const reconnect = previous.then(() => active.runtime.requestProviderReconnect())
-    active.reconnect = reconnect
-    await reconnect
+    await Promise.all(
+      this.activeChats().map(async (active) => {
+        const previous = active.reconnect?.catch(() => undefined) ?? Promise.resolve()
+        const reconnect = previous.then(() => active.runtime.requestProviderReconnect())
+        active.reconnect = reconnect
+        await reconnect
+      })
+    )
   }
 
   async applyModelChange(target: AgentModelChangeTarget): Promise<boolean> {
-    const active = this.active
-    if (!active || active.closing) return true
-    const applied = await active.runtime.applyModelChange(target)
-    // applyModelChange may hot-switch the attached Session or reconnect internally. The next
-    // follow-up checks attachment continuity after its model barrier; an attached Session returns
-    // unchanged, while an adopted Session reports contextReset and receives the fallback transcript.
-    if (applied && this.active === active && !active.closing && !active.reconnect) {
-      active.reconnect = Promise.resolve()
-    }
-    return applied
+    const results = await Promise.all(
+      this.activeChats().map(async (active) => {
+        const applied = await active.runtime.applyModelChange(target)
+        // A hot switch keeps the attached Session. A reconnect may adopt a replacement Session;
+        // dispatch verifies continuity and supplies this chat's bounded fallback only if needed.
+        if (
+          applied &&
+          this.activeByParent.get(active.parentSessionId) === active &&
+          !active.closing &&
+          !active.reconnect
+        ) {
+          active.reconnect = Promise.resolve()
+        }
+        return applied
+      })
+    )
+    return results.every(Boolean)
   }
 
-  applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
-    const active = this.active
-    return active && !active.closing
-      ? active.runtime.applyReasoningEffortChange(effort)
-      : Promise.resolve(true)
+  async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
+    const results = await Promise.all(
+      this.activeChats().map((active) => active.runtime.applyReasoningEffortChange(effort))
+    )
+    return results.every(Boolean)
   }
 
   async cancel(request: SideChatSessionRequest): Promise<void> {
@@ -379,19 +431,18 @@ class SideChatRuntimeOwner {
   }
 
   async close(request: SideChatSessionRequest): Promise<void> {
-    this.requireActive(request.sideSessionId)
-    await this.closeActive()
+    await this.closeActive(this.requireActive(request.sideSessionId))
   }
 
   async closeActiveForParent(parentSessionId: string): Promise<void> {
-    const starting = this.starting?.parentSessionId === parentSessionId ? this.starting : undefined
+    const starting = this.startingByParent.get(parentSessionId)
     if (starting) this.closeRequestedParents.add(parentSessionId)
-    if (this.active?.parentSessionId === parentSessionId) {
-      await this.closeActive()
-    }
+    const active = this.activeByParent.get(parentSessionId)
+    if (active) await this.closeActive(active)
     if (starting) {
       await starting.done.promise
-      if (this.active?.parentSessionId === parentSessionId) await this.closeActive()
+      const started = this.activeByParent.get(parentSessionId)
+      if (started) await this.closeActive(started)
     }
   }
 
@@ -412,12 +463,12 @@ class SideChatRuntimeOwner {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true
-    const starting = this.starting
-    if (starting) this.closeRequestedParents.add(starting.parentSessionId)
-    await this.closeActive()
-    await starting?.done.promise
-    await this.closeActive()
-    await this.closing
+    const starting = [...this.startingByParent.values()]
+    for (const chat of starting) this.closeRequestedParents.add(chat.parentSessionId)
+    await Promise.all(this.activeChats().map((active) => this.closeActive(active)))
+    await Promise.all(starting.map((chat) => chat.done.promise))
+    await Promise.all(this.activeChats().map((active) => this.closeActive(active)))
+    await Promise.all(this.closingByParent.values())
   }
 
   private async dispatch(
@@ -441,11 +492,16 @@ class SideChatRuntimeOwner {
       if (resumed.contextReset) historyPreamble = buildResumeFallback(active)
     }
     const resumeFallback = buildResumeFallback(active)
-    active.transcript.push({
-      id: `user-${active.transcript.length + 1}`,
+    active.entrySequence += 1
+    active.entries.push({
+      id: `user-${active.entrySequence}`,
+      kind: 'message',
       role: 'user',
       text
     })
+    active.running = true
+    active.error = undefined
+    this.touch(active)
     const accepted = deferred()
     active.turnAccepted = accepted
     const turn = active.runtime.sendPrompt({
@@ -456,7 +512,7 @@ class SideChatRuntimeOwner {
     })
     active.turn = turn
     const finish = (): void => {
-      if (this.active === active && active.turn === turn) {
+      if (this.activeByParent.get(active.parentSessionId) === active && active.turn === turn) {
         active.turn = undefined
         active.turnAccepted = undefined
       }
@@ -475,11 +531,13 @@ class SideChatRuntimeOwner {
   }
 
   private sendToMain(
+    active: ActiveSideChat,
     routingId: string,
     request: SideChatSendMessageRequest
   ): ReturnType<SideChatRelayOwner['send']> {
-    const active = this.active
-    if (!active || active.closing) throw new Error('Side chat sender is no longer active.')
+    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
+      throw new Error('Side chat sender is no longer active.')
+    }
     if (!active.relaySenderId) {
       active.relaySenderId = routingId
       this.options.relay.bind({
@@ -511,55 +569,120 @@ class SideChatRuntimeOwner {
       .catch(() => undefined)
   }
 
-  private handleRuntimeEvent(event: AcpRuntimeEvent): void {
-    const active = this.active
-    if (!active || active.closing) return
+  private handleRuntimeEvent(active: ActiveSideChat, event: AcpRuntimeEvent): void {
+    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
     if (event.kind === 'message' && event.role === 'assistant') {
       const text = getAcpRuntimeEventText(event)
       if (text) {
         const id = event.messageId ?? event.id
-        const existing = active.transcript.find((entry) => entry.id === id)
-        if (existing) existing.text += text
-        else active.transcript.push({ id, role: 'assistant', text })
+        const existing = active.entries.find(
+          (entry) => entry.kind === 'message' && entry.role === 'assistant' && entry.id === id
+        )
+        if (existing?.kind === 'message') {
+          const index = active.entries.indexOf(existing)
+          active.entries[index] = { ...existing, text: existing.text + text }
+        } else {
+          active.entries.push({ id, kind: 'message', role: 'assistant', text })
+        }
       }
+    } else if (event.kind === 'tool' && event.toolCallId) {
+      const tool = {
+        id: event.toolCallId,
+        kind: 'tool' as const,
+        title: event.title ?? event.providerToolName ?? 'Tool',
+        ...(event.status ? { status: event.status } : {})
+      }
+      const existing = active.entries.findIndex(
+        (entry) => entry.kind === 'tool' && entry.id === event.toolCallId
+      )
+      if (existing >= 0) active.entries[existing] = tool
+      else active.entries.push(tool)
+    } else if (event.kind === 'error') {
+      active.running = false
+      active.error = event.text ?? event.title ?? 'Side chat failed.'
+    } else if (event.kind === 'stop') {
+      active.running = false
     }
+    const revision = this.touch(active)
     this.options.onEvent({
+      revision,
       parentSessionId: active.parentSessionId,
+      projectId: active.projectId,
       sideSessionId: active.sideSessionId,
       event
     })
   }
 
-  private handleRuntimeClosed(reason: 'connection-error' | 'connection-closed'): void {
-    const active = this.active
-    if (!active || active.closing) return
+  private handleRuntimeClosed(
+    active: ActiveSideChat,
+    reason: 'closed' | 'connection-error' | 'connection-closed'
+  ): void {
+    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
     this.options.onEvent({
+      revision: this.touch(active),
       parentSessionId: active.parentSessionId,
+      projectId: active.projectId,
       sideSessionId: active.sideSessionId,
       event: { kind: 'closed', reason }
     })
   }
 
   private requireActive(sideSessionId: string): ActiveSideChat {
-    const active = this.active
-    if (!active || active.sideSessionId !== sideSessionId || active.closing) {
-      throw new Error('Side chat Session is not active.')
+    for (const active of this.activeByParent.values()) {
+      if (active.sideSessionId === sideSessionId && !active.closing) return active
     }
-    return active
+    throw new Error('Side chat Session is not active.')
   }
 
-  private async closeActive(): Promise<void> {
-    if (this.closing) return this.closing
-    const active = this.active
-    if (!active || active.closing) return
+  private activeChats(): ActiveSideChat[] {
+    return [...this.activeByParent.values()].filter((active) => !active.closing)
+  }
+
+  private touch(chat: ActiveSideChat | StartingSideChat): number {
+    chat.revision = ++this.revision
+    return chat.revision
+  }
+
+  private snapshotStarting(starting: StartingSideChat): SideChatSnapshot {
+    return {
+      revision: starting.revision,
+      parentSessionId: starting.parentSessionId,
+      projectId: starting.projectId,
+      entries: [{ id: 'user-1', kind: 'message', role: 'user', text: starting.text }],
+      running: true
+    }
+  }
+
+  private snapshotActive(active: ActiveSideChat): SideChatSnapshot {
+    return {
+      revision: active.revision,
+      parentSessionId: active.parentSessionId,
+      projectId: active.projectId,
+      sideSessionId: active.sideSessionId,
+      entries: active.entries.map((entry) => ({ ...entry })),
+      running: active.running,
+      ...(active.error ? { error: active.error } : {})
+    }
+  }
+
+  private async closeActive(active: ActiveSideChat, notify = true): Promise<void> {
+    const existing = this.closingByParent.get(active.parentSessionId)
+    if (existing) return existing
+    if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) {
+      return
+    }
+    if (notify) this.handleRuntimeClosed(active, 'closed')
     active.closing = true
-    this.active = undefined
+    this.activeByParent.delete(active.parentSessionId)
+    this.touch(active)
     const closing = this.disposeActive(active)
-    this.closing = closing
+    this.closingByParent.set(active.parentSessionId, closing)
     try {
       await closing
     } finally {
-      if (this.closing === closing) this.closing = undefined
+      if (this.closingByParent.get(active.parentSessionId) === closing) {
+        this.closingByParent.delete(active.parentSessionId)
+      }
     }
   }
 

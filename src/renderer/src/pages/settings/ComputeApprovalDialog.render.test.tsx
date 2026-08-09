@@ -53,7 +53,7 @@ describe('ComputeApprovalDialog', () => {
       pendingApprovals: [{ ...request, session_id: 'session-side' }]
     })
 
-    act(() => root.render(<ComputeApprovalDialog blockedSessionId="session-side" />))
+    act(() => root.render(<ComputeApprovalDialog blockedSessionIds={new Set(['session-side'])} />))
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(useComputeStore.getState().pendingApprovals).toHaveLength(1)

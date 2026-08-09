@@ -13,13 +13,13 @@ import { useSettingsStore } from '@/stores/settings-store'
 // service, so a call that isn't pre-allowed or skip-approved is held until the user decides here.
 // Requests are answered one at a time (oldest first); the card can't be dismissed without a decision.
 export function ConnectorApprovalDialog({
-  blockedSessionId
+  blockedSessionIds
 }: {
-  blockedSessionId?: string
+  blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useSettingsStore((state) =>
     state.pendingApprovals.find(
-      (candidate) => !blockedSessionId || candidate.sessionId !== blockedSessionId
+      (candidate) => !candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId)
     )
   )
   const connectors = useSettingsStore((state) => state.connectors)

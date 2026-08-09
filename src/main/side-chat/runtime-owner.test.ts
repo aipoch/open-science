@@ -313,7 +313,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     runtimeOptions?.callbacks?.onStateChanged?.({ status: 'error' } as never)
 
     expect(onEvent).toHaveBeenCalledWith({
+      revision: expect.any(Number),
       parentSessionId: 'main-session-disconnected',
+      projectId: 'project-1',
       sideSessionId: 'side-session-disconnected',
       event: { kind: 'closed', reason: 'connection-error' }
     })
@@ -425,6 +427,139 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(String(sent[2]?.historyPreamble)).not.toContain('User: Follow up')
   })
 
+  it('keeps independent temporary Sessions for different parent Sessions', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-concurrent-'))
+    const shutdowns: Array<ReturnType<typeof vi.fn>> = []
+    let runtimeNumber = 0
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeNumber += 1
+        const sideSessionId = `side-session-${runtimeNumber}`
+        const shutdownForQuit = vi.fn(async () => undefined)
+        shutdowns.push(shutdownForQuit)
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: sideSessionId,
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit
+        } as never
+      }
+    })
+
+    const first = await owner.start({
+      parentSessionId: 'main-session-1',
+      projectId: 'project-1',
+      text: 'First parent'
+    })
+    await expect(
+      owner.start({
+        parentSessionId: 'main-session-1',
+        projectId: 'project-1',
+        text: 'Duplicate parent'
+      })
+    ).rejects.toThrow('already open')
+    const second = await owner.start({
+      parentSessionId: 'main-session-2',
+      projectId: 'project-1',
+      text: 'Second parent'
+    })
+
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({
+        parentSessionId: 'main-session-1',
+        sideSessionId: first.sideSessionId
+      }),
+      expect.objectContaining({
+        parentSessionId: 'main-session-2',
+        sideSessionId: second.sideSessionId
+      })
+    ])
+
+    await owner.close({ sideSessionId: first.sideSessionId })
+
+    expect(shutdowns[0]).toHaveBeenCalledOnce()
+    expect(shutdowns[1]).not.toHaveBeenCalled()
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({
+        parentSessionId: 'main-session-2',
+        sideSessionId: second.sideSessionId
+      })
+    ])
+    await owner.close({ sideSessionId: second.sideSessionId })
+  })
+
+  it('fans Settings runtime changes out to every live Side chat', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-settings-fanout-'))
+    const modelChanges: Array<ReturnType<typeof vi.fn>> = []
+    const reasoningChanges: Array<ReturnType<typeof vi.fn>> = []
+    const reconnects: Array<ReturnType<typeof vi.fn>> = []
+    let runtimeNumber = 0
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: new SideChatRelayOwner({ targetState: () => 'idle' }),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeNumber += 1
+        const sideSessionId = `side-settings-${runtimeNumber}`
+        const applyModelChange = vi.fn(async () => true)
+        const applyReasoningEffortChange = vi.fn(async () => true)
+        const requestProviderReconnect = vi.fn(async () => undefined)
+        modelChanges.push(applyModelChange)
+        reasoningChanges.push(applyReasoningEffortChange)
+        reconnects.push(requestProviderReconnect)
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: sideSessionId,
+            frameworkId: 'claude-code' as const
+          })),
+          resumeSession: vi.fn(async () => ({
+            sessionId: sideSessionId,
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt: vi.fn(async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' as const }
+          }),
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          requestProviderReconnect,
+          applyModelChange,
+          applyReasoningEffortChange,
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    await owner.start({ parentSessionId: 'main-a', projectId: 'project-1', text: 'A' })
+    await owner.start({ parentSessionId: 'main-b', projectId: 'project-1', text: 'B' })
+
+    await expect(owner.applyModelChange({ model: 'model-b' } as never)).resolves.toBe(true)
+    await expect(owner.applyReasoningEffortChange('high')).resolves.toBe(true)
+    await owner.requestProviderReconnect()
+
+    for (const apply of modelChanges) expect(apply).toHaveBeenCalledOnce()
+    for (const apply of reasoningChanges) expect(apply).toHaveBeenCalledWith('high')
+    for (const reconnect of reconnects) expect(reconnect).toHaveBeenCalledOnce()
+    await owner.shutdown()
+  })
+
   it('does not admit another temporary Session until asynchronous teardown finishes', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-drain-'))
     let finishShutdown!: () => void
@@ -467,7 +602,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await expect(
       owner.start({
-        parentSessionId: 'main-session-next',
+        parentSessionId: 'main-session-drain',
         projectId: 'project-1',
         text: 'Too early'
       })

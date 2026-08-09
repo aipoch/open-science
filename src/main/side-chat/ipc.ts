@@ -26,6 +26,7 @@ const registerSideChatIpcHandlers = (
   const startingParents = new Set<string>()
   const closeRequestedParents = new Set<string>()
 
+  ipcMainHandle('side-chat:list', () => runtime.list())
   ipcMainHandle('side-chat:start', async (_event, request: SideChatStartRequest) => {
     startingParents.add(request.parentSessionId)
     try {

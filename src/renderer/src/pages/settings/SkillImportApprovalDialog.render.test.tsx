@@ -62,7 +62,9 @@ describe('SkillImportApprovalDialog', () => {
       skipped: []
     })
 
-    act(() => root.render(<SkillImportApprovalDialog blockedSessionId="session-side" />))
+    act(() =>
+      root.render(<SkillImportApprovalDialog blockedSessionIds={new Set(['session-side'])} />)
+    )
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(useSkillImportStore.getState().pending).toHaveLength(1)

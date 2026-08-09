@@ -487,6 +487,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.validateProvider',
       'sideChat.cancel',
       'sideChat.close',
+      'sideChat.list',
       'sideChat.onEvent',
       'sideChat.onRelayDelivered',
       'sideChat.send',

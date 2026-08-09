@@ -12,6 +12,14 @@ vi.mock('../ipc-handler-registry', () => ({
 describe('Side chat IPC', () => {
   beforeEach(() => handlers.clear())
 
+  it('lists every live in-memory Side chat for renderer hydration', async () => {
+    const snapshot = { revision: 2, chats: [{ parentSessionId: 'main-1' }] }
+    const runtime = { list: vi.fn(() => snapshot) }
+    registerSideChatIpcHandlers(runtime as never, {} as never)
+
+    expect(handlers.get('side-chat:list')?.(undefined, undefined as never)).toBe(snapshot)
+  })
+
   it('loads a main-owned bounded history snapshot before starting', async () => {
     const runtime = {
       start: vi.fn(async (request) => ({ sideSessionId: 'side-1', ...request })),

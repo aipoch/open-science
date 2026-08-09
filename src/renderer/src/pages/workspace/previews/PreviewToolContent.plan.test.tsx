@@ -14,7 +14,7 @@ vi.mock('../NotebookPreview', () => ({ NotebookPreview: () => null }))
 vi.mock('../ProjectFilesView', () => ({ ProjectFilesView: () => null }))
 vi.mock('../SessionReviewerPanel', () => ({ SessionReviewerPanel: () => null }))
 vi.mock('../use-side-chat-controller', () => ({
-  useOpenSideChatParentSessionId: () => sideChatState.parentSessionId
+  useIsSideChatOpenForSession: (sessionId: string) => sideChatState.parentSessionId === sessionId
 }))
 
 import { PreviewToolContent } from './PreviewToolContent'
