@@ -44,12 +44,12 @@ describe('ManagedFileIndexRepository', () => {
     client = createProjectDbClient(storageRoot)
     await ensureProjectSchema(client)
     repository = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
-  }, 30_000)
+  })
 
   afterEach(async () => {
     await client.$disconnect()
     await rm(storageRoot, { recursive: true, force: true })
-  }, 30_000)
+  })
 
   it('indexes uploads and all finalized managed artifacts without requiring a message link', async () => {
     const uploadPath = join(storageRoot, 'uploads', 'default-project', SESSION_ID, 'input.csv')
