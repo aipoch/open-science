@@ -860,18 +860,27 @@ const asArtifactKind = (value: unknown): PersistedArtifactKind | undefined => {
   return kind && ARTIFACT_KINDS.has(kind) ? kind : undefined
 }
 
-const hasRestorablePermissionWait = (session: PersistedChatSession): boolean => {
-  const permission = session.runtimeContext?.permission
+const isPermissionAuthorityBoundToActivePrompt = (
+  session: PersistedChatSession,
+  permission: SessionPermissionRuntimeContext
+): boolean => {
   const activeMessages = session.conversationGraph
     ? resolveActiveConversationMessages(session.conversationGraph)
     : session.messages
   return Boolean(
-    session.status === 'waiting-permission' &&
-    permission?.state === 'pending' &&
-    permission?.request.sessionId === session.id &&
+    permission.request.sessionId === session.id &&
     activeMessages.some(
       (message) => message.id === permission.originatingPromptMessageId && message.role === 'user'
     )
+  )
+}
+
+const hasRestorablePermissionWait = (session: PersistedChatSession): boolean => {
+  const permission = session.runtimeContext?.permission
+  return Boolean(
+    session.status === 'waiting-permission' &&
+    permission?.state === 'pending' &&
+    isPermissionAuthorityBoundToActivePrompt(session, permission)
   )
 }
 
@@ -906,15 +915,40 @@ const markInterruptedPrompt = (
 const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
   [...messages].reverse().find((message) => message.role === 'user')?.id
 
-// Restores interrupted sessions as retryable errors because runtime state is gone.
+// Rehydrates durable waits and converts runtime-only work into recoverable states after restart.
 const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedChatSession => {
-  const continuingPermission = session.runtimeContext?.permission
-  if (continuingPermission?.state === 'continuing') {
-    const promptMessageId = continuingPermission.originatingPromptMessageId
+  const persistedRuntimeContext = session.runtimeContext
+  const continuingPermission = persistedRuntimeContext?.permission
+  if (persistedRuntimeContext && continuingPermission?.state === 'continuing') {
+    if (isPermissionAuthorityBoundToActivePrompt(session, continuingPermission)) {
+      // The provider continuation died with the process. Re-present its durable request instead
+      // of automatically replaying privileged work that may already have partially completed.
+      return {
+        ...session,
+        status: 'waiting-permission',
+        activeRun: undefined,
+        runtimeContext: {
+          ...persistedRuntimeContext,
+          permission: {
+            ...continuingPermission,
+            state: 'pending'
+          }
+        },
+        resumeRecovery: undefined,
+        error: undefined,
+        errorReportable: undefined,
+        messages: session.messages.map(normalizeMessageAfterRestore)
+      }
+    }
+
+    const runtimeContext = { ...persistedRuntimeContext }
+    delete runtimeContext.permission
+    const promptMessageId = latestUserMessageId(session.messages)
     return {
       ...session,
       status: 'error',
       activeRun: undefined,
+      runtimeContext,
       resumeRecovery: {
         kind: 'resume-required',
         cause: 'app-restart',

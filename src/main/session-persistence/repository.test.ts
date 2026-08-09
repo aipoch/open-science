@@ -721,7 +721,7 @@ describe('session persistence repository (per-session files)', () => {
     expect(sessions[0].messages[0].interrupted).toBe(true)
   })
 
-  it('fails a permission continuation closed instead of restoring an actionable card', async () => {
+  it('rearms a prompt-bound permission continuation as actionable after restart', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(
       createSession({
@@ -750,16 +750,20 @@ describe('session persistence repository (per-session files)', () => {
     const { sessions } = await repository.loadAll()
 
     expect(sessions[0]).toMatchObject({
-      status: 'error',
-      runtimeContext: { version: 1, revision: 2 },
-      resumeRecovery: {
-        kind: 'resume-required',
-        cause: 'app-restart',
-        promptMessageId: 'message-1'
+      status: 'waiting-permission',
+      runtimeContext: {
+        version: 1,
+        revision: 2,
+        permission: {
+          state: 'pending',
+          originatingPromptMessageId: 'message-1'
+        }
       }
     })
-    expect(sessions[0].runtimeContext?.permission).toMatchObject({ state: 'continuing' })
-    expect(sessions[0].messages[0].interrupted).toBe(true)
+    expect(sessions[0].activeRun).toBeUndefined()
+    expect(sessions[0].resumeRecovery).toBeUndefined()
+    expect(sessions[0].error).toBeUndefined()
+    expect(sessions[0].messages[0].interrupted).toBeUndefined()
   })
 
   it('fails a permission wait closed when its persisted fingerprint is invalid', async () => {

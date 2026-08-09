@@ -955,6 +955,108 @@ describe('normalizeSessionFile with activities', () => {
     expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
   })
 
+  it('rearms a prompt-bound continuing permission after restart', () => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'running',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the tests',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          permission: {
+            state: 'continuing',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 2
+          }
+        }
+      })
+    )
+
+    expect(restored).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        permission: {
+          state: 'pending',
+          originatingPromptMessageId: 'prompt-1'
+        }
+      }
+    })
+    expect(restored?.activeRun).toBeUndefined()
+    expect(restored?.resumeRecovery).toBeUndefined()
+    expect(restored?.error).toBeUndefined()
+    expect(restored?.messages[0]?.interrupted).toBeUndefined()
+  })
+
+  it('releases an invalid continuing permission before generic restart recovery', () => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'running',
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the tests',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          permission: {
+            state: 'continuing',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'missing-prompt',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 2
+          }
+        }
+      })
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
   it('round-trips special Plan step titles without changing object prototypes', () => {
     const specialStatuses = JSON.parse(
       '{"toString":{"status":"completed","updatedAt":1},"constructor":{"status":"skipped","updatedAt":2},"__proto__":{"status":"blocked","updatedAt":3}}'
