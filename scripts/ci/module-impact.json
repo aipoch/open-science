@@ -132,6 +132,7 @@
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/compute-service.architecture.test.ts",
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
@@ -140,6 +141,7 @@
           "src/main/compute/concurrency-integration.test.ts"
         ],
         "contract": [
+          "src/main/application-command-composition.test.ts",
           "src/main/compute/concurrency-manager.test.ts",
           "src/main/compute/job-dispatcher.test.ts",
           "src/main/compute/scp-runner.test.ts",
