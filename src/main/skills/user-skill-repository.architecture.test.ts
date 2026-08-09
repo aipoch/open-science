@@ -31,11 +31,13 @@ import { describe, expect, it } from 'vitest'
 const projectRoot = resolve(__dirname, '../../..')
 const skillsRoot = resolve(projectRoot, 'src/main/skills')
 const repositoryPath = resolve(skillsRoot, 'user-skill-repository.ts')
+const storePath = resolve(skillsRoot, 'user-skill-store.ts')
 const mutationOwnerPath = resolve(skillsRoot, 'skill-mutation-owner.ts')
 const transactionOwnerPath = resolve(skillsRoot, 'skill-package-transaction-owner.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
+const rawLineCount = (source: string): number => source.trimEnd().split(/\r?\n/).length
 const modulePath = (path: string): string => path.replace(/\.[cm]?[jt]sx?$/, '')
 const portableProjectPath = (path: string): string =>
   relative(projectRoot, path).replaceAll('\\', '/')
@@ -174,6 +176,10 @@ type ModuleImpactManifest = {
 }
 
 describe('User Skill repository architecture', () => {
+  it('keeps the catalog and Personal Skill owner within the production file budget', () => {
+    expect(rawLineCount(readSource(storePath))).toBeLessThanOrEqual(660)
+  })
+
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
@@ -215,11 +221,18 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/skill-package-transaction-owner.ts',
       'src/main/skills/specialist-package-adapter.ts'
     ])
-    expect(importersOf(transactionOwnerPath)).toEqual(['src/main/skills/user-skill-repository.ts'])
+    expect(importersOf(storePath)).toEqual(['src/main/skills/user-skill-repository.ts'])
+    expect(importersOf(transactionOwnerPath)).toEqual([
+      'src/main/skills/user-skill-repository.ts',
+      'src/main/skills/user-skill-store.ts'
+    ])
     expect(readSource(repositoryPath)).not.toContain('skillMutationOwnerFor(')
     expect(readSource(repositoryPath)).toContain('mutationOwner?: SkillMutationOwner')
     expect(readSource(repositoryPath)).toContain(
       'new SkillPackageTransactionOwner(storageRoot, mutationOwner)'
+    )
+    expect(readSource(repositoryPath)).toContain(
+      'new UserSkillStore(storageRoot, this.transactions)'
     )
   })
 
@@ -228,6 +241,7 @@ describe('User Skill repository architecture', () => {
     expect(manifest.modules.user_skills_repository).toEqual({
       ownerPaths: [
         'src/main/skills/user-skill-repository.ts',
+        'src/main/skills/user-skill-store.ts',
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-package-transaction-owner.ts'
       ],

@@ -1,20 +1,15 @@
 import { createHash } from 'node:crypto'
-import { cp, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
-
-import { dump as dumpYaml } from 'js-yaml'
 
 import type {
   AgentHomeSkillRef,
   AgentHomeSkillSource,
   SkillBundlePreview,
   SkillBundlePreviewResult,
-  SkillReference,
-  SkillSource,
   SkippedSkill
 } from '../../shared/settings'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
-import { createLogger } from '../logger'
 import {
   fetchSkillFiles,
   fetchSkillPreview,
@@ -27,84 +22,23 @@ import {
 } from './github-import'
 import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
-import { readSkillFile } from './skill-files'
 import { selectSkillManifestRoots } from './skill-bundle-paths'
 import { extractZip, extractZipLenient } from './zip-extract'
-import { readSpecialistPackageSkillMetadata } from './specialist-package-adapter'
 import {
   SOURCE_MANIFEST,
   SkillPackageTransactionOwner,
   type SkillMutationOwner,
   type StagedSkillPackage
 } from './skill-package-transaction-owner'
-
-const log = createLogger('skills')
-
-// User skills live in writable app storage, one subdir per skill, grouped by source. Bundled (featured)
-// skills stay read-only in resources and are handled by SkillRegistry instead.
-const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'personal'>> = [
-  'imported',
-  'personal'
-]
-
-// Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
-// Exported so the settings service can validate renderer-supplied slugs before resolving them
-// against the active agent's skills dir; the import path is the only trust boundary.
-export const SAFE_SLUG = /^[a-z0-9-]+$/
-
-// Reserved id namespaces a user-authored skill may not claim: `os-` is the app's own materialized
-// prefix and `mcp-` is reserved for MCP-provided skills.
-const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-'] as const
-
-// Validates a user-chosen slug, throwing a user-facing error for empty, unsafe, or reserved values.
-export const assertUsableSlug = (slug: string): void => {
-  if (!slug) throw new Error('Skill ID is required.')
-  if (!SAFE_SLUG.test(slug)) {
-    throw new Error('Skill ID may only contain lowercase letters, numbers, and hyphens.')
-  }
-  if (RESERVED_SLUG_PREFIXES.some((prefix) => slug.startsWith(prefix))) {
-    throw new Error(`Skill ID may not start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`)
-  }
-}
-
-// Builds a filesystem-safe slug from a display name (e.g. "My Skill!" -> "my-skill").
-const toSlug = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64)
-
-// Serializes the SKILL.md frontmatter block from arbitrary user values. A hand-rolled emitter kept
-// getting subtle YAML edge cases wrong (type coercion of `true`/`123`, trailing-newline handling,
-// leading spaces), so this delegates to js-yaml: it quotes or block-escapes each value as needed so
-// every field round-trips LOSSLESSLY and always as a string through any conformant YAML parser. The
-// leading `---`/trailing `---` document markers are added by the caller. `lineWidth: -1` disables line
-// folding so long descriptions aren't rewrapped (which would not be byte-lossless).
-const frontmatterBlock = (fields: Record<string, string>): string =>
-  dumpYaml(fields, { lineWidth: -1 })
-
-// A skill id is `<source>-<slug>`; parse it back to its source + slug (null for bundled/unknown ids).
-const parseUserSkillId = (
-  id: string
-): { source: (typeof USER_SOURCES)[number]; slug: string } | null => {
-  for (const source of USER_SOURCES) {
-    const prefix = `${source}-`
-    if (id.startsWith(prefix)) {
-      const slug = id.slice(prefix.length)
-      if (SAFE_SLUG.test(slug)) return { source, slug }
-    }
-  }
-  return null
-}
-
-type WriteSkillInput = {
-  name: string
-  description: string
-  body: string
-  metadata?: Record<string, string>
-  references?: SkillReference[]
-}
+import {
+  SAFE_SLUG,
+  UserSkillStore,
+  assertUsableSlug,
+  frontmatterBlock,
+  parseUserSkillId,
+  toSlug,
+  type WriteSkillInput
+} from './user-skill-store'
 
 // Result of an import: whether it was newly imported, refreshed from an upstream change, or a no-op
 // because the same source was already imported unchanged.
@@ -318,39 +252,18 @@ const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
   private readonly transactions: SkillPackageTransactionOwner
+  private readonly store: UserSkillStore
 
-  constructor(
-    private readonly storageRoot: string,
-    mutationOwner?: SkillMutationOwner
-  ) {
+  constructor(storageRoot: string, mutationOwner?: SkillMutationOwner) {
     this.transactions = new SkillPackageTransactionOwner(storageRoot, mutationOwner)
-  }
-
-  private sourceDir(source: (typeof USER_SOURCES)[number]): string {
-    return join(this.storageRoot, 'skills', source)
-  }
-
-  private skillDir(source: (typeof USER_SOURCES)[number], slug: string): string {
-    return join(this.sourceDir(source), slug)
-  }
-
-  // Lists the valid skill slugs under a source, ignoring hidden entries — in particular the
-  // `.import-`/`.backup-` transaction dirs, which must never be surfaced as slugs or skill ids.
-  private async listSlugs(source: (typeof USER_SOURCES)[number]): Promise<string[]> {
-    try {
-      return (await readdir(this.sourceDir(source))).filter((entry) => SAFE_SLUG.test(entry))
-    } catch {
-      return []
-    }
+    this.store = new UserSkillStore(storageRoot, this.transactions)
   }
 
   // Lists every personal + imported skill, skipping any dir whose SKILL.md is missing/unreadable. The
   // whole read runs under the lock, after recovery, so it can't observe a live dir mid-swap (a rename
   // to/from a backup) and drop or duplicate an entry.
   async list(): Promise<BundledSkill[]> {
-    return this.transactions.runRecovered(async () => {
-      return this.listSkillsInternal()
-    })
+    return this.store.list()
   }
 
   // Keeps a user-Skill filesystem read inside the same owner lock as create, update, import, delete,
@@ -360,91 +273,20 @@ class UserSkillRepository {
     id: string,
     read: (skill: BundledSkill) => Promise<T>
   ): Promise<T | undefined> {
-    return this.transactions.runRecovered(async () => {
-      const skill = (await this.listSkillsInternal()).find((entry) => entry.id === id)
-      return skill ? read(skill) : undefined
-    })
-  }
-
-  // The listing itself, without acquiring the lock or running recovery — call only from within a
-  // critical section that has already recovered (avoids re-entrant locking / deadlock).
-  private async listSkillsInternal(): Promise<BundledSkill[]> {
-    const skills: BundledSkill[] = []
-
-    for (const source of USER_SOURCES) {
-      for (const slug of await this.listSlugs(source)) {
-        const skillDir = this.skillDir(source, slug)
-
-        try {
-          const { fields } = await readSkillFile(skillDir)
-          const packageMetadata = await readSpecialistPackageSkillMetadata(skillDir)
-          const updatedAt = (await stat(join(skillDir, 'SKILL.md'))).mtime.toISOString()
-
-          skills.push({
-            id: packageMetadata?.id ?? `${source}-${slug}`,
-            name: fields.name || slug,
-            description: fields.description ?? '',
-            source,
-            updatedAt,
-            sourceDir: skillDir,
-            author: fields.author,
-            license: fields.license,
-            thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
-          })
-        } catch (error) {
-          log.warn('skipping user skill with unreadable SKILL.md', { source, slug, error })
-        }
-      }
-    }
-
-    return skills
-  }
-
-  private async resolveSkillId(
-    id: string
-  ): Promise<{ source: (typeof USER_SOURCES)[number]; slug: string }> {
-    const conventional = parseUserSkillId(id)
-    if (conventional) return conventional
-    for (const source of USER_SOURCES) {
-      for (const slug of await this.listSlugs(source)) {
-        const metadata = await readSpecialistPackageSkillMetadata(this.skillDir(source, slug))
-        if (metadata?.id === id) return { source, slug }
-      }
-    }
-    throw new Error(`Not a user skill id: ${id}`)
+    return this.store.withSkillReadLock(id, read)
   }
 
   // Returns one user skill's SKILL.md body (frontmatter stripped). Recovery + read run under the lock
   // so a concurrent replace can't rename the live dir out from under the read (transient ENOENT).
   async body(id: string): Promise<string> {
-    return this.transactions.runRecovered(async () => {
-      const parsed = await this.resolveSkillId(id)
-      return (await readSkillFile(this.skillDir(parsed.source, parsed.slug))).body
-    })
+    return this.store.body(id)
   }
 
   // Creates a personal skill, returning its new id. With an explicit `requestedSlug`, that slug is
   // used verbatim (validated, and rejected if already taken); otherwise a slug is derived from the
   // name and collisions get a numeric suffix.
   async createPersonal(input: WriteSkillInput, requestedSlug?: string): Promise<string> {
-    return this.transactions.runExclusive(async () => {
-      if (requestedSlug !== undefined) {
-        const slug = requestedSlug.trim()
-        assertUsableSlug(slug)
-        if (await this.slugTaken('personal', slug)) {
-          throw new Error(`A skill with ID "${slug}" already exists.`)
-        }
-        await this.writeSkill('personal', slug, input)
-
-        return `personal-${slug}`
-      }
-
-      const base = toSlug(input.name) || 'skill'
-      const slug = await this.uniqueSlug('personal', base)
-      await this.writeSkill('personal', slug, input)
-
-      return `personal-${slug}`
-    })
+    return this.store.createPersonal(input, requestedSlug)
   }
 
   // Publishes an app-authored draft as a complete Personal Skill package. Unlike the form editor,
@@ -456,62 +298,27 @@ class UserSkillRepository {
     sourcePath: string,
     overwrite = false
   ): Promise<string> {
-    const slug = requestedSlug.trim()
-    assertUsableSlug(slug)
-
-    return this.transactions.runRecovered(async () => {
-      if (!overwrite && (await this.slugTaken('personal', slug))) {
-        throw new Error(`A skill with ID "${slug}" already exists.`)
-      }
-
-      const staged = await this.transactions.stage('personal', slug, async (staging) => {
-        await cp(sourcePath, staging, {
-          recursive: true,
-          force: false,
-          errorOnExist: true,
-          filter: async (entry) => {
-            if ((await lstat(entry)).isSymbolicLink()) {
-              throw new Error('Refusing to publish a Skill containing a symbolic link.')
-            }
-            if (resolve(entry) === resolve(sourcePath, SOURCE_MANIFEST)) {
-              throw new Error(`Skill publish may not include the reserved file ${SOURCE_MANIFEST}.`)
-            }
-            return true
-          }
-        })
+    return this.store.publishPersonalDirectory(
+      requestedSlug,
+      sourcePath,
+      overwrite,
+      async (staging) => {
         const entries = await this.inspectAgentHomeSkill(staging)
         if (!entries.some((entry) => entry.kind === 'file' && entry.relativePath === 'SKILL.md')) {
           throw new Error('A published Skill must contain SKILL.md at its root.')
         }
-      })
-      await this.transactions.promote(staged)
-      return `personal-${slug}`
-    }, ['personal'])
+      }
+    )
   }
 
   // Rewrites an existing personal skill's SKILL.md in place.
   async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
-    const parsed = parseUserSkillId(id)
-    if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
-
-    await this.transactions.runExclusive(() => this.writeSkill('personal', parsed.slug, input))
+    return this.store.updatePersonal(id, input)
   }
 
   // Deletes a personal or imported skill directory.
   async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
-    return this.transactions.runRecovered(async () => {
-      // Recover first, so a skill left only in a crash backup is restored to its live dir and then
-      // actually removed here — otherwise a later recovery would "resurrect" the deleted skill.
-      await guard?.(id)
-      const parsed = await this.resolveSkillId(id)
-      const metadata = await readSpecialistPackageSkillMetadata(
-        this.skillDir(parsed.source, parsed.slug)
-      )
-      if (metadata?.ownerIds.length) {
-        throw new Error('A Specialist-owned Skill cannot be deleted directly.')
-      }
-      await rm(this.skillDir(parsed.source, parsed.slug), { recursive: true, force: true })
-    })
+    return this.store.delete(id, guard)
   }
 
   // Imports a single skill directory from a public GitHub URL, deduplicating against prior imports of
@@ -544,7 +351,7 @@ class UserSkillRepository {
       }
 
       // A brand-new source; take a free slug (a same-name skill from a different repo gets a suffix).
-      const slug = await this.uniqueSlug('imported', base)
+      const slug = await this.store.uniqueSlug('imported', base)
       await this.writeImported(slug, files, url, signature)
       return { status: 'imported', id: `imported-${slug}` }
     })
@@ -568,7 +375,7 @@ class UserSkillRepository {
   // Finds an already-imported skill whose recorded source URL matches, for dedup. Only real slugs are
   // scanned, so a hidden transaction dir can never be returned as a (bogus) slug.
   private async findImportedSlugByUrl(url: string): Promise<string | undefined> {
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       const source = await this.transactions.readImportedSource(slug)
       if (source?.url === url) return slug
     }
@@ -637,7 +444,7 @@ class UserSkillRepository {
     const target = name.trim().toLowerCase()
     // Non-locking listing: this is only ever called from within a critical section that has already
     // recovered, so it must not re-acquire the lock (which would deadlock).
-    const matches = (await this.listSkillsInternal()).filter(
+    const matches = (await this.store.listSkillsLocked()).filter(
       (skill) => skill.source === 'imported' && skill.name.trim().toLowerCase() === target
     )
     return matches.length === 1 ? matches[0].id : undefined
@@ -724,7 +531,7 @@ class UserSkillRepository {
       if (
         !parsed ||
         parsed.source !== 'imported' ||
-        !(await this.slugTaken('imported', parsed.slug))
+        !(await this.store.slugTaken('imported', parsed.slug))
       ) {
         throw new Error(`Not an imported skill to replace: ${replaceId}`)
       }
@@ -740,14 +547,14 @@ class UserSkillRepository {
     // CRLF-aware name extraction (from #181) inside #170's operation-level critical section.
     const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
     const base = toSlug(name ?? 'skill') || 'skill'
-    const slug = await this.uniqueSlug('imported', base)
+    const slug = await this.store.uniqueSlug('imported', base)
     await this.writeImported(slug, files, '', signature)
     return { status: 'imported', id: `imported-${slug}` }
   }
 
   // Finds an imported skill whose recorded content signature matches, for zip dedup.
   private async findImportedSlugBySignature(signature: string): Promise<string | undefined> {
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       const source = await this.transactions.readImportedSource(slug)
       if (source?.signature === signature) return slug
     }
@@ -789,7 +596,7 @@ class UserSkillRepository {
 
     // listSlugs ignores hidden entries, so a transaction dir's .source.json is never read as an
     // already-imported source even if recovery couldn't clean it up.
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       slugs.add(slug)
       const source = await this.transactions.readImportedSource(slug)
       if (source?.url) urls.add(source.url)
@@ -801,7 +608,7 @@ class UserSkillRepository {
     Map<string, { importedSlug: string; signature?: string }>
   > {
     const signatures = new Map<string, { importedSlug: string; signature?: string }>()
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       const source = await this.transactions.readImportedSource(slug)
       if (source?.agentHome) {
         signatures.set(agentHomeKey(source.agentHome), {
@@ -817,13 +624,13 @@ class UserSkillRepository {
     candidateSlugs: ReadonlySet<string>
   ): Promise<Map<string, string>> {
     const signatures = new Map<string, string>()
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       if (!candidateSlugs.has(slug)) continue
       if ((await this.transactions.readImportedSource(slug))?.agentHome) continue
       try {
         signatures.set(
           slug,
-          await this.signatureOfAgentHomeSkill(this.skillDir('imported', slug), {
+          await this.signatureOfAgentHomeSkill(this.store.skillDir('imported', slug), {
             skipSourceManifest: true
           })
         )
@@ -886,7 +693,7 @@ class UserSkillRepository {
             if (record.signature !== signature) continue
             try {
               const importedSignature = await this.signatureOfAgentHomeSkill(
-                this.skillDir('imported', record.importedSlug),
+                this.store.skillDir('imported', record.importedSlug),
                 { skipSourceManifest: true }
               )
               if (importedSignature === signature) matchingIdentities.push(record)
@@ -933,7 +740,7 @@ class UserSkillRepository {
     aliases: readonly AgentHomeSkillRef[]
   ): Promise<string | undefined> {
     const acceptedKeys = new Set([skill, ...aliases].map(agentHomeKey))
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       const source = await this.transactions.readImportedSource(slug)
       if (source?.agentHome && acceptedKeys.has(agentHomeKey(source.agentHome))) {
         return slug
@@ -946,12 +753,12 @@ class UserSkillRepository {
     fallbackSlugs: ReadonlySet<string>,
     sourceSignature: string
   ): Promise<string | undefined> {
-    for (const slug of await this.listSlugs('imported')) {
+    for (const slug of await this.store.listSlugs('imported')) {
       if (!fallbackSlugs.has(slug)) continue
       if ((await this.transactions.readImportedSource(slug))?.agentHome) continue
       try {
         const importedSignature = await this.signatureOfAgentHomeSkill(
-          this.skillDir('imported', slug),
+          this.store.skillDir('imported', slug),
           { skipSourceManifest: true }
         )
         if (importedSignature === sourceSignature) return slug
@@ -1076,7 +883,7 @@ class UserSkillRepository {
     url: string,
     signature: string
   ): Promise<void> {
-    const dir = this.skillDir('imported', slug)
+    const dir = this.store.skillDir('imported', slug)
     const root = resolve(dir)
 
     // Validate the whole file set against the FINAL directory before touching disk. Every target must
@@ -1154,84 +961,6 @@ class UserSkillRepository {
       await this.transactions.writeSourceManifest(staging, { signature, agentHome: skill })
     })
     return { ...staged, signature }
-  }
-
-  // Finds a slug not yet taken under the source, appending -2, -3, ... on collision.
-  private async uniqueSlug(source: (typeof USER_SOURCES)[number], base: string): Promise<string> {
-    const taken = new Set(await this.listSlugs(source))
-
-    if (!taken.has(base)) return base
-    for (let index = 2; ; index += 1) {
-      const candidate = `${base}-${index}`
-      if (!taken.has(candidate)) return candidate
-    }
-  }
-
-  // Whether a slug's directory already exists under the source.
-  private async slugTaken(source: (typeof USER_SOURCES)[number], slug: string): Promise<boolean> {
-    return (await this.listSlugs(source)).includes(slug)
-  }
-
-  // Writes a SKILL.md with authoritative name/description plus optional imported frontmatter.
-  private async writeSkill(
-    source: (typeof USER_SOURCES)[number],
-    slug: string,
-    input: WriteSkillInput
-  ): Promise<void> {
-    const dir = this.skillDir(source, slug)
-    await mkdir(dir, { recursive: true })
-
-    // Renderer requests are untrusted: accept only the flat keys this app can read, keep every value
-    // a string, and never let imported metadata override the authoritative name or description.
-    const metadata = Object.fromEntries(
-      Object.entries(input.metadata ?? {}).filter(
-        ([key, value]) =>
-          key.toLowerCase() !== 'name' &&
-          key.toLowerCase() !== 'description' &&
-          /^[A-Za-z0-9_-]+$/.test(key) &&
-          typeof value === 'string'
-      )
-    )
-    // js-yaml.dump already ends with a newline, so the closing fence follows directly.
-    const frontmatter = `---\n${frontmatterBlock({
-      name: input.name,
-      description: input.description,
-      ...metadata
-    })}---`
-    const contents = `${frontmatter}\n\n${input.body.trimStart()}`
-
-    await writeFile(join(dir, 'SKILL.md'), contents, 'utf8')
-
-    // Reconcile the references/ dir to the desired set when references are provided (an array — even
-    // empty — reconciles; `undefined` leaves the dir untouched). A reference with `dataBase64` is
-    // written (created or replaced); one without it is an existing file to keep as-is. Any file not in
-    // the desired set is removed, so the editor's removals delete the file on disk.
-    if (input.references !== undefined) {
-      const refsDir = join(dir, 'references')
-      const desired = new Map<string, SkillReference>()
-      for (const reference of input.references) {
-        const name = reference.path.split(/[\\/]/).pop() ?? ''
-        if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
-        desired.set(name, reference)
-      }
-
-      let existing: string[] = []
-      try {
-        existing = await readdir(refsDir)
-      } catch {
-        existing = []
-      }
-      for (const name of existing) {
-        if (!desired.has(name)) await rm(join(refsDir, name), { recursive: true, force: true })
-      }
-
-      for (const [name, reference] of desired) {
-        if (reference.dataBase64 === undefined) continue
-        const target = join(refsDir, name)
-        await mkdir(dirname(target), { recursive: true })
-        await writeFile(target, Buffer.from(reference.dataBase64, 'base64'))
-      }
-    }
   }
 
   // Lists the skill directories under a machine-level agent home (typically ~/.claude/skills/).
@@ -1375,7 +1104,7 @@ class UserSkillRepository {
 
     return this.transactions.runRecovered(async () => {
       const existingSlug = await this.findImportedSlugByAgentHome(skill, options.aliases ?? [])
-      const slug = existingSlug ?? (await this.uniqueSlug('imported', requestedSlug))
+      const slug = existingSlug ?? (await this.store.uniqueSlug('imported', requestedSlug))
       const staged = await this.stageAgentHomeSkill(slug, sourcePath, skill)
       try {
         if (options.expectedImportedIdentity) {
@@ -1384,7 +1113,7 @@ class UserSkillRepository {
           let currentTreeSignature: string | undefined
           try {
             currentTreeSignature = await this.signatureOfAgentHomeSkill(
-              this.skillDir('imported', expected.importedSlug),
+              this.store.skillDir('imported', expected.importedSlug),
               { skipSourceManifest: true }
             )
           } catch {
@@ -1437,4 +1166,11 @@ class UserSkillRepository {
   }
 }
 
-export { UserSkillRepository, frontmatterBlock, parseUserSkillId, toSlug }
+export {
+  SAFE_SLUG,
+  UserSkillRepository,
+  assertUsableSlug,
+  frontmatterBlock,
+  parseUserSkillId,
+  toSlug
+}
