@@ -12,42 +12,17 @@ import {
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
 } from '../../shared/run-error-classification'
-import type { ModelReasoningEffort, ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import {
   getAgentFramework,
-  type AgentModelCatalogEntry,
   type AgentModelChangeTarget,
   type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
-import { opencodeConfigDir, opencodeTransportProviderId } from '../agent-framework/opencode'
-import {
-  codexStorageDir,
-  codexSubscriptionStorageDir,
-  normalizeResponsesBaseUrl
-} from '../agent-framework/codex'
+import { opencodeConfigDir } from '../agent-framework/opencode'
+import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { renderConnectorInstructions } from '../connectors/skill-doc'
-import {
-  normalizeAnthropicBaseUrl,
-  openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
 import { buildProviderEnv } from './provider-env'
-import {
-  AnthropicProviderBridge,
-  type AnthropicProviderBridgeTarget
-} from './anthropic-provider-bridge'
-import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
-import {
-  ResponsesBridge,
-  type ResponsesBridgeConnection,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeTarget
-} from './responses-bridge'
-import {
-  NativeResponsesCompatibilityProxy,
-  type NativeResponsesCompatibilityTarget
-} from './native-responses-compatibility'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
 import type { ConnectorSettingsModule } from './connector-settings'
 import {
@@ -57,7 +32,6 @@ import {
   type RuntimeProviderModelSelection
 } from './provider-accounts'
 import { ensureCodexAuthHome } from './codex-auth'
-import { loopbackProxyBypassEnvironment } from './system-proxy'
 import type { StoredSettings } from './types'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import {
@@ -66,7 +40,11 @@ import {
   type BackendSelectionResolution,
   type ExplicitAgentBackendTarget
 } from './backend-selection-owner'
-import { BackendRoutePlanner, type BackendTransportPlan } from './backend-route-planner'
+import { BackendRoutePlanner } from './backend-route-planner'
+import {
+  ProviderTransportOwner,
+  type ProviderTransportOwnerOptions
+} from './provider-transport-owner'
 
 export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 
@@ -106,55 +84,7 @@ export type AgentBackendConnectorPort = Pick<
   'enabledConnectorIds' | 'provisionedConnectorSkillNames'
 >
 
-type BridgeBasePort = Pick<
-  ResponsesBridge,
-  | 'start'
-  | 'close'
-  | 'selectSkills'
-  | 'registerReviewerSession'
-  | 'unregisterReviewerSession'
-  | 'registerToolLessSession'
-  | 'unregisterToolLessSession'
->
-
-type ResponsesBridgePort = BridgeBasePort &
-  Pick<ResponsesBridge, 'setReasoningEffort' | 'setModelTarget' | 'setTarget'>
-type NativeResponsesProxyPort = BridgeBasePort &
-  Pick<NativeResponsesCompatibilityProxy, 'setModelTarget' | 'setTarget'>
-type AnthropicProviderBridgePort = Pick<AnthropicProviderBridge, 'start' | 'close' | 'setTarget'>
-type OpenAiProviderBridgePort = Pick<OpenAiProviderBridge, 'start' | 'close' | 'setTarget'>
-
-type NativeResponsesProxyTarget = NativeResponsesCompatibilityTarget & {
-  reviewerScope: { namespacedTools: ResponsesBridgeNamespacedTool[] }
-}
-
-type ResponsesBridgeEntry = {
-  bridge: ResponsesBridgePort
-  connection: Promise<ResponsesBridgeConnection>
-}
-
-type NativeResponsesCompatibilityEntry = {
-  proxy: NativeResponsesProxyPort
-  connection: Promise<ResponsesBridgeConnection>
-}
-
-type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
-  providerTransportLease?: NonNullable<ResolvedAgentBackend['providerTransportLease']>
-}
-
-type OpenCodeProviderTransport = Readonly<{
-  provider: ProviderRuntimeTarget['provider']
-  providerModelCatalog: readonly AgentModelCatalogEntry[]
-  lease: NonNullable<ResolvedAgentBackend['providerTransportLease']>
-}>
-
-type NativeCodexProviderTransport = Readonly<{
-  provider: ProviderRuntimeTarget['provider']
-  lease: NonNullable<ResolvedAgentBackend['providerTransportLease']>
-}>
-
-export type AgentBackendResolverOptions = {
+export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
   readSettings: () => Promise<StoredSettings>
   providers: AgentBackendProviderPort
   runtime: AgentBackendRuntimePort
@@ -162,22 +92,11 @@ export type AgentBackendResolverOptions = {
   storageRoot: string
   userClaudeDir: string
   readFrameworkOverride?: () => string | undefined
-  createResponsesBridge?: (target: ResponsesBridgeTarget) => ResponsesBridgePort
-  createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
-  createAnthropicProviderBridge?: (
-    targets: readonly AnthropicProviderBridgeTarget[],
-    initialTargetId: string
-  ) => AnthropicProviderBridgePort
-  createOpenAiProviderBridge?: (
-    targets: readonly OpenAiProviderBridgeTarget[],
-    initialTargetId: string
-  ) => OpenAiProviderBridgePort
   ensureCodexSubscriptionHome?: () => Promise<void>
-  nextGenerationId?: () => string
 }
 
-// Owns backend resolution decisions and every live bridge/proxy generation created for them. The
-// constructor is intentionally side-effect free; runtime resources start only inside resolve calls.
+// Coordinates stable backend decisions while ProviderTransportOwner owns every live generation.
+// The constructor is intentionally side-effect free; runtime resources start only inside resolve calls.
 export class AgentBackendResolver {
   private readonly readSettings: () => Promise<StoredSettings>
   private readonly providers: AgentBackendProviderPort
@@ -187,25 +106,8 @@ export class AgentBackendResolver {
   private readonly userClaudeDir: string
   private readonly selection: BackendSelectionOwner
   private readonly planner: BackendRoutePlanner
-  private readonly createResponsesBridge: (target: ResponsesBridgeTarget) => ResponsesBridgePort
-  private readonly createNativeResponsesProxy: (
-    target: NativeResponsesProxyTarget
-  ) => NativeResponsesProxyPort
-  private readonly createAnthropicProviderBridge: (
-    targets: readonly AnthropicProviderBridgeTarget[],
-    initialTargetId: string
-  ) => AnthropicProviderBridgePort
-  private readonly createOpenAiProviderBridge: (
-    targets: readonly OpenAiProviderBridgeTarget[],
-    initialTargetId: string
-  ) => OpenAiProviderBridgePort
+  private readonly transports: ProviderTransportOwner
   private readonly ensureCodexSubscriptionHome: () => Promise<void>
-  private readonly nextGenerationId: () => string
-  private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
-  private readonly nativeResponsesCompatibilityProxies = new Map<
-    string,
-    NativeResponsesCompatibilityEntry
-  >()
 
   constructor(options: AgentBackendResolverOptions) {
     this.readSettings = options.readSettings
@@ -222,21 +124,10 @@ export class AgentBackendResolver {
         this.providers.resolveRuntimeReasoningEffortProfile(provider, model)
     })
     this.planner = new BackendRoutePlanner({ providers: this.providers })
-    this.createResponsesBridge =
-      options.createResponsesBridge ?? ((target) => new ResponsesBridge(target))
-    this.createNativeResponsesProxy =
-      options.createNativeResponsesProxy ??
-      ((target) => new NativeResponsesCompatibilityProxy(target))
-    this.createAnthropicProviderBridge =
-      options.createAnthropicProviderBridge ??
-      ((targets, initialTargetId) => new AnthropicProviderBridge(targets, initialTargetId))
-    this.createOpenAiProviderBridge =
-      options.createOpenAiProviderBridge ??
-      ((targets, initialTargetId) => new OpenAiProviderBridge(targets, initialTargetId))
+    this.transports = new ProviderTransportOwner(options)
     this.ensureCodexSubscriptionHome =
       options.ensureCodexSubscriptionHome ??
       (() => ensureCodexAuthHome('isolated', this.storageRoot))
-    this.nextGenerationId = options.nextGenerationId ?? randomUUID
   }
 
   async resolveActiveSpawnConfig(
@@ -428,96 +319,41 @@ export class AgentBackendResolver {
         executablePath,
         plan.claudeModelConfig
       )
-      const bridgeCatalog = plan.transport.kind === 'claude-anthropic' ? plan.transport : undefined
-      let bridge: AnthropicProviderBridgePort | undefined
-      try {
-        const bridgeConnection = bridgeCatalog
-          ? await (bridge = this.createAnthropicProviderBridge(
-              bridgeCatalog.targets,
-              bridgeCatalog.initialTargetId
-            )).start()
-          : undefined
-        const startedBridge = bridge
-        const bridgeLease = startedBridge
-          ? {
-              setTarget: (targetId: string) => startedBridge.setTarget(targetId),
-              release: () => startedBridge.close()
-            }
-          : undefined
-        return {
-          framework,
-          backendId: `${framework.id}:${target.providerId}`,
-          modelRoute,
-          executablePath: claudeExecutablePath,
-          env: {
-            ...envOverrides,
-            ...(bridgeConnection
-              ? {
-                  ANTHROPIC_BASE_URL: bridgeConnection.baseUrl,
-                  ANTHROPIC_AUTH_TOKEN: bridgeConnection.token,
-                  ANTHROPIC_API_KEY: bridgeConnection.token,
-                  ...loopbackProxyBypassEnvironment(process.env)
-                }
-              : {})
-          },
-          sessionOptions,
-          sessionEffort,
-          contextWindow,
-          ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
-          contextUsageModel: target.effectiveModel,
-          ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
-          ...(bridgeLease ? { anthropicBridgeLease: bridgeLease } : {})
-        }
-      } catch (error) {
-        await bridge?.close().catch(() => undefined)
-        throw error
+      const transport = await this.transports.acquire({ activeTarget: target, plan })
+      return {
+        framework,
+        backendId: `${framework.id}:${target.providerId}`,
+        modelRoute,
+        executablePath: claudeExecutablePath,
+        env: { ...envOverrides, ...(transport.environment ?? {}) },
+        sessionOptions,
+        sessionEffort,
+        contextWindow,
+        ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
+        contextUsageModel: target.effectiveModel,
+        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
+        ...(transport.anthropicBridgeLease
+          ? { anthropicBridgeLease: transport.anthropicBridgeLease }
+          : {})
       }
     }
 
-    let provider = target.provider
-    let providerModelCatalog: readonly AgentModelCatalogEntry[] = plan.providerModelCatalog
-    if (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type)) {
+    if (framework.id === 'codex' && isCodexSubscriptionProvider(target.provider.type)) {
       await this.ensureCodexSubscriptionHome()
     }
     const backendProviderId = plan.backendProviderId
     const skillsRoot =
       framework.id === 'codex'
-        ? isCodexSubscriptionProvider(provider.type)
+        ? isCodexSubscriptionProvider(target.provider.type)
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
     await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
 
-    const openCodeProviderTransport =
-      framework.id === 'opencode'
-        ? await this.ensureOpenCodeProviderTransports(target, plan.transport)
-        : undefined
-    if (openCodeProviderTransport) {
-      provider = openCodeProviderTransport.provider
-      providerModelCatalog = openCodeProviderTransport.providerModelCatalog
-    }
-    const nativeCodexProviderTransport =
-      framework.id === 'codex' && plan.transport.kind === 'codex-native-responses'
-        ? await this.ensureNativeCodexProviderTransport(target, plan.transport)
-        : undefined
-    if (nativeCodexProviderTransport) provider = nativeCodexProviderTransport.provider
-
-    const responsesBridge = target.needsChatResponsesBridge
-      ? await this.ensureResponsesBridge(
-          target,
-          sessionEffort,
-          plan.transport,
-          plan.codexBridgeTools ?? [],
-          plan.reviewerBridgeTools ?? []
-        )
-      : target.needsNativeResponsesCompatibility ||
-          plan.modelRoute === 'codex-responses-compatibility'
-        ? await this.ensureNativeResponsesCompatibility(
-            target,
-            plan.transport,
-            plan.reviewerBridgeTools ?? []
-          )
-        : undefined
+    const transport = await this.transports.acquire({ activeTarget: target, plan })
+    const provider = transport.provider ?? target.provider
+    const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
+    const responsesBridge = transport.responsesBridge
     const persistentSystemPromptAppends = [
       ...(context.systemPromptAppends ?? []),
       ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
@@ -546,13 +382,6 @@ export class AgentBackendResolver {
       const proxyEnv = usesCodexSystemProxy
         ? await this.runtime.resolveCodexProxyEnvironment()
         : undefined
-      // Only the Codex child talks to the app-owned bridge at loopback. Add a bypass override for
-      // that local hop without copying or clearing proxy variables. This leaves the main-process
-      // bridge's upstream network route untouched.
-      const loopbackProxyBypass =
-        responsesBridge || openCodeProviderTransport || nativeCodexProviderTransport
-          ? loopbackProxyBypassEnvironment(process.env)
-          : undefined
       const sessionModel = modelConfig.sessionModel ?? provider.model
 
       return {
@@ -567,7 +396,7 @@ export class AgentBackendResolver {
           ...(modelConfig.env ?? {}),
           ...(opencodeUsagePassword ? { OPENCODE_SERVER_PASSWORD: opencodeUsagePassword } : {}),
           ...(proxyEnv ?? {}),
-          ...(loopbackProxyBypass ?? {}),
+          ...(transport.environment ?? {}),
           ...(framework.id === 'codex' && settings.codex?.nativePath
             ? { CODEX_PATH: settings.codex.nativePath }
             : {})
@@ -605,15 +434,10 @@ export class AgentBackendResolver {
               }
             }),
         responsesBridgeLease: responsesBridge?.lease,
-        providerTransportLease:
-          openCodeProviderTransport?.lease ??
-          nativeCodexProviderTransport?.lease ??
-          responsesBridge?.providerTransportLease
+        providerTransportLease: transport.providerTransportLease
       }
     } catch (error) {
-      await responsesBridge?.lease.release()
-      await openCodeProviderTransport?.lease.release()
-      await nativeCodexProviderTransport?.lease.release()
+      await transport.release()
       throw error
     }
   }
@@ -663,348 +487,6 @@ export class AgentBackendResolver {
       executablePath,
       sessionOptions,
       contextWindow: provider.contextWindow
-    }
-  }
-
-  private async ensureOpenCodeProviderTransports(
-    activeTarget: ProviderRuntimeTarget,
-    transport: BackendTransportPlan
-  ): Promise<OpenCodeProviderTransport | undefined> {
-    if (transport.kind !== 'opencode-openai' && transport.kind !== 'opencode-anthropic') {
-      return undefined
-    }
-    const route = transport.kind
-
-    const bridges: Array<AnthropicProviderBridgePort | OpenAiProviderBridgePort> = []
-    const targetIds = new Set<string>()
-    const catalog: AgentModelCatalogEntry[] = []
-    let activeProvider: ProviderRuntimeTarget['provider'] | undefined
-
-    try {
-      for (const planned of transport.targets) {
-        const candidate = planned.target
-        const model = candidate.effectiveModel ?? candidate.provider.model
-        if (!model) continue
-        const targetId = planned.id
-        const bridge =
-          route === 'opencode-openai'
-            ? this.createOpenAiProviderBridge(
-                [
-                  {
-                    id: targetId,
-                    wire: 'chat-completions',
-                    endpoint: openAiChatCompletionsUrl(candidate.provider)!,
-                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                    model
-                  }
-                ],
-                targetId
-              )
-            : this.createAnthropicProviderBridge(
-                [
-                  {
-                    id: targetId,
-                    baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
-                    ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                    model
-                  }
-                ],
-                targetId
-              )
-        bridges.push(bridge)
-        const connection = await bridge.start()
-        const apiEndpoints = [
-          route === 'opencode-openai' ? ('openai' as const) : ('anthropic' as const)
-        ]
-        const localProvider = Object.freeze({
-          ...candidate.provider,
-          agentProviderId: opencodeTransportProviderId(candidate.providerId, model),
-          baseUrl: connection.baseUrl,
-          ...(route === 'opencode-openai'
-            ? { openaiBaseUrl: `${connection.baseUrl}/v1` }
-            : { openaiBaseUrl: undefined }),
-          model,
-          key: connection.token,
-          apiEndpoints
-        })
-        catalog.push(
-          Object.freeze({
-            provider: localProvider,
-            ...(planned.reasoningEffort ? { reasoningEffort: planned.reasoningEffort } : {}),
-            ...(planned.reasoningEfforts ? { reasoningEfforts: planned.reasoningEfforts } : {})
-          })
-        )
-        targetIds.add(targetId)
-        if (
-          candidate.providerId === activeTarget.providerId &&
-          model === (activeTarget.effectiveModel ?? activeTarget.provider.model)
-        ) {
-          activeProvider = localProvider
-        }
-      }
-
-      if (!activeProvider)
-        throw new Error('The active OpenCode transport target was not registered.')
-      let released = false
-      return Object.freeze({
-        provider: activeProvider,
-        providerModelCatalog: Object.freeze(catalog),
-        lease: {
-          setTarget: (targetId: string) => targetIds.has(targetId),
-          release: async () => {
-            if (released) return
-            released = true
-            await Promise.all(bridges.map((bridge) => bridge.close()))
-          }
-        }
-      })
-    } catch (error) {
-      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
-      throw error
-    }
-  }
-
-  private async ensureNativeCodexProviderTransport(
-    activeTarget: ProviderRuntimeTarget,
-    transport: Extract<BackendTransportPlan, { targets: readonly unknown[] }>
-  ): Promise<NativeCodexProviderTransport> {
-    const targets = transport.targets.map((planned): OpenAiProviderBridgeTarget => {
-      const candidate = planned.target
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      const baseUrl = normalizeResponsesBaseUrl(
-        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-      )
-      if (!model || !baseUrl) throw new Error('The native Responses provider target is incomplete.')
-      return Object.freeze({
-        id: planned.id,
-        wire: 'responses',
-        endpoint: `${baseUrl}/responses`,
-        ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-        model
-      })
-    })
-    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
-    if (!activeModel) throw new Error('The active native Responses model is unavailable.')
-    const initialTargetId = transport.initialTargetId
-    if (!initialTargetId) throw new Error('The active native Responses model is unavailable.')
-    const bridge = this.createOpenAiProviderBridge(targets, initialTargetId)
-
-    try {
-      const connection = await bridge.start()
-      let released = false
-      return Object.freeze({
-        provider: Object.freeze({
-          ...activeTarget.provider,
-          baseUrl: connection.baseUrl,
-          openaiBaseUrl: `${connection.baseUrl}/v1`,
-          model: activeModel,
-          key: connection.token,
-          apiEndpoints: ['responses'] as const
-        }),
-        lease: {
-          setTarget: (targetId: string) => bridge.setTarget(targetId),
-          release: async () => {
-            if (released) return
-            released = true
-            await bridge.close()
-          }
-        }
-      })
-    } catch (error) {
-      await bridge.close().catch(() => undefined)
-      throw error
-    }
-  }
-
-  private async ensureResponsesBridge(
-    activeTarget: ProviderRuntimeTarget,
-    reasoningEffort: ModelReasoningEffort | undefined,
-    transport: BackendTransportPlan,
-    namespacedTools: readonly ResponsesBridgeNamespacedTool[],
-    reviewerTools: readonly ResponsesBridgeNamespacedTool[]
-  ): Promise<LeasedResponsesBridgeConnection> {
-    const createTarget = (
-      candidate: ProviderRuntimeTarget,
-      effort: ModelReasoningEffort | undefined
-    ): ResponsesBridgeTarget => {
-      const targetBaseUrl = openAiCompletionsBase(candidate.provider)
-      if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
-      return {
-        baseUrl: targetBaseUrl,
-        key: candidate.provider.key,
-        vendorId: candidate.provider.vendorId,
-        reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
-        model: candidate.effectiveModel ?? candidate.provider.model,
-        reasoningEffort: effort,
-        namespacedTools: [...namespacedTools],
-        reviewerScope: { namespacedTools: [...reviewerTools] }
-      }
-    }
-    const targets = new Map<string, ResponsesBridgeTarget>()
-    const plannedTargets = transport.kind === 'codex-chat' ? transport.targets : []
-    for (const planned of plannedTargets) {
-      const candidate = planned.target
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      if (!model) continue
-      targets.set(planned.id, createTarget(candidate, planned.reasoningEffort))
-    }
-    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
-    const initialTargetId = activeModel
-      ? plannedTargets.find(
-          ({ target }) =>
-            target.providerId === activeTarget.providerId &&
-            (target.effectiveModel ?? target.provider.model) === activeModel
-        )?.id
-      : undefined
-    const target =
-      (initialTargetId ? targets.get(initialTargetId) : undefined) ??
-      createTarget(activeTarget, reasoningEffort)
-    const bridgeId = this.nextGenerationId()
-    const bridge = this.createResponsesBridge(target)
-    const entry = { bridge, connection: bridge.start() }
-    this.responsesBridges.set(bridgeId, entry)
-
-    let connection: ResponsesBridgeConnection
-    try {
-      connection = await entry.connection
-    } catch (error) {
-      if (this.responsesBridges.get(bridgeId) === entry) this.responsesBridges.delete(bridgeId)
-      await entry.bridge.close().catch(() => undefined)
-      throw error
-    }
-
-    let released = false
-    const leasedEntry = entry
-    const release = async (): Promise<void> => {
-      if (released) return
-      released = true
-      if (this.responsesBridges.get(bridgeId) !== leasedEntry) return
-      this.responsesBridges.delete(bridgeId)
-      await leasedEntry.bridge.close()
-    }
-    return {
-      ...connection,
-      lease: {
-        selectSkills: (text, catalog, signal) =>
-          leasedEntry.bridge.selectSkills(text, catalog, signal),
-        registerReviewerSession: (promptCacheKey) =>
-          leasedEntry.bridge.registerReviewerSession(promptCacheKey),
-        unregisterReviewerSession: (promptCacheKey) =>
-          leasedEntry.bridge.unregisterReviewerSession(promptCacheKey),
-        registerToolLessSession: (promptCacheKey) =>
-          leasedEntry.bridge.registerToolLessSession(promptCacheKey),
-        unregisterToolLessSession: (promptCacheKey) =>
-          leasedEntry.bridge.unregisterToolLessSession(promptCacheKey),
-        setReasoningEffort: (effort) => leasedEntry.bridge.setReasoningEffort(effort),
-        setModelTarget: (target) => leasedEntry.bridge.setModelTarget(target),
-        release
-      },
-      ...(targets.size > 0
-        ? {
-            providerTransportLease: {
-              setTarget: (targetId: string) => {
-                const providerTarget = targets.get(targetId)
-                if (!providerTarget) return false
-                leasedEntry.bridge.setTarget(providerTarget)
-                return true
-              },
-              release
-            }
-          }
-        : {})
-    }
-  }
-
-  private async ensureNativeResponsesCompatibility(
-    activeTarget: ProviderRuntimeTarget,
-    transport: BackendTransportPlan,
-    reviewerTools: readonly ResponsesBridgeNamespacedTool[]
-  ): Promise<LeasedResponsesBridgeConnection> {
-    const createTarget = (candidate: ProviderRuntimeTarget): NativeResponsesProxyTarget => {
-      const targetBaseUrl = normalizeResponsesBaseUrl(
-        candidate.provider.openaiBaseUrl ?? candidate.provider.baseUrl
-      )
-      if (!targetBaseUrl) throw new Error('The native Responses provider has no base URL.')
-      return {
-        baseUrl: targetBaseUrl,
-        key: candidate.provider.key,
-        model: candidate.effectiveModel ?? candidate.provider.model,
-        reviewerScope: { namespacedTools: [...reviewerTools] }
-      }
-    }
-    const targets = new Map<string, NativeResponsesProxyTarget>()
-    const plannedTargets =
-      transport.kind === 'codex-responses-compatibility' ? transport.targets : []
-    for (const planned of plannedTargets) {
-      const candidate = planned.target
-      const model = candidate.effectiveModel ?? candidate.provider.model
-      if (!model) continue
-      targets.set(planned.id, createTarget(candidate))
-    }
-    const activeModel = activeTarget.effectiveModel ?? activeTarget.provider.model
-    const initialTargetId = activeModel
-      ? plannedTargets.find(
-          ({ target }) =>
-            target.providerId === activeTarget.providerId &&
-            (target.effectiveModel ?? target.provider.model) === activeModel
-        )?.id
-      : undefined
-    const proxyId = this.nextGenerationId()
-    const proxy = this.createNativeResponsesProxy(
-      (initialTargetId ? targets.get(initialTargetId) : undefined) ?? createTarget(activeTarget)
-    )
-    const entry = { proxy, connection: proxy.start() }
-    this.nativeResponsesCompatibilityProxies.set(proxyId, entry)
-
-    let connection: ResponsesBridgeConnection
-    try {
-      connection = await entry.connection
-    } catch (error) {
-      if (this.nativeResponsesCompatibilityProxies.get(proxyId) === entry) {
-        this.nativeResponsesCompatibilityProxies.delete(proxyId)
-      }
-      await entry.proxy.close().catch(() => undefined)
-      throw error
-    }
-
-    let released = false
-    const leasedEntry = entry
-    const release = async (): Promise<void> => {
-      if (released) return
-      released = true
-      if (this.nativeResponsesCompatibilityProxies.get(proxyId) !== leasedEntry) return
-      this.nativeResponsesCompatibilityProxies.delete(proxyId)
-      await leasedEntry.proxy.close()
-    }
-    return {
-      ...connection,
-      lease: {
-        selectSkills: (text, catalog, signal) =>
-          leasedEntry.proxy.selectSkills(text, catalog, signal),
-        registerReviewerSession: (promptCacheKey) =>
-          leasedEntry.proxy.registerReviewerSession(promptCacheKey),
-        unregisterReviewerSession: (promptCacheKey) =>
-          leasedEntry.proxy.unregisterReviewerSession(promptCacheKey),
-        registerToolLessSession: (promptCacheKey) =>
-          leasedEntry.proxy.registerToolLessSession(promptCacheKey),
-        unregisterToolLessSession: (promptCacheKey) =>
-          leasedEntry.proxy.unregisterToolLessSession(promptCacheKey),
-        setModelTarget: (target) => leasedEntry.proxy.setModelTarget(target),
-        release
-      },
-      ...(targets.size > 0
-        ? {
-            providerTransportLease: {
-              setTarget: (targetId: string) => {
-                const providerTarget = targets.get(targetId)
-                if (!providerTarget) return false
-                leasedEntry.proxy.setTarget(providerTarget)
-                return true
-              },
-              release
-            }
-          }
-        : {})
     }
   }
 }

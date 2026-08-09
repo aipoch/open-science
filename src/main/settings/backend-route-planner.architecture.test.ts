@@ -114,6 +114,7 @@ describe('Backend route planning ownership', () => {
       )
     ).toEqual([
       'value:BackendRoutePlanner',
+      'type:BackendRoutePlan',
       'type:BackendRouteProviderPort',
       'type:BackendTransportPlan'
     ])
@@ -121,7 +122,8 @@ describe('Backend route planning ownership', () => {
 
   it('keeps the planner behind the resolver and inside dependency-aware impact routing', () => {
     expect(productionSources().filter(importsPlanner).map(portablePath)).toEqual([
-      'src/main/settings/backend-resolver.ts'
+      'src/main/settings/backend-resolver.ts',
+      'src/main/settings/provider-transport-owner.ts'
     ])
     const manifest = JSON.parse(readSource(manifestPath)) as {
       modules: Record<string, { ownerPaths: string[]; testFiles: { owner: string[] } }>

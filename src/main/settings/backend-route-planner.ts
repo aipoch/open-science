@@ -497,4 +497,4 @@ class BackendRoutePlanner {
 }
 
 export { BackendRoutePlanner }
-export type { BackendRouteProviderPort, BackendTransportPlan }
+export type { BackendRoutePlan, BackendRouteProviderPort, BackendTransportPlan }
