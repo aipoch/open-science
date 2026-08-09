@@ -548,8 +548,10 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
   `running` from `waiting on you` rather than presenting one ambiguous total.
 - Project actions: use the shared Session dropdown styling and size the surface to its content so
-  inline padding stays balanced. The first action is `Settings`, opening `Project Settings` for Name
-  and Description; its edit action is labelled `Save`.
+  inline padding stays balanced. The first action is `Pin project` / `Unpin project`, using an outline
+  / filled star; `Settings` opens `Project Settings` for Name and Description, and its edit action is
+  labelled `Save`. Pinned Projects form the first group while each pinned and unpinned group retains
+  the existing most-recent-activity ordering.
 - Project description: explain that the optional description is shown in the Project list for the
   user's reference and is not included in the agent prompt.
 - Session updates: show a responsive card grid above the Project/Recent columns for
@@ -576,7 +578,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   additional border, so its built-in hairline ring matches the New project button instead of
   stacking into a heavier outline.
 - Recent sessions: the secondary line is always the owning Project name, never a prompt preview or a
-  repeat of the Session title.
+  repeat of the Session title. Once the Session catalog is complete, if the entire Recent sessions
+  list is empty, each Project row also shows its artifact count from a complete Project Files index;
+  partial index counts are omitted.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 

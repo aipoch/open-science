@@ -26,6 +26,9 @@ describe('project application command contracts', () => {
       projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', name: 'Renamed' }])
     ).toEqual([{ id: 'project-1', name: 'Renamed' }])
     expect(
+      projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', pinned: true }])
+    ).toEqual([{ id: 'project-1', pinned: true }])
+    expect(
       projectApplicationCommandContracts.updateArchive.args.parse([
         { id: 'project-1', archived: true, expectedArchivedAt: null }
       ])

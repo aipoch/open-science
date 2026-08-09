@@ -13,6 +13,8 @@ export const projectSchema = z
     name: z.string(),
     description: z.string(),
     isExample: z.boolean(),
+    // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
+    pinned: z.boolean().optional(),
     // An absent timestamp keeps the Project on active surfaces. Archive is reversible and does not
     // affect the Project's research activity ordering.
     archivedAt: z.number().finite().optional(),
@@ -32,7 +34,8 @@ export const updateProjectRequestSchema = z
   .object({
     id: z.string(),
     name: z.string().optional(),
-    description: z.string().optional()
+    description: z.string().optional(),
+    pinned: z.boolean().optional()
   })
   .strict()
 

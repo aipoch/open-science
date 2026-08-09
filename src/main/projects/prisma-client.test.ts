@@ -53,7 +53,7 @@ describe('project prisma client (integration)', () => {
     }
   })
 
-  it('adds archive visibility to an existing Project table without rewriting its activity time', async () => {
+  it('adds visibility and pin state to an existing Project without rewriting its activity time', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-archive-migration-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -76,6 +76,7 @@ describe('project prisma client (integration)', () => {
       client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
     ).resolves.toMatchObject({
       archivedAt: null,
+      pinned: false,
       updatedAt: new Date('2026-08-06T00:00:00.000Z')
     })
   })

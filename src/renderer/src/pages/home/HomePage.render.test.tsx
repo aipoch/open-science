@@ -22,6 +22,7 @@ vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 
 let container: HTMLDivElement
 let root: Root
+let getProjectFilesOverview: ReturnType<typeof vi.fn>
 
 const project: Project = {
   id: 'project-1',
@@ -63,6 +64,17 @@ const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheck
 })
 
 beforeEach(() => {
+  getProjectFilesOverview = vi.fn().mockResolvedValue({
+    totalCount: 0,
+    uploadCount: 0,
+    artifactCount: 0,
+    artifactGroupCount: 0,
+    isIndexComplete: true
+  })
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: { projectFiles: { getOverview: getProjectFilesOverview } }
+  })
   useProjectStore.setState(createInitialProjectState())
   useNavigationStore.setState({ pendingProjectCreation: false })
   useSessionStore.setState(createInitialSessionState())
@@ -290,7 +302,12 @@ describe('HomePage activity overview', () => {
     expect(menu?.className).toContain('text-popover-foreground')
     expect(menu?.className).toContain('w-max')
     expect(menu?.className).toContain('min-w-0')
-    expect(items.map((item) => item.textContent?.trim())).toEqual(['Settings', 'Archive', 'Delete'])
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      'Pin project',
+      'Settings',
+      'Archive',
+      'Delete'
+    ])
 
     const settingsItem = items.find((item) => item.textContent?.trim() === 'Settings')
     clickRadixMenuItem(settingsItem)
@@ -300,6 +317,116 @@ describe('HomePage activity overview', () => {
     expect(document.body.textContent).toContain('Update this project’s name and description.')
     expect(document.body.textContent).toContain('Save')
     expect(document.body.textContent).not.toContain('Save changes')
+  })
+
+  it('pins and unpins a Project from the first menu action', async () => {
+    const updateProject = vi.fn(async ({ pinned }: { pinned?: boolean }) => {
+      const updated = { ...project, pinned }
+      useProjectStore.setState({ projects: [updated] })
+      return updated
+    })
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true,
+      updateProject
+    } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    openRadixMenu(
+      container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Research project"]')
+    )
+    clickRadixMenuItem(
+      Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (item) => item.textContent?.trim() === 'Pin project'
+      )
+    )
+    await act(async () => Promise.resolve())
+
+    expect(updateProject).toHaveBeenCalledWith({ id: project.id, pinned: true })
+    expect(container.textContent).toContain('Pinned project')
+
+    openRadixMenu(
+      container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Research project"]')
+    )
+    const unpinItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.trim() === 'Unpin project')
+    expect(unpinItem).toBeDefined()
+    clickRadixMenuItem(unpinItem)
+    await act(async () => Promise.resolve())
+
+    expect(updateProject).toHaveBeenLastCalledWith({ id: project.id, pinned: false })
+  })
+
+  it('groups pinned Projects first while preserving recent activity order inside both groups', async () => {
+    const projects: Project[] = [
+      { ...project, id: 'unpinned-new', name: 'Unpinned new', updatedAt: 400 },
+      { ...project, id: 'pinned-old', name: 'Pinned old', pinned: true, updatedAt: 100 },
+      { ...project, id: 'unpinned-old', name: 'Unpinned old', updatedAt: 300 },
+      { ...project, id: 'pinned-new', name: 'Pinned new', pinned: true, updatedAt: 200 }
+    ]
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects,
+      isLoaded: true
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('[aria-label^="Open actions for "]')).map(
+        (action) => action.getAttribute('aria-label')
+      )
+    ).toEqual([
+      'Open actions for Pinned new',
+      'Open actions for Pinned old',
+      'Open actions for Unpinned new',
+      'Open actions for Unpinned old'
+    ])
+  })
+
+  it('shows complete artifact counts only while the entire Recent sessions list is empty', async () => {
+    getProjectFilesOverview.mockResolvedValue({
+      totalCount: 114,
+      uploadCount: 0,
+      artifactCount: 114,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    await act(async () => Promise.resolve())
+
+    expect(container.textContent).toContain('114 artifacts')
+    expect(getProjectFilesOverview).toHaveBeenCalledWith({ projectId: project.id })
+
+    await act(async () => {
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [session('recent', 'Recent analysis', 'idle', 600_000)]
+      })
+    })
+
+    expect(container.textContent).not.toContain('114 artifacts')
   })
 
   it('opens global search from the header and uses the selected Projects icon', async () => {

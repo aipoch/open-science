@@ -7,6 +7,7 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
   name: 'Research',
   description: 'A project',
   isExample: false,
+  pinned: false,
   createdAt: new Date(1710000000000),
   updatedAt: new Date(1710000000100),
   ...overrides
@@ -101,6 +102,26 @@ describe('project repository', () => {
     expect(project.update).toHaveBeenCalledWith({
       where: { id: 'project-1' },
       data: { name: 'Renamed' }
+    })
+  })
+
+  it('changes pin placement without rewriting activity time', async () => {
+    const current = createRow()
+    const pinned = createRow({ pinned: true })
+    const { client, project } = createMockClient({
+      findUnique: () => Promise.resolve(current),
+      update: () => Promise.resolve(pinned)
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.update({ id: 'project-1', pinned: true })).resolves.toMatchObject({
+      pinned: true,
+      updatedAt: 1710000000100
+    })
+
+    expect(project.update).toHaveBeenCalledWith({
+      where: { id: 'project-1' },
+      data: { pinned: true, updatedAt: new Date(1710000000100) }
     })
   })
 

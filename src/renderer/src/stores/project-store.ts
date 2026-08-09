@@ -75,7 +75,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     return project
   },
 
-  // Applies a name/description edit and merges the updated row into the cache.
+  // Applies an editable Project patch and merges the updated row into the cache.
   updateProject: async (request) => {
     const project = await window.api.projects.update(request)
 

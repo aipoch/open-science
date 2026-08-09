@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Settings,
+  Star,
   Trash2,
   X
 } from 'lucide-react'
@@ -140,7 +141,9 @@ const HomePage = ({
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
-  const [archiveProjectError, setArchiveProjectError] = useState<string | undefined>(undefined)
+  const [pinningProjectIds, setPinningProjectIds] = useState<Set<string>>(() => new Set())
+  const [projectActionError, setProjectActionError] = useState<string | undefined>(undefined)
+  const [artifactCounts, setArtifactCounts] = useState<Map<string, number>>(() => new Map())
   const [markingReadSessionIds, setMarkingReadSessionIds] = useState<Set<string>>(() => new Set())
   const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
     () => new Set()
@@ -254,7 +257,11 @@ const HomePage = ({
       }
     })
 
-    return summaries.sort((left, right) => right.lastActivityAt - left.lastActivityAt)
+    return summaries.sort(
+      (left, right) =>
+        Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
+        right.lastActivityAt - left.lastActivityAt
+    )
   }, [activeProjects, persistedSessions])
 
   const recentSessions = useMemo(
@@ -264,6 +271,36 @@ const HomePage = ({
         .slice(0, RECENT_SESSION_LIMIT),
     [persistedSessions]
   )
+
+  const showArtifactCounts = hasCompleteSessionCatalog && recentSessions.length === 0
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!showArtifactCounts) return
+
+    void Promise.all(
+      activeProjects.map(async (project) => {
+        try {
+          const overview = await window.api.projectFiles.getOverview({ projectId: project.id })
+          return overview.isIndexComplete
+            ? ([project.id, overview.artifactCount] as const)
+            : undefined
+        } catch {
+          return undefined
+        }
+      })
+    ).then((entries) => {
+      if (cancelled) return
+      setArtifactCounts(
+        new Map(entries.filter((entry): entry is readonly [string, number] => entry !== undefined))
+      )
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjects, showArtifactCounts])
 
   const deleteTargetSessionCount = useMemo(
     () =>
@@ -329,13 +366,11 @@ const HomePage = ({
     if (!canArchiveProject(project) || archivingProjectIds.has(project.id)) return
 
     setArchivingProjectIds((current) => new Set(current).add(project.id))
-    setArchiveProjectError(undefined)
+    setProjectActionError(undefined)
     void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
-        setArchiveProjectError(
-          error instanceof Error ? error.message : 'Could not archive project.'
-        )
+        setProjectActionError(error instanceof Error ? error.message : 'Could not archive project.')
       )
       .finally(() => {
         setArchivingProjectIds((current) => {
@@ -366,6 +401,26 @@ const HomePage = ({
         return next
       })
     }
+  }
+
+  const toggleProjectPin = (project: Project): void => {
+    if (pinningProjectIds.has(project.id)) return
+
+    setPinningProjectIds((current) => new Set(current).add(project.id))
+    setProjectActionError(undefined)
+    void updateProject({ id: project.id, pinned: !project.pinned })
+      .catch((error: unknown) =>
+        setProjectActionError(
+          error instanceof Error ? error.message : 'Could not update project pin.'
+        )
+      )
+      .finally(() => {
+        setPinningProjectIds((current) => {
+          const next = new Set(current)
+          next.delete(project.id)
+          return next
+        })
+      })
   }
 
   const closeFormDialog = (): void => {
@@ -655,12 +710,12 @@ const HomePage = ({
               />
               Projects
             </h2>
-            {archiveProjectError ? (
+            {projectActionError ? (
               <div
                 className="mb-3 rounded-2xl border border-danger-000/30 px-4 py-3 text-sm text-danger-000"
                 role="alert"
               >
-                {archiveProjectError}
+                {projectActionError}
               </div>
             ) : null}
             {loadError ? (
@@ -691,6 +746,16 @@ const HomePage = ({
                         <span className="min-w-0 truncate font-semibold text-text-000">
                           {project.name}
                         </span>
+                        {project.pinned ? (
+                          <>
+                            <Star
+                              className="size-4 shrink-0 fill-current text-session-waiting"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                            <span className="sr-only">Pinned project</span>
+                          </>
+                        ) : null}
                         {project.isExample ? (
                           <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
                             Example
@@ -727,6 +792,12 @@ const HomePage = ({
                           ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
                           : 'Session count unavailable'}
                       </span>
+                      {showArtifactCounts && artifactCounts.has(project.id) ? (
+                        <span className="hidden shrink-0 tabular-nums text-xs text-text-100 sm:inline">
+                          {artifactCounts.get(project.id)}{' '}
+                          {artifactCounts.get(project.id) === 1 ? 'artifact' : 'artifacts'}
+                        </span>
+                      ) : null}
                       <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
                         {formatRelativeTime(lastActivityAt)}
                       </span>
@@ -746,6 +817,18 @@ const HomePage = ({
                           align="end"
                           sideOffset={6}
                         >
+                          <DropdownMenuItem
+                            className="gap-2"
+                            disabled={pinningProjectIds.has(project.id)}
+                            onSelect={() => toggleProjectPin(project)}
+                          >
+                            <Star
+                              className={cn('size-4', project.pinned && 'fill-current')}
+                              strokeWidth={2}
+                              aria-hidden="true"
+                            />
+                            {project.pinned ? 'Unpin project' : 'Pin project'}
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2"
                             onSelect={() => openEditDialog(project)}

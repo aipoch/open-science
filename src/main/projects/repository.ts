@@ -17,6 +17,7 @@ const toProject = (row: PrismaProject): Project => ({
   name: row.name,
   description: row.description,
   isExample: row.isExample,
+  ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
@@ -62,9 +63,10 @@ class ProjectRepository {
     return toProject(row)
   }
 
-  // Updates name and/or description, ignoring undefined fields so callers can patch either one.
+  // Updates editable fields, ignoring undefined values so callers can patch only what changed.
+  // Pin-only changes preserve updatedAt because pinning controls placement, not research activity.
   async update(request: UpdateProjectRequest): Promise<Project> {
-    const data: { name?: string; description?: string } = {}
+    const data: { name?: string; description?: string; pinned?: boolean; updatedAt?: Date } = {}
 
     if (request.name !== undefined) {
       const name = request.name.trim()
@@ -81,6 +83,17 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
+
+    if (request.pinned !== undefined) {
+      data.pinned = request.pinned
+
+      if (request.name === undefined && request.description === undefined) {
+        const current = await client.project.findUnique({ where: { id: request.id } })
+        if (!current) throw new Error('Project not found.')
+        data.updatedAt = current.updatedAt
+      }
+    }
+
     const row = await client.project.update({ where: { id: request.id }, data })
 
     return toProject(row)
