@@ -44,11 +44,16 @@ type PermissionRestoreContext = PermissionToolContext & {
   isCancelled: () => boolean
 }
 
+type ToolCallSessionUpdate = Extract<
+  SessionNotification['update'],
+  { sessionUpdate: 'tool_call' | 'tool_call_update' }
+>
+
 type CodexMcpToolIdentity = {
   title: string
   providerToolName: string
   mcpIdentity: string
-  rawInput: unknown
+  rawInput?: unknown
 }
 
 type OpenCodeMcpToolInput = {
@@ -217,31 +222,41 @@ const isCodexMcpApproval = (params: RequestPermissionRequest): boolean => {
   return isRecord(meta) && meta.is_mcp_tool_approval === true
 }
 
-const isCodexMcpToolCall = (update: SessionNotification['update']): boolean => {
+const isCodexMcpToolCall = (
+  update: SessionNotification['update']
+): update is ToolCallSessionUpdate => {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update')
+    return false
   const meta = (update as SessionNotification['update'] & { _meta?: unknown })._meta
   return isRecord(meta) && meta.is_mcp_tool_call === true
 }
 
 const codexMcpToolIdentity = (
   event: ReturnType<typeof toAcpRuntimeEvent>,
+  rawInput: unknown,
   mcpServerNames: readonly string[]
 ): CodexMcpToolIdentity | undefined => {
-  if (event.kind !== 'tool' || !isRecord(event.rawInput)) return undefined
+  if (event.kind !== 'tool' || !isRecord(rawInput)) return undefined
 
-  const server = event.rawInput.server
-  const tool = event.rawInput.tool
+  const server = rawInput.server
+  const tool = rawInput.tool
   if (typeof server !== 'string' || typeof tool !== 'string' || !tool.trim()) return undefined
 
   const title = `mcp.${server}.${tool}`
   if (event.title !== title) return undefined
   const mcpIdentity = resolveCanonicalMcpToolIdentity(title, mcpServerNames)
   if (!mcpIdentity) return undefined
+  // Runtime events intentionally omit oversized payloads. Keep correlation independent from that
+  // projection while retaining at most the existing bounded execution preview for permission UI.
+  const permissionInput = isRecord(event.rawInput)
+    ? event.rawInput.arguments
+    : boundedNotebookPermissionInput(title, rawInput, mcpServerNames)
 
   return {
     title,
     providerToolName: tool,
     mcpIdentity,
-    rawInput: event.rawInput.arguments
+    ...(permissionInput === undefined ? {} : { rawInput: permissionInput })
   }
 }
 
@@ -487,7 +502,7 @@ class AcpPermissionContext {
 
     if (framework === 'codex') {
       if (!isCodexMcpToolCall(notification.update)) return
-      const identity = codexMcpToolIdentity(event, mcpServerNames)
+      const identity = codexMcpToolIdentity(event, notification.update.rawInput, mcpServerNames)
       if (!identity) return
 
       const identities = this.codexMcpToolIdentities.get(sessionId) ?? new Map()

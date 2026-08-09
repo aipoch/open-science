@@ -1358,11 +1358,11 @@ class AcpRuntime {
     params: acp.CreateElicitationRequest
   ): Promise<acp.CreateElicitationResponse> {
     if (!('sessionId' in params) || typeof params.sessionId !== 'string') {
-      return Promise.resolve({ action: 'decline' })
+      return Promise.resolve({ action: 'cancel' })
     }
 
     const sessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
-    if (!this.activeSessionFor(sessionId)) return Promise.resolve({ action: 'decline' })
+    if (!this.activeSessionFor(sessionId)) return Promise.resolve({ action: 'cancel' })
 
     const meta = params._meta
     const isCodexMcpToolApproval =
@@ -1373,7 +1373,7 @@ class AcpRuntime {
     // session/request_permission. Keep that provider detail behind the existing permission owner so
     // the renderer never mistakes an authorization prompt for structured user input.
     if (frameworkId === 'codex' && isCodexMcpToolApproval) {
-      if (typeof toolCallId !== 'string') return Promise.resolve({ action: 'decline' })
+      if (typeof toolCallId !== 'string') return Promise.resolve({ action: 'cancel' })
       if (
         this.permissionContext.consumeTrustedCodexMcpToolCall(
           sessionId,
@@ -1384,7 +1384,7 @@ class AcpRuntime {
         return Promise.resolve({ action: 'accept' })
       }
       if (!this.permissionContext.hasTrustedCodexMcpToolCall(sessionId, toolCallId)) {
-        return Promise.resolve({ action: 'decline' })
+        return Promise.resolve({ action: 'cancel' })
       }
 
       const allowOnceOptionId = 'codex-elicitation-allow-once'
@@ -1402,11 +1402,12 @@ class AcpRuntime {
           ],
           _meta: { is_mcp_tool_approval: true }
         })
-        .then((response) =>
-          response.outcome.outcome === 'selected' && response.outcome.optionId === allowOnceOptionId
+        .then((response) => {
+          if (response.outcome.outcome === 'cancelled') return { action: 'cancel' as const }
+          return response.outcome.optionId === allowOnceOptionId
             ? { action: 'accept' as const }
             : { action: 'decline' as const }
-        )
+        })
     }
 
     const promptInteraction = this.sessionInteractions.current(sessionId)
