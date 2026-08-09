@@ -1496,18 +1496,20 @@ class AcpRuntime {
       } else if (completed && durablePermission) {
         this.restoredPermissionContextResetSessionIds?.delete(sessionId)
         try {
-          await this.permissionWaitOwner.clearAfterContinuation(
+          const cleared = await this.permissionWaitOwner.clearAfterContinuation(
             durablePermission.projectId,
             sessionId,
             durablePermission.requestId
           )
-          this.pushEvent({
-            kind: 'permission',
-            level: 'info',
-            sessionId,
-            title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
-            text: 'completed'
-          })
+          if (cleared) {
+            this.pushEvent({
+              kind: 'permission',
+              level: 'info',
+              sessionId,
+              title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+              text: 'completed'
+            })
+          }
         } catch (error) {
           this.pushEvent({
             kind: 'permission',

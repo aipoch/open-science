@@ -69,11 +69,14 @@ class AcpPermissionWaitOwner {
       candidate.projectId,
       candidate.request.sessionId,
       (context) => {
-        if (
-          context.permission &&
-          context.permission.state === 'pending' &&
-          context.permission.request.requestId !== permission.request.requestId
-        ) {
+        const currentPermission = context.permission
+        if (currentPermission) {
+          if (
+            currentPermission.state === 'pending' &&
+            currentPermission.request.requestId === permission.request.requestId
+          ) {
+            return currentPermission
+          }
           throw new Error('Another durable permission request already owns this Session.')
         }
         return permission
@@ -97,9 +100,9 @@ class AcpPermissionWaitOwner {
     projectId: string,
     sessionId: string,
     requestId: string
-  ): Promise<void> {
-    if (!this.sessions) return
-    await this.patch(
+  ): Promise<boolean> {
+    if (!this.sessions) return false
+    return this.patch(
       projectId,
       sessionId,
       (context) => {

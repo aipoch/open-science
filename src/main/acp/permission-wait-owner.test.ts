@@ -181,6 +181,30 @@ describe('ACP durable permission wait owner', () => {
     expect(fixture.patches).not.toHaveBeenCalled()
   })
 
+  it('does not let a new durable wait replace an active continuation', async () => {
+    const fixture = createSessions()
+    const owner = new AcpPermissionWaitOwner(fixture.sessions)
+    const candidate = createCandidate()
+
+    await owner.persist(candidate)
+    await owner.beginContinuation('project-1', 'session-1', 'permission-1')
+
+    await expect(
+      owner.persist({
+        ...candidate,
+        request: {
+          ...candidate.request,
+          requestId: 'permission-2',
+          toolCallId: 'tool-2'
+        }
+      })
+    ).rejects.toThrow('Another durable permission request already owns this Session.')
+    expect(fixture.context().permission).toMatchObject({
+      state: 'continuing',
+      request: { requestId: 'permission-1' }
+    })
+  })
+
   it('cancels matching pending and continuing authority idempotently', async () => {
     const fixture = createSessions()
     const owner = new AcpPermissionWaitOwner(fixture.sessions)
