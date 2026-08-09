@@ -136,6 +136,7 @@
       "consumerModules": ["workspace_runtime", "workspace_page", "artifact_provenance"],
       "testFiles": {
         "owner": [
+          "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
           "src/main/reviewer/review-assessment-owner.test.ts",
           "src/main/reviewer/orchestrator.test.ts",
           "src/main/reviewer/orchestrator-drive.test.ts",

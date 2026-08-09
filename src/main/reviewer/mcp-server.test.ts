@@ -931,14 +931,12 @@ describe('ReviewerMcpServer named-pipe proxy', () => {
     try {
       await Promise.all([proxy.connect(serverTransport), client.connect(clientTransport)])
       const tools = await client.listTools()
-      expect(tools.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining([
-          'read_turn',
-          'query_execution_log',
-          'read_artifact',
-          'submit_findings'
-        ])
-      )
+      expect(tools.tools.map((tool) => tool.name)).toEqual([
+        'read_turn',
+        'query_execution_log',
+        'read_artifact',
+        'submit_findings'
+      ])
 
       const turn = await client.callTool({ name: 'read_turn', arguments: {} })
       expect(turn.content).toEqual([
