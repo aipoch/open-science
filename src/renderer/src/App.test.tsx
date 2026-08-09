@@ -784,13 +784,19 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
-  it('blocks Home while the initial session snapshot is loading', async () => {
+  it('continues the startup animation while the initial session snapshot loads', async () => {
+    await render()
+
+    const settingsLogo = container.querySelector<HTMLCanvasElement>(
+      '[data-testid="settings-startup-loading"] canvas[data-testid="open-science-logo-loader"]'
+    )
+    expect(settingsLogo).not.toBeNull()
+
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
-
-    await render()
+    await act(async () => root.render(<App />))
 
     const shell = container.querySelector('[data-testid="session-persistence-startup-loading"]')
     expect(shell).not.toBeNull()
@@ -798,6 +804,9 @@ describe('App startup routing', () => {
     expect(shell?.classList.contains('h-screen')).toBe(false)
     expect(shell?.classList.contains('text-foreground')).toBe(true)
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
+    expect(
+      shell?.querySelector<HTMLCanvasElement>('canvas[data-testid="open-science-logo-loader"]')
+    ).toBe(settingsLogo)
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
