@@ -9,11 +9,17 @@ import type {
   SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
+import { getActiveConversationContext } from '../../../shared/conversation-graph'
+import { validateDurableMessageOwnership } from '../../../main/artifacts/provenance-message-finalization'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore
+} from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
 const listeners: {
@@ -172,6 +178,68 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated session')
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it("does not roll back live conversation state from this renderer's save echo", async () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex-response',
+        agentModel: 'gpt-5.5',
+        runtimeContext: { version: 1, revision: 1 }
+      }
+    ])
+    const earlierSave = toPersistedSession(useSessionStore.getState().sessions[0])
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Create the report',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex-response',
+      agentModel: 'gpt-5.6-sol'
+    })
+    const live = useSessionStore.getState().sessions[0]
+    const context = getActiveConversationContext(live.conversationGraph!, appended!.messageId)
+    const response = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: appended?.messageId,
+      content: 'Saved the report.'
+    })
+    useSessionStore.getState().finishRun(session.id, undefined, appended?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...earlierSave, updatedAt: live.updatedAt + 1 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(() =>
+      validateDurableMessageOwnership(toPersistedSession(useSessionStore.getState().sessions[0]), {
+        ...context,
+        messageId: response!.messageId
+      })
+    ).not.toThrow()
+  })
+
+  it("keeps archive cleanup for this renderer's update echo", async () => {
+    const removeSessionItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
+    useSessionStore.getState().hydrateSessions([{ ...session, title: 'Live title', updatedAt: 3 }])
+    useSessionStore.setState({ selectedSessionId: session.id })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, title: 'Stale title', archivedAt: 2, updatedAt: 4 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]?.title).toBe('Live title')
+    expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
 
   it('clears a stale notice when its session is archived', async () => {

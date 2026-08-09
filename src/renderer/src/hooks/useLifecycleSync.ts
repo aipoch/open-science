@@ -108,9 +108,16 @@ const useLifecycleSync = ({
         })
       }
     )
-    const removeSessionUpdated = window.api.sessions.onUpdated(({ session }) => {
+    const removeSessionUpdated = window.api.sessions.onUpdated(({ session, originClientId }) => {
       applyOrQueue(() => {
-        useSessionStore.getState().upsertPersistedSession(session)
+        // The ordered persistence owner already applies this renderer's save result. Its lifecycle
+        // echo may describe an earlier graph with a later main-owned timestamp, so replacing the
+        // live projection here can discard a prompt and the Runtime Segment used by its artifact
+        // claim. Events from other clients remain authoritative synchronization input; same-client
+        // command results return through their direct IPC path.
+        if (originClientId !== lifecycleClientIdRef.current) {
+          useSessionStore.getState().upsertPersistedSession(session)
+        }
         useArchiveUndoStore.getState().reconcileSession(session)
         if (
           session.archivedAt !== undefined &&
