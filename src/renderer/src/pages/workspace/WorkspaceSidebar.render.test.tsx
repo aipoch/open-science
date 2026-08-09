@@ -1,7 +1,12 @@
+// @vitest-environment jsdom
+
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import type { ChatSession } from '@/stores/session-store'
 import { describe, expect, it, vi } from 'vitest'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/lib/utils', () => ({
   cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
@@ -133,7 +138,7 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('wires session open and row menu actions to the matching session', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Notebook review' }),
       createSession({ id: 'session-b', title: 'Dataset cleanup' })
@@ -144,7 +149,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
     const onArchiveSession = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -215,9 +221,10 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('renders Files directly after New and wires it to the preview opener', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [createSession({ id: 'session-a', title: 'Notebook review' })],
       activeSessionId: 'session-a',
@@ -253,13 +260,14 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('wires the View notebook menu item to the matching session', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Notebook review' }),
       createSession({ id: 'session-b', title: 'Dataset cleanup' })
     ]
     const onViewNotebook = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -303,14 +311,162 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(withPin.indexOf('>Pinned<')).toBeLessThan(withPin.indexOf('>Active<'))
   })
 
-  it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
+  it('groups unpinned sessions by live activity, recent completion, and local date', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+
+    try {
+      const html = await renderSidebar([
+        createSession({
+          id: 'older-session',
+          title: 'Older conversation',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 2, 12).getTime()
+        }),
+        createSession({
+          id: 'today-session',
+          title: 'Earlier today',
+          status: 'idle',
+          updatedAt: now - 16 * 60_000
+        }),
+        createSession({
+          id: 'failed-session',
+          title: 'Failed today',
+          status: 'error',
+          updatedAt: now
+        }),
+        createSession({
+          id: 'week-session',
+          title: 'Earlier this week',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 4, 12).getTime()
+        }),
+        createSession({
+          id: 'yesterday-session',
+          title: 'Yesterday conversation',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 8, 12).getTime()
+        }),
+        createSession({
+          id: 'recent-session',
+          title: 'Just completed',
+          status: 'idle',
+          updatedAt: now - 14 * 60_000
+        }),
+        createSession({
+          id: 'waiting-session',
+          title: 'Waiting for approval',
+          status: 'waiting-permission',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'waiting-user-session',
+          title: 'Waiting for an answer',
+          status: 'waiting-for-user',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'waiting-plan-session',
+          title: 'Waiting for plan approval',
+          status: 'waiting-plan-approval',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'pinned-session',
+          title: 'Pinned running session',
+          status: 'running',
+          pinned: true,
+          updatedAt: now
+        })
+      ])
+
+      const headings = ['Pinned', 'Active', 'Today', 'Yesterday', 'This week', 'Older']
+      headings.reduce((previousIndex, heading) => {
+        const index = html.indexOf(`>${heading}<`)
+        expect(index).toBeGreaterThan(previousIndex)
+        return index
+      }, -1)
+
+      expect(html.indexOf('Pinned running session')).toBeLessThan(html.indexOf('>Active<'))
+      expect(html.indexOf('Waiting for approval')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Waiting for an answer')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Waiting for plan approval')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Just completed')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Earlier today')).toBeGreaterThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Failed today')).toBeGreaterThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Older conversation')).toBeGreaterThan(html.indexOf('>Older<'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves a recently completed idle session to Today when its Active grace period expires', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+    const session = createSession({
+      id: 'recent-session',
+      title: 'Just completed',
+      status: 'idle',
+      updatedAt: now - 14 * 60_000
+    })
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={[session]}
+            activeSessionId={undefined}
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onExportSession={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />
+        )
+      })
+
+      expect(container.textContent).toContain('Active')
+      expect(container.textContent).not.toContain('Today')
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_001)
+      })
+
+      expect(container.textContent).not.toContain('Active')
+      expect(container.textContent).toContain('Today')
+      expect(container.textContent).toContain('Just completed')
+    } finally {
+      act(() => root.unmount())
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Unpinned one' }),
       createSession({ id: 'session-b', title: 'Pinned one', pinned: true })
     ]
     const onTogglePin = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -347,9 +503,10 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('keeps target-validated deletion available while other mutations are recovering', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [session],
       activeSessionId: session.id,
@@ -380,8 +537,9 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('disables conversation export for active, waiting, or empty sessions', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const tree = WorkspaceSidebar({
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [
         createSession({ id: 'running', status: 'running', messages: [createMessage()] }),
@@ -431,8 +589,9 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('hides conversation export when the runtime does not expose that capability', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const tree = WorkspaceSidebar({
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [createSession({ status: 'idle', messages: [createMessage()] })],
       activeSessionId: 'session-1',
@@ -457,9 +616,10 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [session],
       activeSessionId: session.id,

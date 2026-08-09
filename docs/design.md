@@ -443,6 +443,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Session row wrapper owns hover/active visuals only: `group mx-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300 select-none`; active adds `bg-bg-300`.
 - Session title button is the row click target: `flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left`.
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
+- Session groups appear in `Pinned`, `Active`, `Today`, `Yesterday`, `This week`, `Older` order and omit empty headings. Pinning has priority over every activity or date group. `Active` includes running and user-waiting Sessions plus idle Sessions for 15 minutes after their latest activity; selection and Side chat activity alone do not make a Session active. Date groups use the device's local calendar, with `This week` beginning Monday at 00:00, and refresh at local midnight.
 - Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
 
 ### Message Center

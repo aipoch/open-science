@@ -15,6 +15,7 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +62,10 @@ type WorkspaceSidebarProps = {
   onMobileClose?: () => void
 }
 
+type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
+  now: number
+}
+
 // Maps each session status to the left-side indicator dot using emitted theme colors.
 const sessionStatusDotClassName: Record<SessionStatus, string> = {
   idle: 'border border-text-100 bg-transparent',
@@ -80,6 +85,82 @@ const sessionStatusLabel: Record<SessionStatus, string> = {
   error: 'Error'
 }
 
+const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
+
+const isLiveSessionStatus = (status: SessionStatus): boolean =>
+  status === 'running' ||
+  status === 'waiting-for-user' ||
+  status === 'waiting-permission' ||
+  status === 'waiting-plan-approval'
+
+type SidebarSessionSection = {
+  label: 'Pinned' | 'Active' | 'Today' | 'Yesterday' | 'This week' | 'Older'
+  items: ChatSession[]
+}
+
+const startOfLocalDay = (timestamp: number): number => {
+  const date = new Date(timestamp)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+const getSessionSections = (sessions: ChatSession[], now: number): SidebarSessionSection[] => {
+  const todayStartedAt = startOfLocalDay(now)
+  const yesterday = new Date(todayStartedAt)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayStartedAt = yesterday.getTime()
+  const week = new Date(todayStartedAt)
+  week.setDate(week.getDate() - ((week.getDay() + 6) % 7))
+  const weekStartedAt = week.getTime()
+
+  const pinned: ChatSession[] = []
+  const active: ChatSession[] = []
+  const today: ChatSession[] = []
+  const yesterdaySessions: ChatSession[] = []
+  const thisWeek: ChatSession[] = []
+  const older: ChatSession[] = []
+
+  sessions.forEach((session) => {
+    if (session.pinned) {
+      pinned.push(session)
+    } else if (
+      isLiveSessionStatus(session.status) ||
+      (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
+    ) {
+      active.push(session)
+    } else if (session.updatedAt >= todayStartedAt) {
+      today.push(session)
+    } else if (session.updatedAt >= yesterdayStartedAt) {
+      yesterdaySessions.push(session)
+    } else if (session.updatedAt >= weekStartedAt) {
+      thisWeek.push(session)
+    } else {
+      older.push(session)
+    }
+  })
+
+  const sections: SidebarSessionSection[] = [
+    { label: 'Pinned', items: pinned },
+    { label: 'Active', items: active },
+    { label: 'Today', items: today },
+    { label: 'Yesterday', items: yesterdaySessions },
+    { label: 'This week', items: thisWeek },
+    { label: 'Older', items: older }
+  ]
+  return sections.filter((section) => section.items.length > 0)
+}
+
+const getNextSessionSectionRefreshAt = (sessions: ChatSession[], now: number): number => {
+  const tomorrow = new Date(now)
+  tomorrow.setHours(24, 0, 0, 0)
+
+  return sessions.reduce((nextRefreshAt, session) => {
+    if (session.pinned || session.status !== 'idle') return nextRefreshAt
+    const activeUntil = session.updatedAt + ACTIVE_SESSION_GRACE_MS
+    return activeUntil > now ? Math.min(nextRefreshAt, activeUntil) : nextRefreshAt
+  }, tomorrow.getTime())
+}
+
 const sidebarInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const sessionRowClassName = cn(
@@ -94,7 +175,7 @@ const sessionRowActionClassName =
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
 
 // Left navigation owns session selection, creation entry, and workspace settings.
-const WorkspaceSidebar = ({
+const WorkspaceSidebarView = ({
   projectName,
   sessions,
   activeSessionId,
@@ -118,17 +199,10 @@ const WorkspaceSidebar = ({
   onOpenSettings,
   mobileMode = false,
   isMobileOpen = false,
-  onMobileClose
-}: WorkspaceSidebarProps): React.JSX.Element => {
-  // Partition sessions into pinned and unpinned groups; each group preserves the incoming order.
-  const pinnedSessions = sessions.filter((s) => s.pinned)
-  const activeSessions = sessions.filter((s) => !s.pinned)
-
-  // Build section descriptors so the list renders with a labelled header per group.
-  const sections: Array<{ label: string; items: typeof sessions }> = []
-
-  if (pinnedSessions.length > 0) sections.push({ label: 'Pinned', items: pinnedSessions })
-  sections.push({ label: 'Active', items: activeSessions })
+  onMobileClose,
+  now
+}: WorkspaceSidebarViewProps): React.JSX.Element => {
+  const sections = getSessionSections(sessions, now)
 
   return (
     <aside
@@ -446,4 +520,22 @@ const WorkspaceSidebar = ({
   )
 }
 
+const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
+  const [now, setNow] = useState(Date.now)
+  const nextSectionRefreshAt = getNextSessionSectionRefreshAt(props.sessions, now)
+
+  // Reclassify recent completions at 15 minutes and date groups at local midnight without waiting
+  // for unrelated Session activity to trigger a render.
+  useEffect(() => {
+    const timeoutId = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(1, nextSectionRefreshAt - Date.now() + 1)
+    )
+    return () => window.clearTimeout(timeoutId)
+  }, [nextSectionRefreshAt])
+
+  return <WorkspaceSidebarView {...props} now={now} />
+}
+
 export { WorkspaceSidebar }
+export { WorkspaceSidebarView }
