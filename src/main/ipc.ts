@@ -1996,7 +1996,11 @@ const createApplicationModules = async (
     taskAgent,
     sessionDeletionCapability: sessionPersistenceCoordinator,
     archiveCapability: archiveCoordinator,
-    detectActiveSessions: () => detectActiveSessions({ runtime, notebook: notebookService }),
+    detectActiveSessions: () =>
+      detectActiveSessions({
+        runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+        notebook: notebookService
+      }),
     prepareForQuit: () => runtime.prepareForQuit(),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,

@@ -27,6 +27,8 @@ type PermissionPolicyContext = {
   cwd?: string
   // Canonical MCP server names, so framework-visible tools can resolve to stable policy identities.
   mcpServerNames?: readonly string[]
+  // Main-owned identity of the user Message whose provider turn is parked on this request.
+  promptMessageId?: string
 }
 
 const TRUSTED_MCP_TOOL_IDENTITY = Symbol('trusted-mcp-tool-identity')

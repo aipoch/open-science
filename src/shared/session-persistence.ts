@@ -7,6 +7,7 @@ import {
   sanitizeAcpContextUsage,
   sanitizeAcpMessageImage,
   sanitizeAcpTurnTokenUsage,
+  type AcpPermissionRequest,
   type AcpContextUsage,
   type AcpMessageImage,
   type AcpTurnTokenUsage
@@ -41,6 +42,11 @@ import {
   type PersistedMessageNode,
   type PersistedRuntimeSegment
 } from './conversation-graph'
+import {
+  EXACT_PERMISSION_QUALIFIER_PATTERN,
+  PERMISSION_CAPABILITY_KINDS,
+  type PermissionCapability
+} from './permission-grants'
 
 // One JSON file per session (sessions/<projectId>/<sessionId>.json) carries this envelope version.
 export const SESSION_FILE_VERSION = 2
@@ -62,7 +68,7 @@ export type SessionRuntimeContextValue =
   | SessionRuntimeContextValue[]
   | { [key: string]: SessionRuntimeContextValue }
 
-export type SessionRuntimeContextOwner = 'plan'
+export type SessionRuntimeContextOwner = 'plan' | 'permission'
 
 export type SessionPlanApproval = 'pending' | 'approved' | 'rejected'
 export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 'skipped'
@@ -85,6 +91,15 @@ export type SessionPlanRuntimeContext = Readonly<{
   >
 }>
 
+export type SessionPermissionRuntimeContext = Readonly<{
+  request: AcpPermissionRequest
+  originatingPromptMessageId: string
+  fingerprint: string
+  categoryKey?: string
+  capability?: PermissionCapability
+  createdAt: number
+}>
+
 // Main-owned mutable authority embedded in the Session record. Owner modules use top-level keys
 // (for example `plan`); renderer consumers receive this only as a read projection. Versioning lets a
 // future incompatible envelope fail closed instead of reviving authority under unknown semantics.
@@ -92,11 +107,13 @@ export type SessionRuntimeContext = Readonly<{
   version: 1
   revision: number
   plan?: SessionPlanRuntimeContext
+  permission?: SessionPermissionRuntimeContext
 }>
 
-export type SessionRuntimeContextPatch = Readonly<
-  Partial<Record<SessionRuntimeContextOwner, SessionPlanRuntimeContext | undefined>>
->
+export type SessionRuntimeContextPatch = Readonly<{
+  plan?: SessionPlanRuntimeContext | undefined
+  permission?: SessionPermissionRuntimeContext | undefined
+}>
 
 // Stores artifact references only; file bytes stay on disk under the managed artifact root.
 export type PersistedArtifact = {
@@ -502,6 +519,209 @@ const sanitizeSessionPlanRuntimeContext = (
   }
 }
 
+const PERMISSION_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/
+const PERMISSION_SCOPES = new Set(['once', 'session', 'project', 'global'])
+const PERMISSION_OPTION_KINDS = new Set([
+  'allow_once',
+  'allow_always',
+  'reject_once',
+  'reject_always'
+])
+const PERMISSION_CAPABILITY_KIND_SET = new Set<string>(PERMISSION_CAPABILITY_KINDS)
+const MAX_PERMISSION_CONTEXT_STRING_CHARS = 16_000
+const MAX_PERMISSION_CONTEXT_RAW_CHARS = 8_000
+
+const boundedPermissionString = (value: unknown): string | undefined => {
+  const text = asString(value)
+  return text && text.length <= MAX_PERMISSION_CONTEXT_STRING_CHARS ? text : undefined
+}
+
+const sanitizePermissionRawInput = (value: unknown): unknown | undefined => {
+  if (value === undefined) return undefined
+  try {
+    const serialized = JSON.stringify(value)
+    if (serialized === undefined || serialized.length > MAX_PERMISSION_CONTEXT_RAW_CHARS) {
+      return undefined
+    }
+    return JSON.parse(serialized) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+const sanitizePermissionCapability = (value: unknown): PermissionCapability | undefined => {
+  if (!isRecord(value)) return undefined
+  const kind = asString(value.kind)
+  const key = boundedPermissionString(value.key)?.trim()
+  if (!kind || !PERMISSION_CAPABILITY_KIND_SET.has(kind) || !key) return undefined
+
+  if (value.qualifier === undefined) {
+    return { kind: kind as PermissionCapability['kind'], key }
+  }
+  if (!isRecord(value.qualifier)) return undefined
+  const mode = asString(value.qualifier.mode)
+  if (mode === 'any') {
+    return { kind: kind as PermissionCapability['kind'], key, qualifier: { mode } }
+  }
+  const qualifierValue = boundedPermissionString(value.qualifier.value)?.trim()
+  if (
+    (mode !== 'category' && mode !== 'exact') ||
+    !qualifierValue ||
+    (mode === 'exact' && !EXACT_PERMISSION_QUALIFIER_PATTERN.test(qualifierValue))
+  ) {
+    return undefined
+  }
+  return {
+    kind: kind as PermissionCapability['kind'],
+    key,
+    qualifier: { mode, value: qualifierValue }
+  }
+}
+
+const sanitizePermissionRequest = (value: unknown): AcpPermissionRequest | undefined => {
+  if (!isRecord(value)) return undefined
+  const requestId = boundedPermissionString(value.requestId)
+  const sessionId = boundedPermissionString(value.sessionId)
+  const toolCallId = boundedPermissionString(value.toolCallId)
+  const title = boundedPermissionString(value.title)
+  if (!requestId || !sessionId || !toolCallId || !title || !Array.isArray(value.options)) {
+    return undefined
+  }
+
+  const optionIds = new Set<string>()
+  const options = value.options.flatMap((candidate) => {
+    if (!isRecord(candidate)) return []
+    const optionId = boundedPermissionString(candidate.optionId)
+    const name = boundedPermissionString(candidate.name)
+    const kind = boundedPermissionString(candidate.kind)
+    const scope = asString(candidate.scope)
+    const normalizedKind = kind?.toLowerCase()
+    if (
+      !optionId ||
+      !name ||
+      !kind ||
+      !normalizedKind ||
+      !PERMISSION_OPTION_KINDS.has(normalizedKind) ||
+      optionIds.has(optionId) ||
+      (scope !== undefined && !PERMISSION_SCOPES.has(scope)) ||
+      (scope === 'once' && normalizedKind !== 'allow_once') ||
+      ((scope === 'session' || scope === 'project' || scope === 'global') &&
+        normalizedKind !== 'allow_always')
+    ) {
+      return []
+    }
+    optionIds.add(optionId)
+    return [
+      {
+        optionId,
+        name,
+        kind,
+        ...(scope
+          ? { scope: scope as NonNullable<AcpPermissionRequest['options'][number]['scope']> }
+          : {})
+      }
+    ]
+  })
+  if (options.length === 0 || options.length !== value.options.length || options.length > 32) {
+    return undefined
+  }
+
+  const request: AcpPermissionRequest = { requestId, sessionId, toolCallId, title, options }
+  const status = boundedPermissionString(value.status)
+  const providerToolName = boundedPermissionString(value.providerToolName)
+  const mcpIdentity = boundedPermissionString(value.mcpIdentity)
+  const toolKind = boundedPermissionString(value.toolKind)
+  const commandPrefix = Array.isArray(value.commandPrefix)
+    ? value.commandPrefix.map(boundedPermissionString).filter((item): item is string => !!item)
+    : undefined
+  const toolLocations = Array.isArray(value.toolLocations)
+    ? value.toolLocations.flatMap((candidate) => {
+        if (!isRecord(candidate)) return []
+        const path = boundedPermissionString(candidate.path)
+        const line = asNumber(candidate.line)
+        if (!path || (line !== undefined && (!Number.isSafeInteger(line) || line < 0))) return []
+        return [{ path, ...(line === undefined ? {} : { line }) }]
+      })
+    : undefined
+  const rawInput = sanitizePermissionRawInput(value.rawInput)
+  if (value.rawInput !== undefined && rawInput === undefined) return undefined
+  if (
+    value.toolLocations !== undefined &&
+    (!Array.isArray(value.toolLocations) ||
+      toolLocations?.length !== value.toolLocations.length ||
+      toolLocations.length > 100)
+  ) {
+    return undefined
+  }
+  if (
+    value.commandPrefix !== undefined &&
+    (!Array.isArray(value.commandPrefix) ||
+      commandPrefix?.length !== value.commandPrefix.length ||
+      commandPrefix.length > 32)
+  ) {
+    return undefined
+  }
+
+  if (status) request.status = status
+  if (providerToolName) request.providerToolName = providerToolName
+  if (typeof value.isMcp === 'boolean') request.isMcp = value.isMcp
+  if (mcpIdentity) request.mcpIdentity = mcpIdentity
+  if (toolKind) request.toolKind = toolKind as AcpPermissionRequest['toolKind']
+  if (toolLocations) {
+    request.toolLocations = toolLocations as AcpPermissionRequest['toolLocations']
+  }
+  if (commandPrefix) request.commandPrefix = commandPrefix
+  if (rawInput !== undefined) request.rawInput = rawInput
+  return request
+}
+
+export const sanitizeSessionPermissionRuntimeContext = (
+  value: unknown
+): SessionPermissionRuntimeContext | undefined => {
+  if (!isRecord(value)) return undefined
+  if (
+    Object.keys(value).some(
+      (field) =>
+        ![
+          'request',
+          'originatingPromptMessageId',
+          'fingerprint',
+          'categoryKey',
+          'capability',
+          'createdAt'
+        ].includes(field)
+    )
+  ) {
+    return undefined
+  }
+  const request = sanitizePermissionRequest(value.request)
+  const originatingPromptMessageId = boundedPermissionString(value.originatingPromptMessageId)
+  const fingerprint = asString(value.fingerprint)
+  const categoryKey = boundedPermissionString(value.categoryKey)
+  const capability = sanitizePermissionCapability(value.capability)
+  const createdAt = asNumber(value.createdAt)
+  if (
+    !request ||
+    !originatingPromptMessageId ||
+    !fingerprint ||
+    !PERMISSION_FINGERPRINT_PATTERN.test(fingerprint) ||
+    createdAt === undefined ||
+    !Number.isSafeInteger(createdAt) ||
+    createdAt < 0 ||
+    (value.capability !== undefined && !capability)
+  ) {
+    return undefined
+  }
+  return {
+    request,
+    originatingPromptMessageId,
+    fingerprint,
+    ...(categoryKey ? { categoryKey } : {}),
+    ...(capability ? { capability } : {}),
+    createdAt
+  }
+}
+
 export const sanitizeSessionRuntimeContext = (
   value: unknown
 ): SessionRuntimeContext | undefined => {
@@ -509,19 +729,30 @@ export const sanitizeSessionRuntimeContext = (
   const revision = asNumber(value.revision)
   if (revision === undefined || !Number.isSafeInteger(revision) || revision < 0) return undefined
 
-  const result: { version: 1; revision: number; plan?: SessionPlanRuntimeContext } = {
+  const result: {
+    version: 1
+    revision: number
+    plan?: SessionPlanRuntimeContext
+    permission?: SessionPermissionRuntimeContext
+  } = {
     version: 1,
     revision
   }
   const budget = { remaining: 2_000 }
   for (const [owner, ownerValue] of Object.entries(value)) {
     if (owner === 'version' || owner === 'revision') continue
-    if (owner !== 'plan') return undefined
+    if (owner !== 'plan' && owner !== 'permission') return undefined
     const sanitizedJson = sanitizeRuntimeContextValue(ownerValue, budget)
     if (sanitizedJson === undefined) return undefined
-    const plan = sanitizeSessionPlanRuntimeContext(sanitizedJson)
-    if (!plan) return undefined
-    result.plan = plan
+    if (owner === 'plan') {
+      const plan = sanitizeSessionPlanRuntimeContext(sanitizedJson)
+      if (!plan) return undefined
+      result.plan = plan
+      continue
+    }
+    const permission = sanitizeSessionPermissionRuntimeContext(sanitizedJson)
+    if (!permission) return undefined
+    result.permission = permission
   }
   return result
 }
@@ -624,9 +855,25 @@ const asArtifactKind = (value: unknown): PersistedArtifactKind | undefined => {
   return kind && ARTIFACT_KINDS.has(kind) ? kind : undefined
 }
 
-// Identifies UI states that cannot survive an app process shutdown.
-const isSessionInterrupted = (status: PersistedSessionStatus): boolean =>
-  status === 'running' || status === 'waiting-permission'
+const hasRestorablePermissionWait = (session: PersistedChatSession): boolean => {
+  const permission = session.runtimeContext?.permission
+  const activeMessages = session.conversationGraph
+    ? resolveActiveConversationMessages(session.conversationGraph)
+    : session.messages
+  return Boolean(
+    session.status === 'waiting-permission' &&
+    permission?.request.sessionId === session.id &&
+    activeMessages.some(
+      (message) => message.id === permission.originatingPromptMessageId && message.role === 'user'
+    )
+  )
+}
+
+// Identifies UI states that cannot survive an app process shutdown. Permission waits are durable
+// only when their main-owned authority and active-branch prompt binding survived with the Session.
+const isSessionInterrupted = (session: PersistedChatSession): boolean =>
+  session.status === 'running' ||
+  (session.status === 'waiting-permission' && !hasRestorablePermissionWait(session))
 
 // Converts partial streamed assistant messages into visible errors after restart.
 const normalizeMessageAfterRestore = (message: PersistedChatMessage): PersistedChatMessage =>
@@ -655,6 +902,17 @@ const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefin
 
 // Restores interrupted sessions as retryable errors because runtime state is gone.
 const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedChatSession => {
+  if (hasRestorablePermissionWait(session)) {
+    return {
+      ...session,
+      status: 'waiting-permission',
+      activeRun: undefined,
+      resumeRecovery: undefined,
+      error: undefined,
+      errorReportable: undefined,
+      messages: session.messages.map(normalizeMessageAfterRestore)
+    }
+  }
   if (
     session.status === 'waiting-plan-approval' &&
     session.runtimeContext?.plan?.approval === 'pending'
@@ -665,7 +923,7 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
       messages: session.messages.map(normalizeMessageAfterRestore)
     }
   }
-  if (!isSessionInterrupted(session.status)) {
+  if (!isSessionInterrupted(session)) {
     const legacyInterrupted =
       session.resumeRecovery === undefined && session.error === INTERRUPTED_SESSION_ERROR
     const promptMessageId =

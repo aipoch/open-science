@@ -268,6 +268,10 @@ class AcpRuntimeCoordinator {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
   }
 
+  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+    return Array.from(this.runtimes).flatMap((runtime) => runtime.getQuitBlockingPromptSessions())
+  }
+
   hasLiveSession(projectId: string, sessionId: string): boolean {
     const runtime = this.sessionRuntimes.get(sessionId)
     return runtime?.hasLiveSession(projectId, sessionId) ?? false
@@ -737,6 +741,7 @@ class AcpRuntimeCoordinator {
           .getSnapshot()
           .pendingPermissions.some((request) => request.requestId === response.requestId)
       ) ??
+      (response.restored ? this.sessionRuntimes.get(response.restored.sessionId) : undefined) ??
       this.getActiveRuntime()
     try {
       await runtime.respondToPermission(response)

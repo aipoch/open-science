@@ -295,9 +295,79 @@ describe('workspace Agent Runtime hook contract', () => {
       await latest.revokePermissionGrant('session-1', 'shell:git')
     })
 
-    expect(runtime.respondToPermission).toHaveBeenCalledWith('permission-1', 'allow-once')
+    expect(runtime.respondToPermission).toHaveBeenCalledWith(
+      'permission-1',
+      'allow-once',
+      undefined
+    )
     expect(runtime.setPermissionProfile).toHaveBeenCalledWith('session-1', 'full')
     expect(runtime.revokePermissionGrant).toHaveBeenCalledWith('session-1', 'shell:git')
     expect(useSessionStore.getState().sessions[0]?.permissionProfile).toBe('auto')
+  })
+
+  it('reattaches a restored permission wait before sending its main-validated decision', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    const request = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        activeRun: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            request,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+    const runtime = createRuntime(createSnapshot())
+    runtime.resumeSession.mockResolvedValue({
+      sessionId: 'session-1',
+      cwd: workspacePath,
+      frameworkId: 'claude-code',
+      backendId: 'claude-code:anthropic',
+      contextReset: false
+    })
+    runtimeMock.current = runtime
+    await render()
+
+    expect(latest.pendingPermissions).toEqual([request])
+    await act(async () => {
+      await latest.respondToPermission('permission-restored', 'allow-once')
+    })
+
+    expect(runtime.resumeSession).toHaveBeenCalledWith(
+      'session-1',
+      workspacePath,
+      'project-1',
+      'ask',
+      'claude-code',
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    )
+    expect(runtime.respondToPermission).toHaveBeenCalledWith('permission-restored', 'allow-once', {
+      sessionId: 'session-1',
+      projectId: 'project-1'
+    })
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 })

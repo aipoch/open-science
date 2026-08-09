@@ -53,7 +53,7 @@ import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
 import type { UploadedAttachment } from '../../shared/uploads'
 import { projectConversationMessage } from '../../shared/conversation-graph'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatSession, SessionRuntimeContext } from '../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
@@ -1589,6 +1589,111 @@ describe('ACP runtime provider prompt acceptance', () => {
 
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
       expect(onProviderPromptAccepted).toHaveBeenCalledWith(session.sessionId, undefined)
+    }
+  )
+})
+
+describe('ACP runtime restored permission continuation', () => {
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+  ] as const)(
+    'continues an approved restored wait through %s and then clears its authority',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      let runtimeContext: SessionRuntimeContext = {
+        version: 1,
+        revision: 1,
+        permission: {
+          request: {
+            requestId: 'permission-restored',
+            sessionId: 'restored-session',
+            toolCallId: 'tool-restored',
+            title: 'Run npm test',
+            providerToolName: 'Bash',
+            rawInput: { command: 'npm test' },
+            options: [
+              {
+                optionId: 'allow-once',
+                name: 'Allow once',
+                kind: 'allow_once',
+                scope: 'once'
+              },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+            ]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 1
+        }
+      }
+      const patchSessionRuntimeContext = vi.fn(
+        async (command: {
+          expectedRevision: number
+          patch: { permission?: SessionRuntimeContext['permission'] }
+        }) => {
+          expect(command.expectedRevision).toBe(runtimeContext.revision)
+          runtimeContext = {
+            ...runtimeContext,
+            ...command.patch,
+            revision: runtimeContext.revision + 1
+          }
+          return structuredClone(runtimeContext)
+        }
+      )
+      const onPermissionSettled = vi.fn()
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        callbacks: { onPermissionSettled },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+            patchSessionRuntimeContext,
+            containsMessageOnActiveBranch: vi.fn(async () => true)
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+      await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+      await runtime.respondToPermission({
+        requestId: 'permission-restored',
+        optionId: 'allow-once',
+        restored: {
+          sessionId: 'restored-session',
+          projectId: 'project-1',
+          historyReplay: { historyPreamble: 'Previous conversation context.' }
+        }
+      })
+
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      expect(fakeAgent.prompts[0]?.text).toContain('Previous conversation context.')
+      expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
+      await vi.waitFor(() => expect(runtimeContext.permission).toBeUndefined())
+      expect(patchSessionRuntimeContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          sessionStatus: 'idle',
+          patch: { permission: undefined }
+        })
+      )
+      expect(onPermissionSettled).toHaveBeenCalledWith('permission-restored', 'resolved')
     }
   )
 })
@@ -7448,6 +7553,64 @@ describe('ACP runtime session management', () => {
     expect(emittedUnknownPermission).toBe(false)
     expect(permissionError).toBeDefined()
     expect(runtime.getSnapshot().pendingPermissions).toEqual([])
+  })
+
+  it('keeps a durable permission wait active for Session safety but excludes it from quit warnings', async () => {
+    const process = new FakeAgentProcess()
+    const permissionSeen = createDeferred<AcpPermissionRequest>()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'durable-permission-session',
+      toolCallId: 'durable-permission-tool',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    let runtimeContext: SessionRuntimeContext = { version: 1, revision: 0 }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext: vi.fn(
+            async (command: {
+              patch: { permission?: SessionRuntimeContext['permission'] }
+              expectedRevision: number
+            }) => {
+              expect(command.expectedRevision).toBe(runtimeContext.revision)
+              runtimeContext = {
+                ...runtimeContext,
+                ...command.patch,
+                revision: runtimeContext.revision + 1
+              }
+              return structuredClone(runtimeContext)
+            }
+          ),
+          containsMessageOnActiveBranch: vi.fn(async () => true)
+        }
+      }
+    })
+    const session = await runtime.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1',
+      permissionProfile: 'ask'
+    })
+    const prompting = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'run a command',
+      provenanceContext: { promptMessageId: 'prompt-1' }
+    })
+    const permission = await permissionSeen.promise
+
+    expect(permission.durable).toBe(true)
+    expect(runtime.getActivePromptSessions()).toEqual([
+      { projectName: 'project-1', sessionId: session.sessionId }
+    ])
+    expect(runtime.getQuitBlockingPromptSessions()).toEqual([])
+
+    await runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
   it('changes permission profile while a prompt is waiting and releases the eligible request', async () => {

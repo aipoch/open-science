@@ -142,6 +142,58 @@ const controlledEmptyGrantRegistry = (): {
 }
 
 describe('ACP permission broker with durable grants', () => {
+  it.each([
+    ['session', { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }],
+    ['project', { kind: 'project', projectId: 'project-1' }],
+    ['global', { kind: 'global' }]
+  ] as const)(
+    'commits a restored %s selection through the durable grant registry',
+    async (scope, expectedScope) => {
+      const registry = {
+        resolve: vi.fn().mockResolvedValue(undefined),
+        remember: vi.fn().mockResolvedValue(undefined),
+        list: vi.fn().mockResolvedValue([]),
+        listCached: vi.fn().mockReturnValue([]),
+        revoke: vi.fn(),
+        extendUndo: vi.fn(),
+        restore: vi.fn(),
+        prune: vi.fn(),
+        finalizeOwnerDeletion: vi.fn(),
+        subscribe: vi.fn().mockReturnValue(() => undefined)
+      } satisfies PermissionGrantRegistry
+      const broker = new AcpPermissionBroker(() => undefined, undefined, registry)
+      const option = {
+        optionId: `allow-${scope}`,
+        name: `Allow for ${scope}`,
+        kind: 'allow_always',
+        scope
+      } as const
+
+      await broker.prepareRestoredDecision(
+        {
+          request: {
+            requestId: 'permission-1',
+            sessionId: 'session-1',
+            toolCallId: 'tool-1',
+            title: 'Inspect repository status',
+            options: [option]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          capability: { kind: 'execution', key: 'shell:git-status' },
+          createdAt: 1
+        },
+        option,
+        'project-1'
+      )
+
+      expect(registry.remember).toHaveBeenCalledWith({
+        capability: { kind: 'execution', key: 'shell:git-status' },
+        scope: expectedScope
+      })
+    }
+  )
+
   it('cancels a request while its durable grant lookup is still pending', async () => {
     let finishResolve: (() => void) | undefined
     const registry = {

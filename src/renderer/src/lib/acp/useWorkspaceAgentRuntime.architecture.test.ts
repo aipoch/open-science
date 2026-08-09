@@ -527,6 +527,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({
       setPermissionProfile: 1,
+      resumeSession: 1,
       respondToPermission: 1,
       revokePermissionGrant: 1
     })

@@ -290,7 +290,7 @@ class SessionPersistenceStateOwner {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       throw new Error('Session runtime context expected revision must be a non-negative integer.')
     }
-    if (Object.keys(patch).some((owner) => owner !== 'plan')) {
+    if (Object.keys(patch).some((owner) => owner !== 'plan' && owner !== 'permission')) {
       throw new Error('Session runtime context patch contains an unknown authority owner.')
     }
 
@@ -367,9 +367,15 @@ class SessionPersistenceStateOwner {
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
-    const mainOwnedStatus =
-      authority?.status === 'waiting-plan-approval' ||
-      rendererOwnedSession.status === 'waiting-plan-approval'
+    const permissionOwnedStatus = authority?.runtimeContext?.permission
+      ? 'waiting-permission'
+      : rendererOwnedSession.status === 'waiting-permission'
+        ? (authority?.status ?? 'idle')
+        : undefined
+    const mainOwnedStatus = permissionOwnedStatus
+      ? permissionOwnedStatus
+      : authority?.status === 'waiting-plan-approval' ||
+          rendererOwnedSession.status === 'waiting-plan-approval'
         ? (authority?.status ?? 'idle')
         : undefined
     const mergedSession: PersistedChatSession = {

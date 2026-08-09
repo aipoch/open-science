@@ -15,12 +15,14 @@ import type { SessionPermissionProfileState } from '../../shared/permission-prof
 import type { AgentFrameworkId } from '../../shared/settings'
 import { getAgentFramework, type AgentFramework } from '../agent-framework'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger } from '../logger'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
-  resolveNotebookPermissionContext
+  resolveNotebookPermissionContext,
+  type PermissionWaitHooks
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
@@ -94,6 +96,7 @@ type AcpPermissionContextOptions = {
     capturePrompt: (sessionId: string) =>
       | {
           sequence: number
+          promptMessageId?: string
           isCancellationAccepted: () => boolean
         }
       | undefined
@@ -121,6 +124,7 @@ type AcpPermissionContextOptions = {
     waitMs: number
   }) => void
   onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
+  permissionWaitHooks?: PermissionWaitHooks
 }
 
 type PermissionContextSessionSnapshot = {
@@ -291,7 +295,8 @@ class AcpPermissionContext {
       },
       options.conversationGrants,
       options.permissionGrantRegistry,
-      options.onPermissionSettled
+      options.onPermissionSettled,
+      options.permissionWaitHooks
     )
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
@@ -372,7 +377,8 @@ class AcpPermissionContext {
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: aggregateSnapshot?.cwd,
           mcpServerNames,
-          projectId: routing.resolveProjectId(appSessionId)
+          projectId: routing.resolveProjectId(appSessionId),
+          promptMessageId: promptInteraction?.promptMessageId
         }
       )
     } catch (error) {
@@ -406,6 +412,22 @@ class AcpPermissionContext {
 
   getPendingRequests(): AcpPermissionRequest[] {
     return this.broker.getPendingRequests()
+  }
+
+  hasDurablePendingForSession(sessionId: string): boolean {
+    return this.broker.hasDurablePendingForSession(sessionId)
+  }
+
+  prepareRestoredDecision(
+    permission: SessionPermissionRuntimeContext,
+    option: AcpPermissionRequest['options'][number] | undefined,
+    projectId: string
+  ): Promise<void> {
+    return this.broker.prepareRestoredDecision(permission, option, projectId)
+  }
+
+  clearRestoredDecision(sessionId: string): void {
+    this.broker.clearRestoredDecision(sessionId)
   }
 
   async applyPermissionProfile(
@@ -724,7 +746,8 @@ class AcpPermissionContext {
   }
 
   dispose(): void {
-    this.cancelAllPending()
+    this.broker.abandonAllPending()
+    this.humanOnlyRequestIds.clear()
     const sessionIds = new Set([
       ...this.codexMcpToolIdentities.keys(),
       ...this.claudeCodeMcpToolInputs.keys(),

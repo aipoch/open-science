@@ -49,6 +49,7 @@ const createFakeRuntime = (options: {
   beforeResume?: () => Promise<void>
   afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
+  quitBlockingSessions?: { projectName: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
@@ -184,6 +185,7 @@ const createFakeRuntime = (options: {
   const runtime = {
     getSnapshot: () => snapshot,
     getActivePromptSessions: () => [],
+    getQuitBlockingPromptSessions: () => options.quitBlockingSessions ?? [],
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
@@ -270,6 +272,23 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('combines only the quit-blocking prompts reported by each runtime generation', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          quitBlockingSessions: [{ projectName: 'project-1', sessionId: 'session-running' }]
+        }).runtime
+    )
+    await coordinator.connect()
+
+    expect(coordinator.getQuitBlockingPromptSessions()).toEqual([
+      { projectName: 'project-1', sessionId: 'session-running' }
+    ])
+  })
+
   it.each([
     ['Claude Code', 'claude-code'],
     ['OpenCode', 'opencode'],

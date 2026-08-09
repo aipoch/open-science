@@ -17,6 +17,7 @@ import {
   createWorkspaceRuntimeEventProcessor,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
+  pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
@@ -90,6 +91,50 @@ const flushRuntimeTasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('workspace permission wait recovery', () => {
+  it('projects a restored main-owned request and prefers a matching live request', () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const durableRequest = {
+      requestId: 'permission-1',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            request: durableRequest,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([
+      durableRequest
+    ])
+
+    const liveRequest = { ...durableRequest, title: 'Live runtime title' }
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [liveRequest])).toEqual(
+      [liveRequest]
+    )
+  })
+})
 
 describe('workspace permission profile persistence', () => {
   it('persists the profile committed by the runtime instead of a superseded request', async () => {
@@ -3746,6 +3791,37 @@ describe('resuming an interrupted session on demand', () => {
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('waiting-for-user')
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('keeps a durable permission wait actionable when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setPermissionPending('session-1')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed', {}, {}, new Set(['session-1']))
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('waiting-permission')
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('interrupts a non-durable permission wait when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Approve an in-memory action',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setPermissionPending('session-1')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true
+    })
   })
 
   it('reconnects and continues the interrupted turn without duplicating its user message', async () => {

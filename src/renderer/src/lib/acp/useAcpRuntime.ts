@@ -91,7 +91,11 @@ const useAcpRuntime = (): {
     planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent']
   ) => Promise<AcpStateSnapshot>
-  respondToPermission: (requestId: string, optionId?: string) => Promise<AcpStateSnapshot>
+  respondToPermission: (
+    requestId: string,
+    optionId?: string,
+    restored?: AcpPermissionResponse['restored']
+  ) => Promise<AcpStateSnapshot>
   respondToElicitation: (response: ElicitationResponse) => Promise<AcpStateSnapshot>
   setPermissionProfile: (
     sessionId: string,
@@ -345,11 +349,16 @@ const useAcpRuntime = (): {
 
   // Converts a UI permission click into the response shape expected by IPC.
   const respondToPermission = useCallback(
-    async (requestId: string, optionId?: string): Promise<AcpStateSnapshot> => {
+    async (
+      requestId: string,
+      optionId?: string,
+      restored?: AcpPermissionResponse['restored']
+    ): Promise<AcpStateSnapshot> => {
       const response: AcpPermissionResponse = {
         requestId,
         optionId,
-        cancelled: !optionId
+        cancelled: !optionId,
+        ...(restored ? { restored } : {})
       }
       setActionError(null)
       try {

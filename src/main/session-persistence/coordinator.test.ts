@@ -18,6 +18,7 @@ import {
   type PersistedArtifact,
   type PersistedChatMessage,
   type PersistedChatSession,
+  type SessionPermissionRuntimeContext,
   type SessionPlanRuntimeContext
 } from '../../shared/session-persistence'
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
@@ -61,6 +62,19 @@ const createRuntimePlan = (
   approval: 'pending',
   stepStatuses: {},
   ...overrides
+})
+
+const createRuntimePermission = (): SessionPermissionRuntimeContext => ({
+  request: {
+    requestId: 'permission-1',
+    sessionId: 'session-1',
+    toolCallId: 'tool-1',
+    title: 'Run npm test',
+    options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+  },
+  originatingPromptMessageId: 'prompt-1',
+  fingerprint: 'a'.repeat(64),
+  createdAt: 1
 })
 
 const createLegacyUploadSession = (sessionId: string): PersistedChatSession =>
@@ -463,6 +477,66 @@ describe('SessionPersistenceCoordinator', () => {
       plan: createRuntimePlan()
     })
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('preserves authoritative permission context and waiting status on a stale renderer save', async () => {
+    let durable = createSession({
+      status: 'waiting-permission',
+      runtimeContext: { version: 1, revision: 3, permission: createRuntimePermission() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(createSession({ status: 'idle', runtimeContext: undefined }))
+    ).resolves.toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        permission: { request: { requestId: 'permission-1' } }
+      }
+    })
+    expect(durable.status).toBe('waiting-permission')
+    expect(durable.runtimeContext?.permission).toEqual(createRuntimePermission())
+  })
+
+  it('does not let a stale renderer save revive a permission wait after main clears it', async () => {
+    let durable = createSession({
+      status: 'running',
+      runtimeContext: { version: 1, revision: 4 }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({
+          status: 'waiting-permission',
+          runtimeContext: { version: 1, revision: 3, permission: createRuntimePermission() }
+        })
+      )
+    ).resolves.toMatchObject({
+      status: 'running',
+      runtimeContext: { version: 1, revision: 4 }
+    })
+    expect(durable.runtimeContext?.permission).toBeUndefined()
   })
 
   it('preserves main-owned archive state on a stale whole-session save', async () => {
@@ -1474,7 +1548,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([session])
   })
 
-  it('preserves a live permission wait when another client hydrates in the same process', async () => {
+  it('preserves a main-owned permission wait when another client hydrates in the same process', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-live-permission-hydration-'))
     const repository = new SessionRepository(root, { hasActiveRuntimePrompt: () => true })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
@@ -1485,7 +1559,7 @@ describe('SessionPersistenceCoordinator', () => {
 
       await coordinator.saveSession(
         createSession({
-          status: 'waiting-permission',
+          status: 'running',
           activeRun: { promptMessageId: 'prompt-1', startedAt: 3 },
           messages: [
             {
@@ -1512,6 +1586,13 @@ describe('SessionPersistenceCoordinator', () => {
           ]
         })
       )
+      await coordinator.patchSessionRuntimeContext({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        expectedRevision: 0,
+        patch: { permission: createRuntimePermission() },
+        sessionStatus: 'waiting-permission'
+      })
 
       const rehydrated = await coordinator.loadAll()
 

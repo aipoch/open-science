@@ -159,6 +159,12 @@ type AcpRuntimeOptions = {
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
+  permissionWait?: {
+    sessions: Pick<
+      SessionPersistenceCoordinator,
+      'readSessionRuntimeContext' | 'patchSessionRuntimeContext' | 'containsMessageOnActiveBranch'
+    >
+  }
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework
@@ -322,6 +328,8 @@ class AcpRuntime {
   private readonly sessionInteractions: AcpSessionInteractionOwner
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
+  private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
+  private durablePermissionContinuations?: Map<string, { projectId: string; requestId: string }>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   private readonly turnSkills: AcpTurnSkillOwner
@@ -376,6 +384,7 @@ class AcpRuntime {
     this.publication = session.publication
     this.permissionContext = session.permissionContext
     this.elicitationOwner = session.elicitationOwner
+    this.permissionWaitOwner = session.permissionWaitOwner
     this.appContinuations = session.appContinuations
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
@@ -482,6 +491,17 @@ class AcpRuntime {
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  // A permission-blocked prompt whose authority reached durable storage is quiescent for app quit:
+  // teardown loses only the dead provider RPC, while the card remains actionable after restart.
+  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+    return this.getInFlightSessionIds()
+      .filter((sessionId) => !this.permissionContext.hasDurablePendingForSession(sessionId))
+      .map((sessionId) => ({
+        projectName: this.resolveSessionProjectName(sessionId),
+        sessionId
+      }))
   }
 
   hasLiveSession(projectId: string, sessionId: string): boolean {
@@ -999,6 +1019,9 @@ class AcpRuntime {
     const permissionRequest = this.permissionContext
       .getPendingRequests()
       .find((request) => request.requestId === response.requestId)
+    if (!permissionRequest && response.restored) {
+      return this.respondToRestoredPermission(response)
+    }
     const selectedOption = permissionRequest?.options.find(
       (option) => option.optionId === response.optionId
     )
@@ -1060,6 +1083,84 @@ class AcpRuntime {
     }
     this.emitState()
 
+    return this.getSnapshot()
+  }
+
+  private async respondToRestoredPermission(
+    response: AcpPermissionResponse
+  ): Promise<AcpStateSnapshot> {
+    const restored = response.restored!
+    const activeSession = this.activeSessionFor(restored.sessionId)
+    if (!activeSession) throw new Error(`ACP session not found: ${restored.sessionId}`)
+    const projectId = this.sessionEnvironment.projectName(restored.sessionId)
+    const decision = await this.permissionWaitOwner.resolveRestored(
+      response,
+      projectId,
+      restored.sessionId
+    )
+    const durablePermissionContinuations =
+      this.durablePermissionContinuations ??
+      new Map<string, { projectId: string; requestId: string }>()
+    this.durablePermissionContinuations = durablePermissionContinuations
+    if (durablePermissionContinuations.has(restored.sessionId)) {
+      throw new Error('The restored permission request is already being continued.')
+    }
+    durablePermissionContinuations.set(restored.sessionId, {
+      projectId,
+      requestId: response.requestId
+    })
+    try {
+      await this.permissionContext.prepareRestoredDecision(
+        decision.permission,
+        decision.option,
+        projectId
+      )
+    } catch (error) {
+      durablePermissionContinuations.delete(restored.sessionId)
+      throw error
+    }
+
+    const scope = decision.option?.scope
+    const text = decision.denied
+      ? 'The user denied the pending tool permission. Continue the current task without that tool ' +
+        'call. Use an alternative that does not require the denied permission, or explain what ' +
+        'cannot be completed. Do not request the same permission again unless the user explicitly asks.'
+      : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
+        'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
+    this.appContinuations.set(restored.sessionId, {
+      condition: 'always',
+      request: {
+        sessionId: restored.sessionId,
+        text,
+        suppressUserMessage: true,
+        provenanceContext: {
+          promptMessageId: decision.permission.originatingPromptMessageId
+        },
+        ...(restored.historyReplay?.historyPreamble
+          ? { historyPreamble: restored.historyReplay.historyPreamble }
+          : {}),
+        ...(restored.historyReplay?.historyAttachments?.length
+          ? { historyAttachments: restored.historyReplay.historyAttachments }
+          : {}),
+        ...(restored.historyReplay?.historyImages?.length
+          ? { historyImages: restored.historyReplay.historyImages }
+          : {})
+      }
+    })
+    this.schedulePendingAppContinuation(restored.sessionId)
+    this.options.callbacks?.onPermissionSettled?.(
+      response.requestId,
+      response.cancelled ? 'cancelled' : decision.denied ? 'rejected' : 'resolved'
+    )
+    this.pushEvent({
+      kind: 'permission',
+      level: 'info',
+      sessionId: restored.sessionId,
+      promptMessageId: decision.permission.originatingPromptMessageId,
+      title: 'Restored permission response accepted',
+      text: response.cancelled ? 'cancelled' : response.optionId
+    })
+    this.emitState()
     return this.getSnapshot()
   }
 
@@ -1268,8 +1369,10 @@ class AcpRuntime {
     if (!pending || this.sessionInteractions.current(sessionId)) return
     const continuation = this.appContinuations.takeAndActivate(sessionId)
     if (!continuation) return
+    let completed = false
     try {
       await this.sendAppContinuation(continuation.request)
+      completed = true
     } catch (error) {
       this.pushEvent({
         kind: 'error',
@@ -1281,6 +1384,26 @@ class AcpRuntime {
       })
       this.emitState()
     } finally {
+      const durablePermission = this.durablePermissionContinuations?.get(sessionId)
+      this.permissionContext.clearRestoredDecision(sessionId)
+      if (completed && durablePermission) {
+        try {
+          await this.permissionWaitOwner.clearAfterContinuation(
+            durablePermission.projectId,
+            sessionId,
+            durablePermission.requestId
+          )
+          this.durablePermissionContinuations?.delete(sessionId)
+        } catch (error) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId,
+            title: 'Permission continuation completed but its wait could not be cleared',
+            text: errorMessage(error)
+          })
+        }
+      }
       this.appContinuations.complete(sessionId)
       this.emitState()
     }
@@ -1422,6 +1545,7 @@ class AcpRuntime {
     this.permissionContext.cancelForSession(sessionId)
     this.elicitationOwner.cancelForSession(sessionId)
     this.appContinuations.delete(sessionId)
+    this.durablePermissionContinuations?.delete(sessionId)
   }
 
   private processEventDisposition(

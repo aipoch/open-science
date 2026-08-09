@@ -443,6 +443,9 @@ export type AcpPermissionRequest = {
   sessionId: string
   toolCallId: string
   title: string
+  // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
+  // storage; restored authority is still reloaded and validated independently before use.
+  durable?: true
   status?: string
   providerToolName?: string
   // Set by the permission broker after framework-aware classification so the renderer never has to
@@ -640,6 +643,18 @@ export type AcpPermissionResponse = {
   requestId: string
   optionId?: string
   cancelled?: boolean
+  // Present only when the renderer is answering main-owned permission authority restored from the
+  // Session record. Main reloads and validates that authority; this locator and replay projection do
+  // not themselves grant permission.
+  restored?: {
+    sessionId: string
+    projectId: string
+    historyReplay?: {
+      historyPreamble?: AcpPromptRequest['historyPreamble']
+      historyAttachments?: AcpPromptRequest['historyAttachments']
+      historyImages?: AcpPromptRequest['historyImages']
+    }
+  }
 }
 
 export type AcpPermissionSettlementState = 'resolved' | 'rejected' | 'cancelled'

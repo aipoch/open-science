@@ -207,6 +207,9 @@ const createAcpRuntime = ({
           authorizeReferencedUploads: authorizeSkillImportReferencedUploads
         },
         ...(sessionPersistenceCoordinator
+          ? { permissionWait: { sessions: sessionPersistenceCoordinator } }
+          : {}),
+        ...(sessionPersistenceCoordinator
           ? {
               plan: {
                 mcpEntryPath,

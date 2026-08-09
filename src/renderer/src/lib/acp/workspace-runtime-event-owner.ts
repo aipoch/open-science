@@ -303,24 +303,26 @@ const processWorkspaceRuntimeEvents = (
   return liveWorkspaceRuntimeEventProcessor.process(events)
 }
 
-// Flags sessions with an active prompt or native compaction as disconnected on a transition into a
-// dropped connection state.
+// Flags sessions with a live Agent operation as disconnected on a transition into a dropped
+// connection state. Durable permission waits are intentionally quiescent: their provider RPC can
+// disappear while the persisted card remains actionable after a later resume.
 const markRunningSessionsDisconnectedOnDrop = (
   previousStatus: AcpConnectionStatus,
   currentStatus: AcpConnectionStatus,
   previousSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
-  currentSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {}
+  currentSessionStatuses: Partial<Record<string, AcpConnectionStatus>> = {},
+  durablePermissionSessionIds: ReadonlySet<string> = new Set()
 ): void => {
   const { sessions, markDisconnected } = useSessionStore.getState()
 
   for (const session of sessions) {
-    if (
-      session.status !== 'running' &&
-      session.status !== 'waiting-permission' &&
-      !session.compacting
-    ) {
+    const isPermissionWait = session.status === 'waiting-permission'
+    const isDurablePermissionWait = isPermissionWait && durablePermissionSessionIds.has(session.id)
+    if (session.status !== 'running' && !isPermissionWait && !session.compacting) {
       continue
     }
+
+    if (isDurablePermissionWait) continue
 
     const previousOwnedStatus = previousSessionStatuses[session.id]
     const currentOwnedStatus = currentSessionStatuses[session.id]
