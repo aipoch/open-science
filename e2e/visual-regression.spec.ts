@@ -197,9 +197,12 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
     const updates = page.getByRole('region', { name: 'Session updates' })
     const cardGrid = updates.locator(':scope > div')
     const cards = updates.getByRole('button')
+    const availableWidth = await page.evaluate(() => document.documentElement.clientWidth)
     const expectedInset = width < 768 ? 16 : 32
     const expectedCardWidth =
-      width < 768 ? width - expectedInset * 2 : (width - expectedInset * 2 - 12) / 2
+      width < 768
+        ? availableWidth - expectedInset * 2
+        : (availableWidth - expectedInset * 2 - 12) / 2
 
     await expect(updates).toBeVisible()
     await expect(cards.first()).toBeVisible()
@@ -213,7 +216,7 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
     expect(firstCardBox?.x).toBeCloseTo(expectedInset, 0)
     expect(firstCardBox?.width).toBeCloseTo(expectedCardWidth, 0)
     expect((firstCardBox?.x ?? 0) + (firstCardBox?.width ?? 0)).toBeLessThanOrEqual(
-      width - expectedInset + 1
+      availableWidth - expectedInset + 1
     )
     if (width < 768) {
       expect(secondCardBox?.x).toBeCloseTo(expectedInset, 0)
