@@ -1,6 +1,10 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
-import { ACP_PROMPT_FAILED_EVENT_TITLE, type AcpRuntimeEvent } from '../../shared/acp'
+import {
+  ACP_PROMPT_FAILED_EVENT_TITLE,
+  type AcpRuntimeEvent,
+  type AcpTurnTokenUsage
+} from '../../shared/acp'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { createLogger, errorLogFields } from '../logger'
 import type { ContextUsageTurnHandle } from './context-usage-tracker'
@@ -47,7 +51,83 @@ type ObservedPromptStop = Readonly<{
   turnUsage?: Extract<ProviderPromptOutcome, { kind: 'stopped' }>['facts']['turnUsage']
   modelTurnCount?: number
 }>
+
+type LogicalTurnUsage = Readonly<{
+  turnUsage?: AcpTurnTokenUsage
+  unavailable?: true
+}>
+
+const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
+
+const sumTurnUsage = (
+  left: AcpTurnTokenUsage,
+  right: AcpTurnTokenUsage
+): AcpTurnTokenUsage | undefined => {
+  const inputTokens = left.inputTokens + right.inputTokens
+  const cacheTokens = left.cacheTokens + right.cacheTokens
+  const outputTokens = left.outputTokens + right.outputTokens
+  const hasCacheBreakdown =
+    left.cachedReadTokens !== undefined &&
+    left.cachedWriteTokens !== undefined &&
+    right.cachedReadTokens !== undefined &&
+    right.cachedWriteTokens !== undefined
+  const cachedReadTokens = (left.cachedReadTokens ?? 0) + (right.cachedReadTokens ?? 0)
+  const cachedWriteTokens = (left.cachedWriteTokens ?? 0) + (right.cachedWriteTokens ?? 0)
+  const hasTurnCount = left.turnCount !== undefined && right.turnCount !== undefined
+  const turnCount = (left.turnCount ?? 0) + (right.turnCount ?? 0)
+
+  if (
+    !Number.isSafeInteger(inputTokens) ||
+    !Number.isSafeInteger(cacheTokens) ||
+    !Number.isSafeInteger(outputTokens) ||
+    !Number.isSafeInteger(cachedReadTokens) ||
+    !Number.isSafeInteger(cachedWriteTokens) ||
+    !Number.isSafeInteger(turnCount)
+  ) {
+    return undefined
+  }
+
+  return {
+    inputTokens,
+    cacheTokens,
+    ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
+    outputTokens,
+    ...(hasTurnCount ? { turnCount } : {})
+  }
+}
+
 export class AcpPromptOutcomeFinalizer {
+  // Detached ask-user replies resume as new provider prompts but keep the original Message identity.
+  // Retain a bounded running total so every later stop describes that complete visible user turn.
+  private readonly logicalTurnUsage = new Map<string, LogicalTurnUsage>()
+
+  private accumulateTurnUsage(
+    sessionId: string,
+    promptMessageId: string | undefined,
+    turnUsage: AcpTurnTokenUsage | undefined
+  ): AcpTurnTokenUsage | undefined {
+    if (!promptMessageId) return turnUsage
+
+    const key = `${sessionId.length}:${sessionId}${promptMessageId}`
+    const previous = this.logicalTurnUsage.get(key)
+    const accumulated =
+      !turnUsage || previous?.unavailable
+        ? undefined
+        : previous?.turnUsage
+          ? sumTurnUsage(previous.turnUsage, turnUsage)
+          : turnUsage
+    const next: LogicalTurnUsage = accumulated ? { turnUsage: accumulated } : { unavailable: true }
+
+    // Refresh insertion order so an active continuation is never the oldest retained entry.
+    this.logicalTurnUsage.delete(key)
+    this.logicalTurnUsage.set(key, next)
+    if (this.logicalTurnUsage.size > MAX_LOGICAL_TURN_USAGE_ENTRIES) {
+      const oldestKey = this.logicalTurnUsage.keys().next().value
+      if (oldestKey) this.logicalTurnUsage.delete(oldestKey)
+    }
+    return accumulated
+  }
+
   async finalize(
     handles: AcpPromptFinalizationHandles,
     outcome: AcpPromptFinalizationOutcome
@@ -99,6 +179,11 @@ export class AcpPromptOutcomeFinalizer {
           : { modelTurnCount: observedStop.modelTurnCount })
       })
       if (!terminal) return false
+      const turnUsage = this.accumulateTurnUsage(
+        sessionId,
+        handles.promptMessageId,
+        terminal.turnUsage
+      )
       handles.pushEvent({
         kind: 'stop',
         level: 'info',
@@ -107,7 +192,7 @@ export class AcpPromptOutcomeFinalizer {
         timestamp: terminal.timestamp,
         title: 'Prompt stopped',
         text: observedStop.response.stopReason,
-        turnUsage: terminal.turnUsage,
+        turnUsage,
         raw: observedStop.response
       })
       return true

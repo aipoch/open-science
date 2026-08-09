@@ -963,6 +963,128 @@ describe('session store', () => {
     })
   })
 
+  it('moves cumulative ask-user continuation usage to the final agent message', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Build the requested workflow'
+    })
+    expect(prompt).toBeDefined()
+
+    const segments = [
+      {
+        streamId: 'assistant-before-first-question',
+        eventId: 'event-before-first-question',
+        content: 'I need the first detail.',
+        usage: {
+          inputTokens: 10,
+          cacheTokens: 3,
+          cachedReadTokens: 2,
+          cachedWriteTokens: 1,
+          outputTokens: 4,
+          turnCount: 1
+        }
+      },
+      {
+        streamId: 'assistant-before-second-question',
+        eventId: 'event-before-second-question',
+        content: 'I need one more detail.',
+        usage: {
+          inputTokens: 30,
+          cacheTokens: 8,
+          cachedReadTokens: 6,
+          cachedWriteTokens: 2,
+          outputTokens: 10,
+          turnCount: 3
+        }
+      },
+      {
+        streamId: 'assistant-after-answers',
+        eventId: 'event-after-answers',
+        content: 'The workflow is complete.',
+        usage: {
+          inputTokens: 60,
+          cacheTokens: 15,
+          cachedReadTokens: 11,
+          cachedWriteTokens: 4,
+          outputTokens: 18,
+          turnCount: 6
+        }
+      }
+    ]
+
+    for (const segment of segments) {
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: segment.streamId,
+        eventId: segment.eventId,
+        promptMessageId: prompt!.messageId,
+        content: segment.content
+      })
+      useSessionStore.getState().finishRun('transport-session-1', segment.usage, prompt!.messageId)
+    }
+
+    const session = useSessionStore.getState().sessions[0]
+    const agentMessages = session.messages.filter((message) => message.role === 'agent')
+    expect(agentMessages).toHaveLength(3)
+    expect(agentMessages[0].turnUsage).toBeUndefined()
+    expect(agentMessages[1].turnUsage).toBeUndefined()
+    expect(agentMessages[2].turnUsage).toEqual({
+      inputTokens: 60,
+      cacheTokens: 15,
+      cachedReadTokens: 11,
+      cachedWriteTokens: 4,
+      outputTokens: 18,
+      turnCount: 6
+    })
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === agentMessages[2].id)
+        ?.turnUsage
+    ).toEqual(agentMessages[2].turnUsage)
+    expect(toPersistedSession(session).messages.at(-1)?.turnUsage).toEqual(
+      agentMessages[2].turnUsage
+    )
+  })
+
+  it('marks aggregate ask-user continuation usage unavailable when any segment is unavailable', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Build the requested workflow'
+    })
+    expect(prompt).toBeDefined()
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-before-question',
+      eventId: 'event-before-question',
+      promptMessageId: prompt!.messageId,
+      content: 'I need one detail.'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 10, cacheTokens: 3, outputTokens: 4, turnCount: 1 },
+        prompt!.messageId
+      )
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-after-answer',
+      eventId: 'event-after-answer',
+      promptMessageId: prompt!.messageId,
+      content: 'The workflow is complete.'
+    })
+    useSessionStore.getState().finishRun('transport-session-1', undefined, prompt!.messageId)
+
+    const agentMessages = useSessionStore
+      .getState()
+      .sessions[0].messages.filter((message) => message.role === 'agent')
+    expect(agentMessages[0].turnUsage).toBeUndefined()
+    expect(agentMessages[0].turnUsageUnavailable).toBeUndefined()
+    expect(agentMessages[1].turnUsage).toBeUndefined()
+    expect(agentMessages[1].turnUsageUnavailable).toBe(true)
+  })
+
   it('marks only the final agent message when whole-turn usage is unavailable', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

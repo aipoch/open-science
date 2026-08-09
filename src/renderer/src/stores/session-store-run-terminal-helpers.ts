@@ -72,22 +72,26 @@ const completeStreamingMessages = (
   turnUsage: AcpTurnTokenUsage | undefined,
   now: number
 ): ChatMessage[] => {
-  const usageFooterMessageId = promptMessageId
-    ? [...messages]
-        .reverse()
-        .find(
-          (message) => message.role === 'agent' && message.responseToMessageId === promptMessageId
-        )?.id
-    : undefined
+  const promptResponses = promptMessageId
+    ? messages.filter(
+        (message) => message.role === 'agent' && message.responseToMessageId === promptMessageId
+      )
+    : []
+  const usageFooterMessageId = promptResponses.at(-1)?.id
   return messages.map((message) => {
     const completesStream = message.status === 'streaming'
     const ownsTurnUsageFooter = message.id === usageFooterMessageId
-    if (!completesStream && !ownsTurnUsageFooter) return message
+    const belongsToPrompt =
+      promptMessageId !== undefined &&
+      message.role === 'agent' &&
+      message.responseToMessageId === promptMessageId
+    if (!completesStream && !belongsToPrompt) return message
     const recordsCompletion =
       completesStream ||
       (ownsTurnUsageFooter && message.status === 'complete' && message.completedAt === undefined)
     return {
       ...message,
+      ...(belongsToPrompt ? { turnUsage: undefined, turnUsageUnavailable: undefined } : {}),
       ...(completesStream ? { status: 'complete' as const } : {}),
       ...(recordsCompletion ? { completedAt: now } : {}),
       ...(ownsTurnUsageFooter

@@ -3337,6 +3337,109 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts[0].text).toContain('Report')
   })
 
+  it('aggregates usage across repeated app-owned choices for the originating user turn', async () => {
+    const process = new FakeAgentProcess()
+    const usageForText = (text: string): NonNullable<PromptResponse['usage']> =>
+      text === 'begin the workflow'
+        ? {
+            totalTokens: 17,
+            inputTokens: 10,
+            cachedReadTokens: 2,
+            cachedWriteTokens: 1,
+            outputTokens: 4
+          }
+        : text.includes('Answer: Minimal')
+          ? {
+              totalTokens: 31,
+              inputTokens: 20,
+              cachedReadTokens: 4,
+              cachedWriteTokens: 1,
+              outputTokens: 6
+            }
+          : {
+              totalTokens: 45,
+              inputTokens: 30,
+              cachedReadTokens: 5,
+              cachedWriteTokens: 2,
+              outputTokens: 8
+            }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    const fakeAgent = startFakeAgent(process, ['repeated-user-choice-session'], {
+      onPrompt: async ({ sessionId, text }) => {
+        if (text === 'begin the workflow') {
+          await runtime.requestUserInput({
+            sessionId,
+            questions: [
+              {
+                question: 'Which implementation should I use?',
+                options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+              }
+            ]
+          })
+        } else if (text.includes('Answer: Minimal')) {
+          await runtime.requestUserInput({
+            sessionId,
+            questions: [
+              {
+                question: 'Which output should I produce?',
+                options: [{ label: 'Report' }, { label: 'Notebook' }]
+              }
+            ]
+          })
+        }
+        return { stopReason: 'end_turn', usage: usageForText(text) }
+      },
+      claudeTurnCountForPrompt: (text) =>
+        text === 'begin the workflow' ? 1 : text.includes('Answer: Minimal') ? 2 : 3
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const promptMessageId = 'originating-user-message'
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'begin the workflow',
+      provenanceContext: { promptMessageId }
+    })
+
+    const firstChoice = runtime.getSnapshot().pendingElicitations?.[0]
+    expect(firstChoice).toBeDefined()
+    runtime.respondToElicitation({
+      requestId: firstChoice!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(2))
+    await vi.waitFor(() => expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1))
+
+    const secondChoice = runtime.getSnapshot().pendingElicitations?.[0]
+    runtime.respondToElicitation({
+      requestId: secondChoice!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Report' }]
+    })
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(3))
+    await vi.waitFor(() =>
+      expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
+
+    const stops = runtime
+      .getSnapshot()
+      .events.filter((event) => event.kind === 'stop' && event.promptMessageId === promptMessageId)
+    expect(stops).toHaveLength(3)
+    expect(stops.at(-1)?.turnUsage).toEqual({
+      inputTokens: 60,
+      cacheTokens: 15,
+      cachedReadTokens: 11,
+      cachedWriteTokens: 4,
+      outputTokens: 18,
+      turnCount: 6
+    })
+  })
+
   it('publishes one multi-question choice and continues only after every answer', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['batched-user-choice-session'])
