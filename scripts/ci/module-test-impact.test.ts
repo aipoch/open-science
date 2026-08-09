@@ -61,10 +61,15 @@ describe('module test impact commands', () => {
         'src/main/skills/conversation-import.test.ts',
         'src/main/skills/specialist-package-adapter.test.ts',
         'src/main/notebook/local-rpc-server.test.ts',
+        'src/main/notebook/local-rpc-server.skill-import.test.ts',
+        'src/main/notebook/local-rpc-server.skills.test.ts',
         'src/main/settings/skill-catalog.test.ts',
         'src/main/settings/service.test.ts',
         'src/main/specialist/package/release-certification.test.ts',
-        'src/main/specialist/package/service.test.ts'
+        'src/main/specialist/package/service.test.ts',
+        'src/preload/index.test.ts',
+        'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
+        'src/renderer/src/stores/settings-skills-slice.test.ts'
       ])
     )
 
@@ -96,7 +101,21 @@ describe('module test impact commands', () => {
       )
       expect(affected.testFiles).toEqual(
         expect.arrayContaining([
+          'packages/open-science/cli.test.ts',
+          'src/main/acp/task-agent-port.test.ts',
+          'src/main/notebook/local-rpc-notebook-adapter.test.ts',
+          'src/main/notebook/local-rpc-server.mcpcall.test.ts',
+          'src/main/notebook/local-rpc-server.skill-import.test.ts',
+          'src/main/notebook/local-rpc-server.skills.test.ts',
+          'src/main/notebook/mcp-server.test.ts',
           'src/main/settings/ipc.test.ts',
+          'src/main/web-service/http-server.test.ts',
+          'src/preload/electron-renderer-contract-adapter.test.ts',
+          'src/preload/index.test.ts',
+          'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
+          'src/renderer/src/stores/settings-skills-slice.test.ts',
+          'src/renderer/src/stores/settings-store.test.ts',
+          'src/renderer/web/api-installer.test.ts',
           'src/shared/renderer-surface-inventory.test.ts',
           'src/shared/renderer-surface-matrix.test.ts',
           'src/shared/web-rpc-contract.test.ts'

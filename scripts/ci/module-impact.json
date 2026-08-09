@@ -239,9 +239,14 @@
           "src/main/skills/conversation-import.test.ts",
           "src/main/skills/specialist-package-adapter.test.ts",
           "src/main/notebook/local-rpc-server.test.ts",
+          "src/main/notebook/local-rpc-server.skill-import.test.ts",
+          "src/main/notebook/local-rpc-server.skills.test.ts",
           "src/main/settings/service.test.ts",
           "src/main/specialist/package/release-certification.test.ts",
-          "src/main/specialist/package/service.test.ts"
+          "src/main/specialist/package/service.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
+          "src/renderer/src/stores/settings-skills-slice.test.ts"
         ]
       },
       "capabilityOverlays": ["windows_sensitive"],

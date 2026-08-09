@@ -179,6 +179,10 @@ type ModuleImpactManifest = {
 }
 
 describe('User Skill repository architecture', () => {
+  it('keeps the public facade within the production file budget', () => {
+    expect(rawLineCount(readSource(repositoryPath))).toBeLessThanOrEqual(660)
+  })
+
   it('keeps the catalog and Personal Skill owner within the production file budget', () => {
     expect(rawLineCount(readSource(storePath))).toBeLessThanOrEqual(660)
   })
@@ -189,6 +193,11 @@ describe('User Skill repository architecture', () => {
 
   it('keeps the Agent Home import owner within the production file budget', () => {
     expect(rawLineCount(readSource(agentHomeOwnerPath))).toBeLessThanOrEqual(660)
+  })
+
+  it('keeps the mutation and transaction owners within the production file budget', () => {
+    expect(rawLineCount(readSource(mutationOwnerPath))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(transactionOwnerPath))).toBeLessThanOrEqual(660)
   })
 
   it('locks the compatibility export and operation inventories', () => {
@@ -299,9 +308,14 @@ describe('User Skill repository architecture', () => {
           'src/main/skills/conversation-import.test.ts',
           'src/main/skills/specialist-package-adapter.test.ts',
           'src/main/notebook/local-rpc-server.test.ts',
+          'src/main/notebook/local-rpc-server.skill-import.test.ts',
+          'src/main/notebook/local-rpc-server.skills.test.ts',
           'src/main/settings/service.test.ts',
           'src/main/specialist/package/release-certification.test.ts',
-          'src/main/specialist/package/service.test.ts'
+          'src/main/specialist/package/service.test.ts',
+          'src/preload/index.test.ts',
+          'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
+          'src/renderer/src/stores/settings-skills-slice.test.ts'
         ]
       },
       capabilityOverlays: ['windows_sensitive'],
