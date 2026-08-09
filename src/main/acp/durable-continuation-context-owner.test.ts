@@ -236,9 +236,33 @@ describe('AcpDurableContinuationContextOwner', () => {
     )
     durable.activities = []
     durable.status = 'idle'
+    const revisionInput = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      requestId: 'choice-1',
+      toolCallId: 'renderer-forged-revision-tool',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      replacePreviousAnswer: true
+    }
+    const invalidActivityOwner = structuredClone(durable)
+    invalidActivityOwner.conversationGraph!.activities.find(
+      (activity) => activity.id === 'tool-choice-1'
+    )!.messageBranchId = 'message-branch-revision'
+    await expect(
+      createOwner(invalidActivityOwner).prepareElicitation(revisionInput)
+    ).rejects.toThrow('active Session Branch')
+
     const appendUserMessageToInteraction = async (
       command: Parameters<SessionPersistenceCoordinator['appendUserMessageToInteraction']>[0]
     ): Promise<PersistedChatMessage> => {
+      const staleAuthority = structuredClone(durable)
+      staleAuthority.conversationGraph!.activities.find(
+        (activity) => activity.id === 'tool-choice-1'
+      )!.elicitation!.fields[0].label = 'Changed concurrently'
+      expect(() => command.beforePersist?.(staleAuthority)).toThrow(
+        'revision authority changed before commit'
+      )
       command.beforePersist?.(structuredClone(durable))
       const revisedPrompt: PersistedChatMessage = {
         id: 'prompt-revision',
@@ -267,15 +291,7 @@ describe('AcpDurableContinuationContextOwner', () => {
       appendUserMessageToInteraction: vi.fn(appendUserMessageToInteraction)
     })
 
-    const prepared = await owner.prepareElicitation({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      requestId: 'choice-1',
-      toolCallId: 'renderer-forged-revision-tool',
-      action: 'accept',
-      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
-      replacePreviousAnswer: true
-    })
+    const prepared = await owner.prepareElicitation(revisionInput)
 
     expect(prepared.request).toMatchObject({
       requestId: 'choice-1',

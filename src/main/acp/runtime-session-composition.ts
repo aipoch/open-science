@@ -136,7 +136,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     tooling: () => sessionEnvironment.toolingAvailability()
   })
   const durableContinuationContext = new AcpDurableContinuationContextOwner(
-    options.permissionWait?.sessions
+    options.permissionWait?.sessions,
+    options.permissionWait?.onContinuationSessionUpdated
   )
   const permissionWaitOwner = new AcpPermissionWaitOwner(
     options.permissionWait?.sessions,

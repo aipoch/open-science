@@ -4993,7 +4993,12 @@ describe('ACP runtime session management', () => {
 
   it('validates a revised choice against the durable fork before continuing', async () => {
     const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    const journal: string[] = []
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
+      onPrompt: () => {
+        journal.push('provider-prompt')
+      }
+    })
     let persistedSession = createRestoredChoiceRevisionSession()
     const appendUserMessageToInteraction = vi.fn(
       async (
@@ -5034,6 +5039,10 @@ describe('ACP runtime session management', () => {
           containsMessageOnActiveBranch: vi.fn(),
           loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
           appendUserMessageToInteraction
+        },
+        onContinuationSessionUpdated: (session) => {
+          expect(session.messages.at(-1)).toMatchObject({ id: 'prompt-revision' })
+          journal.push('session-published')
         }
       }
     })
@@ -5059,6 +5068,7 @@ describe('ACP runtime session management', () => {
     })
 
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(journal).toEqual(['session-published', 'provider-prompt'])
     expect(appendUserMessageToInteraction).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: 'project-1',

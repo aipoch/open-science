@@ -178,6 +178,7 @@ type AcpRuntimeOptions = {
         Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction' | 'sessionProjectId'>
       >
     onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
+    onContinuationSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
   }
   sideChat?: Readonly<{
     sendMessage: (
@@ -1472,7 +1473,14 @@ class AcpRuntime {
               ? selectedAnswer.join(', ')
               : undefined
       return answer
-        ? [{ question: field.description ?? field.label ?? request.message, answer }]
+        ? [
+            {
+              question:
+                field.description ??
+                (request.fields.length === 1 ? request.message : (field.label ?? request.message)),
+              answer
+            }
+          ]
         : []
     })
     const text = (() => {

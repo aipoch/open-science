@@ -39,8 +39,13 @@ type DurableContinuationReplay = {
   supportsImageInput: boolean
 }
 
+type PublishDurableContinuationSession = (session: PersistedChatSession) => Promise<void> | void
+
 class AcpDurableContinuationContextOwner {
-  constructor(private readonly sessions?: DurableContinuationSessions) {}
+  constructor(
+    private readonly sessions?: DurableContinuationSessions,
+    private readonly publishSessionUpdated?: PublishDurableContinuationSession
+  ) {}
 
   async prepare(input: {
     projectId: string
@@ -159,16 +164,14 @@ class AcpDurableContinuationContextOwner {
       content: this.revisionPromptContent(originalRequest, input.action, answers),
       beforePersist: (latest) => {
         const current = this.resolveElicitationRevision(latest, input.requestId)
-        if (
-          current.branchId !== authority.branchId ||
-          current.interactionId !== authority.interactionId
-        ) {
+        if (!isDeepStrictEqual(current, authority)) {
           throw new Error('Durable elicitation revision authority changed before commit.')
         }
       }
     })
     const continuedSession = await this.loadSession(input.projectId, input.sessionId)
     const continuation = this.prepareFromSession(continuedSession, message.id, input.replay)
+    await this.publishSessionUpdated?.(structuredClone(continuedSession))
     return {
       ...continuation,
       request: {
@@ -193,21 +196,44 @@ class AcpDurableContinuationContextOwner {
     const graph = session.conversationGraph
     const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
     const branch = graph?.branches.find((candidate) => candidate.id === frame?.activeBranchId)
+    const parentBranch = graph?.branches.find(
+      (candidate) => candidate.id === branch?.parentBranchId
+    )
     const activity = branch?.forkActivityId
       ? graph?.activities.find((candidate) => candidate.id === branch.forkActivityId)
       : undefined
     const projection = activity?.elicitation
     const durable = projection?.durable
+    const parentPath = graph && parentBranch ? resolveMessageBranchPath(graph, parentBranch.id) : []
+    const prompt = activity
+      ? parentPath.find((candidate) => candidate.id === activity.promptMessageId)
+      : undefined
+    const runtimeSegment = activity
+      ? graph?.runtimeSegments.find((candidate) => candidate.id === activity.runtimeSegmentId)
+      : undefined
     if (
       !graph ||
       session.status !== 'idle' ||
+      !frame ||
       !branch?.forkActivityId ||
       !branch.forkMessageId ||
       branch.headMessageId !== branch.forkMessageId ||
+      !parentBranch ||
+      parentBranch.agentFrameId !== frame.id ||
       !activity ||
+      activity.agentFrameId !== frame.id ||
+      activity.messageBranchId !== parentBranch.id ||
+      !prompt ||
+      prompt.role !== 'user' ||
+      prompt.status !== 'complete' ||
+      prompt.agentFrameId !== frame.id ||
+      prompt.runtimeSegmentId !== activity.runtimeSegmentId ||
+      !runtimeSegment ||
+      runtimeSegment.agentFrameId !== frame.id ||
       projection?.state !== 'answered' ||
       durable?.kind !== 'agent-user-choice' ||
       durable.requestId !== requestId ||
+      durable.promptMessageId !== activity.promptMessageId ||
       (session.activities ?? []).some((candidate) => candidate.id === activity.id)
     ) {
       throw new Error('Durable elicitation revision no longer matches the active Session Branch.')
