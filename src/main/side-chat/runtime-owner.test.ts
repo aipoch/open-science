@@ -187,6 +187,79 @@ describe('Side chat restricted backend profile', () => {
 })
 
 describe('SideChatRuntimeOwner lifecycle', () => {
+  it('rejects oversized initial prompts before creating provider state', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-input-limit-'))
+    const captureTarget = vi.fn(async () => target)
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget,
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn()
+    })
+
+    await expect(
+      owner.start({
+        parentSessionId: 'main-oversized',
+        projectId: 'project-1',
+        text: 'x'.repeat(SIDE_CHAT_MESSAGE_LIMIT + 1)
+      })
+    ).rejects.toThrow('must not exceed 12,000 characters')
+    expect(captureTarget).not.toHaveBeenCalled()
+    expect(owner.hasForParent('main-oversized')).toBe(false)
+  })
+
+  it('rejects oversized follow-ups before provider dispatch or transcript mutation', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-follow-up-limit-'))
+    let runtimeOptions: AcpRuntimeOptions | undefined
+    const sendPrompt = vi.fn(async (request: { sessionId: string }) => {
+      runtimeOptions!.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+      return { stopReason: 'end_turn' as const }
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(async () => target),
+      resolveTarget: vi.fn(async () => backend(claudeCodeFramework)),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        runtimeOptions = options
+        return {
+          createSession: vi.fn(async () => ({
+            sessionId: 'side-session-input-limit',
+            frameworkId: 'claude-code' as const
+          })),
+          sendPrompt,
+          cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
+          deleteSession: vi.fn(async () => ({ sessionIds: [] })),
+          respondToPermission: vi.fn(async () => undefined),
+          shutdownForQuit: vi.fn(async () => undefined)
+        } as never
+      }
+    })
+    const started = await owner.start({
+      parentSessionId: 'main-follow-up-limit',
+      projectId: 'project-1',
+      text: 'Initial prompt'
+    })
+    const entriesBefore = owner.list().chats[0]?.entries
+
+    await expect(
+      owner.send({
+        sideSessionId: started.sideSessionId,
+        text: 'x'.repeat(SIDE_CHAT_MESSAGE_LIMIT + 1)
+      })
+    ).rejects.toThrow('must not exceed 12,000 characters')
+
+    expect(sendPrompt).toHaveBeenCalledOnce()
+    expect(owner.list().chats[0]?.entries).toEqual(entriesBefore)
+    await owner.close({ sideSessionId: started.sideSessionId })
+  })
+
   it('removes every leftover chat profile at startup because none can resume', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-sweep-'))
     const stale = join(temporaryRoot, 'runtime-support', 'side-chat', 'chat-leftover')

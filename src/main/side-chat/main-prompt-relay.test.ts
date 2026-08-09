@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
-import { createMainPromptSideChatRelay } from './main-prompt-relay'
+import {
+  SIDE_CHAT_ADVISORY_PREAMBLE_LIMIT,
+  createMainPromptSideChatRelay
+} from './main-prompt-relay'
 
 describe('main prompt side-chat relay', () => {
   it('adds bounded advisory context, then persists and publishes only after commit', async () => {
@@ -97,6 +100,59 @@ describe('main prompt side-chat relay', () => {
       relayIds: [first.messageId, second.messageId],
       promptMessageId: 'prompt-1'
     })
+  })
+
+  it('bounds each Main advisory preamble and leaves overflow queued for a later turn', async () => {
+    const relay = new SideChatRelayOwner({
+      targetState: () => 'idle',
+      appendRelay: async () => undefined
+    })
+    relay.bind({
+      sideSessionId: 'side-1',
+      sideChatId: 'chat-1',
+      parentSessionId: 'main-1',
+      projectId: 'project-1'
+    })
+    const first = await relay.send({
+      sideSessionId: 'side-1',
+      target: 'main',
+      text: `first-${'a'.repeat(7_000)}`
+    })
+    const second = await relay.send({
+      sideSessionId: 'side-1',
+      target: 'main',
+      text: `second-${'b'.repeat(7_000)}`
+    })
+    const commitSideChatRelays = vi.fn(async () => [])
+    const adapter = createMainPromptSideChatRelay({
+      relay,
+      commitSideChatRelays,
+      onDelivered: vi.fn()
+    })
+
+    const firstClaim = adapter.claim('main-1')
+    expect(firstClaim?.historyPreamble.length).toBeLessThanOrEqual(
+      SIDE_CHAT_ADVISORY_PREAMBLE_LIMIT
+    )
+    expect(firstClaim?.historyPreamble).toContain('first-')
+    expect(firstClaim?.historyPreamble).not.toContain('second-')
+    await firstClaim?.commit('prompt-1')
+
+    const secondClaim = adapter.claim('main-1')
+    expect(secondClaim?.historyPreamble.length).toBeLessThanOrEqual(
+      SIDE_CHAT_ADVISORY_PREAMBLE_LIMIT
+    )
+    expect(secondClaim?.historyPreamble).toContain('second-')
+    await secondClaim?.commit('prompt-2')
+
+    expect(commitSideChatRelays).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ relayIds: [first.messageId], promptMessageId: 'prompt-1' })
+    )
+    expect(commitSideChatRelays).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ relayIds: [second.messageId], promptMessageId: 'prompt-2' })
+    )
   })
 
   it('restores a claim before provider admission', async () => {

@@ -47,6 +47,15 @@ const HOST_MESSAGE_IDENTITY = `${HOST_MESSAGE_MCP_SERVER_NAME}/${HOST_SEND_MESSA
 const MAX_PERSISTED_SIDE_CHAT_ENTRIES = 1_000
 const MAX_PERSISTED_SIDE_CHAT_TRANSCRIPT_JSON_CHARS = 512_000
 const PERSISTED_MESSAGE_TRUNCATION_PREFIX = '[Earlier message content truncated]\n'
+
+const requirePromptText = (value: string): string => {
+  const text = value.trim()
+  if (!text) throw new Error('Side chat text must be non-empty.')
+  if (text.length > SIDE_CHAT_MESSAGE_LIMIT) {
+    throw new Error('Side chat text must not exceed 12,000 characters.')
+  }
+  return text
+}
 const log = createLogger('side-chat')
 const SIDE_CHAT_SYSTEM_PROMPT = [
   'You are in a Side chat attached to a main conversation.',
@@ -349,8 +358,7 @@ class SideChatRuntimeOwner {
     ) {
       throw new Error('A Side chat is already open.')
     }
-    const text = request.text.trim()
-    if (!text) throw new Error('Side chat text must be non-empty.')
+    const text = requirePromptText(request.text)
 
     const sideChatId = `side-chat-${randomUUID()}`
     let jobRoot: string | undefined
@@ -658,12 +666,11 @@ class SideChatRuntimeOwner {
   private async dispatch(
     request: SideChatPromptRequest & { historyPreamble?: string }
   ): Promise<void> {
+    const text = requirePromptText(request.text)
     const active = await this.ensureActive(request.sideSessionId)
     if (this.shuttingDown) throw new Error('Side chat is shutting down.')
     if (active.turn || active.running) throw new Error('A Side chat prompt is already running.')
     await this.flushQueuedPersistence(active)
-    const text = request.text.trim()
-    if (!text) throw new Error('Side chat text must be non-empty.')
     let historyPreamble = request.historyPreamble
     let needsReplay = active.needsReplay === true
     if (needsReplay) {

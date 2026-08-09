@@ -34,6 +34,10 @@ type SideChatRelayClaim = Readonly<{
   restore: () => void
 }>
 
+type SideChatRelayClaimOptions = Readonly<{
+  selectCount: (messages: readonly SideChatRelayMessage[]) => number
+}>
+
 type SideChatRelayOwnerOptions = Readonly<{
   targetState: (parentSessionId: string) => SideChatTargetState
   appendRelay: (input: {
@@ -127,11 +131,21 @@ class SideChatRelayOwner {
     }
   }
 
-  claim(parentSessionId: string): SideChatRelayClaim | undefined {
+  claim(
+    parentSessionId: string,
+    options?: SideChatRelayClaimOptions
+  ): SideChatRelayClaim | undefined {
     if (this.claims.has(parentSessionId)) return undefined
-    const messages = this.queued.get(parentSessionId)
-    if (!messages || messages.length === 0) return undefined
-    this.queued.delete(parentSessionId)
+    const queued = this.queued.get(parentSessionId)
+    if (!queued || queued.length === 0) return undefined
+    const selectedCount = options?.selectCount(queued) ?? queued.length
+    if (!Number.isInteger(selectedCount) || selectedCount < 1 || selectedCount > queued.length) {
+      throw new Error('Side chat relay claim selected an invalid message count.')
+    }
+    const messages = queued.slice(0, selectedCount)
+    const deferred = queued.slice(selectedCount)
+    if (deferred.length > 0) this.queued.set(parentSessionId, deferred)
+    else this.queued.delete(parentSessionId)
     const token = Symbol('side-chat-relay-claim')
     this.claims.set(parentSessionId, token)
     let settled = false
