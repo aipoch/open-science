@@ -26,7 +26,10 @@ import {
   sendWorkspaceMessage
 } from './workspace-runtime-command-owner'
 import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
-import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-event-owner'
+import {
+  resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceElicitationState
+} from './workspace-runtime-event-owner'
 import {
   cancelWorkspaceRun,
   compactWorkspaceSession,
@@ -727,6 +730,50 @@ describe('workspace durable elicitation', () => {
       status: 'waiting-for-user',
       agentPromptInFlight: true
     })
+  })
+
+  it('keeps a durable question waiting when its runtime is replaced', () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === request.sessionId
+          ? {
+              ...session,
+              status: 'waiting-for-user',
+              activities: [
+                {
+                  id: request.toolCallId,
+                  kind: 'tool',
+                  title: 'Waiting for an answer',
+                  status: 'in_progress',
+                  sortIndex: 1,
+                  eventIds: [],
+                  elicitation: {
+                    message: request.message,
+                    fields: request.fields,
+                    state: 'pending',
+                    durable: request.durable
+                  },
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                }
+              ]
+            }
+          : session
+      )
+    }))
+
+    syncWorkspaceElicitationState([request])
+    syncWorkspaceElicitationState([])
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-for-user')
   })
 
   it('reattaches a restored session before submitting its durable answer', async () => {
@@ -3684,6 +3731,21 @@ describe('resuming an interrupted session on demand', () => {
 
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+  })
+
+  it('keeps a durable user-choice wait actionable when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Help me choose',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setElicitationPending('session-1', true)
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('waiting-for-user')
+    expect(session.interrupted).toBeUndefined()
   })
 
   it('reconnects and continues the interrupted turn without duplicating its user message', async () => {

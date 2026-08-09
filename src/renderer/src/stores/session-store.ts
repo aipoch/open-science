@@ -151,7 +151,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   setPermissionPending: (sessionId) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
-        session.id === sessionId && session.status !== 'waiting-permission'
+        session.id === sessionId &&
+        session.status !== 'waiting-permission' &&
+        session.status !== 'waiting-for-user' &&
+        session.status !== 'waiting-plan-approval'
           ? {
               ...session,
               status: 'waiting-permission',

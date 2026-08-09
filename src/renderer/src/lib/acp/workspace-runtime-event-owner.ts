@@ -243,11 +243,26 @@ const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void =>
 }
 
 // Keeps Session status aligned with app-owned questions independently of Agent execution state.
+// A Session already waiting on a durable question remains authoritative while its runtime is
+// detached; requiring the waiting status prevents a stale pending activity from re-arming after
+// its answer has synchronously returned the Session to running.
 const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): void => {
+  const store = useSessionStore.getState()
   const nextSessionIds = new Set(
     requests.filter(isDurableAgentUserChoiceRequest).map((request) => request.sessionId)
   )
-  const store = useSessionStore.getState()
+  for (const session of store.sessions) {
+    if (
+      session.status === 'waiting-for-user' &&
+      session.activities?.some(
+        (activity) =>
+          activity.elicitation?.state === 'pending' &&
+          activity.elicitation.durable?.kind === 'agent-user-choice'
+      )
+    ) {
+      nextSessionIds.add(session.id)
+    }
+  }
 
   for (const sessionId of nextSessionIds) {
     store.setElicitationPending(sessionId, true)
