@@ -10,6 +10,7 @@ import {
   createPermissionGrantRegistry,
   type PermissionGrantRegistry
 } from '../permission-grants/registry'
+import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity } from './permission-policy'
@@ -736,6 +737,25 @@ describe('ACP permission broker with durable grants', () => {
         'exec:local/bash'
       ].sort()
     )
+  })
+
+  it('uses a default Global customization grant without prompting', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-default-grant-'))
+    client = createProjectDbClient(storageRoot)
+    await ensureProjectSchema(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    await seedDefaultPermissionGrants(registry, client)
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+
+    await expect(
+      broker.requestPermission(registeredToolRequest('agent_create'), {
+        profile: 'ask',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    expect(emitted).toEqual([])
   })
 
   it('reuses one app MCP grant across Claude Code, Codex, OpenCode, and runtime-trusted sparse requests', async () => {

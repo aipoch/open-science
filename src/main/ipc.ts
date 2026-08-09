@@ -147,6 +147,7 @@ import { createProjectFilesHandlers, registerProjectFilesIpcHandlers } from './p
 import { createManagedFileIndexRepository } from './project-files/repository'
 import { ProjectDeletionCoordinator } from './projects/deletion-coordinator'
 import { getProjectDbClient } from './projects/prisma-client'
+import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
 import { isPermissionGrantScopeLive } from './permission-grants/scope-liveness'
 import { registerPermissionGrantIpcAdapter } from './permission-grants/ipc'
@@ -496,6 +497,7 @@ const createApplicationModules = async (
           runtimeRef.current?.hasLiveSession(projectId, sessionId) ?? false
       })
   })
+  await seedDefaultPermissionGrants(permissionGrantRegistry, await getProjectDbClient(configRoot))
   const projectFilesRepository = createManagedFileIndexRepository(
     getProjectDbClient,
     configRoot,
