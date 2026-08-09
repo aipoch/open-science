@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
@@ -23,6 +24,8 @@ vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
 let container: HTMLDivElement
 let root: Root
 let getProjectFilesOverview: ReturnType<typeof vi.fn>
+let onProjectFilesChanged: ((event: ProjectFilesChangedEvent) => void) | undefined
+let removeProjectFilesChanged: ReturnType<typeof vi.fn>
 
 const project: Project = {
   id: 'project-1',
@@ -64,6 +67,8 @@ const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheck
 })
 
 beforeEach(() => {
+  onProjectFilesChanged = undefined
+  removeProjectFilesChanged = vi.fn()
   getProjectFilesOverview = vi.fn().mockResolvedValue({
     totalCount: 0,
     uploadCount: 0,
@@ -73,7 +78,15 @@ beforeEach(() => {
   })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { projectFiles: { getOverview: getProjectFilesOverview } }
+    value: {
+      projectFiles: {
+        getOverview: getProjectFilesOverview,
+        onChanged: vi.fn((listener: (event: ProjectFilesChangedEvent) => void) => {
+          onProjectFilesChanged = listener
+          return removeProjectFilesChanged
+        })
+      }
+    }
   })
   useProjectStore.setState(createInitialProjectState())
   useNavigationStore.setState({ pendingProjectCreation: false })
@@ -419,6 +432,26 @@ describe('HomePage activity overview', () => {
     expect(container.textContent).toContain('114 artifacts')
     expect(getProjectFilesOverview).toHaveBeenCalledWith({ projectId: project.id })
 
+    getProjectFilesOverview.mockResolvedValue({
+      totalCount: 115,
+      uploadCount: 0,
+      artifactCount: 115,
+      artifactGroupCount: 1,
+      isIndexComplete: true
+    })
+    await act(async () => {
+      onProjectFilesChanged?.({
+        projectId: project.id,
+        sessionId: 'session-1',
+        sources: ['artifact'],
+        kind: 'upsert'
+      })
+      await Promise.resolve()
+    })
+
+    expect(container.textContent).toContain('115 artifacts')
+    expect(getProjectFilesOverview).toHaveBeenCalledTimes(2)
+
     await act(async () => {
       useSessionStore.setState({
         ...createInitialSessionState(),
@@ -427,6 +460,8 @@ describe('HomePage activity overview', () => {
     })
 
     expect(container.textContent).not.toContain('114 artifacts')
+    expect(container.textContent).not.toContain('115 artifacts')
+    expect(removeProjectFilesChanged).toHaveBeenCalledOnce()
   })
 
   it('opens global search from the header and uses the selected Projects icon', async () => {

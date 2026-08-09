@@ -96,7 +96,8 @@ describe('HomePage persistence recovery', () => {
             artifactCount: 0,
             artifactGroupCount: 0,
             isIndexComplete: true
-          })
+          }),
+          onChanged: vi.fn(() => vi.fn())
         }
       }
     })

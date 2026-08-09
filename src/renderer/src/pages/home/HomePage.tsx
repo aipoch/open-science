@@ -276,29 +276,41 @@ const HomePage = ({
 
   useEffect(() => {
     let cancelled = false
+    const activeProjectIds = new Set(activeProjects.map((project) => project.id))
+    const requestVersions = new Map<string, number>()
 
     if (!showArtifactCounts) return
 
-    void Promise.all(
-      activeProjects.map(async (project) => {
-        try {
-          const overview = await window.api.projectFiles.getOverview({ projectId: project.id })
-          return overview.isIndexComplete
-            ? ([project.id, overview.artifactCount] as const)
-            : undefined
-        } catch {
-          return undefined
-        }
+    const refreshArtifactCount = async (projectId: string): Promise<void> => {
+      const requestVersion = (requestVersions.get(projectId) ?? 0) + 1
+      requestVersions.set(projectId, requestVersion)
+
+      let artifactCount: number | undefined
+      try {
+        const overview = await window.api.projectFiles.getOverview({ projectId })
+        if (overview.isIndexComplete) artifactCount = overview.artifactCount
+      } catch {
+        // An unavailable or incomplete index is not authoritative, so omit its count.
+      }
+
+      if (cancelled || requestVersions.get(projectId) !== requestVersion) return
+      setArtifactCounts((current) => {
+        const next = new Map(current)
+        if (artifactCount === undefined) next.delete(projectId)
+        else next.set(projectId, artifactCount)
+        return next
       })
-    ).then((entries) => {
-      if (cancelled) return
-      setArtifactCounts(
-        new Map(entries.filter((entry): entry is readonly [string, number] => entry !== undefined))
-      )
+    }
+
+    for (const project of activeProjects) void refreshArtifactCount(project.id)
+
+    const removeChangedListener = window.api.projectFiles.onChanged((event) => {
+      if (activeProjectIds.has(event.projectId)) void refreshArtifactCount(event.projectId)
     })
 
     return () => {
       cancelled = true
+      removeChangedListener()
     }
   }, [activeProjects, showArtifactCounts])
 

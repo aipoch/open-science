@@ -580,7 +580,8 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Recent sessions: the secondary line is always the owning Project name, never a prompt preview or a
   repeat of the Session title. Once the Session catalog is complete, if the entire Recent sessions
   list is empty, each Project row also shows its artifact count from a complete Project Files index;
-  partial index counts are omitted.
+  partial index counts are omitted. While those counts are visible, Project Files change events
+  refresh the affected Project so index repair and file changes do not leave stale totals.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 
