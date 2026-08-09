@@ -5,7 +5,6 @@ module.exports = {
   ...require('./aggregate-benchmark'),
   ...require('./generate-report'),
   ...require('./improve-description'),
-  ...require('./package-skill'),
   ...require('./quick-validate'),
   ...require('./run-eval'),
   ...require('./run-loop'),

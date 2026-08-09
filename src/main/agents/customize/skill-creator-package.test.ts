@@ -27,7 +27,7 @@ const listFiles = async (directory: string): Promise<string[]> => {
 }
 
 describe('skill-creator bundled package', () => {
-  it('ships the provided 17-file workflow as JavaScript-first progressive resources', async () => {
+  it('ships the reusable workflow as JavaScript-first progressive resources', async () => {
     await expect(listFiles(skillRoot)).resolves.toEqual(
       [
         'SKILL.md',
@@ -42,7 +42,6 @@ describe('skill-creator bundled package', () => {
         'scripts/generate-report.js',
         'scripts/improve-description.js',
         'scripts/index.js',
-        'scripts/package-skill.js',
         'scripts/quick-validate.js',
         'scripts/run-eval.js',
         'scripts/run-loop.js',
