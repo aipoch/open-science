@@ -115,9 +115,9 @@ describe('HostSkillsService', () => {
       content: 'console.log("v2")\n',
       origin: 'personal'
     })
-    await expect(readFile(join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md'))).rejects.toMatchObject(
-      { code: 'ENOENT' }
-    )
+    await expect(
+      readFile(join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
@@ -159,7 +159,7 @@ describe('HostSkillsService', () => {
         op: 'edit',
         params: { name: 'bad', path: '../outside', content: 'x' }
       })
-    ).rejects.toThrow('unsafe path')
+    ).rejects.toThrow('host.skills.edit: unsafe path')
 
     await service.dispatch({
       op: 'edit',
@@ -171,6 +171,62 @@ describe('HostSkillsService', () => {
         params: { name: 'bad', path: 'SKILL.md', old_string: 'same', content: 'new' }
       })
     ).rejects.toThrow('exactly once')
+  })
+
+  it('rejects extra SKILL.md frontmatter fields before publish', async () => {
+    const { service, userSkills } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'extra-metadata',
+        path: 'SKILL.md',
+        content:
+          '---\nname: extra-metadata\ndescription: Invalid extra metadata.\nlicense: MIT\n---\nBody.\n'
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'publish', params: { name: 'extra-metadata' } })
+    ).rejects.toThrow('frontmatter must contain exactly name and description')
+    expect(await userSkills.list()).toHaveLength(0)
+  })
+
+  it('deletes an explicit draft without deleting its published Personal Skill', async () => {
+    const { service, root, userSkills, approveDelete, reload } = await makeFixture()
+    await userSkills.createPersonal({
+      name: 'Disposable',
+      description: 'Delete me.',
+      body: 'Published body.'
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'personal-disposable',
+        path: 'SKILL.md',
+        old_string: 'Published body.',
+        content: 'Draft body.'
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'draft-disposable' } })
+    ).resolves.toMatchObject({ name: 'disposable', origin: 'draft' })
+    await expect(
+      service.dispatch(
+        { op: 'delete', params: { name: 'draft-disposable' } },
+        { sessionId: 'session-1' }
+      )
+    ).resolves.toEqual({ status: 'deleted', operation: 'delete', name: 'disposable' })
+
+    expect(approveDelete).toHaveBeenCalledWith(
+      { name: 'disposable', origin: 'draft' },
+      { sessionId: 'session-1' }
+    )
+    expect(await userSkills.list()).toHaveLength(1)
+    expect(reload).not.toHaveBeenCalled()
+    await expect(
+      readFile(join(root, 'skills', 'drafts', 'disposable', 'SKILL.md'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('requires approval for delete and reports a decline as a normal result', async () => {

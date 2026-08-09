@@ -1103,9 +1103,7 @@ async function skillsRpc(op, params = {}) {
   if (!res.ok || body.error) {
     const serverMessage = body.error || 'host.skills HTTP ' + res.status
     throw new Error(
-      /^host\.skills\./.test(serverMessage)
-        ? serverMessage
-        : `host.skills.${op}: ${serverMessage}`
+      /^host\.skills\./.test(serverMessage) ? serverMessage : `host.skills.${op}: ${serverMessage}`
     )
   }
   return body.result

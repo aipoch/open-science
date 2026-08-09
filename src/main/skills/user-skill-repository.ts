@@ -588,11 +588,7 @@ class UserSkillRepository {
           }
         })
         const entries = await this.inspectAgentHomeSkill(staging)
-        if (
-          !entries.some(
-            (entry) => entry.kind === 'file' && entry.relativePath === 'SKILL.md'
-          )
-        ) {
+        if (!entries.some((entry) => entry.kind === 'file' && entry.relativePath === 'SKILL.md')) {
           throw new Error('A published Skill must contain SKILL.md at its root.')
         }
         await this.swapStaging('personal', slug, staging, generation)

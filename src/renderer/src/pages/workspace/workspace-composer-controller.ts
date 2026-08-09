@@ -118,9 +118,7 @@ const useWorkspaceComposerController = ({
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
-  const [appliedCustomizePrefill, setAppliedCustomizePrefill] =
-    useState<CustomizePrefillIntent>()
-
+  const [appliedCustomizePrefill, setAppliedCustomizePrefill] = useState<CustomizePrefillIntent>()
   const activeDraftKeyRef = useRef(currentDraftKey)
   const draftsRef = useRef<Record<string, ComposerDraft>>({})
   const versionsRef = useRef<Record<string, number>>({})

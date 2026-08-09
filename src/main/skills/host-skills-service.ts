@@ -1,30 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import {
-  cp,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  writeFile
-} from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 
 import type { TrustedCallingSession } from '../../shared/agents-contract'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
-import { parseSkillDocument } from './frontmatter'
+import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
 import { SAFE_SLUG, parseUserSkillId } from './user-skill-repository'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
 export type HostSkillsCatalog = {
   list(): Promise<BundledSkill[]>
-  withSkillRead<T>(
-    id: string,
-    read: (skill: BundledSkill) => Promise<T>
-  ): Promise<T | undefined>
+  withSkillRead<T>(id: string, read: (skill: BundledSkill) => Promise<T>): Promise<T | undefined>
   publishPersonalDirectory(slug: string, sourcePath: string, overwrite: boolean): Promise<string>
   deletePublished(id: string): Promise<void>
 }
@@ -82,6 +69,12 @@ const readPackageText = async (root: string, relativePath: string): Promise<stri
 
 const publicSlug = (skill: BundledSkill): string | undefined => parseUserSkillId(skill.id)?.slug
 
+const explicitDraftSlug = (reference: string): string | undefined => {
+  if (!reference.startsWith('draft-')) return undefined
+  const slug = reference.slice('draft-'.length)
+  return SAFE_SLUG.test(slug) ? slug : undefined
+}
+
 class HostSkillsCallError extends Error {
   constructor(operation: string, cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause)
@@ -118,11 +111,11 @@ export class HostSkillsService {
         : {}
 
     try {
-      if (op === 'list') return this.list()
-      if (op === 'read') return this.read(params)
-      if (op === 'edit') return this.edit(params)
-      if (op === 'publish') return this.publish(params)
-      if (op === 'delete') return this.delete(params, context)
+      if (op === 'list') return await this.list()
+      if (op === 'read') return await this.read(params)
+      if (op === 'edit') return await this.edit(params)
+      if (op === 'publish') return await this.publish(params)
+      if (op === 'delete') return await this.delete(params, context)
       throw new Error('Unknown operation')
     } catch (error) {
       throw new HostSkillsCallError(op ?? 'unknown', error)
@@ -156,9 +149,7 @@ export class HostSkillsService {
         let name = slug
         let description = ''
         try {
-          const parsed = parseSkillDocument(
-            await readPackageText(this.draftDir(slug), 'SKILL.md')
-          )
+          const parsed = parseSkillDocument(await readPackageText(this.draftDir(slug), 'SKILL.md'))
           name = parsed.name?.trim() || slug
           description = parsed.description ?? ''
         } catch {
@@ -182,11 +173,14 @@ export class HostSkillsService {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const relativePath = safeRelativePath(params.path, 'SKILL.md')
-    if (SAFE_SLUG.test(requestedName) && (await exists(this.draftDir(requestedName)))) {
+    const draftSlug =
+      explicitDraftSlug(requestedName) ??
+      (SAFE_SLUG.test(requestedName) ? requestedName : undefined)
+    if (draftSlug && (await exists(this.draftDir(draftSlug)))) {
       return {
-        name: requestedName,
+        name: draftSlug,
         path: relativePath,
-        content: await readPackageText(this.draftDir(requestedName), relativePath),
+        content: await readPackageText(this.draftDir(draftSlug), relativePath),
         origin: 'draft'
       }
     }
@@ -207,7 +201,8 @@ export class HostSkillsService {
     if (!SAFE_SLUG.test(name)) {
       const existing = await this.resolvePublished(name)
       if (!existing) throw new Error('new Skill names must be lowercase hyphenated slugs')
-      if (existing.source !== 'personal') throw new Error('built-in and imported Skills are read-only')
+      if (existing.source !== 'personal')
+        throw new Error('built-in and imported Skills are read-only')
       const slug = publicSlug(existing)
       if (!slug) throw new Error('personal Skill has no editable slug')
       return this.seedPersonalDraft(existing, slug)
@@ -217,7 +212,8 @@ export class HostSkillsService {
     if (await exists(path)) return { slug: name, path }
     const existing = await this.resolvePublished(name)
     if (existing) {
-      if (existing.source !== 'personal') throw new Error('built-in and imported Skills are read-only')
+      if (existing.source !== 'personal')
+        throw new Error('built-in and imported Skills are read-only')
       return this.seedPersonalDraft(existing, publicSlug(existing) ?? name)
     }
     await mkdir(path, { recursive: true })
@@ -354,9 +350,14 @@ export class HostSkillsService {
     }
     const draft = this.draftDir(name)
     if (!(await exists(draft))) throw new Error(`Unknown draft: ${name}`)
-    const parsed = parseSkillDocument(await readPackageText(draft, 'SKILL.md'))
+    const skillDocument = await readPackageText(draft, 'SKILL.md')
+    const parsed = parseSkillDocument(skillDocument)
     if (!parsed.name?.trim() || !parsed.description?.trim()) {
       throw new Error('SKILL.md requires name and description frontmatter')
+    }
+    const fieldNames = frontmatterFieldNames(skillDocument).sort()
+    if (fieldNames.length !== 2 || fieldNames[0] !== 'description' || fieldNames[1] !== 'name') {
+      throw new Error('SKILL.md frontmatter must contain exactly name and description')
     }
     if (parsed.name.trim() !== name) throw new Error('SKILL.md name must match the draft slug')
 
@@ -369,25 +370,44 @@ export class HostSkillsService {
   private async delete(params: Params, context: TrustedCallingSession): Promise<unknown> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
+
+    const requestedDraft = explicitDraftSlug(requestedName)
+    if (requestedDraft) {
+      if (!(await exists(this.draftDir(requestedDraft)))) {
+        throw new Error(`Unknown draft: ${requestedDraft}`)
+      }
+      const approved = await this.options.approveDelete?.(
+        { name: requestedDraft, origin: 'draft' },
+        context
+      )
+      if (!approved) return { status: 'declined', operation: 'delete' }
+      await rm(this.draftDir(requestedDraft), { recursive: true, force: true })
+      return { status: 'deleted', operation: 'delete', name: requestedDraft }
+    }
+
     const published = await this.resolvePublished(requestedName)
-    const draftSlug = SAFE_SLUG.test(requestedName)
-      ? requestedName
-      : published
-        ? publicSlug(published)
-        : undefined
-    const draftExists = draftSlug ? await exists(this.draftDir(draftSlug)) : false
-    if (!published && !draftExists) throw new Error(`Unknown Skill: ${requestedName}`)
+    if (!published) {
+      if (!SAFE_SLUG.test(requestedName) || !(await exists(this.draftDir(requestedName)))) {
+        throw new Error(`Unknown Skill: ${requestedName}`)
+      }
+      const approved = await this.options.approveDelete?.(
+        { name: requestedName, origin: 'draft' },
+        context
+      )
+      if (!approved) return { status: 'declined', operation: 'delete' }
+      await rm(this.draftDir(requestedName), { recursive: true, force: true })
+      return { status: 'deleted', operation: 'delete', name: requestedName }
+    }
     if (published?.source === 'featured') throw new Error('built-in Skills cannot be deleted')
 
-    const publicName = published?.name ?? draftSlug!
+    const publicName = published.name
     const approved = await this.options.approveDelete?.(
-      { name: publicName, origin: published?.source ?? 'draft' },
+      { name: publicName, origin: published.source },
       context
     )
     if (!approved) return { status: 'declined', operation: 'delete' }
-    if (published) await this.options.catalog.deletePublished(published.id)
-    if (draftSlug) await rm(this.draftDir(draftSlug), { recursive: true, force: true })
-    if (published) await this.options.onPublishedSkillsChanged?.()
+    await this.options.catalog.deletePublished(published.id)
+    await this.options.onPublishedSkillsChanged?.()
     return { status: 'deleted', operation: 'delete', name: publicName }
   }
 }

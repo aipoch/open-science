@@ -82,6 +82,19 @@ ambiguous name is rejected — tell the user to use the stable id from `list_ski
 Errors are sanitized and prefixed `host.agents.<method>:`; they never contain system instructions,
 credentials, headers, environment values, Connector arguments, or the RPC token.
 
+## Specialist identity and composition
+
+Treat `system_prompt` as the Specialist's identity override while the application's safety, tool, and
+workflow rules remain in force. Lead with `You are {display_name}.`, replacing `{display_name}` with
+the proposed public name. State the Specialist's one focused job, what it handles, and what the
+Specialist does not do. Keep the identity concise; the heavy how-to lives in Skills, not in the system
+prompt. Reuse or create Skills for recurring procedures instead of copying those procedures into the
+identity.
+
+After a newly created Specialist exists and its state has been read back, offer to switch this
+conversation to it with `host.agents.switch(name)`. Do not switch unless the user accepts the offer and
+the application approves the privileged operation.
+
 ## Workflow — every operation
 
 Follow this order for every mutation. Do not skip the live read, and do not snapshot catalog contents

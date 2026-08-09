@@ -186,10 +186,7 @@ describe('UserSkillRepository', () => {
       'personal-analysis-helper'
     )
     await expect(
-      readFile(
-        join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'),
-        'utf8'
-      )
+      readFile(join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'), 'utf8')
     ).resolves.toBe('console.log("v1")\n')
 
     await writeFile(join(draft, 'scripts', 'run.js'), 'console.log("v2")\n')
@@ -200,10 +197,7 @@ describe('UserSkillRepository', () => {
       'personal-analysis-helper'
     )
     await expect(
-      readFile(
-        join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'),
-        'utf8'
-      )
+      readFile(join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'), 'utf8')
     ).resolves.toBe('console.log("v2")\n')
   })
 

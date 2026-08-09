@@ -170,6 +170,14 @@ describe('customize Skill: bundled source', () => {
     expect(raw).toContain('create or revise the Skill first')
   })
 
+  it('documents identity-first, bounded, composable Specialist authoring and offers switching', async () => {
+    const raw = await readFile(skillPath, 'utf8')
+    expect(raw).toContain('You are {display_name}')
+    expect(raw).toMatch(/what\s+(?:the\s+)?Specialist\s+does not do/i)
+    expect(raw).toMatch(/heavy how-to.*Skills/i)
+    expect(raw).toMatch(/after.*exists.*offer.*switch/is)
+  })
+
   it('is activated in the Featured manifest (issue 08 turns on the live journey)', async () => {
     const manifestRaw = await readFile(
       join(__dirname, '..', '..', '..', '..', 'resources', 'skills', 'manifest.json'),

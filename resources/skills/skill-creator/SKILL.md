@@ -22,7 +22,8 @@ await host.skills.delete(name)
 `edit` writes an app-managed draft. Without `old_string`, it creates a file and fails if that file
 already exists. With `old_string`, the old text must occur exactly once. `publish` promotes the whole
 draft package directly into Personal Skills and removes the draft only after success. `delete` is
-privileged and always asks for app approval.
+privileged and always asks for app approval. When a Personal Skill and its edit draft both exist, use
+the stable `personal-<name>` or `draft-<name>` id returned by `list()` to delete only the intended one.
 
 ## Workflow
 

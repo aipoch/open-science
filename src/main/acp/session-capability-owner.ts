@@ -41,12 +41,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'host-agents',
   'host-skills'
 ] as const
-const NOTEBOOK_CONTROL_RPC_METHODS = [
-  'mcpCall',
-  'computeCall',
-  'agentsCall',
-  'skillsCall'
-] as const
+const NOTEBOOK_CONTROL_RPC_METHODS = ['mcpCall', 'computeCall', 'agentsCall', 'skillsCall'] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 
@@ -471,8 +466,8 @@ export class AcpSessionCapabilityOwner {
       modelFacingMcpServerNames,
       controlRpcMethods:
         capabilities.includes('host-agents') || capabilities.includes('host-skills')
-        ? [...NOTEBOOK_CONTROL_RPC_METHODS]
-        : []
+          ? [...NOTEBOOK_CONTROL_RPC_METHODS]
+          : []
     })
 
     log.info('session capabilities built', {
