@@ -163,6 +163,32 @@ const makeJobRepo = (
     jobs.set(jobId, updated as import('../../shared/compute').ComputeJob)
     return updated as import('../../shared/compute').ComputeJob
   })
+  const updateIfStatus = vi.fn(
+    async (
+      jobId: string,
+      expectedStatuses: readonly import('../../shared/compute').ComputeJobStatus[],
+      updates: import('./job-repository').UpdateJobRequest
+    ) => {
+      const job = jobs.get(jobId)
+      if (!job || !expectedStatuses.includes(job.status)) return null
+      const updated: import('../../shared/compute').ComputeJob = {
+        ...job,
+        ...(updates.status === undefined ? {} : { status: updates.status }),
+        ...(updates.remoteHandle === undefined ? {} : { remote_handle: updates.remoteHandle }),
+        ...(updates.stderrTail === undefined
+          ? {}
+          : { stderr_tail: updates.stderrTail ?? undefined }),
+        ...(updates.errorCode === undefined ? {} : { error_code: updates.errorCode ?? undefined }),
+        ...(updates.submittedAt === undefined
+          ? {}
+          : { submitted_at: updates.submittedAt.getTime() }),
+        ...(updates.startedAt === undefined ? {} : { started_at: updates.startedAt.getTime() }),
+        ...(updates.finishedAt === undefined ? {} : { finished_at: updates.finishedAt.getTime() })
+      }
+      jobs.set(jobId, updated)
+      return updated
+    }
+  )
   const getCalls = vi.fn(async (jobId: string) => jobs.get(jobId) ?? null)
   const findNonTerminalCalls = vi.fn(async () => Array.from(jobs.values()))
 
@@ -171,6 +197,7 @@ const makeJobRepo = (
       create: createCalls,
       get: getCalls,
       update: updateCalls,
+      updateIfStatus,
       findNonTerminal: findNonTerminalCalls,
       findNonTerminalByProvider: vi.fn(async () => []),
       hasActiveJobsForProvider: vi.fn(async () => false)

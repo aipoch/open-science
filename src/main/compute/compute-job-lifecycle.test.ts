@@ -32,6 +32,17 @@ beforeEach(async () => {
     commandHash: 'hash',
     initialStatus: 'queued'
   })
+  await repository.create({
+    id: 'submitted-job',
+    providerId: 'ssh:test',
+    shape: 'direct_ssh',
+    sessionId: 'session-1',
+    projectId: 'project-1',
+    intent: 'test dispatch',
+    command: 'echo ok',
+    commandHash: 'hash',
+    initialStatus: 'submitted'
+  })
   publish = vi.fn()
   lifecycle = new ComputeJobLifecycle(repository, publish)
 })
@@ -76,5 +87,45 @@ describe('ComputeJobLifecycle', () => {
     const result = await lifecycle.promoteQueued('queued-job')
 
     expect(result.kind).toBe('applied')
+  })
+
+  it('records the running projection and publishes it after dispatch succeeds', async () => {
+    const result = await lifecycle.dispatchRunning('submitted-job', '{"pid":123}')
+
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') throw new Error('expected an applied transition')
+    expect(result.job.status).toBe('running')
+    expect(result.job.remote_handle).toBe('{"pid":123}')
+    expect(result.job.started_at).toBeGreaterThan(0)
+    expect(publish).toHaveBeenCalledOnce()
+    expect(publish).toHaveBeenCalledWith(result.job)
+  })
+
+  it('records one dispatch error projection with its completion fields', async () => {
+    const result = await lifecycle.dispatchError('submitted-job', {
+      errorCode: 'host_unreachable',
+      stderrTail: 'connection refused'
+    })
+
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') throw new Error('expected an applied transition')
+    expect(result.job.status).toBe('error')
+    expect(result.job.error_code).toBe('host_unreachable')
+    expect(result.job.stderr_tail).toBe('connection refused')
+    expect(result.job.finished_at).toBeGreaterThan(0)
+    expect(publish).toHaveBeenCalledOnce()
+  })
+
+  it('ignores a late dispatcher result after another writer has made the job terminal', async () => {
+    await repository.update('submitted-job', { status: 'success', finishedAt: new Date() })
+
+    const results = await Promise.all([
+      lifecycle.dispatchError('submitted-job', { errorCode: 'dispatch_failed' }),
+      lifecycle.dispatchRunning('submitted-job', '{"pid":123}')
+    ])
+
+    expect(results).toEqual([{ kind: 'ignored' }, { kind: 'ignored' }])
+    expect((await repository.get('submitted-job'))?.status).toBe('success')
+    expect(publish).not.toHaveBeenCalled()
   })
 })
