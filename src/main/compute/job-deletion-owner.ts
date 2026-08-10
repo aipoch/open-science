@@ -33,9 +33,13 @@ type PreparedRemoteCleanup = {
   command: string
 }
 
+type PreparedDeletionOutcome = { status: 'released' } | { status: 'retained'; error: unknown }
+
 type PreparedOwnerDeletion = {
   owner: ComputeJobOwner
   remoteCleanups: PreparedRemoteCleanup[]
+  outcome: Promise<PreparedDeletionOutcome>
+  settleOutcome(outcome: PreparedDeletionOutcome): void
 }
 
 type ComputeJobDeletionOwnerDeps = {
@@ -158,7 +162,7 @@ class ComputeJobDeletionOwner {
   }
 
   prepareSessionJobDeletion(projectId: string, sessionId: string): Promise<void> {
-    return this.enqueue(() => this.prepareOwner({ projectId, sessionId }))
+    return this.prepareOwnerWhenAvailable({ projectId, sessionId })
   }
 
   commitSessionJobDeletion(projectId: string, sessionId: string): Promise<void> {
@@ -166,7 +170,7 @@ class ComputeJobDeletionOwner {
   }
 
   prepareProjectJobDeletion(projectId: string): Promise<void> {
-    return this.enqueue(() => this.prepareOwner({ projectId }))
+    return this.prepareOwnerWhenAvailable({ projectId })
   }
 
   commitProjectJobDeletion(projectId: string): Promise<void> {
@@ -210,10 +214,27 @@ class ComputeJobDeletionOwner {
     return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive, projectId))
   }
 
-  private enqueue(operationOwner: () => Promise<void>): Promise<void> {
+  private enqueue<Result>(operationOwner: () => Promise<Result>): Promise<Result> {
     const operation = this.operationQueue.then(operationOwner)
     this.operationQueue = operation.catch(() => undefined)
     return operation
+  }
+
+  private async prepareOwnerWhenAvailable(owner: ComputeJobOwner): Promise<void> {
+    while (true) {
+      const decision = await this.enqueue(async () => {
+        const prepared = this.preparedDeletion
+        if (prepared && !this.sameOwner(prepared.owner, owner)) {
+          return { status: 'wait' as const, outcome: prepared.outcome }
+        }
+        await this.prepareOwner(owner)
+        return { status: 'prepared' as const }
+      })
+      if (decision.status === 'prepared') return
+
+      const outcome = await decision.outcome
+      if (outcome.status === 'retained') throw outcome.error
+    }
   }
 
   private sameOwner(left: ComputeJobOwner, right: ComputeJobOwner): boolean {
@@ -289,7 +310,11 @@ class ComputeJobDeletionOwner {
         const cleanup = await this.prepareRemoteCleanup(job)
         if (cleanup) remoteCleanups.push(cleanup)
       }
-      this.preparedDeletion = { owner, remoteCleanups }
+      let settleOutcome!: (outcome: PreparedDeletionOutcome) => void
+      const outcome = new Promise<PreparedDeletionOutcome>((resolve) => {
+        settleOutcome = resolve
+      })
+      this.preparedDeletion = { owner, remoteCleanups, outcome, settleOutcome }
     } catch (error) {
       try {
         if (!this.retainedOwners.has(this.ownerKey(owner))) {
@@ -309,9 +334,15 @@ class ComputeJobDeletionOwner {
     }
     // The caller invokes this phase only after Session JSON deletion or the Project Session
     // tombstone is durable. Keep Job rows until every idempotent remote cleanup succeeds.
-    for (const cleanup of prepared.remoteCleanups) await this.runRemoteCleanup(cleanup)
-    await this.deps.lifecycle.deleteOwnerRows(owner)
+    try {
+      for (const cleanup of prepared.remoteCleanups) await this.runRemoteCleanup(cleanup)
+      await this.deps.lifecycle.deleteOwnerRows(owner)
+    } catch (error) {
+      prepared.settleOutcome({ status: 'retained', error })
+      throw error
+    }
     this.preparedDeletion = undefined
+    prepared.settleOutcome({ status: 'released' })
     this.releaseCommittedOwnerBarriers(owner)
     this.runtime?.resume()
   }
@@ -323,10 +354,11 @@ class ComputeJobDeletionOwner {
       // and any restored durable Project barrier untouched for the next recovery attempt.
       return
     }
-    const prepared = this.preparedDeletion !== undefined
+    const prepared = this.preparedDeletion
     await this.releaseOwnerBarrier(owner)
     if (prepared) {
       this.preparedDeletion = undefined
+      prepared.settleOutcome({ status: 'released' })
       this.runtime?.resume()
     }
   }

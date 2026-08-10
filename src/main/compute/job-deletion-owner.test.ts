@@ -287,6 +287,45 @@ describe('ComputeJobDeletionOwner', () => {
     })
   })
 
+  it('waits for a prepared Session plan before preparing its parent Project', async () => {
+    const harness = createHarness([job()])
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+
+    const projectPreparation = expect(
+      harness.owner.prepareProjectJobDeletion('project-1')
+    ).resolves.toBeUndefined()
+    await harness.owner.commitSessionJobDeletion('project-1', 'session-1')
+    await projectPreparation
+
+    expect(harness.lifecycle.beginOwnerDeletion).toHaveBeenLastCalledWith({
+      projectId: 'project-1'
+    })
+  })
+
+  it('reports a retained Session cleanup failure to a waiting Project prepare', async () => {
+    const harness = createHarness([job()])
+    harness.runner.run.mockResolvedValueOnce({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'offline',
+      truncated: false,
+      timedOut: false
+    })
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+
+    const projectPreparation = expect(
+      harness.owner.prepareProjectJobDeletion('project-1')
+    ).rejects.toThrow(/remote Compute Job cleanup failed/i)
+    await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
+      /remote Compute Job cleanup failed/i
+    )
+    await projectPreparation
+
+    expect(harness.lifecycle.beginOwnerDeletion).not.toHaveBeenCalledWith({
+      projectId: 'project-1'
+    })
+  })
+
   it('limits pre-Project recovery to orphan Sessions from that Project', async () => {
     const harness = createHarness([job()])
     harness.jobRepository.listOwners.mockResolvedValueOnce([
