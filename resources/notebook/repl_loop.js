@@ -976,7 +976,15 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
-const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills', 'artifacts', 'lineage']
+const HOST_CAPABILITY_NAMES = [
+  'mcp',
+  'compute',
+  'agents',
+  'skills',
+  'artifacts',
+  'lineage',
+  'frames'
+]
 
 async function hostCapabilities(...args) {
   if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
@@ -1119,6 +1127,219 @@ async function lineageRpc(op, params) {
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
     throw new Error(`host.lineage.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+const exactObject = (value, requiredKeys, optionalKeys = []) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  return (
+    requiredKeys.every((key) => keys.includes(key)) &&
+    keys.every((key) => requiredKeys.includes(key) || optionalKeys.includes(key))
+  )
+}
+
+const hostFrameString = (value) => typeof value === 'string'
+const hostFrameCount = (value) => Number.isSafeInteger(value) && value >= 0
+const hostFrameOptionalString = (value) => value === undefined || hostFrameString(value)
+const frozenProjection = (value, keys) =>
+  Object.freeze(
+    Object.fromEntries(
+      keys.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])
+    )
+  )
+
+const HOST_FRAME_REQUIRED_KEYS = [
+  'frame_id',
+  'session_id',
+  'session_title',
+  'kind',
+  'recorded_frame_status',
+  'session_status',
+  'created_at',
+  'session_updated_at',
+  'message_count',
+  'child_count'
+]
+const HOST_FRAME_OPTIONAL_KEYS = [
+  'parent_frame_id',
+  'origin_message_id',
+  'agent_name',
+  'delegate_name',
+  'linked_review_id',
+  'completed_at',
+  'archived_at'
+]
+const HOST_FRAME_KINDS = ['root', 'reviewer', 'delegate', 'compatibility']
+const HOST_FRAME_STATUSES = ['running', 'completed', 'cancelled', 'error']
+const HOST_SESSION_STATUSES = [
+  'idle',
+  'running',
+  'waiting-for-user',
+  'waiting-permission',
+  'waiting-plan-approval',
+  'error'
+]
+
+const validatedHostFrame = (value) => {
+  if (
+    !exactObject(value, HOST_FRAME_REQUIRED_KEYS, HOST_FRAME_OPTIONAL_KEYS) ||
+    !hostFrameString(value.frame_id) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.session_title) ||
+    !HOST_FRAME_KINDS.includes(value.kind) ||
+    !HOST_FRAME_STATUSES.includes(value.recorded_frame_status) ||
+    !HOST_SESSION_STATUSES.includes(value.session_status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.session_updated_at) ||
+    !hostFrameCount(value.message_count) ||
+    !hostFrameCount(value.child_count) ||
+    HOST_FRAME_OPTIONAL_KEYS.some((key) => !hostFrameOptionalString(value[key]))
+  ) {
+    throw new Error('host.frames returned an invalid Frame')
+  }
+  return frozenProjection(value, [...HOST_FRAME_REQUIRED_KEYS, ...HOST_FRAME_OPTIONAL_KEYS])
+}
+
+const validatedHostFrameSession = (value) => {
+  const required = ['session_id', 'session_title', 'session_status', 'created_at', 'updated_at']
+  const optional = ['archived_at']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.session_title) ||
+    !HOST_SESSION_STATUSES.includes(value.session_status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    !hostFrameOptionalString(value.archived_at)
+  ) {
+    throw new Error('host.frames.get returned an invalid Session')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameBranch = (value) => {
+  const keys = ['branch_id', 'created_at', 'updated_at']
+  if (!exactObject(value, keys) || keys.some((key) => !hostFrameString(value[key]))) {
+    throw new Error('host.frames.get returned an invalid Branch')
+  }
+  return frozenProjection(value, keys)
+}
+
+const validatedHostFrameTurnUsage = (value) => {
+  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
+  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  if (
+    !exactObject(value, required, optional) ||
+    [...required, ...optional].some(
+      (key) => value[key] !== undefined && !hostFrameCount(value[key])
+    )
+  ) {
+    throw new Error('host.frames.get returned invalid turn usage')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameAttachment = (value) => {
+  const required = ['kind', 'attachment_id']
+  const optional = ['version_id', 'name', 'mime_type', 'size_bytes']
+  if (
+    !exactObject(value, required, optional) ||
+    !['upload', 'artifact', 'image'].includes(value.kind) ||
+    !hostFrameString(value.attachment_id) ||
+    ['version_id', 'name', 'mime_type'].some((key) => !hostFrameOptionalString(value[key])) ||
+    (value.size_bytes !== undefined && !hostFrameCount(value.size_bytes))
+  ) {
+    throw new Error('host.frames.get returned an invalid attachment')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameMessage = (value) => {
+  const required = ['message_id', 'role', 'content', 'status', 'created_at', 'updated_at']
+  const optional = [
+    'response_to_message_id',
+    'runtime_segment_id',
+    'completed_at',
+    'failed_at',
+    'turn_usage',
+    'attachments'
+  ]
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.message_id) ||
+    !['user', 'agent'].includes(value.role) ||
+    !hostFrameString(value.content) ||
+    !['complete', 'streaming', 'error'].includes(value.status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    ['response_to_message_id', 'runtime_segment_id', 'completed_at', 'failed_at'].some(
+      (key) => !hostFrameOptionalString(value[key])
+    ) ||
+    (value.turn_usage !== undefined &&
+      (!value.turn_usage ||
+        typeof value.turn_usage !== 'object' ||
+        Array.isArray(value.turn_usage))) ||
+    (value.attachments !== undefined && !Array.isArray(value.attachments))
+  ) {
+    throw new Error('host.frames.get returned an invalid Message')
+  }
+  return Object.freeze({
+    ...frozenProjection(
+      value,
+      [...required, ...optional].filter((key) => !['turn_usage', 'attachments'].includes(key))
+    ),
+    ...(value.turn_usage ? { turn_usage: validatedHostFrameTurnUsage(value.turn_usage) } : {}),
+    ...(value.attachments
+      ? { attachments: Object.freeze(value.attachments.map(validatedHostFrameAttachment)) }
+      : {})
+  })
+}
+
+const validatedHostFrameTranscript = (value) => {
+  const required = ['messages', 'has_more_before']
+  const optional = ['previous_cursor']
+  if (
+    !exactObject(value, required, optional) ||
+    !Array.isArray(value.messages) ||
+    typeof value.has_more_before !== 'boolean' ||
+    !hostFrameOptionalString(value.previous_cursor) ||
+    value.has_more_before !== (value.previous_cursor !== undefined)
+  ) {
+    throw new Error('host.frames.get returned an invalid transcript')
+  }
+  return Object.freeze({
+    messages: Object.freeze(value.messages.map(validatedHostFrameMessage)),
+    ...(value.previous_cursor !== undefined ? { previous_cursor: value.previous_cursor } : {}),
+    has_more_before: value.has_more_before
+  })
+}
+
+const validatedHostRuntimeSegment = (value) => {
+  const required = ['runtime_segment_id', 'started_at']
+  const optional = ['agent_name', 'ended_at']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.runtime_segment_id) ||
+    !hostFrameString(value.started_at) ||
+    optional.some((key) => !hostFrameOptionalString(value[key]))
+  ) {
+    throw new Error('host.frames.get returned an invalid runtime segment')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+async function framesRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error(`host.frames.${op} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'framesCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.frames.${op}: ${body.error || 'HTTP ' + res.status}`)
   }
   return body.result
 }
@@ -1793,6 +2014,60 @@ async function hostLineageGet(versionId) {
 
 const hostLineage = Object.freeze({ graph: hostLineageGraph, get: hostLineageGet })
 
+async function hostFramesList(options = {}) {
+  if (arguments.length > 1)
+    throw new TypeError('host.frames.list accepts at most one options object')
+  const result = await framesRpc('list', { options })
+  const required = ['project_id', 'frames', 'total_count']
+  const optional = ['next_cursor']
+  if (
+    !exactObject(result, required, optional) ||
+    !hostFrameString(result.project_id) ||
+    !Array.isArray(result.frames) ||
+    !hostFrameCount(result.total_count) ||
+    result.total_count < result.frames.length ||
+    !hostFrameOptionalString(result.next_cursor)
+  ) {
+    throw new Error('host.frames.list returned an invalid result')
+  }
+  return Object.freeze({
+    project_id: result.project_id,
+    frames: Object.freeze(result.frames.map(validatedHostFrame)),
+    total_count: result.total_count,
+    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {})
+  })
+}
+
+async function hostFramesGet(frameId, options = {}) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.frames.get accepts frame_id and at most one options object')
+  }
+  const result = await framesRpc('get', { frame_id: frameId, options })
+  const keys = ['project_id', 'session', 'frame', 'branch', 'transcript', 'runtime_segments']
+  if (
+    !exactObject(result, keys) ||
+    !hostFrameString(result.project_id) ||
+    !Array.isArray(result.runtime_segments)
+  ) {
+    throw new Error('host.frames.get returned an invalid result')
+  }
+  const session = validatedHostFrameSession(result.session)
+  const frame = validatedHostFrame(result.frame)
+  if (frame.frame_id !== frameId || frame.session_id !== session.session_id) {
+    throw new Error('host.frames.get returned an invalid result')
+  }
+  return Object.freeze({
+    project_id: result.project_id,
+    session,
+    frame,
+    branch: validatedHostFrameBranch(result.branch),
+    transcript: validatedHostFrameTranscript(result.transcript),
+    runtime_segments: Object.freeze(result.runtime_segments.map(validatedHostRuntimeSegment))
+  })
+}
+
+const hostFrames = Object.freeze({ list: hostFramesList, get: hostFramesGet })
+
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
@@ -2094,6 +2369,7 @@ const sandbox = {
     artifacts: hostArtifacts,
     artifact_path: hostArtifactPath,
     lineage: hostLineage,
+    frames: hostFrames,
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,

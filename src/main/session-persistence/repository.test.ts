@@ -403,6 +403,28 @@ describe('session persistence repository (per-session files)', () => {
     await expect(readdir(projectDir)).resolves.toEqual(['damaged.json'])
   })
 
+  it('keeps direct Project and Session diagnostics strictly read-only', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    const damagedPath = join(projectDir, 'damaged.json')
+    const damagedJson = JSON.stringify({
+      version: 2,
+      session: { id: 'damaged', messages: 'not-an-array' }
+    })
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(damagedPath, damagedJson, 'utf8')
+
+    await expect(
+      repository.loadProjectWithDiagnostics('project-a', { mode: 'read-only' })
+    ).resolves.toEqual({ sessions: [], isComplete: false })
+    await expect(
+      repository.loadSessionWithDiagnostics('project-a', 'damaged', { mode: 'read-only' })
+    ).resolves.toEqual({ status: 'unreadable' })
+
+    await expect(readFile(damagedPath, 'utf8')).resolves.toBe(damagedJson)
+    await expect(readdir(projectDir)).resolves.toEqual(['damaged.json'])
+  })
+
   it('quarantines a structurally corrupt Session instead of normalizing it to empty', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const projectDir = join(storageRoot!, 'sessions', 'project-a')

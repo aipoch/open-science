@@ -39,7 +39,8 @@ describe('capabilitiesCall RPC', () => {
       agentsService: {} as never,
       skillsService: {} as never,
       hostArtifacts: {} as never,
-      hostLineage: {} as never
+      hostLineage: {} as never,
+      hostFrames: {} as never
     })
     const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
 
@@ -57,7 +58,8 @@ describe('capabilitiesCall RPC', () => {
         agents: true,
         skills: true,
         artifacts: true,
-        lineage: true
+        lineage: true,
+        frames: true
       }
     })
   })
@@ -77,9 +79,22 @@ describe('capabilitiesCall RPC', () => {
           agents: false,
           skills: false,
           artifacts: false,
-          lineage: false
+          lineage: false,
+          frames: false
         }
       }
+    })
+  })
+
+  it('does not advertise Host Frames to an ordinary non-control Session token', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostFrames: {} as never
+    })
+    const connection = await server.issueSessionConnection('trusted-session', 'trusted-project')
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { frames: false } }
     })
   })
 

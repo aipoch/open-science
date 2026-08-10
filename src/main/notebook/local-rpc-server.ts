@@ -149,6 +149,14 @@ type NotebookLocalRpcServerOptions = {
       context: { projectId: string; sessionId: string }
     ): Promise<HostLineageVersion>
   }
+  hostFrames?: {
+    list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
+    get(
+      frameId: unknown,
+      options: unknown,
+      context: { projectId: string; sessionId: string }
+    ): Promise<unknown>
+  }
   // host.agents control-plane SDK (issue 02): exposes the Specialist/catalog surface to the
   // JavaScript control-plane REPL via the extensible dispatcher. Never routed through host.mcp();
   // carries the trusted calling session identity captured outside the sandbox so switch()
@@ -204,6 +212,7 @@ const CONTROL_RPC_METHODS = new Set([
   'capabilitiesCall',
   'artifactsCall',
   'lineageCall',
+  'framesCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
@@ -254,6 +263,7 @@ class NotebookLocalRpcServer {
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
   private readonly hostLineage: NotebookLocalRpcServerOptions['hostLineage']
+  private readonly hostFrames: NotebookLocalRpcServerOptions['hostFrames']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private server: Server | undefined
@@ -292,6 +302,7 @@ class NotebookLocalRpcServer {
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
     this.hostLineage = options.hostLineage
+    this.hostFrames = options.hostFrames
     this.agentsService = options.agentsService
     this.skillsService = options.skillsService
   }
@@ -709,7 +720,10 @@ class NotebookLocalRpcServer {
         ? authorization.slice('Bearer '.length)
         : ''
       let hostCapabilities:
-        | Record<'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage', boolean>
+        | Record<
+            'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage' | 'frames',
+            boolean
+          >
         | undefined
       if (isArtifactRpcMethod(method)) {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
@@ -741,6 +755,9 @@ class NotebookLocalRpcServer {
               throw new Error('host.lineage RPC params are invalid.')
             }
           }
+          if (method === 'framesCall' && !sessionBinding.isControl) {
+            throw new RpcHttpError(403, 'host.frames requires a control-plane REPL capability.')
+          }
           if (
             method === 'agentsCall' &&
             params.op === 'switch' &&
@@ -760,7 +777,11 @@ class NotebookLocalRpcServer {
               agents: allows('agentsCall') && Boolean(this.agentsService),
               skills: allows('skillsCall') && Boolean(this.skillsService),
               artifacts: allows('artifactsCall') && Boolean(this.hostArtifacts),
-              lineage: allows('lineageCall') && Boolean(this.hostLineage)
+              lineage: allows('lineageCall') && Boolean(this.hostLineage),
+              frames:
+                Boolean(sessionBinding.isControl) &&
+                allows('framesCall') &&
+                Boolean(this.hostFrames)
             }
           }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
@@ -921,6 +942,19 @@ class NotebookLocalRpcServer {
       }
       if (params.op === 'get') return this.hostLineage.get(params.version_id, context)
       throw new Error('Unknown host.lineage operation.')
+    }
+
+    if (method === 'framesCall') {
+      if (!this.hostFrames) throw new Error('Host Frame reads are not configured.')
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!projectId || !sessionId) {
+        throw new Error('Host Frame reads require a session-bound Project scope.')
+      }
+      const context = { projectId, sessionId }
+      if (params.op === 'list') return this.hostFrames.list(params.options, context)
+      if (params.op === 'get') return this.hostFrames.get(params.frame_id, params.options, context)
+      throw new Error('Unknown host Frame operation.')
     }
 
     if (method === 'resolveNotebookInput') {

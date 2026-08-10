@@ -123,6 +123,7 @@ import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-wo
 import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
+import { HostFramesService } from './notebook/host-frames-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
@@ -1286,6 +1287,14 @@ const createApplicationModules = async (
       hostLineage: new HostLineageService({
         catalog: projectFilesRepository,
         provenance: artifactProvenanceRepository
+      }),
+      hostFrames: new HostFramesService({
+        readProject: (projectId) =>
+          sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
+        readSession: (projectId, sessionId) =>
+          sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+            mode: 'read-only'
+          })
       }),
       inputRegistry: notebookInputRegistry,
       agentsService,

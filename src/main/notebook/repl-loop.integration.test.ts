@@ -107,7 +107,8 @@ describe('repl_loop local RPC transport', () => {
                 agents: true,
                 skills: true,
                 artifacts: true,
-                lineage: true
+                lineage: true,
+                frames: true
               }
             : {
                 mcp: true,
@@ -115,7 +116,8 @@ describe('repl_loop local RPC transport', () => {
                 agents: true,
                 skills: true,
                 artifacts: true,
-                lineage: true
+                lineage: true,
+                frames: true
               }
         response
           .writeHead(200, { 'content-type': 'application/json' })
@@ -146,7 +148,8 @@ describe('repl_loop local RPC transport', () => {
           agents: true,
           skills: true,
           artifacts: true,
-          lineage: true
+          lineage: true,
+          frames: true
         },
         second: {
           mcp: true,
@@ -154,7 +157,8 @@ describe('repl_loop local RPC transport', () => {
           agents: true,
           skills: true,
           artifacts: true,
-          lineage: true
+          lineage: true,
+          frames: true
         },
         frozen: true,
         same: false
@@ -536,6 +540,164 @@ describe('repl_loop local RPC transport', () => {
         },
         { method: 'artifactsCall', params: { op: 'path', version_id: 'upload-version-1' } }
       ])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('validates and freezes host.frames list and get projections', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const frame = {
+      frame_id: 'frame-1',
+      session_id: 'session-a',
+      session_title: 'Research session',
+      kind: 'root',
+      recorded_frame_status: 'completed',
+      session_status: 'idle',
+      created_at: '2026-08-01T00:00:00.000Z',
+      completed_at: '2026-08-01T00:01:00.000Z',
+      session_updated_at: '2026-08-01T00:01:00.000Z',
+      message_count: 2,
+      child_count: 0
+    }
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(parsed)
+        const result =
+          requests.length === 3
+            ? { project_id: 'project-a', total_count: 0, frames: [], cwd: '/private' }
+            : parsed.params?.op === 'get'
+              ? {
+                  project_id: 'project-a',
+                  session: {
+                    session_id: 'session-a',
+                    session_title: 'Research session',
+                    session_status: 'idle',
+                    created_at: '2026-08-01T00:00:00.000Z',
+                    updated_at: '2026-08-01T00:01:00.000Z'
+                  },
+                  frame,
+                  branch: {
+                    branch_id: 'branch-1',
+                    created_at: '2026-08-01T00:00:00.000Z',
+                    updated_at: '2026-08-01T00:01:00.000Z'
+                  },
+                  transcript: {
+                    messages: [
+                      {
+                        message_id: 'message-1',
+                        role: 'agent',
+                        content: 'Visible answer',
+                        status: 'complete',
+                        runtime_segment_id: 'runtime-1',
+                        created_at: '2026-08-01T00:00:30.000Z',
+                        updated_at: '2026-08-01T00:01:00.000Z',
+                        turn_usage: {
+                          input_tokens: 10,
+                          cache_tokens: 2,
+                          output_tokens: 5
+                        },
+                        attachments: [
+                          {
+                            kind: 'artifact',
+                            attachment_id: 'artifact-1',
+                            version_id: 'artifact-version-1',
+                            name: 'report.pdf',
+                            mime_type: 'application/pdf',
+                            size_bytes: 42
+                          }
+                        ]
+                      }
+                    ],
+                    has_more_before: false
+                  },
+                  runtime_segments: [
+                    {
+                      runtime_segment_id: 'runtime-1',
+                      agent_name: 'Research Agent',
+                      started_at: '2026-08-01T00:00:00.000Z',
+                      ended_at: '2026-08-01T00:01:00.000Z'
+                    }
+                  ]
+                }
+              : { project_id: 'project-a', total_count: 1, next_cursor: 'next', frames: [frame] }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-frames-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        "const page = await host.frames.list({ search: 'research' }); " +
+          "const detail = await host.frames.get('frame-1', { branch_id: 'branch-1' }); " +
+          'return JSON.stringify({ page, detail, pageFrozen: Object.isFrozen(page), ' +
+          'framesFrozen: Object.isFrozen(page.frames), frameFrozen: Object.isFrozen(page.frames[0]), ' +
+          'detailFrozen: Object.isFrozen(detail), transcriptFrozen: Object.isFrozen(detail.transcript), ' +
+          'sessionFrozen: Object.isFrozen(detail.session), detailFrameFrozen: Object.isFrozen(detail.frame), ' +
+          'branchFrozen: Object.isFrozen(detail.branch), segmentsFrozen: Object.isFrozen(detail.runtime_segments), ' +
+          'segmentFrozen: Object.isFrozen(detail.runtime_segments[0]), ' +
+          'messagesFrozen: Object.isFrozen(detail.transcript.messages), ' +
+          'messageFrozen: Object.isFrozen(detail.transcript.messages[0]), ' +
+          'usageFrozen: Object.isFrozen(detail.transcript.messages[0].turn_usage), ' +
+          'attachmentsFrozen: Object.isFrozen(detail.transcript.messages[0].attachments), ' +
+          'attachmentFrozen: Object.isFrozen(detail.transcript.messages[0].attachments[0]) })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
+        page: { project_id: 'project-a', total_count: 1, next_cursor: 'next' },
+        detail: { project_id: 'project-a', frame: { frame_id: 'frame-1' } },
+        pageFrozen: true,
+        framesFrozen: true,
+        frameFrozen: true,
+        detailFrozen: true,
+        transcriptFrozen: true,
+        sessionFrozen: true,
+        detailFrameFrozen: true,
+        branchFrozen: true,
+        segmentsFrozen: true,
+        segmentFrozen: true,
+        messagesFrozen: true,
+        messageFrozen: true,
+        usageFrozen: true,
+        attachmentsFrozen: true,
+        attachmentFrozen: true
+      })
+      expect(requests).toEqual([
+        {
+          method: 'framesCall',
+          params: { op: 'list', options: { search: 'research' } }
+        },
+        {
+          method: 'framesCall',
+          params: { op: 'get', frame_id: 'frame-1', options: { branch_id: 'branch-1' } }
+        }
+      ])
+
+      const invalid = await send(
+        "try { await host.frames.list(); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalid.result).toBe('host.frames.list returned an invalid result')
+      expect(requests).toHaveLength(3)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

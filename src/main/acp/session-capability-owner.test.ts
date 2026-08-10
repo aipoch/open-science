@@ -649,7 +649,8 @@ describe('ACP session capability owner', () => {
       'notebook',
       'skill-import',
       'host-agents',
-      'host-skills'
+      'host-skills',
+      'host-frames'
     ])
     expect(primary.descriptor.modelFacingMcpServerNames).toEqual([
       'open_science_artifacts',
@@ -667,7 +668,8 @@ describe('ACP session capability owner', () => {
       'mcpCall',
       'computeCall',
       'agentsCall',
-      'skillsCall'
+      'skillsCall',
+      'framesCall'
     ])
     expect(reviewer.mcpServers).toEqual([])
     expect(reviewer.descriptor.capabilities).toEqual([])
@@ -685,7 +687,7 @@ describe('ACP session capability owner', () => {
     ['codex-response', codexFramework, true, false],
     ['codex-bridge', codexFramework, false, true]
   ] as const)(
-    'publishes host capability and lineage reads through the %s primary control descriptor',
+    'publishes Host Lineage and Frames through the %s primary control descriptor',
     async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
       const owner = createOwner()
       const built = await owner.provision({
@@ -700,6 +702,8 @@ describe('ACP session capability owner', () => {
 
       expect(built.descriptor.controlRpcMethods).toContain('capabilitiesCall')
       expect(built.descriptor.controlRpcMethods).toContain('lineageCall')
+      expect(built.descriptor.controlRpcMethods).toContain('framesCall')
+      expect(built.descriptor.capabilities).toContain('host-frames')
     }
   )
 

@@ -183,13 +183,15 @@ class SessionRepository {
   // both as undefined could unlink the JSON before Upload cleanup has observed its final authority.
   async loadSessionWithDiagnostics(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    options: SessionScanOptions = {}
   ): Promise<SessionLoadDiagnostic> {
     const safeProjectId = assertSafeSegment(projectId)
     const safeSessionId = assertSafeSegment(sessionId)
     const read = await this.readSessionFile(
       this.sessionFilePath(safeProjectId, safeSessionId),
-      safeProjectId
+      safeProjectId,
+      { quarantineInvalidFiles: options.mode !== 'read-only' }
     )
     if (!read.isComplete || read.wasQuarantined) return { status: 'unreadable' }
 
@@ -219,9 +221,13 @@ class SessionRepository {
 
   // Project deletion needs a complete view of only its target authority. An unrelated unreadable
   // Project must not block deletion, while any target-directory failure remains fail-closed.
-  async loadProjectWithDiagnostics(projectId: string): Promise<ProjectSessionLoadDiagnostics> {
+  async loadProjectWithDiagnostics(
+    projectId: string,
+    options: SessionScanOptions = {}
+  ): Promise<ProjectSessionLoadDiagnostics> {
     return this.readProjectSessions(assertSafeSegment(projectId), {
-      quarantinedIsIncomplete: true
+      quarantinedIsIncomplete: true,
+      quarantineInvalidFiles: options.mode !== 'read-only'
     })
   }
 

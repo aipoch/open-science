@@ -1,6 +1,6 @@
 ---
 name: self-awareness
-description: Inspect Open Science's JavaScript control REPL, discover managed Project files, and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover available host APIs or locate an Artifact or Upload Version in the current Project.
+description: Inspect Open Science's JavaScript control REPL, discover managed Project files and Agent Frames, and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover available host APIs, locate an Artifact or Upload Version, or read a Frame transcript in the current Project.
 ---
 
 # Self-awareness
@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The v1 result contains exactly six boolean keys:
+The v1 result contains exactly seven boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -22,6 +22,7 @@ The v1 result contains exactly six boolean keys:
 - `skills` gates the `host.skills` namespace.
 - `artifacts` gates `host.artifacts` and `host.artifact_path`.
 - `lineage` gates the read-only `host.lineage` namespace.
+- `frames` gates the read-only `host.frames` namespace.
 
 Interpret the result narrowly:
 
@@ -95,6 +96,27 @@ Session scope fields, create extraction work, or return content, messages, full 
 reviews, paths, storage keys, Bearer tokens, or internal routes. Missing or ambiguous identities,
 cross-Project edges, and corrupt evidence fail closed. There is no indexed property, `clear()`,
 client cache, Python/R `host`, or lineage API outside the JavaScript control REPL.
+
+## Discover Agent Frames
+
+When `caps.frames === true`, use `await host.frames.list(options)` for a metadata-only catalog across
+Sessions in the token-owned current Project. It never searches message bodies. Optional snake_case
+fields are `search`, `session_id`, `roots_only` (default `true`), `kind`, `archived`
+(`exclude`/`include`/`only`, default `exclude`), `after`, `before`, `cursor`, and `limit` (default 20,
+maximum 100). Metadata search fuzzily matches Session title, `agent_name`, and `delegate_name`.
+
+Use `await host.frames.get(frameId, options)` with an exact full Frame ID to read one visible
+conversation path. `session_id` may narrow or disambiguate within the current Project. `branch_id`
+selects a specific Branch; without it, the Frame's active Branch is used. The latest 40 messages are
+returned chronologically by default, with a maximum of 100. Pass `before` with the returned
+`previous_cursor` to page backward through older messages.
+
+The result contains frozen Project, Session, Frame, Branch, visible transcript, and sanitized runtime
+segment projections. Messages follow the selected Branch graph rather than stored array order. The
+response never returns private reasoning, tool activities and raw inputs/outputs, terminal output,
+image bytes, local paths, storage and provider identifiers, internal event/stream identifiers, cost,
+or synthesized summaries. Missing, ambiguous, wrong-Session, invalid-Branch, and stale-cursor reads fail
+explicitly without enabling cross-Project discovery.
 
 ## Continue with the owning Skill
 
