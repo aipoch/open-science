@@ -970,7 +970,9 @@ describe('createJobUpdatedBroadcaster', () => {
   it('drops a delayed update after the Job owner has been deleted', async () => {
     const sink = vi.fn()
     const remove = addRendererBroadcastSink(sink)
-    const jobRepository = { get: vi.fn(async () => null) }
+    const jobRepository = {
+      get: vi.fn().mockResolvedValueOnce(sampleJob()).mockResolvedValueOnce(null)
+    }
     const broadcaster = createJobUpdatedBroadcaster(
       mockRepository({ get: vi.fn(async () => sampleHost()) }),
       storageRoot,
@@ -978,7 +980,7 @@ describe('createJobUpdatedBroadcaster', () => {
     )
 
     broadcaster(sampleJob())
-    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalledWith('job-bcast'))
+    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalledTimes(2))
 
     expect(sink).not.toHaveBeenCalled()
     remove()

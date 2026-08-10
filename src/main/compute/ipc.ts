@@ -439,9 +439,8 @@ const syncCurrentComputeSkillDocuments = async (
 
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
-export const broadcastJobUpdated = (summary: JobSummary): void => {
+export const broadcastJobUpdated = (summary: JobSummary): void =>
   broadcastToRenderers(COMPUTE_JOB_UPDATED_CHANNEL, summary)
-}
 
 export const createJobUpdatedBroadcaster =
   (
@@ -459,7 +458,8 @@ export const createJobUpdatedBroadcaster =
         // Preserve provider fallback; likewise, only a successful null Job lookup proves deletion.
       }
       if (!(await jobRepository.get(job.job_id).catch(() => true))) return
-      broadcastJobUpdated(await toJobSummary(job, displayName, storageRoot))
+      const summary = await toJobSummary(job, displayName, storageRoot)
+      if (await jobRepository.get(job.job_id).catch(() => true)) broadcastJobUpdated(summary)
     })().catch(() => undefined)
   }
 
