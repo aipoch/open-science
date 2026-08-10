@@ -537,6 +537,7 @@ describe('ConversationPanel composer intake', () => {
     expect(permissionComposer).not.toBeNull()
     expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
     expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle.classList.contains('active:bg-bg-200')).toBe(false)
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
     expect(getComposerForm().hidden).toBe(true)

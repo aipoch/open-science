@@ -781,7 +781,14 @@ const PermissionApprovalControls = ({
 
       {/* Allow / Deny button row; wraps so long provider-supplied option labels can never
           push the primary Allow/Deny controls out of view. */}
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div
+        data-testid="permission-actions"
+        className={cn(
+          'flex flex-wrap items-center justify-end gap-2',
+          embedded &&
+            'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card px-4 pb-4 pt-3 sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5'
+        )}
+      >
         {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.
             Styled like the shared Button (default size, including flex centering so the label baseline
             matches the neighboring Button primitives) but kept as two segments so the chevron

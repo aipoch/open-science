@@ -160,6 +160,18 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('motion-safe:slide-in-from-bottom-1')
   })
 
+  it('pins the approval actions to the bottom while request content scrolls', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toMatch(/data-testid="permission-actions" class="[^"]*sticky[^"]*bottom-0[^"]*"/)
+  })
+
   it('does not show the second queued request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

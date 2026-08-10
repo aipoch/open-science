@@ -411,8 +411,9 @@ describe('conversation message scroller integration', () => {
     expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
     // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex flex-wrap items-center justify-end gap-2"'
+      "'flex flex-wrap items-center justify-end gap-2'"
     )
+    expect(permissionApprovalControlsSource).toContain("'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card")
   })
 
   it('keeps composer attachment UI inline with the composer', () => {
