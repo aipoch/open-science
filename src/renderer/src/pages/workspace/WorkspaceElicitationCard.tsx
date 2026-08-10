@@ -153,6 +153,7 @@ const WorkspaceElicitationCard = ({
   const [values, setValues] = useState<Record<string, ElicitationValue | undefined>>(
     () => restoredValues
   )
+  const [confirmedValues, setConfirmedValues] = useState(() => restoredValues)
   const [activeChoiceIndex, setActiveChoiceIndex] = useState(() =>
     choiceQuestions ? firstUnansweredQuestionIndex(choiceQuestions, restoredValues) : 0
   )
@@ -242,7 +243,13 @@ const WorkspaceElicitationCard = ({
     if (!request || !choiceQuestions || !choiceQuestion || !currentChoiceAnswer) return
 
     if (!isFinalChoiceQuestion) {
-      onDraftChange?.(completedChoiceAnswers)
+      const nextConfirmedValues = {
+        ...confirmedValues,
+        [choiceQuestion.choiceField.id]: values[choiceQuestion.choiceField.id],
+        [choiceQuestion.customField.id]: values[choiceQuestion.customField.id]
+      }
+      setConfirmedValues(nextConfirmedValues)
+      onDraftChange?.(choiceAnswers(choiceQuestions, nextConfirmedValues))
       setActiveChoiceIndex((index) => index + 1)
       setError(undefined)
       return

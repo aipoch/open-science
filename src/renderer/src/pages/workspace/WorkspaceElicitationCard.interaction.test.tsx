@@ -305,6 +305,10 @@ describe('WorkspaceElicitationCard choice question', () => {
     )
     expect(next?.querySelector('svg.lucide-chevron-right')).not.toBeNull()
     await act(async () => next?.click())
+    expect(onDraftChange).toHaveBeenCalledTimes(2)
+    expect(onDraftChange).toHaveBeenLastCalledWith([
+      { fieldId: 'question_0', value: 'multi-omics' }
+    ])
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
     ).toBe('2 of 2')
