@@ -255,6 +255,20 @@ class AcpSessionResumePolicy {
       return adoptableFailure('session-not-found-message')
     }
 
+    if (code.value !== -32603) {
+      return code.value !== undefined || message.value !== undefined
+        ? authoritativeFailure('non-internal-error')
+        : authoritativeFailure('unrecognized-error')
+    }
+
+    const data = readProperty(error, 'data')
+    if (!data.readable) return authoritativeFailure('uninspectable-error')
+
+    const service = readProperty(data.value, 'service')
+    if (!service.readable) return authoritativeFailure('uninspectable-error')
+    if (service.value === 'session') return adoptableFailure('session-service-failure')
+    if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
+
     if (
       context?.providerSessionIdPersisted === false &&
       typeof message.value === 'string' &&
@@ -275,20 +289,6 @@ class AcpSessionResumePolicy {
         return adoptableFailure('legacy-opencode-session-unavailable')
       }
     }
-
-    if (code.value !== -32603) {
-      return code.value !== undefined || message.value !== undefined
-        ? authoritativeFailure('non-internal-error')
-        : authoritativeFailure('unrecognized-error')
-    }
-
-    const data = readProperty(error, 'data')
-    if (!data.readable) return authoritativeFailure('uninspectable-error')
-
-    const service = readProperty(data.value, 'service')
-    if (!service.readable) return authoritativeFailure('uninspectable-error')
-    if (service.value === 'session') return adoptableFailure('session-service-failure')
-    if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
 
     if (typeof message.value !== 'string' || !/^internal error\.?$/i.test(message.value.trim())) {
       return authoritativeFailure('non-internal-error')

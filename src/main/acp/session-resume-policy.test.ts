@@ -266,6 +266,46 @@ describe('ACP Session resume policy', () => {
   )
 
   it.each([
+    [
+      'non-internal Codex',
+      { code: -32001, message: 'Unknown error' },
+      {
+        currentFrameworkId: 'codex',
+        currentModelRoute: 'codex-responses',
+        providerSessionIdPersisted: false
+      },
+      'non-internal-error'
+    ],
+    [
+      'missing-code OpenCode',
+      { message: 'Unknown error' },
+      {
+        currentFrameworkId: 'opencode',
+        currentModelRoute: 'opencode-openai',
+        providerSessionIdPersisted: false
+      },
+      'non-internal-error'
+    ],
+    [
+      'non-session OpenCode service',
+      { code: -32603, message: 'Unknown error', data: { service: 'transport' } },
+      {
+        currentFrameworkId: 'opencode',
+        currentModelRoute: 'opencode-anthropic',
+        providerSessionIdPersisted: false
+      },
+      'non-session-service-failure'
+    ]
+  ] as const)('keeps a %s Unknown error authoritative', (_label, error, context, reason) => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(policy.classifyFailure(error, context)).toEqual({
+      disposition: 'authoritative',
+      reason
+    })
+  })
+
+  it.each([
     ['Claude Code', 'claude-code', undefined],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ] as const)(
