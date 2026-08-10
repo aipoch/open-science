@@ -292,7 +292,14 @@ const WorkspacePage = ({
 
   useEffect(() => {
     const getPlanProjection = window.api.acp?.getPlanProjection
-    if (!activeSession || activeSession.activePlanProjection || !getPlanProjection) return
+    if (
+      !activeSession ||
+      activeSession.activePlanProjection ||
+      !getPlanProjection ||
+      (activeSession.status !== 'waiting-plan-approval' && !activeSession.runtimeContext?.plan)
+    ) {
+      return
+    }
     let cancelled = false
     void getPlanProjection(activeSession.projectId, activeSession.id)
       .then((projection) => {

@@ -268,6 +268,20 @@ describe('WorkspacePage send gate while compacting', () => {
     }
   )
 
+  it('does not query Plan authority before a newly bound Session is persisted', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockRejectedValueOnce(
+      new Error('Cannot read runtime context for a missing Session.')
+    )
+
+    await renderPage()
+
+    expect(window.api.acp.getPlanProjection).not.toHaveBeenCalled()
+  })
+
   it('blocks overlapping actions while the Session is waiting for a user answer', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'waiting-for-user' })],
