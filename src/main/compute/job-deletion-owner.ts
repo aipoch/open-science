@@ -100,6 +100,7 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
   // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
   // without that evidence, skip process mutation and keep directory removal idempotent.
   const lines = [
+    `[ ! -L ${quotedWorkdir} ] || exit 1`,
     `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
     'kill_job_pid() {',
     '  pid=$1',
@@ -119,8 +120,8 @@ const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): stri
   if (handle) lines.push(`kill_job_pid ${handle.pid}`)
   lines.push(
     `if [ -f ${quotedPidFile} ]; then kill_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)"; fi`,
-    `rm -rf -- ${quotedWorkdir}`,
-    `test ! -e ${quotedWorkdir}`
+    'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
+    'test -z "$workdir" || test ! -e "$workdir"'
   )
   return lines.join('\n')
 }

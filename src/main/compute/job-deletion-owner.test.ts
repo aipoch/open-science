@@ -141,9 +141,11 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('[ "$process_workdir" = "$workdir" ] || return 0')
     expect(command).toContain('kill_job_pid 123')
     expect(command).not.toContain('kill -TERM -- -123')
+    expect(command).toContain('[ ! -L ')
     expect(command).toContain('job.pid')
-    expect(command).toContain('rm -rf --')
-    expect(command).toContain('test ! -e')
+    expect(command).toContain('rm -rf -- "$workdir"')
+    expect(command).toContain('test -z "$workdir" || test ! -e "$workdir"')
+    expect(command).not.toContain("rm -rf -- ~/'.openscience/jobs/job-1'")
   })
 
   it('retains an active Session row until owner authority commits', async () => {
