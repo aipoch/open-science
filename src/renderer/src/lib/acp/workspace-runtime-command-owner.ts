@@ -13,8 +13,9 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
+import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
@@ -327,6 +328,22 @@ const startPendingPrompt = (
       return
     }
     if (!ownsPrompt(created.sessionId, bound.messageId)) return
+
+    const boundSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === created.sessionId)
+    if (boundSession?.enabledComputeHosts?.length) {
+      try {
+        await saveSessionInOrder(toPersistedSession(boundSession))
+      } catch (error) {
+        if (ownsPrompt(created.sessionId, bound.messageId)) {
+          useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
+        }
+        return
+      }
+      if (!ownsPrompt(created.sessionId, bound.messageId)) return
+    }
+
     dispatchPrompt(runtime, {
       sessionId: created.sessionId,
       messageId: bound.messageId,
