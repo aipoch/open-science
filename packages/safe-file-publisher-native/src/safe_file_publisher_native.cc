@@ -1,8 +1,6 @@
 #include <node_api.h>
 
 #include <cerrno>
-#include <cstddef>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -106,16 +104,6 @@ std::wstring HandlePath(HANDLE handle) {
       handle, buffer.data(), buffer.size(), FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
   if (written == 0 || written >= buffer.size()) return {};
   return std::wstring(buffer.data(), written);
-}
-
-std::wstring RenameTargetPath(const std::wstring& path) {
-  constexpr wchar_t kExtendedUncPrefix[] = L"\\\\?\\UNC\\";
-  constexpr wchar_t kExtendedPrefix[] = L"\\\\?\\";
-  if (path.rfind(kExtendedUncPrefix, 0) == 0) {
-    return std::wstring(L"\\\\") + path.substr(8);
-  }
-  if (path.rfind(kExtendedPrefix, 0) == 0) return path.substr(4);
-  return path;
 }
 
 std::wstring ParentPath(const std::wstring& path) {
@@ -284,31 +272,20 @@ napi_value PublishWindows(
     destination_path.push_back(L'\\');
   }
   destination_path.append(destination_name);
-  const std::wstring rename_target_path = RenameTargetPath(destination_path);
-  const DWORD destination_bytes =
-      static_cast<DWORD>(rename_target_path.size() * sizeof(wchar_t));
-  const size_t rename_size = offsetof(FILE_RENAME_INFO, FileName) + destination_bytes;
-  std::vector<unsigned char> rename_buffer(rename_size);
-  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_buffer.data());
-  rename_info->ReplaceIfExists = FALSE;
-  // With no RootDirectory, Win32 resolves relative rename targets against the process working
-  // directory. Pass the anchored parent's absolute DOS path without HandlePath's extended prefix.
-  rename_info->RootDirectory = nullptr;
-  rename_info->FileNameLength = destination_bytes;
-  std::memcpy(rename_info->FileName, rename_target_path.data(), destination_bytes);
-
-  const BOOL renamed = SetFileInformationByHandle(
-      source_handle,
-      FileRenameInfo,
-      rename_info,
-      static_cast<DWORD>(rename_buffer.size()));
-  const DWORD rename_error = renamed ? ERROR_SUCCESS : GetLastError();
   BY_HANDLE_FILE_INFORMATION source_identity{};
-  const bool source_identity_available =
-      renamed && GetFileInformationByHandle(source_handle, &source_identity);
-  CloseHandle(source_handle);
+  if (!GetFileInformationByHandle(source_handle, &source_identity)) {
+    CloseHandle(source_handle);
+    CloseHandle(parent_handle);
+    CloseHandle(root_handle);
+    return ThrowError(env, "Could not identify the publication source.", "EIO");
+  }
+
+  // Like the Linux linkat fallback, a hard link publishes the complete file atomically without
+  // replacing an existing destination. Removing the verified temporary alias is best effort.
+  const BOOL linked = CreateHardLinkW(destination_path.c_str(), source_path.c_str(), nullptr);
+  const DWORD link_error = linked ? ERROR_SUCCESS : GetLastError();
   HANDLE destination_handle = INVALID_HANDLE_VALUE;
-  if (renamed) {
+  if (linked) {
     destination_handle = CreateFileW(
         destination_path.c_str(),
         FILE_READ_ATTRIBUTES,
@@ -321,13 +298,20 @@ napi_value PublishWindows(
   const DWORD destination_error =
       destination_handle == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
   const bool landed_at_destination =
-      source_identity_available && destination_handle != INVALID_HANDLE_VALUE &&
+      destination_handle != INVALID_HANDLE_VALUE &&
       SameFileIdentity(source_identity, destination_handle);
+  if (landed_at_destination) {
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    (void)SetFileInformationByHandle(
+        source_handle, FileDispositionInfo, &disposition, sizeof(disposition));
+  }
   if (destination_handle != INVALID_HANDLE_VALUE) CloseHandle(destination_handle);
+  CloseHandle(source_handle);
   CloseHandle(parent_handle);
   CloseHandle(root_handle);
-  if (!renamed) {
-    return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(rename_error));
+  if (!linked) {
+    return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(link_error));
   }
   if (destination_handle == INVALID_HANDLE_VALUE) {
     return ThrowError(env, "Could not reopen the publication destination.",
