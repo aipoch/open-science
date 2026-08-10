@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
+vi.mock('./remote-data-root', () => ({
+  isRemoteWindowsPath: () => false
+}))
 
 import { existsSync } from 'node:fs'
 
@@ -153,6 +156,25 @@ describe('classifyDataRoot', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
       await rm(spacedParent, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a Windows network data root before migration or adoption', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+    try {
+      const result = await classifyDataRoot(emptyParent, currentDataRoot, {
+        isRemotePath: async () => true
+      })
+
+      expect(result).toEqual({
+        kind: 'invalid',
+        error:
+          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }
   })
 

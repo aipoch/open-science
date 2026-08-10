@@ -4,3 +4,5 @@ export function publishNoReplace(
   sourceName: string,
   destinationName: string
 ): void
+
+export function isRemotePath(path: string): boolean

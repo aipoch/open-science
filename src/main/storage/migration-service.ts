@@ -32,6 +32,7 @@ import { validateProvenanceMigrationState } from './provenance-migration-validat
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
+import { isRemoteWindowsPath } from './remote-data-root'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -93,7 +94,10 @@ export const maxManagedEnvRelativePath = (dataRoot: string): number => {
 // Optional injectable deps for classifyDataRoot, so its write probe can be exercised in tests without
 // depending on platform-specific filesystem permission semantics (chmod is a POSIX-only no-op on
 // Windows).
-type ClassifyDataRootDeps = { canWrite?: (dir: string) => Promise<boolean> }
+type ClassifyDataRootDeps = {
+  canWrite?: (dir: string) => Promise<boolean>
+  isRemotePath?: (dir: string) => boolean | Promise<boolean>
+}
 
 // Real write probe (create + delete a temp file) instead of only fs.access(W_OK): access() checks
 // POSIX bits but NOT macOS TCC (Documents/Desktop/Downloads/external & network volumes) or read-only
@@ -178,6 +182,19 @@ export const classifyDataRoot = async (
     }
   } catch {
     return { kind: 'invalid', error: 'The selected folder does not exist.' }
+  }
+
+  try {
+    const isRemotePath = deps.isRemotePath ?? isRemoteWindowsPath
+    if (process.platform === 'win32' && (await isRemotePath(resolvedParent))) {
+      return {
+        kind: 'invalid',
+        error:
+          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+      }
+    }
+  } catch {
+    return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
 
   // Probing here surfaces TCC-denied, read-only, and out-of-space cases up front with a clear

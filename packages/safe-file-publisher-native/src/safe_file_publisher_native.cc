@@ -118,6 +118,14 @@ bool SamePath(const std::wstring& left, const std::wstring& right) {
   return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
+bool IsRemoteHandle(HANDLE handle) {
+  FILE_REMOTE_PROTOCOL_INFO info{};
+  info.StructureVersion = 2;
+  info.StructureSize = sizeof(info);
+  return GetFileInformationByHandleEx(handle, FileRemoteProtocolInfo, &info, sizeof(info)) &&
+         info.Protocol != 0;
+}
+
 bool IsSameOrDescendant(const std::wstring& root, const std::wstring& candidate) {
   if (SamePath(root, candidate)) return true;
   if (candidate.size() <= root.size() ||
@@ -207,6 +215,11 @@ napi_value PublishWindows(
     return ThrowError(env, "Could not open the storage root.", WindowsErrorCode(error));
   }
 
+  if (IsRemoteHandle(root_handle)) {
+    CloseHandle(root_handle);
+    return ThrowError(env, "Network storage roots are not supported for atomic publication.",
+                      "ENOTSUP");
+  }
   FILE_ATTRIBUTE_TAG_INFO root_attributes{};
   if (!GetFileInformationByHandleEx(
           root_handle, FileAttributeTagInfo, &root_attributes, sizeof(root_attributes)) ||
@@ -466,6 +479,45 @@ napi_value PublishPosix(
 
 #endif
 
+napi_value IsRemotePath(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 1) {
+    return ThrowError(env, "isRemotePath requires a path.", "EINVAL");
+  }
+
+  std::string path;
+  if (!ReadString(env, argv[0], &path) || path.empty()) {
+    return ThrowError(env, "Invalid remote-path query.", "EINVAL");
+  }
+
+  bool is_remote = false;
+#ifdef _WIN32
+  const std::wstring wide_path = Utf8ToWide(path);
+  if (wide_path.empty()) {
+    return ThrowError(env, "Invalid UTF-8 path for remote-path query.", "EINVAL");
+  }
+  HANDLE handle = CreateFileW(
+      wide_path.c_str(),
+      FILE_READ_ATTRIBUTES,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+      nullptr,
+      OPEN_EXISTING,
+      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+      nullptr);
+  if (handle == INVALID_HANDLE_VALUE) {
+    const DWORD error = GetLastError();
+    return ThrowError(env, "Could not inspect the storage path.", WindowsErrorCode(error));
+  }
+  is_remote = IsRemoteHandle(handle);
+  CloseHandle(handle);
+#endif
+
+  napi_value result;
+  napi_get_boolean(env, is_remote, &result);
+  return result;
+}
+
 napi_value PublishNoReplace(napi_env env, napi_callback_info info) {
   size_t argc = 4;
   napi_value argv[4];
@@ -499,6 +551,10 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(
       env, "publishNoReplace", NAPI_AUTO_LENGTH, PublishNoReplace, nullptr, &publish);
   napi_set_named_property(env, exports, "publishNoReplace", publish);
+  napi_value is_remote_path;
+  napi_create_function(
+      env, "isRemotePath", NAPI_AUTO_LENGTH, IsRemotePath, nullptr, &is_remote_path);
+  napi_set_named_property(env, exports, "isRemotePath", is_remote_path);
   return exports;
 }
 
