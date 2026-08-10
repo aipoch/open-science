@@ -172,6 +172,18 @@ describe('PermissionApprovalControls', () => {
     expect(html).toMatch(/data-testid="permission-actions" class="[^"]*sticky[^"]*bottom-0[^"]*"/)
   })
 
+  it('pins the permission title banner to the top while request content scrolls', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toMatch(/data-testid="permission-header" class="[^"]*sticky[^"]*top-0[^"]*"/)
+  })
+
   it('does not show the second queued request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

@@ -723,7 +723,14 @@ const PermissionApprovalControls = ({
       )}
     >
       {/* Header: plain-language action plus its classification and notebook context. */}
-      <div className="flex min-w-0 items-center gap-2">
+      <div
+        data-testid="permission-header"
+        className={cn(
+          'flex min-w-0 items-center gap-2',
+          embedded &&
+            'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
+        )}
+      >
         <div className="flex min-w-0 items-center gap-1.5">
           <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
             {presentation.actionTitle}

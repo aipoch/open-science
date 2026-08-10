@@ -404,8 +404,9 @@ describe('conversation message scroller integration', () => {
     )
     expect(permissionApprovalControlsSource).toContain('!embedded &&')
     // Header maintains min-w-0 for text truncation
+    expect(permissionApprovalControlsSource).toContain("'flex min-w-0 items-center gap-2'")
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex min-w-0 items-center gap-2"'
+      "'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card"
     )
     // Code block uses WorkspaceToolCodeBlock with max-height constraint
     expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')

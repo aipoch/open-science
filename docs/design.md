@@ -521,9 +521,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   pending. Its embedded content uses the panel's single border rather than nesting another card. The
   panel can grow upward only by the amount of currently hidden scroll overflow, never beyond
   `min(70dvh, 44rem)`; content that already fits cannot be stretched into empty space. At the maximum
-  height, remaining content scrolls inside the panel while the Allow/Deny action bar stays pinned to
-  the panel bottom. Pressing the resize hit area changes only the visible handle, not the full hit-area
-  background.
+  height, remaining content scrolls inside the panel while the title banner and Allow/Deny action bar
+  stay pinned to the panel top and bottom. Pressing the resize hit area changes only the visible
+  handle, not the full hit-area background.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
