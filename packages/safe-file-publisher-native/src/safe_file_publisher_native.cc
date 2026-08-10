@@ -1,6 +1,8 @@
 #include <node_api.h>
 
 #include <cerrno>
+#include <cstddef>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -115,14 +117,6 @@ bool SamePath(const std::wstring& left, const std::wstring& right) {
   return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
-bool SameFileIdentity(const BY_HANDLE_FILE_INFORMATION& left_info, HANDLE right) {
-  BY_HANDLE_FILE_INFORMATION right_info{};
-  if (!GetFileInformationByHandle(right, &right_info)) return false;
-  return left_info.dwVolumeSerialNumber == right_info.dwVolumeSerialNumber &&
-         left_info.nFileIndexHigh == right_info.nFileIndexHigh &&
-         left_info.nFileIndexLow == right_info.nFileIndexLow;
-}
-
 bool IsSameOrDescendant(const std::wstring& root, const std::wstring& candidate) {
   if (SamePath(root, candidate)) return true;
   if (candidate.size() <= root.size() ||
@@ -143,6 +137,8 @@ const char* WindowsErrorCode(DWORD error) {
       return "ENOENT";
     case ERROR_NOT_SAME_DEVICE:
       return "EXDEV";
+    case ERROR_INVALID_FUNCTION:
+    case ERROR_INVALID_PARAMETER:
     case ERROR_NOT_SUPPORTED:
       return "ENOTSUP";
     case ERROR_ACCESS_DENIED:
@@ -152,6 +148,27 @@ const char* WindowsErrorCode(DWORD error) {
       return "EIO";
   }
 }
+
+struct NativeIoStatusBlock {
+  union {
+    LONG status;
+    void* pointer;
+  };
+  ULONG_PTR information;
+};
+
+struct NativeFileLinkInformation {
+  BOOLEAN replace_if_exists;
+  HANDLE root_directory;
+  ULONG file_name_length;
+  WCHAR file_name[1];
+};
+
+using NtSetInformationFileFunction = LONG(NTAPI*)(
+    HANDLE, NativeIoStatusBlock*, void*, ULONG, ULONG);
+using RtlNtStatusToDosErrorFunction = ULONG(NTAPI*)(LONG);
+
+constexpr ULONG kFileLinkInformation = 11;
 
 napi_value PublishWindows(
     napi_env env,
@@ -266,59 +283,66 @@ napi_value PublishWindows(
     return ThrowError(env, "The publication source is outside the anchored parent.", "ELOOP");
   }
 
-  std::wstring destination_path = anchored_parent_path;
-  if (!destination_path.empty() && destination_path.back() != L'\\' &&
-      destination_path.back() != L'/') {
-    destination_path.push_back(L'\\');
-  }
-  destination_path.append(destination_name);
-  BY_HANDLE_FILE_INFORMATION source_identity{};
-  if (!GetFileInformationByHandle(source_handle, &source_identity)) {
+  const size_t destination_bytes = destination_name.size() * sizeof(wchar_t);
+  const size_t link_prefix_size = offsetof(NativeFileLinkInformation, file_name);
+  if (destination_bytes > MAXULONG - link_prefix_size) {
     CloseHandle(source_handle);
     CloseHandle(parent_handle);
     CloseHandle(root_handle);
-    return ThrowError(env, "Could not identify the publication source.", "EIO");
+    return ThrowError(env, "The publication destination name is too long.", "EINVAL");
+  }
+  size_t link_size = link_prefix_size + destination_bytes;
+  if (link_size < sizeof(NativeFileLinkInformation)) {
+    link_size = sizeof(NativeFileLinkInformation);
+  }
+  std::vector<unsigned char> link_buffer(link_size);
+  auto* link_info = reinterpret_cast<NativeFileLinkInformation*>(link_buffer.data());
+  link_info->replace_if_exists = FALSE;
+  link_info->root_directory = parent_handle;
+  link_info->file_name_length = static_cast<ULONG>(destination_bytes);
+  std::memcpy(link_info->file_name, destination_name.data(), destination_bytes);
+
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  const auto nt_set_information_file =
+      ntdll == nullptr
+          ? nullptr
+          : reinterpret_cast<NtSetInformationFileFunction>(
+                GetProcAddress(ntdll, "NtSetInformationFile"));
+  const auto rtl_nt_status_to_dos_error =
+      ntdll == nullptr
+          ? nullptr
+          : reinterpret_cast<RtlNtStatusToDosErrorFunction>(
+                GetProcAddress(ntdll, "RtlNtStatusToDosError"));
+  if (nt_set_information_file == nullptr || rtl_nt_status_to_dos_error == nullptr) {
+    CloseHandle(source_handle);
+    CloseHandle(parent_handle);
+    CloseHandle(root_handle);
+    return ThrowError(env, "Handle-relative publication is unavailable.", "ENOTSUP");
   }
 
-  // Like the Linux linkat fallback, a hard link publishes the complete file atomically without
-  // replacing an existing destination. Removing the verified temporary alias is best effort.
-  const BOOL linked = CreateHardLinkW(destination_path.c_str(), source_path.c_str(), nullptr);
-  const DWORD link_error = linked ? ERROR_SUCCESS : GetLastError();
-  HANDLE destination_handle = INVALID_HANDLE_VALUE;
+  // FileLinkInformation binds both the already-open source and parent handles while creating the
+  // destination atomically without replacement. Removing the temporary alias is best effort.
+  NativeIoStatusBlock io_status{};
+  const LONG link_status = nt_set_information_file(
+      source_handle,
+      &io_status,
+      link_info,
+      static_cast<ULONG>(link_buffer.size()),
+      kFileLinkInformation);
+  const bool linked = link_status >= 0;
+  const DWORD link_error =
+      linked ? ERROR_SUCCESS : rtl_nt_status_to_dos_error(link_status);
   if (linked) {
-    destination_handle = CreateFileW(
-        destination_path.c_str(),
-        FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT,
-        nullptr);
-  }
-  const DWORD destination_error =
-      destination_handle == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
-  const bool landed_at_destination =
-      destination_handle != INVALID_HANDLE_VALUE &&
-      SameFileIdentity(source_identity, destination_handle);
-  if (landed_at_destination) {
     FILE_DISPOSITION_INFO disposition{};
     disposition.DeleteFile = TRUE;
     (void)SetFileInformationByHandle(
         source_handle, FileDispositionInfo, &disposition, sizeof(disposition));
   }
-  if (destination_handle != INVALID_HANDLE_VALUE) CloseHandle(destination_handle);
   CloseHandle(source_handle);
   CloseHandle(parent_handle);
   CloseHandle(root_handle);
   if (!linked) {
     return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(link_error));
-  }
-  if (destination_handle == INVALID_HANDLE_VALUE) {
-    return ThrowError(env, "Could not reopen the publication destination.",
-                      WindowsErrorCode(destination_error));
-  }
-  if (!landed_at_destination) {
-    return ThrowError(env, "Atomic publication landed outside its destination.", "EIO");
   }
 
   napi_value undefined;
