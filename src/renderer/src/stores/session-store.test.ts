@@ -1726,7 +1726,8 @@ describe('session store', () => {
   it('creates a pending first message before a runtime session id exists', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      enabledComputeHosts: ['ssh:lab']
     })
 
     expect(result?.sessionId).toMatch(/^pending-session-/)
@@ -1736,6 +1737,7 @@ describe('session store', () => {
         id: result?.sessionId,
         isPending: true,
         cwd: '/workspace/project',
+        enabledComputeHosts: ['ssh:lab'],
         title: 'Help me inspect this notebook',
         status: 'running',
         activeRun: {
@@ -4359,7 +4361,6 @@ describe('session store public contract', () => {
         'setElicitationDraftAnswers',
         'setElicitationHistoryReplayRequest',
         'setElicitationPending',
-        'setEnabledComputeHosts',
         'setFixLoopActive',
         'setPermissionPending',
         'setPermissionProfile',
@@ -5626,6 +5627,27 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Acknowledged title',
       elicitationHistoryReplayRequestId: 'choice-retry'
+    })
+  })
+
+  it('projects enabled Compute Host authority without replacing newer local state', () => {
+    seedSession()
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', 'Newer local title')
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        enabledComputeHosts: ['ssh:lab'],
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'enabled-compute-hosts-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Newer local title',
+      enabledComputeHosts: ['ssh:lab']
     })
   })
 })

@@ -692,10 +692,9 @@ export interface OpenScienceAPI {
     jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated(listener: (job: JobSummary) => void): () => void
-    // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);
-    // the main-process registry is the runtime cache for list_compute RPC ops.
+    // Per-session enabled Compute Hosts. Main owns durable Session JSON and projects the runtime cache.
     enabledHostsGet(sessionId: string): Promise<string[]>
-    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<void>
+    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<PersistedChatSession>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

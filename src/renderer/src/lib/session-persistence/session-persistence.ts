@@ -45,7 +45,6 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
-  'enabledComputeHosts',
   'pinned',
   'specialistId'
 ] as const satisfies readonly SessionConflictRebaseField[]
@@ -55,13 +54,7 @@ const conflictRebaseFieldChanged = (
   next: ChatSession,
   field: SessionConflictRebaseField
 ): boolean => {
-  if (field !== 'enabledComputeHosts') return previous[field] !== next[field]
-  const previousHosts = previous.enabledComputeHosts ?? []
-  const nextHosts = next.enabledComputeHosts ?? []
-  return (
-    previousHosts.length !== nextHosts.length ||
-    previousHosts.some((host, index) => host !== nextHosts[index])
-  )
+  return previous[field] !== next[field]
 }
 
 const mergeSaveSessionOptions = (

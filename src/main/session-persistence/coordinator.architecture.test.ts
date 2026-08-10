@@ -439,6 +439,7 @@ describe('Session persistence coordinator architecture', () => {
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
         'patchSessionRuntimeContext',
+        'pruneSessionEnabledComputeHosts',
         'readChildren',
         'readSessionRuntimeContext',
         'recoverInterruptedDelegatedWork',
@@ -451,6 +452,7 @@ describe('Session persistence coordinator architecture', () => {
         'sessionMetadataSnapshot',
         'sessionProjectId',
         'setSessionDeletionHandlers',
+        'setSessionEnabledComputeHosts',
         'settleMessage',
         'startAttemptRuntime',
         'startContinuationAttempt',
@@ -797,13 +799,15 @@ describe('Session persistence coordinator architecture', () => {
         'markMetadataIncomplete',
         'metadataSnapshot',
         'patchRuntimeContext',
+        'pruneEnabledComputeHosts',
         'readRuntimeContext',
         'recordSession',
         'removeProject',
         'removeSession',
         'replaceMetadata',
         'saveSession',
-        'sessionProjectId'
+        'sessionProjectId',
+        'setEnabledComputeHosts'
       ].sort()
     )
     expect(methods(stateOwner, 'private')).toEqual(['loadRuntimeContextSession'])
@@ -873,12 +877,14 @@ describe('Session persistence coordinator architecture', () => {
       loadPersistedSideChats: ['sideChatOwner.loadCatalog'],
       markCommittedProjectSessionsPrepared: ['deletionOwner.markCommittedProjectSessionsPrepared'],
       patchSessionRuntimeContext: ['stateOwner.patchRuntimeContext'],
+      pruneSessionEnabledComputeHosts: ['stateOwner.pruneEnabledComputeHosts'],
       readSessionRuntimeContext: ['stateOwner.readRuntimeContext'],
       saveSession: ['stateOwner.saveSession'],
       saveSessionSpecialistBinding: ['stateOwner.saveSession'],
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
+      setSessionEnabledComputeHosts: ['stateOwner.setEnabledComputeHosts'],
       readChildren: ['delegatedWorkOwner.readChildren'],
       recoverInterruptedDelegatedWork: ['delegatedWorkOwner.recoverInterruptedDelegatedWork'],
       settleMessage: ['delegatedWorkOwner.settleMessage'],

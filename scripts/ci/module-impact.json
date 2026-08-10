@@ -187,10 +187,16 @@
         "src/main/compute/job-dispatcher.ts",
         "src/main/compute/job-poller.ts",
         "src/main/compute/job-repository.ts",
+        "src/main/compute/enabled-hosts-registry.ts",
+        "src/main/compute/session-enabled-hosts-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
         "src/main/compute/compute-service.ts"
       ],
-      "interfacePaths": ["src/main/compute/compute-service.ts", "src/main/compute/ipc.ts"],
+      "interfacePaths": [
+        "src/main/compute/compute-service.ts",
+        "src/main/compute/ipc.ts",
+        "src/main/compute/electron-ipc-adapter.ts"
+      ],
       "consumerModules": [],
       "testFiles": {
         "owner": [
@@ -200,6 +206,7 @@
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",
           "src/main/compute/compute-remote-operation-owner.test.ts",
+          "src/main/compute/session-enabled-hosts-owner.test.ts",
           "src/main/compute/permission-grant-adapter.test.ts",
           "src/main/compute/compute-service.test.ts",
           "src/main/compute/compute-jobs.integration.test.ts",

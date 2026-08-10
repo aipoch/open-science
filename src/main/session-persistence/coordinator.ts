@@ -672,6 +672,31 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     )
   }
 
+  setSessionEnabledComputeHosts(
+    projectId: string,
+    sessionId: string,
+    providerIds: readonly string[]
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(() =>
+      this.stateOwner.setEnabledComputeHosts(projectId, sessionId, providerIds)
+    )
+  }
+
+  pruneSessionEnabledComputeHosts(
+    validProviderIds: readonly string[]
+  ): Promise<PersistedChatSession[]> {
+    return this.enqueue(async () => {
+      const scan = await this.repository.loadAllWithDiagnostics()
+      if (!scan.isComplete) {
+        throw new Error('Cannot prune Compute Hosts without a complete Session catalog.')
+      }
+      return this.stateOwner.pruneEnabledComputeHosts(
+        scan.result.sessions,
+        new Set(validProviderIds)
+      )
+    })
+  }
+
   // Joins late Session-owned side effects (for example Upload finalization) to the same ordering
   // boundary as JSON save and deletion. The mutation is rejected after a Session/Project tombstone.
   runSessionMutation<Result>(

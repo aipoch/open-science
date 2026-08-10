@@ -1,7 +1,7 @@
 import { installAcpIpcHandlers } from './acp/ipc'
 import type { AcpHandlerWorkflows } from './acp/handler-workflows'
 import type { AcpRuntimeCoordinator } from './acp/runtime-coordinator'
-import { installComputeIpcHandlers, type ComputeIpcModule } from './compute/ipc'
+import { installComputeIpcHandlers, type ComputeIpcAdapter } from './compute/ipc'
 import type { ElicitationResponse } from '../shared/acp'
 
 type Awaitable<T> = T | Promise<T>
@@ -17,7 +17,7 @@ export type NamedElectronSurfaceAdapter = {
 
 export type ElectronRuntimeAdapterInterfaces = {
   readonly beforeCompute: readonly NamedElectronSurfaceAdapter[]
-  readonly compute: Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>
+  readonly compute: ComputeIpcAdapter
   readonly beforeAcp: readonly NamedElectronSurfaceAdapter[]
   readonly acp: {
     runtime: AcpRuntimeCoordinator

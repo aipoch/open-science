@@ -116,7 +116,6 @@ const WorkspacePage = ({
   const currentDraftKey = selectedSessionId ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
-  const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   // Only sessions belonging to the active project are shown in this workspace.
@@ -463,13 +462,10 @@ const WorkspacePage = ({
     sideChat: canEditDraft && !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     setAutoReviewEnabled,
-    setEnabledComputeHosts,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationEnabledComputeHosts([])
     },
-    syncComputeHosts: (sessionId, providerIds) =>
-      window.api.compute.enabledHostsSet(sessionId, providerIds),
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
@@ -707,21 +703,6 @@ const WorkspacePage = ({
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
 
-  // Sync the active session's enabled compute hosts to the main-process registry when switching
-  // sessions. The registry is the runtime source for list_compute RPC ops; the session JSON is the
-  // durable source. Toggle updates also sync directly in handleComputeHostToggle.
-  useEffect(() => {
-    if (!activeSessionId) return
-    // Read from store snapshot to avoid stale closure on activeEnabledComputeHosts.
-    const session = useSessionStore.getState().sessions.find((s) => s.id === activeSessionId)
-    void window.api.compute
-      .enabledHostsSet(activeSessionId, session?.enabledComputeHosts ?? [])
-      .catch((err: unknown) => {
-        console.warn('Failed to sync enabled compute hosts to registry', err)
-      })
-    // Only re-run when the active session changes (session switch). Toggle handler syncs directly.
-  }, [activeSessionId])
-
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
   const openNewConversation = useCallback((): void => {
     if (!isSessionPersistenceReady) return
@@ -811,7 +792,7 @@ const WorkspacePage = ({
   // Enables or disables a compute host for the active session (single-select semantics).
   // Enabling one host replaces any existing selection; disabling clears the set.
   // For a not-yet-created conversation, the Conversation submit transaction stamps this draft state
-  // onto the new session. Existing sessions update the store and main-process registry immediately.
+  // onto the new session. Existing sessions update only from the durable command result.
   const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
     // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
     const newEnabledHosts = enabled ? [providerId] : []
@@ -819,13 +800,20 @@ const WorkspacePage = ({
       setNewConversationEnabledComputeHosts(newEnabledHosts)
       return
     }
-    const sessionId = activeSession.id
-    setEnabledComputeHosts(sessionId, newEnabledHosts)
-    // Keep the main-process registry in sync immediately so list_compute() reflects the change
-    // without waiting for the next session-switch effect.
-    void window.api.compute.enabledHostsSet(sessionId, newEnabledHosts).catch((err: unknown) => {
-      console.warn('Failed to sync enabled compute hosts to registry', err)
-    })
+    const source = activeSession
+    setAttachmentError(null)
+    void window.api.compute
+      .enabledHostsSet(source.id, newEnabledHosts)
+      .then((session) => {
+        useSessionStore.getState().applyDurableSessionProjection({
+          source,
+          session,
+          mode: 'enabled-compute-hosts-authority'
+        })
+      })
+      .catch((error: unknown) => {
+        setAttachmentError(error instanceof Error ? error.message : String(error))
+      })
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the

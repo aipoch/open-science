@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
@@ -139,6 +140,18 @@ const useLifecycleSync = ({
               source,
               session,
               mode: 'permission-authority'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'enabled-compute-hosts-authority'
             })
           } else {
             store.upsertPersistedSession(session)

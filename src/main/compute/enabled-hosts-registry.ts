@@ -1,7 +1,5 @@
-// In-memory registry mapping sessionId → enabled compute providerIds (set semantics, array storage).
-// Populated when the renderer calls the set IPC after loading a session, and updated on each toggle.
-// The registry is the authoritative source for `list_compute` RPC ops — the renderer is the
-// persistent source (session JSON), the main process is the runtime cache.
+// Derived runtime projection mapping Session id → enabled Compute Host provider ids. Durable Session
+// JSON is the authority; this cache only serves synchronous list_compute lookups.
 export class EnabledComputeHostsRegistry {
   private readonly map = new Map<string, Set<string>>()
 
@@ -22,6 +20,21 @@ export class EnabledComputeHostsRegistry {
 
   clear(sessionId: string): void {
     this.map.delete(sessionId)
+  }
+
+  removeProvider(providerId: string): void {
+    for (const [sessionId, providerIds] of this.map) {
+      providerIds.delete(providerId)
+      if (providerIds.size === 0) this.map.delete(sessionId)
+    }
+  }
+
+  reconcile(
+    entries: Iterable<readonly [sessionId: string, providerIds: readonly string[]]>,
+    isComplete: boolean
+  ): void {
+    if (isComplete) this.map.clear()
+    for (const [sessionId, providerIds] of entries) this.set(sessionId, [...providerIds])
   }
 }
 

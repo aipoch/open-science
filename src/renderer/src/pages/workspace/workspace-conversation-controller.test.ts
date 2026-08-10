@@ -97,9 +97,7 @@ const options = (
     },
     sideChatOpen: false,
     setAutoReviewEnabled: vi.fn(),
-    setEnabledComputeHosts: vi.fn(),
     resetNewConversationSettings: vi.fn(),
-    syncComputeHosts: vi.fn(() => Promise.resolve()),
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
     ...overrides
@@ -352,7 +350,7 @@ describe('workspace conversation controller', () => {
     )
   })
 
-  it('stamps new-Session Review and Compute intent only after submit succeeds', async () => {
+  it('includes new-Session Compute intent in creation and stamps Review after submit succeeds', async () => {
     const input = options({
       activeSession: undefined,
       currentDraftKey: 'new:project-a',
@@ -375,8 +373,9 @@ describe('workspace conversation controller', () => {
     await vi.waitFor(() => expect(input.resetNewConversationSettings).toHaveBeenCalled())
 
     expect(input.setAutoReviewEnabled).toHaveBeenCalledWith('pending-session', true)
-    expect(input.setEnabledComputeHosts).toHaveBeenCalledWith('pending-session', ['ssh:lab'])
-    expect(input.syncComputeHosts).toHaveBeenCalledWith('pending-session', ['ssh:lab'])
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledComputeHosts: ['ssh:lab'] })
+    )
     expect(input.session.actions.resetNewConversationSpecialist).toHaveBeenCalledOnce()
   })
 

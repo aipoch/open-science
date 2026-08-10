@@ -479,7 +479,8 @@ const sendIntentKeys = [
   'forcedSkillIds',
   'referencedArtifacts',
   'parts',
-  'specialistId'
+  'specialistId',
+  'enabledComputeHosts'
 ] as const
 const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))

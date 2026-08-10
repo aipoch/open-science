@@ -76,9 +76,7 @@ type WorkspaceConversationControllerOptions = {
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
   setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
-  setEnabledComputeHosts: (sessionId: string, providerIds: string[]) => void
   resetNewConversationSettings: () => void
-  syncComputeHosts: (sessionId: string, providerIds: string[]) => Promise<unknown>
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
 }
@@ -219,7 +217,10 @@ const useWorkspaceConversationController = (
             permissionProfile: current.permissionProfile,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),
-            specialistId: draftSpecialistId
+            specialistId: draftSpecialistId,
+            ...(wasNewConversation && computeHosts.length > 0
+              ? { enabledComputeHosts: computeHosts }
+              : {})
           })
           .catch((error: unknown) => {
             composer.actions.setError(errorMessage(error))
@@ -232,17 +233,6 @@ const useWorkspaceConversationController = (
             }
             if (wasNewConversation && autoReviewEnabled) {
               current.setAutoReviewEnabled(result.sessionId, true)
-            }
-            if (wasNewConversation && computeHosts.length > 0) {
-              current.setEnabledComputeHosts(result.sessionId, computeHosts)
-              void current
-                .syncComputeHosts(result.sessionId, computeHosts)
-                .catch((error: unknown) =>
-                  console.warn(
-                    'Failed to sync draft compute hosts to registry for new session',
-                    error
-                  )
-                )
             }
             current.resetNewConversationSettings()
             session.actions.resetNewConversationSpecialist()

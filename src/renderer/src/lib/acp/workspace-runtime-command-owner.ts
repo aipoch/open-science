@@ -43,6 +43,7 @@ type SendWorkspaceMessageIntent = {
   referencedArtifacts?: FileReference[]
   parts?: MessagePart[]
   specialistId?: string | null
+  enabledComputeHosts?: string[]
 }
 
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
@@ -566,7 +567,8 @@ const sendWorkspaceMessage = async (
     agentFrameworkId: input.agentFrameworkId,
     agentBackendId: input.agentBackendId,
     agentModel: input.agentModel,
-    specialistId: input.specialistId ?? undefined
+    specialistId: input.specialistId ?? undefined,
+    enabledComputeHosts: input.enabledComputeHosts
   })
   if (!pending) return undefined
   startPendingPrompt(runtime, {

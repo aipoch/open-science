@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   type ProjectDeletedEvent,
   type SessionDeletedEvent,
@@ -184,6 +185,31 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated session')
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('projects enabled Compute Host authority without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([session])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Keep this live prompt'
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...toPersistedSession(source),
+          enabledComputeHosts: ['ssh:lab'],
+          updatedAt: source.updatedAt + 1
+        }
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      enabledComputeHosts: ['ssh:lab'],
+      messages: [expect.objectContaining({ content: 'Keep this live prompt' })]
+    })
   })
 
   it('merges Main-owned permission authority without replacing live chat state', async () => {
