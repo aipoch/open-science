@@ -194,6 +194,16 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     () => pendingWorkspacePermissions(restoredPermissionSessions, runtime.state.pendingPermissions),
     [restoredPermissionSessions, runtime.state.pendingPermissions]
   )
+  const [respondingPermissionRequestIds, setRespondingPermissionRequestIds] = useState<string[]>([])
+  const visiblePendingPermissions = useMemo(
+    () =>
+      respondingPermissionRequestIds.length === 0
+        ? pendingPermissions
+        : pendingPermissions.filter(
+            (request) => !respondingPermissionRequestIds.includes(request.requestId)
+          ),
+    [pendingPermissions, respondingPermissionRequestIds]
+  )
   const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
     string[]
   >([])
@@ -377,6 +387,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       }
 
       const attempt: PermissionResponseAttempt = { accepted: false, promise: Promise.resolve() }
+      setRespondingPermissionRequestIds((current) =>
+        current.includes(requestId) ? current : [...current, requestId]
+      )
       const response = (async (): Promise<void> => {
         const request = pendingPermissions.find((item) => item.requestId === requestId)
         const isRestoredRequest = Boolean(
@@ -466,6 +479,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         }
       })()
       const tracked = response.finally(() => {
+        setRespondingPermissionRequestIds((current) =>
+          current.includes(requestId) ? current.filter((id) => id !== requestId) : current
+        )
         // A permission request id is one-shot authority. Keep successful responses coalesced for
         // stale renders, releasing it only when Main explicitly re-arms the durable request.
         if (!attempt.accepted && permissionResponseAttemptsRef.current.get(requestId) === attempt) {
@@ -494,7 +510,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   return {
     actionError: runtime.actionError,
     isConnecting: runtime.isConnecting,
-    pendingPermissions,
+    pendingPermissions: visiblePendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,
     permissionGrants: runtime.state.permissionGrants,
     contextUsageBySession: runtime.state.contextUsageBySession,

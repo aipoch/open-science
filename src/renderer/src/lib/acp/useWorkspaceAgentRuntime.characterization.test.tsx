@@ -309,6 +309,41 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(useSessionStore.getState().sessions[0]?.permissionProfile).toBe('auto')
   })
 
+  it('hides a live permission immediately while its response is pending', async () => {
+    const request = {
+      requestId: 'permission-live',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Allow command?',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const deferred = createDeferred<AcpStateSnapshot>()
+    const runtime = createRuntime(
+      createSnapshot({ sessionIds: ['session-1'], pendingPermissions: [request] })
+    )
+    runtime.respondToPermission.mockImplementation(async () => {
+      const snapshot = await deferred.promise
+      runtime.state = snapshot
+      return snapshot
+    })
+    runtimeMock.current = runtime
+    await render()
+
+    expect(latest.pendingPermissions).toEqual([request])
+
+    let response!: Promise<void>
+    act(() => {
+      response = latest.respondToPermission('permission-live', 'allow-once')
+    })
+
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+    expect(latest.pendingPermissions).toEqual([])
+
+    deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    await act(async () => response)
+    expect(latest.pendingPermissions).toEqual([])
+  })
+
   it('reattaches a restored permission wait before sending its main-validated decision', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
