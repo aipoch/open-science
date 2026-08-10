@@ -4,6 +4,7 @@
     "session_renderer": {
       "ownerPaths": [
         "src/renderer/src/stores/session-store.ts",
+        "src/renderer/src/stores/session-store-interaction-state.ts",
         "src/renderer/src/stores/session-store-persistence-owner.ts",
         "src/renderer/src/stores/session-store-message-graph-owner.ts",
         "src/renderer/src/stores/session-store-message-graph-helpers.ts",

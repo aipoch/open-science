@@ -15,6 +15,7 @@ import {
   completeOpenActivityGroups,
   failOpenActivities
 } from './session-store-run-activity-helpers'
+import { projectSessionInteractionState } from './session-store-interaction-state'
 import type { ChatMessage, ChatSession, ToolActivity } from './session-store-persistence-owner'
 
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
@@ -29,7 +30,8 @@ const CLEARED_AGENT_RUN_STATE = {
   agentStatus: undefined,
   awaitingFirstAgentOutput: undefined,
   agentPromptInFlight: undefined,
-  compacting: undefined
+  compacting: undefined,
+  interactionState: undefined
 } satisfies Pick<
   ChatSession,
   | 'activeRun'
@@ -38,6 +40,7 @@ const CLEARED_AGENT_RUN_STATE = {
   | 'awaitingFirstAgentOutput'
   | 'agentPromptInFlight'
   | 'compacting'
+  | 'interactionState'
 >
 
 const settleConversationGraphSyncFailure = (
@@ -186,21 +189,7 @@ export const projectAgentPromptInFlight = (
 }
 
 export const projectElicitationPending = (session: ChatSession, pending: boolean): ChatSession => {
-  if (pending) {
-    if (session.status === 'waiting-for-user') return session
-    return { ...session, status: 'waiting-for-user', updatedAt: Date.now() }
-  }
-  if (session.status !== 'waiting-for-user') return session
-  return {
-    ...session,
-    status:
-      session.activePlanProjection?.lifecycle === 'awaiting_approval'
-        ? 'waiting-plan-approval'
-        : session.activeRun || session.agentPromptInFlight
-          ? 'running'
-          : 'idle',
-    updatedAt: Date.now()
-  }
+  return projectSessionInteractionState(session, { elicitation: pending })
 }
 
 export const projectPermissionPending = (
@@ -214,12 +203,12 @@ export const projectPermissionPending = (
   if (rearmAuthority && runtimeContext && permission) {
     nextRuntimeContext = { ...runtimeContext, permission: { ...permission, state: 'pending' } }
   }
-  const status =
-    session.status === 'waiting-for-user' || session.status === 'waiting-plan-approval'
-      ? session.status
-      : 'waiting-permission'
-  if (nextRuntimeContext === runtimeContext && status === session.status) return session
-  return { ...session, runtimeContext: nextRuntimeContext, status, updatedAt: Date.now() }
+  return projectSessionInteractionState(
+    nextRuntimeContext === runtimeContext
+      ? session
+      : { ...session, runtimeContext: nextRuntimeContext },
+    { permission: true }
+  )
 }
 
 export const projectPermissionCleared = (
@@ -245,14 +234,12 @@ export const projectPermissionCleared = (
     delete settledRuntimeContext.permission
     nextRuntimeContext = settledRuntimeContext
   }
-  const status =
-    session.status === 'waiting-permission'
-      ? session.activeRun || session.agentPromptInFlight
-        ? 'running'
-        : 'idle'
-      : session.status
-  if (nextRuntimeContext === runtimeContext && status === session.status) return session
-  return { ...session, runtimeContext: nextRuntimeContext, status, updatedAt: Date.now() }
+  return projectSessionInteractionState(
+    nextRuntimeContext === runtimeContext
+      ? session
+      : { ...session, runtimeContext: nextRuntimeContext },
+    { permission: false }
+  )
 }
 
 export const projectArtifactError = (session: ChatSession, error: string): ChatSession => ({

@@ -277,8 +277,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   }, [agentPromptInFlightSessionIds, runtime.state])
 
   useEffect(() => {
-    syncWorkspacePermissionState(pendingPermissions)
     syncWorkspaceElicitationState(runtime.state.pendingElicitations ?? [])
+    syncWorkspacePermissionState(pendingPermissions)
   }, [pendingPermissions, runtime.state.pendingElicitations])
 
   useEffect(() => {

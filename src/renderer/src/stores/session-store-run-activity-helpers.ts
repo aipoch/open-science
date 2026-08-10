@@ -5,6 +5,7 @@ import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { PersistedActivityGroup } from '../../../shared/session-persistence'
 import { createSortIndex } from './session-store-message-graph-owner'
+import { inferSessionInteractionState } from './session-store-interaction-state'
 import type {
   ChatSession,
   SessionStatus,
@@ -127,30 +128,41 @@ export const projectActivePlan = (
           previous
         ]
       : session.planHistoryProjections
+  const interactionState = inferSessionInteractionState(session)
+  const planWaiting = projection.lifecycle === 'awaiting_approval'
+  const interactionStatus = interactionState.permission
+    ? 'waiting-permission'
+    : interactionState.elicitation
+      ? 'waiting-for-user'
+      : planWaiting
+        ? 'waiting-plan-approval'
+        : undefined
   return {
     ...session,
     ...(replaced ? { planHistoryProjections: replaced } : {}),
     activePlanProjection: projection,
-    status:
-      session.compacting || session.status === 'waiting-for-user'
-        ? session.status
-        : projection.lifecycle === 'awaiting_approval'
-          ? 'waiting-plan-approval'
-          : projection.lifecycle === 'rejected'
-            ? session.activeRun
-              ? 'running'
-              : 'idle'
-            : projection.lifecycle === 'blocked'
-              ? 'idle'
-              : projection.lifecycle === 'completed'
+    interactionState: {
+      ...interactionState,
+      plan: planWaiting
+    },
+    status: session.compacting
+      ? session.status
+      : (interactionStatus ??
+        (projection.lifecycle === 'rejected'
+          ? session.activeRun
+            ? 'running'
+            : 'idle'
+          : projection.lifecycle === 'blocked'
+            ? 'idle'
+            : projection.lifecycle === 'completed'
+              ? session.activeRun
+                ? 'running'
+                : 'idle'
+              : projection.approval === 'approved'
                 ? session.activeRun
                   ? 'running'
                   : 'idle'
-                : projection.approval === 'approved'
-                  ? session.activeRun
-                    ? 'running'
-                    : 'idle'
-                  : session.status,
+                : session.status)),
     updatedAt: Date.now()
   }
 }

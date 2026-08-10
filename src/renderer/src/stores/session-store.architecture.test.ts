@@ -89,6 +89,7 @@ const resolveImportTarget = (sourcePath: string, specifier: string): string | un
 }
 
 const ownerNames = [
+  'session-store-interaction-state',
   'session-store-message-graph-helpers',
   'session-store-message-graph-owner',
   'session-store-persistence-owner',
@@ -996,6 +997,7 @@ describe('Session Store architecture', () => {
     expect(manifest.modules.session_renderer).toMatchObject({
       ownerPaths: [
         'src/renderer/src/stores/session-store.ts',
+        'src/renderer/src/stores/session-store-interaction-state.ts',
         'src/renderer/src/stores/session-store-persistence-owner.ts',
         'src/renderer/src/stores/session-store-message-graph-owner.ts',
         'src/renderer/src/stores/session-store-message-graph-helpers.ts',

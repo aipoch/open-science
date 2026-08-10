@@ -285,6 +285,11 @@ const syncWorkspaceAgentFirstOutputState = (sessionIds: string[]): void => {
 const syncWorkspacePermissionState = (requests: AcpPermissionRequest[]): void => {
   const nextSessionIds = new Set(requests.map((request) => request.sessionId))
   const store = useSessionStore.getState()
+  for (const session of store.sessions) {
+    if (session.runtimeContext?.permission?.state === 'pending') {
+      nextSessionIds.add(session.id)
+    }
+  }
 
   for (const sessionId of nextSessionIds) {
     store.setPermissionPending(sessionId)
@@ -309,7 +314,7 @@ const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): v
   )
   for (const session of store.sessions) {
     if (
-      session.status === 'waiting-for-user' &&
+      (session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
       session.activities?.some(
         (activity) =>
           activity.elicitation?.state === 'pending' &&
@@ -339,8 +344,8 @@ const syncWorkspaceInteractionState = (
   >
 ): void => {
   syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
-  syncWorkspacePermissionState(snapshot.pendingPermissions)
   syncWorkspaceElicitationState(snapshot.pendingElicitations ?? [])
+  syncWorkspacePermissionState(snapshot.pendingPermissions)
 }
 
 const resetWorkspaceRuntimeEventOwnerForTests = (): void => {

@@ -156,6 +156,7 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
     options.isPersistenceReady &&
     options.activeSession.status !== 'waiting-for-user' &&
     options.activeSession.status !== 'waiting-permission' &&
+    options.activeSession.status !== 'waiting-plan-approval' &&
     options.composer.view.transfers.length === 0 &&
     options.composer.view.attachments.length === 0 &&
     docToText(options.composer.view.doc).trim()

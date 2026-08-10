@@ -502,6 +502,7 @@ const ConversationPanel = ({
     hasMainConversation(activeSession) &&
     activeSession?.status !== 'waiting-for-user' &&
     activeSession?.status !== 'waiting-permission' &&
+    activeSession?.status !== 'waiting-plan-approval' &&
     canEditDraft &&
     hasTextDraft &&
     attachments.length === 0 &&

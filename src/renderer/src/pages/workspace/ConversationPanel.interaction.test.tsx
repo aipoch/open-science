@@ -1119,6 +1119,31 @@ describe('ConversationPanel composer intake', () => {
     }
   )
 
+  it('keeps Side chat disabled while the main Session is waiting-plan-approval', () => {
+    const onStartSideChat = vi.fn()
+    renderPanel({
+      activeSession: {
+        id: 'session-plan-waiting',
+        projectId: 'project-a',
+        title: 'Waiting Plan',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        messages: planOriginMessages(),
+        createdAt: 1,
+        updatedAt: 2
+      },
+      canSendMessage: false,
+      canEditDraft: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+      onStartSideChat
+    })
+
+    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(item.disabled).toBe(true)
+    act(() => item.click())
+    expect(onStartSideChat).not.toHaveBeenCalled()
+  })
+
   it('explains why strict Side chat is unavailable for an unsupported backend', () => {
     const reason = 'Strict tool isolation is unavailable.'
     renderPanel({
@@ -1311,20 +1336,24 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it('keeps main approval and ask-user surfaces waiting while Side chat is open', () => {
+    const activeSession: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Existing session',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const pendingPermissions = [{} as never]
+    const pendingElicitations = [{} as never]
+
     renderPanel({
-      activeSession: {
-        id: 'session-existing',
-        projectId: 'project-a',
-        title: 'Existing session',
-        cwd: '/workspace',
-        status: 'waiting-permission',
-        interrupted: true,
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2
-      },
-      pendingPermissions: [{} as never],
-      pendingElicitations: [{} as never],
+      activeSession,
+      pendingPermissions,
+      pendingElicitations,
       sideChat: {
         generation: 1,
         parentSessionId: 'session-existing',
@@ -1346,6 +1375,55 @@ describe('ConversationPanel composer intake', () => {
       container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
     ).toBe('0')
     expect(getComposerForm().hidden).toBe(true)
+
+    renderPanel({ activeSession, pendingPermissions, pendingElicitations })
+
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
+    ).toBe('1')
+  })
+
+  it('reveals a waiting Plan immediately after Side chat closes', () => {
+    const activeSession: ChatSession = {
+      id: 'session-plan-under-side-chat',
+      projectId: 'project-a',
+      title: 'Plan under Side chat',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages: planOriginMessages(),
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({
+      activeSession,
+      sideChat: {
+        generation: 1,
+        parentSessionId: activeSession.id,
+        projectId: activeSession.projectId,
+        sideSessionId: 'side-plan',
+        draft: '',
+        running: false,
+        entries: []
+      },
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    })
+
+    expect(container.querySelector('[data-testid="plan-composer"]')).toBeNull()
+
+    renderPanel({ activeSession })
+
+    expect(container.querySelector('[data-testid="plan-composer"]')).not.toBeNull()
   })
 
   it('disables Plan first for an attachment-only draft', () => {

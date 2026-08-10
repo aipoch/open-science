@@ -186,7 +186,7 @@ describe('workspace conversation controller', () => {
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
 
-  it.each(['waiting-for-user', 'waiting-permission'] as const)(
+  it.each(['waiting-for-user', 'waiting-permission', 'waiting-plan-approval'] as const)(
     'does not start Side chat while the main Session is %s',
     (status) => {
       const input = options({

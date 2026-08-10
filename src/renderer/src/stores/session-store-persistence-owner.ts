@@ -29,6 +29,11 @@ import {
   type PersistedToolActivity,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
+import {
+  inferSessionInteractionState,
+  resolveSessionInteractionStatus,
+  type SessionInteractionState
+} from './session-store-interaction-state'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -85,6 +90,9 @@ export type ChatSession = Omit<
   branchSwitchBlocked?: boolean
   conversationGraphSyncBlocked?: boolean
   pendingContextReplayMessageId?: string
+  // Transient independent facts for the blocking lane. Plan remains owned by its durable
+  // projection, while Side chat remains an overlay that never settles these facts.
+  interactionState?: SessionInteractionState
 }
 
 export type SessionStoreData = {
@@ -153,6 +161,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
     branchSwitchBlocked,
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
+    interactionState,
     activePlanProjection,
     planHistoryProjections,
     runtimeContext,
@@ -174,6 +183,7 @@ export const toPersistedSession = (session: ChatSession): PersistedChatSession =
   void branchSwitchBlocked
   void conversationGraphSyncBlocked
   void pendingContextReplayMessageId
+  void interactionState
   void activePlanProjection
   void runtimeContext
 
@@ -207,16 +217,19 @@ export const hydrateToolActivity = (activity: PersistedToolActivity): ToolActivi
 })
 
 // Maps a persisted session (with bounded activities) back into the in-memory chat session shape.
-export const hydrateSession = (session: PersistedChatSession): ChatSession => ({
-  ...session,
-  permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
-  activities: session.activities?.map(hydrateToolActivity),
-  interrupted:
-    session.resumeRecovery?.kind === 'resume-required' ||
-    session.error === INTERRUPTED_SESSION_ERROR
-      ? true
-      : undefined
-})
+export const hydrateSession = (session: PersistedChatSession): ChatSession => {
+  const hydrated: ChatSession = {
+    ...session,
+    permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    activities: session.activities?.map(hydrateToolActivity),
+    interrupted:
+      session.resumeRecovery?.kind === 'resume-required' ||
+      session.error === INTERRUPTED_SESSION_ERROR
+        ? true
+        : undefined
+  }
+  return { ...hydrated, interactionState: inferSessionInteractionState(hydrated) }
+}
 
 const matchesPersistedPlanProjection = (
   projection: ActivePlanProjection | undefined,
@@ -260,7 +273,8 @@ const withTransientSessionState = (
     elicitationHistoryReplayRequestId: source.elicitationHistoryReplayRequestId,
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
-    pendingContextReplayMessageId: source.pendingContextReplayMessageId
+    pendingContextReplayMessageId: source.pendingContextReplayMessageId,
+    interactionState: source.interactionState
   }
 }
 
@@ -466,18 +480,18 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
 
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
-        const status = permissionPending
-          ? current.status === 'waiting-for-user' || current.status === 'waiting-plan-approval'
-            ? current.status
-            : 'waiting-permission'
-          : current.status === 'waiting-permission'
-            ? current.activeRun || current.agentPromptInFlight
-              ? 'running'
-              : 'idle'
-            : current.status
+        const interactionState = {
+          ...inferSessionInteractionState(current),
+          permission: permissionPending
+        }
+        const status = resolveSessionInteractionStatus(
+          { ...current, runtimeContext: session.runtimeContext },
+          interactionState
+        )
         const projected: ChatSession = {
           ...current,
           status,
+          interactionState,
           runtimeContext: session.runtimeContext,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
