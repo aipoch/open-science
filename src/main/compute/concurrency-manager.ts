@@ -215,12 +215,7 @@ export class ConcurrencyManager {
           await this.dispatchJob(job.job_id, this.handleJobUpdated)
         } catch {
           // If dispatch fails, mark job as error and continue to next queued job.
-          const updated = await this.jobRepository.update(job.job_id, {
-            status: 'error',
-            errorCode: 'dispatch_failed',
-            finishedAt: new Date()
-          })
-          this.handleJobUpdated(updated)
+          await this.lifecycle.dispatchError(job.job_id, { errorCode: 'dispatch_failed' })
         }
       }
     } finally {

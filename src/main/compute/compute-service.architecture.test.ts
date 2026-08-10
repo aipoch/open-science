@@ -38,6 +38,10 @@ const computePaths = {
   remoteOwner: resolve(mainRoot, 'compute/compute-remote-operation-owner.ts'),
   jobOwner: resolve(mainRoot, 'compute/compute-job-workflow-owner.ts'),
   jobLifecycle: resolve(mainRoot, 'compute/compute-job-lifecycle.ts'),
+  jobRepository: resolve(mainRoot, 'compute/job-repository.ts'),
+  concurrencyManager: resolve(mainRoot, 'compute/concurrency-manager.ts'),
+  jobDispatcher: resolve(mainRoot, 'compute/job-dispatcher.ts'),
+  jobPoller: resolve(mainRoot, 'compute/job-poller.ts'),
   ipc: resolve(mainRoot, 'compute/ipc.ts'),
   applicationCommands: resolve(mainRoot, 'compute/application-commands.ts'),
   jobRuntime: resolve(mainRoot, 'compute/job-runtime.ts'),
@@ -188,6 +192,13 @@ const privateOwnerPaths = [
   computePaths.remoteOwner,
   computePaths.jobOwner
 ] as const
+const lifecyclePaths = [
+  computePaths.jobLifecycle,
+  computePaths.jobRepository,
+  computePaths.concurrencyManager,
+  computePaths.jobDispatcher,
+  computePaths.jobPoller
+] as const
 const productionSourcePaths = productionSources()
 
 describe('Compute service architecture', () => {
@@ -199,8 +210,72 @@ describe('Compute service architecture', () => {
         portableProjectPath(ownerPath)
       ).toBeLessThanOrEqual(660)
     }
-    expect(rawLineCount(readSource(computePaths.jobLifecycle))).toBeLessThanOrEqual(660)
+    for (const lifecyclePath of lifecyclePaths) {
+      expect(
+        rawLineCount(readSource(lifecyclePath)),
+        portableProjectPath(lifecyclePath)
+      ).toBeLessThanOrEqual(660)
+    }
     expect(rawLineCount(readSource(computePaths.ipc))).toBeLessThanOrEqual(660)
+  })
+
+  it('keeps lifecycle state ownership behind the narrow intent interface', () => {
+    const lifecycle = sourceFileFor(computePaths.jobLifecycle).statements.find(
+      (statement) => isClassDeclaration(statement) && statement.name?.text === 'ComputeJobLifecycle'
+    )
+    expect(lifecycle && isClassDeclaration(lifecycle)).toBe(true)
+    if (!lifecycle || !isClassDeclaration(lifecycle)) return
+
+    const publicMethods = lifecycle.members
+      .flatMap((member) => {
+        if (
+          !isMethodDeclaration(member) ||
+          !isIdentifier(member.name) ||
+          getModifiers(member)?.some((modifier) => modifier.kind === SyntaxKind.PrivateKeyword) ===
+            true
+        ) {
+          return []
+        }
+        return [member.name.text]
+      })
+      .sort()
+    expect(publicMethods).toEqual(
+      [
+        'dispatchError',
+        'dispatchRunning',
+        'finishPolled',
+        'observeRunning',
+        'promoteQueued',
+        'recordPollError',
+        'recoverInterruptedDispatch'
+      ].sort()
+    )
+    expect(calledMembersOn(computePaths.jobLifecycle, ['this', 'repository'])).toEqual([
+      'updateIfStatus'
+    ])
+
+    const lifecycleTarget = modulePath(computePaths.jobLifecycle)
+    const importers = productionSourcePaths.flatMap((sourcePath) =>
+      importSpecifiersFrom(sourcePath).some(
+        (specifier) => resolveImportTarget(sourcePath, specifier) === lifecycleTarget
+      )
+        ? [portableProjectPath(sourcePath)]
+        : []
+    )
+    expect(importers).toEqual([
+      'src/main/compute/concurrency-manager.ts',
+      'src/main/compute/job-dispatcher.ts',
+      'src/main/compute/job-poller.ts'
+    ])
+
+    for (const calls of [
+      calledMembersOn(computePaths.concurrencyManager, ['this', 'jobRepository']),
+      calledMembersOn(computePaths.jobDispatcher, ['jobRepository']),
+      calledMembersOn(computePaths.jobPoller, ['this', 'deps', 'jobRepository'])
+    ]) {
+      expect(calls).not.toContain('update')
+      expect(calls).not.toContain('updateIfStatus')
+    }
   })
 
   it('keeps every private owner behind the public facade', () => {
@@ -356,6 +431,10 @@ describe('Compute service architecture', () => {
       'src/main/compute/compute-job-lifecycle.ts',
       'src/main/compute/compute-job-workflow-owner.ts',
       'src/main/compute/compute-remote-operation-owner.ts',
+      'src/main/compute/concurrency-manager.ts',
+      'src/main/compute/job-dispatcher.ts',
+      'src/main/compute/job-poller.ts',
+      'src/main/compute/job-repository.ts',
       'src/main/compute/permission-grant-adapter.ts',
       'src/main/compute/compute-service.ts'
     ])
@@ -378,7 +457,10 @@ describe('Compute service architecture', () => {
       expect.arrayContaining([
         'src/main/application-command-composition.test.ts',
         'src/main/compute/application-commands.test.ts',
+        'src/main/compute/concurrency-manager.test.ts',
         'src/main/compute/ipc.test.ts',
+        'src/main/compute/job-dispatcher.test.ts',
+        'src/main/compute/job-poller.test.ts',
         'src/main/notebook/local-rpc-server.mcpcall.test.ts',
         'src/main/notebook/local-rpc-server.test.ts'
       ])

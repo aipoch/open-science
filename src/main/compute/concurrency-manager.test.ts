@@ -519,6 +519,41 @@ describe('ConcurrencyManager', () => {
   })
 
   describe('onJobCompleted - dispatch error handling', () => {
+    it('does not overwrite a terminal job when a promoted dispatch fails late', async () => {
+      const queuedJob = {
+        job_id: 'job-1',
+        session_id: 'session-1',
+        provider_id: 'ssh:cluster-a',
+        created_at: 1000,
+        status: 'queued'
+      } as ComputeJob
+      const submittedJob = { ...queuedJob, status: 'submitted' as const }
+
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([queuedJob])
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      vi.mocked(jobRepo.updateIfStatus)
+        .mockResolvedValueOnce(submittedJob)
+        .mockResolvedValueOnce(null)
+      vi.mocked(jobRepo.update).mockResolvedValue({
+        ...submittedJob,
+        status: 'error'
+      } as ComputeJob)
+      vi.mocked(dispatchJob).mockRejectedValueOnce(new Error('late dispatch failure'))
+
+      await manager.onJobCompleted()
+
+      expect(jobRepo.updateIfStatus).toHaveBeenLastCalledWith(
+        'job-1',
+        ['submitted'],
+        expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
+      )
+      expect(jobRepo.update).not.toHaveBeenCalled()
+      expect(onJobUpdated).toHaveBeenCalledTimes(1)
+      expect(onJobUpdated).toHaveBeenCalledWith(submittedJob)
+    })
+
     it('marks job as error when dispatchJob throws', async () => {
       const queuedJobs: ComputeJob[] = [
         {
@@ -537,7 +572,9 @@ describe('ConcurrencyManager', () => {
         concurrencyLimit: 10
       } as ComputeHost)
       const failedJob = { ...queuedJobs[0], status: 'error' as const }
-      vi.mocked(jobRepo.update).mockResolvedValueOnce(failedJob)
+      vi.mocked(jobRepo.updateIfStatus)
+        .mockResolvedValueOnce({ ...queuedJobs[0], status: 'submitted' })
+        .mockResolvedValueOnce(failedJob)
 
       // Simulate dispatchJob failure
       vi.mocked(dispatchJob).mockRejectedValueOnce(new Error('SSH connection failed'))
@@ -545,7 +582,7 @@ describe('ConcurrencyManager', () => {
       await manager.onJobCompleted()
 
       // Then mark as error after dispatch fails
-      expect(jobRepo.update).toHaveBeenCalledWith('job-1', {
+      expect(jobRepo.updateIfStatus).toHaveBeenLastCalledWith('job-1', ['submitted'], {
         status: 'error',
         errorCode: 'dispatch_failed',
         finishedAt: expect.any(Date)
@@ -577,7 +614,6 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
-      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
 
       // First job fails, second succeeds
       vi.mocked(dispatchJob)
@@ -587,7 +623,7 @@ describe('ConcurrencyManager', () => {
       await manager.onJobCompleted()
 
       // First job should be marked as error
-      expect(jobRepo.update).toHaveBeenCalledWith('job-1', {
+      expect(jobRepo.updateIfStatus).toHaveBeenCalledWith('job-1', ['submitted'], {
         status: 'error',
         errorCode: 'dispatch_failed',
         finishedAt: expect.any(Date)

@@ -179,6 +179,10 @@
         "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/compute-job-workflow-owner.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
+        "src/main/compute/concurrency-manager.ts",
+        "src/main/compute/job-dispatcher.ts",
+        "src/main/compute/job-poller.ts",
+        "src/main/compute/job-repository.ts",
         "src/main/compute/permission-grant-adapter.ts",
         "src/main/compute/compute-service.ts"
       ],
@@ -200,6 +204,7 @@
           "src/main/application-command-composition.test.ts",
           "src/main/compute/concurrency-manager.test.ts",
           "src/main/compute/job-dispatcher.test.ts",
+          "src/main/compute/job-poller.test.ts",
           "src/main/compute/scp-runner.test.ts",
           "src/main/compute/ssh-runner.test.ts",
           "src/main/compute/ipc.test.ts",
