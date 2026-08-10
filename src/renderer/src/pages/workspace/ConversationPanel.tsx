@@ -1002,7 +1002,7 @@ const ConversationPanel = ({
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                          <DropdownMenuContent side="top" align="start" className="w-64">
+                          <DropdownMenuContent side="top" align="start" className="w-56">
                             <TooltipProvider delayDuration={200}>
                               <Tooltip>
                                 <TooltipTrigger asChild>
