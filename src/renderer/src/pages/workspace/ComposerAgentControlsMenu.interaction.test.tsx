@@ -826,7 +826,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(computeSubContents).toHaveLength(1)
     expect(computeSubContents[0]?.textContent).toContain('Manage compute...')
 
-    // Top-level order: permission mode -> session grants -> auto-review -> specialist -> compute.
+    // Top-level order: permission mode -> session grants -> divider -> auto-review -> specialist -> compute.
     const orderAnchor = (needle: string): Element => {
       const match = Array.from(container.querySelectorAll('[data-testid="submenu-trigger"]')).find(
         (el) => el.textContent?.includes(needle)
@@ -848,8 +848,12 @@ describe('ComposerAgentControlsMenu', () => {
 
     const precedes = (a: Element, b: Element): boolean =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    const autoReviewDivider = Array.from(container.querySelectorAll('hr')).find(
+      (separator) =>
+        precedes(sessionGrantsHeading as Element, separator) && precedes(separator, autoReviewRow)
+    )
     expect(precedes(permissionTrigger, sessionGrantsHeading as Element)).toBe(true)
-    expect(precedes(sessionGrantsHeading as Element, autoReviewRow)).toBe(true)
+    expect(autoReviewDivider).not.toBeUndefined()
     expect(precedes(autoReviewRow, specialistStub as Element)).toBe(true)
     expect(precedes(specialistStub as Element, computeTrigger)).toBe(true)
   })

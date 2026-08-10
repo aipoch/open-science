@@ -416,6 +416,8 @@ const ComposerAgentControlsMenu = ({
                 </div>
               ) : null}
 
+              <DropdownMenuSeparator />
+
               {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
               <DropdownMenuItem
                 disabled={readOnly || autoReviewDisabled}
