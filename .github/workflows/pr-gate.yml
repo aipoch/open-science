@@ -7,6 +7,15 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Focused no-side-effect validation plan
+        required: false
+        default: classified
+        type: choice
+        options:
+          - classified
+          - unit-coverage
 
 permissions:
   contents: read
@@ -103,11 +112,30 @@ jobs:
         id: classify
         env:
           BASE_SHA: ${{ steps.revisions.outputs.base }}
+          DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
           TRUSTED_CLASSIFIER_DIR: ${{ steps.trusted_classifier.outputs.dir }}
           TRUSTED_CLASSIFIER_SOURCE: ${{ steps.trusted_classifier.outputs.source }}
         run: |
           set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "unit-coverage" ]]; then
+            plan='{"schemaVersion":1,"mode":"full","roots":["manual:unit-coverage"],"lanes":["policy","unit_macos"],"bundles":["policy","unit"],"reasonChains":["workflow_dispatch unit-coverage -> focused dry-run"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","unit_macos"]' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              '## PR Gate preflight' \
+              '' \
+              '- Mode: **full (focused dry-run)**' \
+              '- Selected lanes: policy, unit_macos' \
+              '- Execution bundles: policy, unit' \
+              '' \
+              '### Reason chains' \
+              '' \
+              '- `workflow_dispatch unit-coverage -> focused dry-run`' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$TRUSTED_CLASSIFIER_SOURCE" == "base" ]]; then
             node "$TRUSTED_CLASSIFIER_DIR/classify-pr-changes.mjs" --base "$BASE_SHA" --head "$HEAD_SHA"
             exit 0
@@ -434,10 +462,12 @@ jobs:
           exit "$failed"
 
   unit:
-    name: Module tests (macOS)
+    name: Module tests and coverage
     needs: [preflight, unit_shard]
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-    runs-on: macos-14
+    # Full plans merge macOS shard reports on Ubuntu so coverage enforcement does not wait for a
+    # scarce fifth macOS slot. Selective plans still execute affected Modules on real macOS.
+    runs-on: ${{ needs.unit_shard.result != 'skipped' && 'ubuntu-latest' || 'macos-14' }}
     timeout-minutes: 15
     steps:
       - name: Checkout

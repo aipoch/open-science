@@ -19,6 +19,7 @@ type Job = {
   env?: Record<string, string>
   if?: string
   needs?: string | string[]
+  outputs?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
   strategy?: { matrix?: { shard?: number[] } }
@@ -43,13 +44,31 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('runs three serial Windows full-suite shards', () => {
-    const job = workflow('windows-full-test.yml').jobs.windows_full_test
+  it('batches latest-main Windows coverage hourly across four serial shards', () => {
+    const windows = workflow('windows-full-test.yml')
+    const schedule = windows.on?.schedule as Array<{ cron: string }>
+    const plan = windows.jobs.plan
+    const job = windows.jobs.windows_full_test
     const test = step(job, 'Test complete suite shard')
 
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/4')
     expect(test.run).toContain('--maxWorkers=1')
+    expect(windows.on).not.toHaveProperty('push')
+    expect(schedule).toEqual([{ cron: '47 * * * *' }])
+    expect(windows.on).toHaveProperty('workflow_dispatch')
+    expect(windows.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(plan).toMatchObject({
+      'runs-on': 'ubuntu-latest',
+      outputs: { should_test: '${{ steps.decide.outputs.should_test }}' }
+    })
+    expect(step(plan, 'Check for untested main changes').run).toContain(
+      'actions/workflows/windows-full-test.yml/runs?branch=main&status=success&per_page=1'
+    )
+    expect(job).toMatchObject({
+      needs: 'plan',
+      if: "needs.plan.outputs.should_test == 'true'"
+    })
   })
 
   it('runs reusable verification beside native builds while callers remain fail closed', () => {
