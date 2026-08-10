@@ -95,13 +95,23 @@ const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | un
 }
 
 const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
+  const marker = '/.openscience/jobs/'
+  const markerIndex = workdir.lastIndexOf(marker)
+  if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
+  const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
+  const workdirSuffix = workdir.slice(markerIndex + 1)
+  const quotedScratchRoot = quoteRemotePath(scratchRoot)
+  const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
   // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
   // without that evidence, skip process mutation and keep directory removal idempotent.
   const lines = [
     `[ ! -L ${quotedWorkdir} ] || exit 1`,
+    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
     `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
+    '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
     'kill_job_pid() {',
     '  pid=$1',
     "  case $pid in ''|*[!0-9]*) return 0 ;; esac",

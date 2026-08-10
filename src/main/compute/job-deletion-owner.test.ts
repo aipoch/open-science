@@ -142,6 +142,9 @@ describe('ComputeJobDeletionOwner', () => {
     expect(command).toContain('kill_job_pid 123')
     expect(command).not.toContain('kill -TERM -- -123')
     expect(command).toContain('[ ! -L ')
+    expect(command).toContain('scratch_root=')
+    expect(command).toContain('expected_workdir=')
+    expect(command).toContain('[ "$workdir" = "$expected_workdir" ]')
     expect(command).toContain('job.pid')
     expect(command).toContain('rm -rf -- "$workdir"')
     expect(command).toContain('test -z "$workdir" || test ! -e "$workdir"')
@@ -222,6 +225,9 @@ describe('ComputeJobDeletionOwner', () => {
 
     expect(harness.runner.run.mock.calls[0]?.[1]).toContain(
       '/scratch/scientist/.openscience/jobs/job-1'
+    )
+    expect(harness.runner.run.mock.calls[0]?.[1]).toContain(
+      "scratch_root=$(cd -- '/scratch/scientist' 2>/dev/null && pwd -P || true)"
     )
   })
 
