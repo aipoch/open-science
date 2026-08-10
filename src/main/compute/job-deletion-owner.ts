@@ -97,16 +97,28 @@ const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | un
 const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
   const quotedWorkdir = quoteRemotePath(workdir)
   const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
-  const lines = handle
-    ? [
-        `kill -TERM -- -${handle.pid} 2>/dev/null || true`,
-        `kill -TERM ${handle.pid} 2>/dev/null || true`,
-        `kill -KILL -- -${handle.pid} 2>/dev/null || true`,
-        `kill -KILL ${handle.pid} 2>/dev/null || true`
-      ]
-    : []
+  // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
+  // without that evidence, skip process mutation and keep directory removal idempotent.
+  const lines = [
+    `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    'kill_job_pid() {',
+    '  pid=$1',
+    "  case $pid in ''|*[!0-9]*) return 0 ;; esac",
+    '  [ -n "$workdir" ] || return 0',
+    '  process_workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)',
+    '  if [ -z "$process_workdir" ] && command -v lsof >/dev/null 2>&1; then',
+    `    process_workdir=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)`,
+    '  fi',
+    '  [ "$process_workdir" = "$workdir" ] || return 0',
+    '  kill -TERM -- -$pid 2>/dev/null || true',
+    '  kill -TERM $pid 2>/dev/null || true',
+    '  kill -KILL -- -$pid 2>/dev/null || true',
+    '  kill -KILL $pid 2>/dev/null || true',
+    '}'
+  ]
+  if (handle) lines.push(`kill_job_pid ${handle.pid}`)
   lines.push(
-    `if [ -f ${quotedPidFile} ]; then pid=$(cat ${quotedPidFile} 2>/dev/null || true); case $pid in ''|*[!0-9]*) ;; *) kill -TERM -- -$pid 2>/dev/null || true; kill -TERM $pid 2>/dev/null || true; kill -KILL -- -$pid 2>/dev/null || true; kill -KILL $pid 2>/dev/null || true ;; esac; fi`,
+    `if [ -f ${quotedPidFile} ]; then kill_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)"; fi`,
     `rm -rf -- ${quotedWorkdir}`,
     `test ! -e ${quotedWorkdir}`
   )

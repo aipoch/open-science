@@ -130,11 +130,17 @@ const createHarness = (jobs: ComputeJob[]) => {
 }
 
 describe('ComputeJobDeletionOwner', () => {
-  it('kills the process group and removes the generated directory', () => {
+  it('kills only a process still owned by the generated directory, then removes it', () => {
     const rawHandle = job().remote_handle ?? ''
     const handle = JSON.parse(rawHandle) as Parameters<typeof cleanupCommand>[1]
     const command = cleanupCommand('~/.openscience/jobs/job-1', handle)
-    expect(command).toContain('kill -TERM -- -123')
+    expect(command).toContain('kill_job_pid() {')
+    expect(command).toContain('process_workdir=$(readlink "/proc/$pid/cwd"')
+    expect(command).toContain('command -v lsof')
+    expect(command).toContain('lsof -a -p "$pid" -d cwd -Fn')
+    expect(command).toContain('[ "$process_workdir" = "$workdir" ] || return 0')
+    expect(command).toContain('kill_job_pid 123')
+    expect(command).not.toContain('kill -TERM -- -123')
     expect(command).toContain('job.pid')
     expect(command).toContain('rm -rf --')
     expect(command).toContain('test ! -e')
