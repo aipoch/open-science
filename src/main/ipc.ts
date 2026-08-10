@@ -987,7 +987,8 @@ const createApplicationModules = async (
   })
   settingsService.setCustomServerRuntimeProjectionProvider({
     materializedSkillNames: () => connectorRuntimeSettings.materializedCustomSkillNames(),
-    availability: (id) => connectorRuntimeSettings.customServerAvailability(id)
+    availability: (id) => connectorRuntimeSettings.customServerAvailability(id),
+    waitForCurrentRefresh: () => connectorRuntimeSettings.waitForCurrentRefresh()
   })
   settingsService.setCustomServerAuthenticator(
     async (serverId) => {

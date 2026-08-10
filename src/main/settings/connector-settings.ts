@@ -42,6 +42,7 @@ type CustomServerSecurityChangeGuard = {
 type CustomServerRuntimeProjectionProvider = {
   materializedSkillNames: () => readonly string[]
   availability: (id: string) => CustomServerView['availability']
+  waitForCurrentRefresh: () => Promise<void>
 }
 
 const normalizeOAuthConfig = (
@@ -61,7 +62,8 @@ const normalizeOAuthConfig = (
 class ConnectorSettingsModule {
   private customServerRuntimeProjectionProvider: CustomServerRuntimeProjectionProvider = {
     materializedSkillNames: () => [],
-    availability: () => undefined
+    availability: () => undefined,
+    waitForCurrentRefresh: () => Promise.resolve()
   }
 
   constructor(private readonly repository: SettingsRepository) {}
@@ -135,6 +137,7 @@ class ConnectorSettingsModule {
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {
+    await this.customServerRuntimeProjectionProvider.waitForCurrentRefresh()
     return this.connectorsSnapshot()
   }
 

@@ -234,18 +234,25 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     const olderRefresh = projection.refresh()
     await vi.waitFor(() => expect(syncBundledSkillDocs).toHaveBeenCalledOnce())
     const newerRefresh = projection.refresh()
+    let currentRefreshSettled = false
+    const currentRefresh = projection.waitForCurrentRefresh().then(() => {
+      currentRefreshSettled = true
+    })
 
     // The newer read and all of its writes stay behind the older full pipeline.
     await Promise.resolve()
     expect(readConnectors).toHaveBeenCalledOnce()
     expect(projection.current()).toBe(first)
+    expect(currentRefreshSettled).toBe(false)
 
     finishFirstSync?.()
     await olderRefresh
     await newerRefresh
+    await currentRefresh
 
     expect(readConnectors).toHaveBeenCalledTimes(2)
     expect(projection.current()).toBe(second)
+    expect(currentRefreshSettled).toBe(true)
   })
 
   it('continues the refresh queue after an earlier pipeline fails', async () => {

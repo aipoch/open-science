@@ -53,6 +53,10 @@ class ConnectorRuntimeSettingsProjection {
     return this.customServerAvailabilities.get(id)
   }
 
+  waitForCurrentRefresh(): Promise<void> {
+    return this.refreshQueue
+  }
+
   async refresh(): Promise<void> {
     const queued = this.refreshQueue.then(() => this.refreshOnce())
     this.refreshQueue = queued
