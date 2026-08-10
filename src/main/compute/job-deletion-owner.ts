@@ -190,14 +190,14 @@ class ComputeJobDeletionOwner {
   reconcileOrphanJobs(
     isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>
   ): Promise<void> {
-    return this.enqueue(async () => {
-      const owners = await this.deps.jobRepository.listOwners()
-      for (const owner of owners) {
-        if (await isOwnerLive(owner)) continue
-        await this.prepareOwner(owner)
-        await this.commitOwner(owner)
-      }
-    })
+    return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive))
+  }
+
+  reconcileProjectOrphanJobs(
+    projectId: string,
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>
+  ): Promise<void> {
+    return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive, projectId))
   }
 
   private enqueue(operationOwner: () => Promise<void>): Promise<void> {
@@ -308,13 +308,35 @@ class ComputeJobDeletionOwner {
 
   private async abortOwner(owner: ComputeJobOwner): Promise<void> {
     if (this.preparedDeletion && !this.sameOwner(this.preparedDeletion.owner, owner)) {
-      throw new Error('A different Compute Job owner deletion is prepared.')
+      // A parent Project abort can race a retained child Session cleanup plan. The parent never
+      // armed a new barrier because prepareOwner rejected before armOwner, so leave the child plan
+      // and any restored durable Project barrier untouched for the next recovery attempt.
+      return
     }
     const prepared = this.preparedDeletion !== undefined
     await this.releaseOwnerBarrier(owner)
     if (prepared) {
       this.preparedDeletion = undefined
       this.runtime?.resume()
+    }
+  }
+
+  private async reconcileOrphanOwners(
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>,
+    projectId?: string
+  ): Promise<void> {
+    const owners = (await this.deps.jobRepository.listOwners()).filter(
+      (owner) => projectId === undefined || owner.projectId === projectId
+    )
+    const prepared = this.preparedDeletion?.owner
+    if (prepared?.sessionId !== undefined) {
+      const preparedIndex = owners.findIndex((owner) => this.sameOwner(owner, prepared))
+      if (preparedIndex > 0) owners.unshift(...owners.splice(preparedIndex, 1))
+    }
+    for (const owner of owners) {
+      if (await isOwnerLive(owner)) continue
+      await this.prepareOwner(owner)
+      await this.commitOwner(owner)
     }
   }
 

@@ -299,11 +299,25 @@ describe('Compute service architecture', () => {
       'const projectDeletionRecovery = new ProjectDeletionRecoveryLoop',
       runtimeStart
     )
+    const projectOrphanRecovery = source.indexOf(
+      'await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)'
+    )
+    const backgroundOrphanRecovery = source.indexOf(
+      'await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)',
+      backgroundRecovery
+    )
+    const backgroundProjectRecovery = source.indexOf(
+      'await projectDeletionCoordinator.recoverPendingDeletions()',
+      backgroundOrphanRecovery
+    )
 
     expect(projectBarriers).toBeGreaterThan(-1)
     expect(jobBarriers).toBeGreaterThan(projectBarriers)
     expect(runtimeStart).toBeGreaterThan(jobBarriers)
     expect(backgroundRecovery).toBeGreaterThan(runtimeStart)
+    expect(projectOrphanRecovery).toBeGreaterThan(-1)
+    expect(backgroundOrphanRecovery).toBeGreaterThan(backgroundRecovery)
+    expect(backgroundProjectRecovery).toBeGreaterThan(backgroundOrphanRecovery)
   })
 
   it('keeps every private owner behind the public facade', () => {

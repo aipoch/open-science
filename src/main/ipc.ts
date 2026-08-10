@@ -520,7 +520,28 @@ const createApplicationModules = async (
     configRoot,
     resolveDataRoot()
   )
-  const computeJobDeletionRef: { current?: Required<ComputeJobDeletionParticipant> } = {}
+  const isComputeJobOwnerLive = async ({
+    projectId,
+    sessionId
+  }: {
+    projectId: string
+    sessionId: string
+  }): Promise<boolean> => {
+    if (!(await projectRepository.get(projectId))) return false
+    const owner = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId)
+    if (owner.status === 'unreadable') {
+      throw new Error(`Cannot reconcile Compute Jobs for unreadable Session ${sessionId}.`)
+    }
+    return owner.status === 'found'
+  }
+  const computeJobDeletionRef: {
+    current?: Required<ComputeJobDeletionParticipant> & {
+      reconcileProjectOrphanJobs(
+        projectId: string,
+        isOwnerLive: typeof isComputeJobOwnerLive
+      ): Promise<void>
+    }
+  } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
       if (!computeJobDeletionRef.current) {
@@ -619,8 +640,12 @@ const createApplicationModules = async (
     artifactProvenanceRepository,
     permissionGrantRegistry,
     {
-      beforeProjectDelete: (projectId) =>
-        sideChatOwnerRef.current?.invalidateProject(projectId) ?? Promise.resolve(),
+      beforeProjectDelete: async (projectId) => {
+        await sideChatOwnerRef.current?.invalidateProject(projectId)
+        const deletionOwner = computeJobDeletionRef.current
+        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
+        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+      },
       restoreProjectDeletion: (projectId) =>
         computeJobDeletionPort.restoreProjectJobDeletion(projectId)
     }
@@ -1070,20 +1095,6 @@ const createApplicationModules = async (
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
   computeJobDeletionRef.current = jobDeletionOwner
-  const isComputeJobOwnerLive = async ({
-    projectId,
-    sessionId
-  }: {
-    projectId: string
-    sessionId: string
-  }): Promise<boolean> => {
-    if (!(await projectRepository.get(projectId))) return false
-    const owner = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId)
-    if (owner.status === 'unreadable') {
-      throw new Error(`Cannot reconcile Compute Jobs for unreadable Session ${sessionId}.`)
-    }
-    return owner.status === 'found'
-  }
   await projectDeletionCoordinator.restorePendingDeletionBarriers()
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
   const dataRoot = resolveDataRoot()
@@ -1112,8 +1123,9 @@ const createApplicationModules = async (
   )
   const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
     async () => {
-      await projectDeletionCoordinator.recoverPendingDeletions()
+      // A retained child Session plan must finish before its parent Project intent can prepare.
       await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+      await projectDeletionCoordinator.recoverPendingDeletions()
     },
     {
       onError: (error) =>

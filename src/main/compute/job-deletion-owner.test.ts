@@ -246,6 +246,62 @@ describe('ComputeJobDeletionOwner', () => {
     expect(harness.runtime.resume).not.toHaveBeenCalled()
   })
 
+  it('recovers a retained child Session plan before preparing its parent Project', async () => {
+    const harness = createHarness([job()])
+    harness.runner.run.mockResolvedValueOnce({
+      exitCode: 255,
+      stdout: '',
+      stderr: 'offline',
+      truncated: false,
+      timedOut: false
+    })
+    await harness.owner.prepareSessionJobDeletion('project-1', 'session-1')
+    await expect(harness.owner.commitSessionJobDeletion('project-1', 'session-1')).rejects.toThrow(
+      /remote Compute Job cleanup failed/i
+    )
+
+    await expect(harness.owner.abortProjectJobDeletion('project-1')).resolves.toBeUndefined()
+    expect(harness.lifecycle.abortOwnerDeletion).not.toHaveBeenCalled()
+    expect(harness.queueManager.resumeOwner).not.toHaveBeenCalled()
+
+    const isOwnerLive = vi.fn(async () => false)
+    await harness.owner.reconcileProjectOrphanJobs('project-1', isOwnerLive)
+
+    expect(isOwnerLive).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    expect(harness.lifecycle.deleteOwnerRows).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    await expect(harness.owner.prepareProjectJobDeletion('project-1')).resolves.toBeUndefined()
+    expect(harness.lifecycle.beginOwnerDeletion).toHaveBeenLastCalledWith({
+      projectId: 'project-1'
+    })
+  })
+
+  it('limits pre-Project recovery to orphan Sessions from that Project', async () => {
+    const harness = createHarness([job()])
+    harness.jobRepository.listOwners.mockResolvedValueOnce([
+      { projectId: 'project-2', sessionId: 'session-2' },
+      { projectId: 'project-1', sessionId: 'session-1' }
+    ])
+    const isOwnerLive = vi.fn(async () => false)
+
+    await harness.owner.reconcileProjectOrphanJobs('project-1', isOwnerLive)
+
+    expect(isOwnerLive).toHaveBeenCalledOnce()
+    expect(isOwnerLive).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    expect(harness.lifecycle.beginOwnerDeletion).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+  })
+
   it('retries the full idempotent plan after a later Job cleanup fails', async () => {
     const secondJob = job({
       job_id: 'job-2',
