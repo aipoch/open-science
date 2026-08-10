@@ -3,6 +3,14 @@ import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import { customConnectorAliasKey, customConnectorAliases } from '../../shared/custom-connector'
 import { ALL_CONNECTOR_IDS } from './registry'
 
+export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
+
+export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvailability =>
+  error instanceof Error &&
+  /(?:401|403|unauthoriz|authenticat|forbidden|invalid_token)/i.test(error.message)
+    ? 'unauthenticated'
+    : 'unavailable'
+
 // Pure mapping/filtering helpers used to wire custom MCP servers into app bootstrap (ipc.ts).
 // Split out from ipc.ts so they can be unit-tested without pulling in ipc.ts's Electron-touching
 // transitive imports (acp/ipc, artifacts/ipc, settings/crypto, ...).

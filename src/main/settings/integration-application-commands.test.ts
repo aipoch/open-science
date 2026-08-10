@@ -48,7 +48,8 @@ const expectedConnectorChannels = [
   'settings:remove-custom-server',
   'settings:update-custom-server',
   'settings:authenticate-custom-server',
-  'settings:cancel-custom-server-authentication'
+  'settings:cancel-custom-server-authentication',
+  'settings:retry-custom-server'
 ] as const
 
 const expectedApprovalChannels = [
@@ -126,7 +127,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 22-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 23-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -160,7 +161,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(22)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(23)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -169,13 +170,14 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(22)
+    expect(integrationContracts).toHaveLength(23)
     expect(
       integrationContracts
         ?.filter(
           (contract) =>
             contract.channel !== 'settings:authenticate-custom-server' &&
-            contract.channel !== 'settings:cancel-custom-server-authentication'
+            contract.channel !== 'settings:cancel-custom-server-authentication' &&
+            contract.channel !== 'settings:retry-custom-server'
         )
         .every(
           (contract) =>
@@ -189,7 +191,8 @@ describe('Settings integration application commands', () => {
         ?.filter(
           (contract) =>
             contract.channel === 'settings:authenticate-custom-server' ||
-            contract.channel === 'settings:cancel-custom-server-authentication'
+            contract.channel === 'settings:cancel-custom-server-authentication' ||
+            contract.channel === 'settings:retry-custom-server'
         )
         .every(
           (contract) =>
@@ -370,7 +373,7 @@ describe('Settings integration application commands', () => {
     })
   })
 
-  it('allows OAuth authentication only from the local app', async () => {
+  it('allows authentication and runtime retry only from the local app', async () => {
     const { connectorMethod, dependencies } = createDependencies()
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
@@ -388,6 +391,12 @@ describe('Settings integration application commands', () => {
     expect(connectorMethod('cancelCustomServerAuthentication')).toHaveBeenCalledWith({
       id: 'server-1'
     })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.retryCustomServer,
+      invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('retryCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
 
     await expect(
       router.dispatcher.invoke(
@@ -412,6 +421,16 @@ describe('Settings integration application commands', () => {
     ).rejects.toThrow(
       'Channel only available from the local app: settings:cancel-custom-server-authentication'
     )
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.retryCustomServer,
+        invocation(
+          [{ id: 'server-1' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: settings:retry-custom-server')
   })
 
   it('allows only current human callers to settle Connector and Skill-import approvals', async () => {

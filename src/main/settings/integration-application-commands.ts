@@ -39,6 +39,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'retryCustomServer'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -150,6 +151,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>
   >('settings:cancel-custom-server-authentication'),
+  retryCustomServer: defineApplicationCommand<
+    'settings:retry-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'retryCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'retryCustomServer'>
+  >('settings:retry-custom-server'),
   respondConnectorApproval: defineApplicationCommand<
     'connectors:approval-respond',
     readonly [request: RespondApprovalRequest],
@@ -195,7 +201,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.removeCustomServer,
     settingsIntegrationApplicationCommands.updateCustomServer,
     settingsIntegrationApplicationCommands.authenticateCustomServer,
-    settingsIntegrationApplicationCommands.cancelCustomServerAuthentication
+    settingsIntegrationApplicationCommands.cancelCustomServerAuthentication,
+    settingsIntegrationApplicationCommands.retryCustomServer
   ] as const
 )
 
@@ -260,6 +267,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:cancel-custom-server-authentication': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-custom-server-authentication')
         return dependencies.connectors.cancelCustomServerAuthentication(args[0])
+      },
+      'settings:retry-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:retry-custom-server')
+        return dependencies.connectors.retryCustomServer(args[0])
       }
     })
     scope.registerGroup(settingsApprovalApplicationCommandGroup, {

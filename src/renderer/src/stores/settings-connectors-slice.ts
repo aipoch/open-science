@@ -32,6 +32,7 @@ export type SettingsConnectorsActions = {
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
+  retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
   enqueueApproval: (request: ConnectorApprovalRequest) => void
@@ -49,6 +50,7 @@ type SettingsConnectorsCommands = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'retryCustomServer'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'respondConnectorApproval'
@@ -115,6 +117,7 @@ export const createSettingsConnectorsSlice = ({
     },
     cancelCustomServerAuthentication: (request) =>
       getCommands().cancelCustomServerAuthentication(request),
+    retryCustomServer: (id) => reconcile(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       setState((state) => ({
         customServers: state.customServers.map((server) =>

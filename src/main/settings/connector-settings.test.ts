@@ -178,9 +178,29 @@ describe('ConnectorSettingsModule', () => {
 
     expect(await service.provisionedConnectorSkillNames()).not.toContain('mcp-custom-catalog')
 
-    service.setMaterializedCustomSkillNamesProvider(() => ['mcp-custom-catalog'])
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => ['mcp-custom-catalog'],
+      availability: () => undefined
+    })
 
     expect(await service.provisionedConnectorSkillNames()).toContain('mcp-custom-catalog')
+  })
+
+  it('projects runtime availability separately from logical enablement', async () => {
+    const added = await service.addCustomServer({
+      name: 'offline-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    const id = added.customServers[0].id
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [],
+      availability: (serverId) => (serverId === id ? 'unavailable' : undefined)
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+
+    expect(server).toMatchObject({ id, enabled: true, availability: 'unavailable' })
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {

@@ -100,11 +100,71 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     await projection.refresh()
 
     expect(projection.materializedCustomSkillNames()).toEqual(['mcp-healthy'])
+    expect(projection.customServerAvailability('unavailable-id')).toBe('unavailable')
     expect(reportError).toHaveBeenCalledOnce()
     expect(reportError.mock.calls[0]?.[0]).toMatchObject({
       message: 'Failed to sync custom MCP server "unavailable" skill docs',
       cause: failure
     })
+  })
+
+  it('classifies authentication discovery failures without exposing transport details', async () => {
+    const server = {
+      id: 'oauth-id',
+      slug: 'oauth',
+      name: 'OAuth',
+      transport: 'streamable_http' as const,
+      url: 'https://mcp.example.test',
+      enabled: true
+    }
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({
+        materializedSlugs: [],
+        failures: [{ server, error: new Error('401 invalid_token for a secret endpoint') }]
+      }),
+      reportError: vi.fn()
+    })
+
+    await projection.refresh()
+
+    expect(projection.customServerAvailability(server.id)).toBe('unauthenticated')
+  })
+
+  it('clears a runtime failure after a successful retry refresh', async () => {
+    const server = {
+      id: 'recovering-id',
+      slug: 'recovering',
+      name: 'Recovering',
+      transport: 'stdio' as const,
+      command: 'node',
+      enabled: true
+    }
+    const syncCustomSkillDocs = vi
+      .fn()
+      .mockResolvedValueOnce({
+        materializedSlugs: [],
+        failures: [{ server, error: new Error('Connection closed') }]
+      })
+      .mockResolvedValueOnce({ materializedSlugs: ['recovering'], failures: [] })
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs,
+      reportError: vi.fn()
+    })
+
+    await projection.refresh()
+    expect(projection.customServerAvailability(server.id)).toBe('unavailable')
+
+    await projection.refresh()
+    expect(projection.customServerAvailability(server.id)).toBeUndefined()
+    expect(projection.materializedCustomSkillNames()).toEqual(['mcp-recovering'])
   })
 
   it('contains refresh errors while retaining the last snapshot reached by the refresh', async () => {

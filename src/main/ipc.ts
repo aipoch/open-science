@@ -985,9 +985,10 @@ const createApplicationModules = async (
     skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
     mcpClientManager
   })
-  settingsService.setMaterializedCustomSkillNamesProvider(() =>
-    connectorRuntimeSettings.materializedCustomSkillNames()
-  )
+  settingsService.setCustomServerRuntimeProjectionProvider({
+    materializedSkillNames: () => connectorRuntimeSettings.materializedCustomSkillNames(),
+    availability: (id) => connectorRuntimeSettings.customServerAvailability(id)
+  })
   settingsService.setCustomServerAuthenticator(
     async (serverId) => {
       const server = (await settingsService.getConnectors())?.customMcpServers?.find(

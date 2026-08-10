@@ -79,6 +79,7 @@ beforeEach(() => {
     addCustomServer: vi.fn().mockResolvedValue(undefined),
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+    retryCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
   })
@@ -373,6 +374,84 @@ describe('ConnectorsPanel (groups)', () => {
     )
     expect(connectedToggle?.disabled).toBe(false)
     expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
+  })
+
+  it('shows an unavailable custom Connector and retries it in place', async () => {
+    let finishRetry!: () => void
+    const retryCustomServer = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRetry = resolve
+        })
+    )
+    useSettingsStore.setState({
+      retryCustomServer,
+      customServers: [
+        {
+          id: 'offline-mcp',
+          slug: 'offline-mcp',
+          name: 'Offline MCP',
+          transport: 'stdio',
+          enabled: true,
+          command: 'mcp',
+          availability: 'unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Unavailable')
+    act(() => clickButtonByText('Retry'))
+    expect(retryCustomServer).toHaveBeenCalledWith('offline-mcp')
+    expect(document.body.textContent).toContain('Checking…')
+
+    await act(async () => finishRetry())
+  })
+
+  it('offers sign-in again when a stored OAuth token is rejected at runtime', async () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'expired-oauth',
+          slug: 'expired-oauth',
+          name: 'Expired OAuth',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          oauth: { hasTokens: true },
+          availability: 'unauthenticated'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Sign-in required')
+    await act(async () => clickButtonByText('Sign in'))
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'expired-oauth'
+    })
+  })
+
+  it('offers authentication setup when a remote Connector has no OAuth configuration', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'anonymous-remote',
+          slug: 'anonymous-remote',
+          name: 'Anonymous Remote',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          availability: 'unauthenticated'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+
+    expect(document.body.textContent).toContain('Sign-in required')
+    act(() => clickButtonByText('Configure'))
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'anonymous-remote' })
   })
 
   it('cancels a waiting OAuth sign-in and allows retry', async () => {

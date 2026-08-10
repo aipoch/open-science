@@ -1,4 +1,9 @@
-import { toCustomMcpConfig, selectEnabledCustomServers } from './custom-mcp-bootstrap'
+import {
+  classifyCustomMcpFailure,
+  toCustomMcpConfig,
+  selectEnabledCustomServers,
+  type CustomMcpFailureAvailability
+} from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { customConnectorSlug } from '../../shared/custom-connector'
@@ -20,6 +25,7 @@ type ConnectorRuntimeSettingsProjectionOptions = {
 class ConnectorRuntimeSettingsProjection {
   private snapshot: StoredConnectors | undefined
   private materializedCustomSkills: string[] = []
+  private customServerAvailabilities = new Map<string, CustomMcpFailureAvailability>()
   private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
@@ -41,6 +47,10 @@ class ConnectorRuntimeSettingsProjection {
 
   materializedCustomSkillNames(): string[] {
     return [...this.materializedCustomSkills]
+  }
+
+  customServerAvailability(id: string): CustomMcpFailureAvailability | undefined {
+    return this.customServerAvailabilities.get(id)
   }
 
   async refresh(): Promise<void> {
@@ -66,6 +76,9 @@ class ConnectorRuntimeSettingsProjection {
         (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
       this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
+      this.customServerAvailabilities = new Map(
+        customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
+      )
       for (const { server, error } of customSync.failures) {
         this.reportError(
           new Error(

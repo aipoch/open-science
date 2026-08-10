@@ -65,6 +65,7 @@ const createCommands = (): ConnectorCommands => ({
   addCustomServer: vi.fn(async () => snapshot()),
   updateCustomServer: vi.fn(async () => snapshot()),
   authenticateCustomServer: vi.fn(async () => snapshot()),
+  retryCustomServer: vi.fn(async () => snapshot()),
   cancelCustomServerAuthentication: vi.fn(async () => undefined),
   setCustomServerEnabled: vi.fn(async () => snapshot()),
   removeCustomServer: vi.fn(async () => snapshot()),
@@ -239,6 +240,18 @@ describe('settings Connectors slice', () => {
     await store.getState().cancelCustomServerAuthentication({ id: 'oauth' })
 
     expect(commands.cancelCustomServerAuthentication).toHaveBeenCalledWith({ id: 'oauth' })
+  })
+
+  it('reconciles a custom Connector retry from the authoritative runtime status', async () => {
+    const unavailable = { ...server('custom'), availability: 'unavailable' as const }
+    const connected = server('custom')
+    store.setState({ customServers: [unavailable] })
+    vi.mocked(commands.retryCustomServer).mockResolvedValue(snapshot([], [connected]))
+
+    await store.getState().retryCustomServer('custom')
+
+    expect(commands.retryCustomServer).toHaveBeenCalledWith({ id: 'custom' })
+    expect(store.getState().customServers).toEqual([connected])
   })
 
   it('optimistically toggles a custom server before authoritative reconciliation', async () => {

@@ -283,6 +283,11 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
+  ipcMainHandle(
+    'settings:retry-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.retryCustomServer(request)
+  )
   ipcMainHandle('settings:preview-custom-server-template-export', (_event, id: string) =>
     service.previewCustomServerTemplateExport(id)
   )

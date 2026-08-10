@@ -492,7 +492,7 @@ describe('Settings backend ownership architecture', () => {
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
-        setMaterializedCustomSkillNamesProvider setNcbiCredentials setNotificationsEnabled
+        setCustomServerRuntimeProjectionProvider setNcbiCredentials setNotificationsEnabled
         setPackageMirror setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead

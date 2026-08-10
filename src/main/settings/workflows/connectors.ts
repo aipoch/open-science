@@ -14,6 +14,7 @@ import type { SettingsService } from '../service'
 
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
+  | 'listConnectors'
   | 'getConnectors'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
@@ -115,6 +116,18 @@ class ConnectorSettingsWorkflows {
     request: AuthenticateCustomServerRequest
   ): WorkflowResult<'cancelCustomServerAuthentication'> {
     return this.settings.cancelCustomServerAuthentication(request.id)
+  }
+
+  async retryCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'listConnectors'> {
+    this.effects.clearCustomServerFailure(request.id)
+    this.effects.invalidatePermissionProjection()
+    await wireConnectorReload(
+      this.effects.refreshConnectorSkillDocs,
+      this.effects.requestSkillsReload
+    )
+    return this.settings.listConnectors()
   }
 
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {

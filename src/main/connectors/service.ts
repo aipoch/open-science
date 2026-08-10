@@ -2,7 +2,11 @@ import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
-import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './custom-mcp-bootstrap'
+import {
+  classifyCustomMcpFailure,
+  isCustomMcpServerRouteSafe,
+  toCustomMcpConfig
+} from './custom-mcp-bootstrap'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
@@ -82,6 +86,11 @@ type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
 }
+
+const customMcpFailureCategory = (
+  error: unknown
+): 'connector_unavailable' | 'connector_unauthenticated' =>
+  `connector_${classifyCustomMcpFailure(error)}`
 
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
@@ -315,11 +324,7 @@ export class ConnectorService {
       // Never relay a transport error: custom server URLs, headers, or server-provided diagnostics
       // can contain credentials. Record only the availability category for subsequent fail-closed
       // dispatches; a successful connection clears the transient state.
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
+      const category = customMcpFailureCategory(error)
       this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
     }
@@ -360,11 +365,7 @@ export class ConnectorService {
       }
       return result
     } catch (error) {
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
+      const category = customMcpFailureCategory(error)
       this.recordCustomServerFailure(custom.id, failureEpoch, category)
       throw new ConnectorGateError(category)
     }

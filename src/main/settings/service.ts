@@ -83,6 +83,7 @@ import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './pref
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
+import type { CustomServerRuntimeProjectionProvider } from './connector-settings'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
 import {
@@ -519,10 +520,9 @@ class SettingsService {
     return this.connectors.provisionedConnectorSkillNames()
   }
 
-  setMaterializedCustomSkillNamesProvider(provider: () => readonly string[]): void {
-    this.connectors.setMaterializedCustomSkillNamesProvider(provider)
+  setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
+    this.connectors.setCustomServerRuntimeProjectionProvider(provider)
   }
-
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
