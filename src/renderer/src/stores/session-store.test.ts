@@ -1694,7 +1694,7 @@ describe('session store', () => {
     expect(session.error).toBeUndefined()
     expect(session.errorReportable).toBeUndefined()
     expect(session.messages[1]).toMatchObject({ status: 'error', failedAt: expect.any(Number) })
-    expect(session.activities[0]).toMatchObject({ status: 'failed' })
+    expect(session.activities?.[0]).toMatchObject({ status: 'failed' })
   })
 
   it('keeps pending Plan approval available when the active run is interrupted', () => {
