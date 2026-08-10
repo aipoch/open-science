@@ -19,11 +19,23 @@ class SettingsDocumentStore {
   }
 
   async read(): Promise<StoredSettings> {
+    let contents: string
+
     try {
-      return sanitizeSettings(JSON.parse(await readFile(this.path, 'utf8')) as unknown)
-    } catch {
-      return createEmptySettings()
+      contents = await readFile(this.path, 'utf8')
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      ) {
+        return createEmptySettings()
+      }
+      throw error
     }
+
+    return sanitizeSettings(JSON.parse(contents) as unknown)
   }
 
   mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
