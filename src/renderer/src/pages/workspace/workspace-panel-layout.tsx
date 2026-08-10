@@ -21,6 +21,8 @@ const SIDEBAR_TOGGLE_RIGHT_INSET = 38
 const PREVIEW_PANEL_DEFAULT_SIZE = 40
 const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
+const OPEN_DIALOG_SELECTOR =
+  '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
 const panelAnimation = {
   duration: 0.22,
@@ -252,6 +254,10 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
 
   const openMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(true), [])
   const closeMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(false), [])
+  const toggleMobileSidebar = useCallback(
+    (): void => setIsMobileSidebarOpen((isOpen) => !isOpen),
+    []
+  )
   const toggleSidebar = useCallback(
     (): void => setSidebarState((state) => (state === 'collapsed' ? 'open' : 'collapsed')),
     []
@@ -292,6 +298,31 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [closeMobileSidebar, isMobile, isMobileSidebarOpen])
 
+  useEffect(() => {
+    const toggleSidebarFromShortcut = (event: KeyboardEvent): void => {
+      const isMac = window.api?.platform === 'darwin'
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.key.toLowerCase() !== 'b' ||
+        !(isMac ? event.metaKey : event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        document.querySelector(OPEN_DIALOG_SELECTOR) !== null
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      if (isMobile) toggleMobileSidebar()
+      else toggleSidebar()
+    }
+
+    window.addEventListener('keydown', toggleSidebarFromShortcut)
+    return () => window.removeEventListener('keydown', toggleSidebarFromShortcut)
+  }, [isMobile, toggleMobileSidebar, toggleSidebar])
+
   return {
     isMobile,
     mobileSidebar: {
@@ -317,6 +348,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
           }
           aria-expanded={sidebarState !== 'collapsed'}
           aria-controls="left-panel"
+          aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
           title={sidebarState === 'collapsed' ? 'Expand sidebar panel' : 'Collapse sidebar panel'}
           onClick={toggleSidebar}
         >

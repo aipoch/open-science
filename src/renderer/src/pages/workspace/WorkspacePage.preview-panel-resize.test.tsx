@@ -278,6 +278,7 @@ describe('WorkspacePage preview panel resize sync', () => {
       dispatchEvent: vi.fn()
     }))
     window.api = {
+      platform: 'linux',
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
@@ -354,6 +355,7 @@ describe('WorkspacePage preview panel resize sync', () => {
 
     expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
     expect(toggleButton.getAttribute('aria-controls')).toBe('left-panel')
+    expect(toggleButton.getAttribute('aria-keyshortcuts')).toBe('Control+B')
     expect(sidebarPanel?.contains(toggleButton)).toBe(false)
     expect(toggleButton.className).toContain('absolute')
     expect(toggleButton.className.split(' ')).toContain('top-0')
@@ -365,6 +367,85 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(toggleButton.className).not.toContain('bg-primary/20')
     expect(toggleButton.style.left).not.toBe('0px')
     expect(resizeHandle?.className).toContain('transition-opacity')
+  })
+
+  it.each([
+    { platform: 'darwin', modifier: { metaKey: true }, wrongModifier: { ctrlKey: true } },
+    { platform: 'win32', modifier: { ctrlKey: true }, wrongModifier: { metaKey: true } },
+    { platform: 'linux', modifier: { ctrlKey: true }, wrongModifier: { metaKey: true } }
+  ])(
+    'toggles the desktop sidebar with the platform shortcut on $platform',
+    async ({ platform, modifier, wrongModifier }) => {
+      window.api.platform = platform
+      await renderPage()
+
+      const toggleButton = getSidebarToggle()
+      expect(toggleButton.getAttribute('aria-keyshortcuts')).toBe(
+        platform === 'darwin' ? 'Meta+B' : 'Control+B'
+      )
+
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ...wrongModifier,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+
+      const collapseEvent = new KeyboardEvent('keydown', {
+        key: 'b',
+        ...modifier,
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => window.dispatchEvent(collapseEvent))
+      expect(collapseEvent.defaultPrevented).toBe(true)
+      expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ...modifier,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+      input.remove()
+    }
+  )
+
+  it('leaves the sidebar unchanged while a modal dialog is open', async () => {
+    await renderPage()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+
+    try {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
+    } finally {
+      dialog.remove()
+    }
   })
 
   // Right preview edge keeps the always-on divider from main; left stays tick-on-hover only.
@@ -585,6 +666,30 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(
       container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
     ).toBe('true')
+  })
+
+  it('toggles the mobile navigation drawer with Ctrl+B', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    const toggleFromKeyboard = async (): Promise<void> => {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+    }
+
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+    await toggleFromKeyboard()
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('true')
+    await toggleFromKeyboard()
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
   })
 
   it('closes the mobile navigation drawer from Escape and the overlay', async () => {

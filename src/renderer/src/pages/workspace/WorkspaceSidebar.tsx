@@ -65,6 +65,7 @@ type WorkspaceSidebarProps = {
 
 type WorkspaceSidebarViewProps = WorkspaceSidebarProps & {
   now: number
+  showSessionShortcuts?: boolean
 }
 
 // Maps each session status to the left-side indicator dot using emitted theme colors.
@@ -87,6 +88,8 @@ const sessionStatusLabel: Record<SessionStatus, string> = {
 }
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
+const OPEN_DIALOG_SELECTOR =
+  '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
 const isLiveSessionStatus = (status: SessionStatus): boolean =>
   status === 'running' ||
@@ -201,9 +204,17 @@ const WorkspaceSidebarView = ({
   mobileMode = false,
   isMobileOpen = false,
   onMobileClose,
-  now
+  now,
+  showSessionShortcuts = false
 }: WorkspaceSidebarViewProps): React.JSX.Element => {
   const sections = getSessionSections(sessions, now)
+  const shortcutNumberBySessionId = new Map(
+    sections
+      .flatMap((section) => section.items)
+      .slice(0, 9)
+      .map((session, index) => [session.id, index + 1])
+  )
+  const isMac = window.api?.platform === 'darwin'
 
   return (
     <aside
@@ -325,6 +336,7 @@ const WorkspaceSidebarView = ({
                 </div>
                 {section.items.map((session) => {
                   const isActive = session.id === activeSessionId
+                  const shortcutNumber = shortcutNumberBySessionId.get(session.id)
                   const isExportDisabled =
                     session.messages.length === 0 ||
                     session.status === 'running' ||
@@ -342,6 +354,11 @@ const WorkspaceSidebarView = ({
                           type="button"
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                           aria-current={isActive ? 'page' : undefined}
+                          aria-keyshortcuts={
+                            shortcutNumber
+                              ? `${isMac ? 'Meta' : 'Control'}+${shortcutNumber}`
+                              : undefined
+                          }
                           onClick={() => onOpenSession(session.id)}
                         >
                           <span
@@ -359,6 +376,14 @@ const WorkspaceSidebarView = ({
                             Session status: {sessionStatusLabel[session.status]}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                          {showSessionShortcuts && shortcutNumber ? (
+                            <kbd
+                              aria-hidden="true"
+                              className="shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
+                            >
+                              {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
+                            </kbd>
+                          ) : null}
                         </button>
 
                         <DropdownMenu>
@@ -540,8 +565,11 @@ const WorkspaceSidebarView = ({
 }
 
 const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
+  const { onOpenSession, sessions } = props
   const [now, setNow] = useState(Date.now)
-  const nextSectionRefreshAt = getNextSessionSectionRefreshAt(props.sessions, now)
+  const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
+  const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
+  const isMac = window.api?.platform === 'darwin'
 
   // Reclassify recent completions at 15 minutes and date groups at local midnight without waiting
   // for unrelated Session activity to trigger a render.
@@ -553,7 +581,58 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
     return () => window.clearTimeout(timeoutId)
   }, [nextSectionRefreshAt])
 
-  return <WorkspaceSidebarView {...props} now={now} />
+  useEffect(() => {
+    const primaryModifierKey = isMac ? 'Meta' : 'Control'
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === primaryModifierKey) {
+        if (!event.repeat && document.querySelector(OPEN_DIALOG_SELECTOR) === null) {
+          setShowSessionShortcuts(true)
+        }
+        return
+      }
+
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.altKey ||
+        event.shiftKey ||
+        !(isMac ? event.metaKey : event.ctrlKey) ||
+        document.querySelector(OPEN_DIALOG_SELECTOR) !== null
+      ) {
+        return
+      }
+
+      const shortcutNumber = Number(event.key)
+      if (!Number.isInteger(shortcutNumber) || shortcutNumber < 1 || shortcutNumber > 9) return
+
+      const session = getSessionSections(sessions, now)
+        .flatMap((section) => section.items)
+        .at(shortcutNumber - 1)
+      if (!session) return
+
+      event.preventDefault()
+      onOpenSession(session.id)
+    }
+
+    const handleKeyUp = (event: KeyboardEvent): void => {
+      if (event.key === primaryModifierKey) setShowSessionShortcuts(false)
+    }
+
+    const hideSessionShortcuts = (): void => setShowSessionShortcuts(false)
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', hideSessionShortcuts)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', hideSessionShortcuts)
+    }
+  }, [isMac, now, onOpenSession, sessions])
+
+  return <WorkspaceSidebarView {...props} now={now} showSessionShortcuts={showSessionShortcuts} />
 }
 
 export { WorkspaceSidebar }

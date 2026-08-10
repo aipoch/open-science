@@ -467,6 +467,126 @@ describe('WorkspaceSidebar accessible render', () => {
     }
   })
 
+  it.each([
+    {
+      platform: 'darwin',
+      modifierKey: 'Meta',
+      modifier: { metaKey: true },
+      hint: '⌘1',
+      ariaShortcut: 'Meta+1'
+    },
+    {
+      platform: 'win32',
+      modifierKey: 'Control',
+      modifier: { ctrlKey: true },
+      hint: 'Ctrl+1',
+      ariaShortcut: 'Control+1'
+    },
+    {
+      platform: 'linux',
+      modifierKey: 'Control',
+      modifier: { ctrlKey: true },
+      hint: 'Ctrl+1',
+      ariaShortcut: 'Control+1'
+    }
+  ])(
+    'shows and handles the first nine session shortcuts on $platform',
+    async ({ platform, modifierKey, modifier, hint, ariaShortcut }) => {
+      const originalApi = window.api
+      window.api = { ...originalApi, platform } as never
+      const sessions = [
+        createSession({ id: 'active-first', title: 'Active first' }),
+        createSession({ id: 'pinned-target', title: 'Pinned target', pinned: true }),
+        ...Array.from({ length: 8 }, (_, index) =>
+          createSession({ id: `active-${index + 2}`, title: `Active ${index + 2}` })
+        )
+      ]
+      const onOpenSession = vi.fn()
+      const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      let dialog: HTMLDivElement | undefined
+
+      try {
+        await act(async () => {
+          root.render(
+            <WorkspaceSidebar
+              projectName="Example project"
+              sessions={sessions}
+              activeSessionId={undefined}
+              canCreateConversation
+              canMutateConversations
+              canDeleteConversations
+              onGoHome={vi.fn()}
+              onNewConversation={vi.fn()}
+              isFilesOpen={false}
+              onOpenFiles={vi.fn()}
+              onOpenSession={onOpenSession}
+              onRenameSession={vi.fn()}
+              canDownloadArtifacts
+              onDownloadArtifacts={vi.fn()}
+              onViewNotebook={vi.fn()}
+              onExportSession={vi.fn()}
+              onTogglePin={vi.fn()}
+              onDeleteSession={vi.fn()}
+              onOpenSettings={vi.fn()}
+            />
+          )
+        })
+
+        const shortcutButtons = container.querySelectorAll<HTMLButtonElement>(
+          'button[aria-keyshortcuts]'
+        )
+        expect(shortcutButtons).toHaveLength(9)
+        expect(shortcutButtons[0]?.textContent).toContain('Pinned target')
+        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')).toBe(ariaShortcut)
+
+        await act(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', { key: modifierKey, ...modifier, bubbles: true })
+          )
+        })
+        expect(container.querySelectorAll('kbd')).toHaveLength(9)
+        expect(container.textContent).toContain(hint)
+
+        const openEvent = new KeyboardEvent('keydown', {
+          key: '1',
+          ...modifier,
+          bubbles: true,
+          cancelable: true
+        })
+        await act(async () => window.dispatchEvent(openEvent))
+        expect(openEvent.defaultPrevented).toBe(true)
+        expect(onOpenSession).toHaveBeenCalledWith('pinned-target')
+
+        await act(async () => {
+          window.dispatchEvent(new KeyboardEvent('keyup', { key: modifierKey, bubbles: true }))
+        })
+        expect(container.querySelector('kbd')).toBeNull()
+
+        onOpenSession.mockClear()
+        dialog = document.createElement('div')
+        dialog.setAttribute('role', 'dialog')
+        document.body.appendChild(dialog)
+        await act(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: '2',
+              ...modifier,
+              bubbles: true,
+              cancelable: true
+            })
+          )
+        })
+        expect(onOpenSession).not.toHaveBeenCalled()
+      } finally {
+        dialog?.remove()
+        act(() => root.unmount())
+        window.api = originalApi
+      }
+    }
+  )
+
   it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
     const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
