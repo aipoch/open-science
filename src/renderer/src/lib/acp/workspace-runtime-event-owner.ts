@@ -315,6 +315,7 @@ const syncWorkspaceElicitationState = (requests: PendingElicitationRequest[]): v
   for (const session of store.sessions) {
     if (
       (session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
+      session.interactionState?.elicitation !== false &&
       session.activities?.some(
         (activity) =>
           activity.elicitation?.state === 'pending' &&

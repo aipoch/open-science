@@ -967,6 +967,56 @@ describe('workspace durable elicitation', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('waiting-for-user')
   })
 
+  it('does not rearm an answered durable question when Permission becomes pending', () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === request.sessionId
+          ? {
+              ...session,
+              status: 'waiting-for-user',
+              activities: [
+                {
+                  id: request.toolCallId,
+                  kind: 'tool',
+                  title: 'Waiting for an answer',
+                  status: 'in_progress',
+                  sortIndex: 1,
+                  eventIds: [],
+                  elicitation: {
+                    message: request.message,
+                    fields: request.fields,
+                    state: 'pending',
+                    durable: request.durable
+                  },
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                }
+              ]
+            }
+          : session
+      )
+    }))
+
+    syncWorkspaceElicitationState([request])
+    useSessionStore.getState().setElicitationPending(request.sessionId, false)
+    useSessionStore.getState().setPermissionPending(request.sessionId)
+    syncWorkspaceElicitationState([])
+    useSessionStore.getState().clearPermissionPending(request.sessionId)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      interactionState: { permission: false, elicitation: false }
+    })
+  })
+
   it('reattaches a restored session before submitting its durable answer', async () => {
     const resumeSession = vi.fn().mockResolvedValue({
       sessionId: 'session-choice-1',
