@@ -1,5 +1,16 @@
 import { constants, createReadStream } from 'node:fs'
-import { copyFile, link, lstat, mkdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises'
+import {
+  copyFile,
+  link,
+  lstat,
+  mkdir,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat
+} from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 
@@ -16,6 +27,9 @@ import {
 import { publishNoReplace } from './atomic-no-replace-publisher'
 
 const LEGACY_CLEANUP_PRIVATE_SUFFIX = '.legacy-cleanup.private'
+const LEGACY_RECOVERY_TEMP_STALE_AFTER_MS = 24 * 60 * 60 * 1_000
+const LEGACY_RECOVERY_ATTEMPT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const HARD_LINK_FALLBACK_ERROR_CODES = new Set([
   'EACCES',
   'EINVAL',
@@ -103,6 +117,49 @@ class VerifiedLegacyCleanupOwner {
       throw error
     }
   }
+
+  private async reclaimStaleRecoveryTemporaries(finalPath: string): Promise<void> {
+    const parentPath = dirname(finalPath)
+    const namePrefix = `${basename(finalPath)}.legacy-recovery.copy.`
+    const nameSuffix = '.tmp'
+    const staleBefore = Date.now() - LEGACY_RECOVERY_TEMP_STALE_AFTER_MS
+    const entries = await readdir(parentPath, { withFileTypes: true })
+
+    for (const entry of entries) {
+      if (
+        !entry.isFile() ||
+        !entry.name.startsWith(namePrefix) ||
+        !entry.name.endsWith(nameSuffix)
+      ) {
+        continue
+      }
+      const attemptId = entry.name.slice(namePrefix.length, -nameSuffix.length)
+      if (!LEGACY_RECOVERY_ATTEMPT_ID_PATTERN.test(attemptId)) continue
+
+      const candidatePath = join(parentPath, entry.name)
+      assertPathInsideRoot(this.storageRoot, candidatePath, 'Upload recovery path escapes storage.')
+      const candidateInfo = await lstat(candidatePath).catch((error: unknown) => {
+        if (isMissingFileError(error)) return undefined
+        throw error
+      })
+      if (
+        !candidateInfo?.isFile() ||
+        candidateInfo.isSymbolicLink() ||
+        candidateInfo.mtimeMs > staleBefore
+      ) {
+        continue
+      }
+
+      const currentInfo = await lstat(candidatePath).catch((error: unknown) => {
+        if (isMissingFileError(error)) return undefined
+        throw error
+      })
+      if (currentInfo && hasSameFileSnapshot(currentInfo, candidateInfo)) {
+        await rm(candidatePath, { force: true })
+      }
+    }
+  }
+
   private async ensureSafeFinalParent(finalPath: string): Promise<boolean> {
     const storageRoot = resolve(this.storageRoot)
     const finalParent = dirname(finalPath)
@@ -378,14 +435,16 @@ class VerifiedLegacyCleanupOwner {
       throw error
     }
 
+    if (!(await this.ensureSafeFinalParent(finalPath))) {
+      return {
+        status: 'unsafe-residual',
+        reason: 'the ready Version content parent contains a symbolic link or escapes storage'
+      }
+    }
+    await this.reclaimStaleRecoveryTemporaries(finalPath)
+
     let recoveredFinalInfo: FileIdentity | undefined
     if (!finalInfo) {
-      if (!(await this.ensureSafeFinalParent(finalPath))) {
-        return {
-          status: 'unsafe-residual',
-          reason: 'the ready Version content parent contains a symbolic link or escapes storage'
-        }
-      }
       let createdFinal = false
       let createdHardLink = false
       try {

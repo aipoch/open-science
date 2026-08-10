@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1198,17 +1199,22 @@ describe('upload repository', () => {
     await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
 
     await writeFile(legacyPath, content)
-    const staleRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.interrupted.tmp`
+    const staleRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000001.tmp`
+    const freshRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000002.tmp`
     await mkdir(dirname(finalPath), { recursive: true })
     await writeFile(staleRecoveryTemporaryPath, content.subarray(0, 1))
+    await writeFile(freshRecoveryTemporaryPath, content.subarray(0, 2))
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000)
+    await utimes(staleRecoveryTemporaryPath, staleTime, staleTime)
     await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
       status: 'removed'
     })
     expect(hardLinkUnavailable).toHaveBeenCalledOnce()
     await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(staleRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 1))
-    await rm(staleRecoveryTemporaryPath)
+    await expect(readFile(staleRecoveryTemporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(freshRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 2))
+    await rm(freshRecoveryTemporaryPath)
 
     await expect(
       repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
