@@ -308,10 +308,13 @@ export const projectFinishedRun = (
       cause
     })
   }
+  const planAwaitingApproval =
+    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
+    session.activePlanProjection.approval === 'pending'
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,
-    status: keepArtifactError ? 'error' : 'idle',
+    status: keepArtifactError ? 'error' : planAwaitingApproval ? 'waiting-plan-approval' : 'idle',
     error: keepArtifactError ? session.error : undefined,
     errorReportable: keepArtifactError ? session.errorReportable : undefined,
     messages,
@@ -357,12 +360,17 @@ export const projectFailedRun = (
       runError: error
     })
   }
+  const planAwaitingApproval =
+    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
+    session.activePlanProjection.approval === 'pending'
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,
-    status: 'error',
-    error,
-    errorReportable: reportable ?? isReportableRunFailure(error),
+    status: planAwaitingApproval ? 'waiting-plan-approval' : 'error',
+    error: planAwaitingApproval ? undefined : error,
+    errorReportable: planAwaitingApproval
+      ? undefined
+      : (reportable ?? isReportableRunFailure(error)),
     messages,
     activities,
     activityGroups,
@@ -468,13 +476,16 @@ export const projectInterruptedRun = (
       resumeRecovery
     }
   }
+  const planAwaitingApproval =
+    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
+    session.activePlanProjection.approval === 'pending'
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,
-    status: 'error',
-    interrupted: true,
-    resumeRecovery,
-    error,
+    status: planAwaitingApproval ? 'waiting-plan-approval' : 'error',
+    interrupted: planAwaitingApproval ? undefined : true,
+    resumeRecovery: planAwaitingApproval ? undefined : resumeRecovery,
+    error: planAwaitingApproval ? undefined : error,
     errorReportable: undefined,
     messages,
     activities,

@@ -135,11 +135,7 @@ export const projectActivePlan = (
       session.compacting || session.status === 'waiting-for-user'
         ? session.status
         : projection.lifecycle === 'awaiting_approval'
-          ? session.activeRun ||
-            session.status === 'waiting-plan-approval' ||
-            session.status === 'waiting-permission'
-            ? 'waiting-plan-approval'
-            : 'idle'
+          ? 'waiting-plan-approval'
           : projection.lifecycle === 'rejected'
             ? session.activeRun
               ? 'running'

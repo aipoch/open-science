@@ -8,6 +8,7 @@ import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -71,6 +72,26 @@ const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile
   ...overrides
 })
 
+const pendingPlanProjection: ActivePlanProjection = {
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision: 1,
+  approval: 'pending',
+  lifecycle: 'awaiting_approval',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Review the generated plan',
+    phases: [],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Ready for review.' }
+  },
+  stepStatuses: {},
+  stepStates: {},
+  counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+}
+
 describe('workspace runtime events', () => {
   // Rebuild the visible session before each adapter assertion.
   beforeEach(() => {
@@ -112,6 +133,21 @@ describe('workspace runtime events', () => {
       streamId: 'assistant-message-1',
       eventIds: ['event-1', 'event-2'],
       status: 'streaming'
+    })
+  })
+
+  it('keeps a pending Plan actionable after the runtime reports a timeout stop', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'plan-ready', kind: 'plan', planProjection: pendingPlanProjection })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'plan-timeout', kind: 'stop', text: 'end_turn' })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      activeRun: undefined,
+      activePlanProjection: { approval: 'pending', lifecycle: 'awaiting_approval' }
     })
   })
 

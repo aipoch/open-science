@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -54,6 +55,26 @@ const session = (
   createdAt: updatedAt,
   updatedAt
 })
+
+const pendingPlan: ActivePlanProjection = {
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision: 1,
+  approval: 'pending',
+  lifecycle: 'awaiting_approval',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Review the generated plan',
+    phases: [],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Ready for review.' }
+  },
+  stepStatuses: {},
+  stepStates: {},
+  counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+}
 
 const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheckResult => ({
   checkedAt: 1,
@@ -586,6 +607,33 @@ describe('HomePage activity overview', () => {
     expect(
       container.querySelector('[aria-label="Open session Live analysis, needs you"]')
     ).not.toBeNull()
+  })
+
+  it('keeps a timed-out Plan approval visible as needs you', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'plan-session',
+      projectId: project.id,
+      cwd: '/workspace/project-1',
+      content: 'Create a research plan'
+    })
+    useSessionStore.getState().setActivePlanProjection('plan-session', pendingPlan)
+    useSessionStore.getState().finishRun('plan-session')
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Create a research plan, needs you"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
   })
 
   it('dismisses every backend completion for a session without opening it', async () => {

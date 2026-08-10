@@ -4628,6 +4628,101 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('preserves the originating Agent Frame when an app-owned choice continues the turn', async () => {
+    const storageRoot = await createTemporaryRoot()
+    const process = new FakeAgentProcess()
+    const observedProvenance: Array<{
+      rootFrameId: string
+      agentFrameId: string
+      messageBranchId: string
+      messageBranchAncestry: string[]
+      messageAncestry: string[]
+      runtimeSegmentId: string
+      promptMessageId: string
+    }> = []
+    let currentRunFile = ''
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: storageRoot,
+        dataRoot: storageRoot,
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        repository: new ArtifactRepository(storageRoot)
+      }
+    })
+    const fakeAgent = startFakeAgent(process, ['user-choice-frame-session'], {
+      onPrompt: async ({ sessionId, text }) => {
+        const currentRun = JSON.parse(await readFile(currentRunFile, 'utf8')) as {
+          rootFrameId: string
+          agentFrameId: string
+          messageBranchId: string
+          messageBranchAncestry: string[]
+          messageAncestry: string[]
+          runtimeSegmentId: string
+          promptMessageId: string
+        }
+        observedProvenance.push({
+          rootFrameId: currentRun.rootFrameId,
+          agentFrameId: currentRun.agentFrameId,
+          messageBranchId: currentRun.messageBranchId,
+          messageBranchAncestry: currentRun.messageBranchAncestry,
+          messageAncestry: currentRun.messageAncestry,
+          runtimeSegmentId: currentRun.runtimeSegmentId,
+          promptMessageId: currentRun.promptMessageId
+        })
+        if (text === 'begin the framed workflow') {
+          await runtime.requestUserInput({
+            sessionId,
+            questions: [
+              {
+                question: 'Which implementation should I use?',
+                options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+              }
+            ]
+          })
+        }
+      }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    currentRunFile = getEnvValue(
+      fakeAgent.newSessions[0].mcpServers[0],
+      'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'
+    )
+    const expectedProvenance = {
+      rootFrameId: 'durable-root-frame',
+      agentFrameId: 'originating-agent-frame',
+      messageBranchId: 'durable-root-branch',
+      messageBranchAncestry: ['durable-root-branch'],
+      messageAncestry: ['originating-prompt-message'],
+      runtimeSegmentId: 'durable-runtime-segment',
+      promptMessageId: 'originating-prompt-message'
+    }
+    const originatingProvenance = structuredClone(expectedProvenance)
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'begin the framed workflow',
+      provenanceContext: originatingProvenance
+    })
+
+    const choice = runtime.getSnapshot().pendingElicitations?.[0]
+    expect(choice).toBeDefined()
+    originatingProvenance.rootFrameId = 'mutated-after-the-originating-turn'
+    originatingProvenance.messageBranchAncestry.push('mutated-branch')
+    originatingProvenance.messageAncestry.push('mutated-message')
+    await runtime.respondToElicitation({
+      requestId: choice!.requestId,
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    })
+    await vi.waitFor(() => expect(observedProvenance).toHaveLength(2))
+
+    expect(observedProvenance).toEqual([expectedProvenance, expectedProvenance])
+  })
+
   it('waits for every queued app-owned choice before continuing with all answers', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['queued-user-choice-session'])

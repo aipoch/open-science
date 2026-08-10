@@ -311,6 +311,141 @@ describe('session store', () => {
     expect(toPersistedSession(projection)).not.toHaveProperty('runtimeContext')
   })
 
+  it('converges a newer durable Plan authority when message content is unchanged', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    const updatedAt = source.updatedAt + 10
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        updatedAt
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      runtimeContext: { revision: 1, plan: { approval: 'pending' } },
+      updatedAt
+    })
+  })
+
+  it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      content: 'Create a plan'
+    })
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'run-1',
+      eventId: 'agent-output-1',
+      promptMessageId: prompt?.messageId,
+      content: 'The plan is ready.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 10
+      }
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.status).toBe('waiting-plan-approval')
+    expect(projected.runtimeContext?.revision).toBe(2)
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Create a plan',
+      'The plan is ready.'
+    ])
+    expect(projected.conversationGraph?.messages.map((message) => message.content)).toEqual([
+      'Create a plan',
+      'The plan is ready.'
+    ])
+  })
+
+  it('rejects an older durable Plan authority revision', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 3,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 20
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'idle',
+        runtimeContext: { version: 1, revision: 2 },
+        updatedAt: 30
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      runtimeContext: { revision: 3, plan: { approval: 'pending' } },
+      updatedAt: 20
+    })
+  })
+
   it('keeps a current Plan projection when a durable Session update echoes back', () => {
     const persistedPlan = {
       artifactId: 'artifact-version-1',
@@ -561,7 +696,7 @@ describe('session store', () => {
     })
   })
 
-  it('keeps a pending Plan idle after its Agent interaction ended without a decision', () => {
+  it('keeps a pending Plan awaiting review after its Agent interaction ended without a decision', () => {
     useSessionStore.getState().hydrateSessions([
       {
         id: 'session-1',
@@ -580,7 +715,7 @@ describe('session store', () => {
       .setActivePlanProjection('session-1', createPlanProjection('version-1'))
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
+      status: 'waiting-plan-approval',
       activePlanProjection: { approval: 'pending' }
     })
   })
@@ -1504,6 +1639,94 @@ describe('session store', () => {
       status: 'waiting-plan-approval',
       activePlanProjection: { lifecycle: 'awaiting_approval' }
     })
+  })
+
+  it('keeps Plan approval waiting when the Agent interaction times out', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan'
+    })
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', createPlanProjection('version-1'))
+
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      activeRun: undefined,
+      activePlanProjection: { lifecycle: 'awaiting_approval', approval: 'pending' }
+    })
+  })
+
+  it('keeps pending Plan approval available when the active run fails', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Waiting for Plan approval'
+    })
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'transport-session-1',
+      toolCallId: 'generate-plan-call',
+      eventId: 'generate-plan-started',
+      providerToolName: 'generate_plan',
+      status: 'pending'
+    })
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', createPlanProjection('version-1'))
+
+    useSessionStore
+      .getState()
+      .failRun('transport-session-1', 'timed out awaiting tools/call after 300s')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      status: 'waiting-plan-approval',
+      activeRun: undefined,
+      activePlanProjection: { lifecycle: 'awaiting_approval', approval: 'pending' }
+    })
+    expect(session.error).toBeUndefined()
+    expect(session.errorReportable).toBeUndefined()
+    expect(session.messages[1]).toMatchObject({ status: 'error', failedAt: expect.any(Number) })
+    expect(session.activities[0]).toMatchObject({ status: 'failed' })
+  })
+
+  it('keeps pending Plan approval available when the active run is interrupted', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Waiting for Plan approval'
+    })
+    useSessionStore
+      .getState()
+      .setActivePlanProjection('transport-session-1', createPlanProjection('version-1'))
+
+    useSessionStore
+      .getState()
+      .interruptRun('transport-session-1', 'connection-lost', 'Connection lost')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session).toMatchObject({
+      status: 'waiting-plan-approval',
+      activeRun: undefined,
+      activePlanProjection: { lifecycle: 'awaiting_approval', approval: 'pending' }
+    })
+    expect(session.error).toBeUndefined()
+    expect(session.interrupted).toBeUndefined()
+    expect(session.resumeRecovery).toBeUndefined()
+    expect(session.messages[0]).toMatchObject({ role: 'user', interrupted: true })
+    expect(session.messages[1]).toMatchObject({ status: 'error', failedAt: expect.any(Number) })
   })
 
   it('upserts transient tool activities without duplicating repeated events', () => {

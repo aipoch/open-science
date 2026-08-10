@@ -313,6 +313,42 @@ const mergeDurableUploadProjection = <Message extends PersistedChatMessage>(
   return { messages, changed }
 }
 
+const projectDurablePlanAuthority = (
+  current: ChatSession,
+  durable: PersistedChatSession
+): ChatSession => {
+  const incomingRevision = durable.runtimeContext?.revision
+  const currentRevision = current.runtimeContext?.revision
+  const hasPlanAuthority =
+    durable.runtimeContext?.plan !== undefined || current.runtimeContext?.plan !== undefined
+  if (
+    !hasPlanAuthority ||
+    incomingRevision === undefined ||
+    (currentRevision !== undefined && incomingRevision < currentRevision)
+  ) {
+    return current
+  }
+
+  const status =
+    current.compacting ||
+    current.status === 'waiting-for-user' ||
+    current.status === 'waiting-permission'
+      ? current.status
+      : durable.runtimeContext?.plan?.approval === 'pending'
+        ? 'waiting-plan-approval'
+        : current.status === 'waiting-plan-approval'
+          ? current.activeRun || current.agentPromptInFlight
+            ? 'running'
+            : 'idle'
+          : current.status
+  return {
+    ...current,
+    status,
+    runtimeContext: durable.runtimeContext,
+    updatedAt: Math.max(current.updatedAt, durable.updatedAt)
+  }
+}
+
 export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   set: StoreApi<State>['setState']
 ): SessionPersistenceActions => ({
@@ -469,8 +505,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               session.conversationGraph?.messages ?? session.messages
             )
           : undefined
-        if (!flat.changed && !graph?.changed) return state
-        projected = withTransientSessionState(session, current)
+        const authorityProjected = projectDurablePlanAuthority(current, session)
+        if (!flat.changed && !graph?.changed && authorityProjected === current) return state
+        projected =
+          flat.changed || graph?.changed
+            ? projectDurablePlanAuthority(withTransientSessionState(session, current), session)
+            : authorityProjected
       } else {
         const flat = mergeDurableUploadProjection(
           current.messages,
@@ -484,8 +524,7 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               session.conversationGraph?.messages ?? session.messages
             )
           : undefined
-        if (!flat.changed && !graph?.changed) return state
-        projected = {
+        const merged: ChatSession = {
           ...current,
           messages: flat.messages,
           ...(graph?.changed
@@ -497,6 +536,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
               }
             : {})
         }
+        projected = projectDurablePlanAuthority(merged, session)
+        if (!flat.changed && !graph?.changed && projected === merged) return state
       }
 
       externallyHydratedSessions.add(projected)

@@ -359,6 +359,13 @@ class AcpRuntime {
   private readonly sessionInteractions: AcpSessionInteractionOwner
   private readonly elicitationOwner: AcpElicitationOwner
   private readonly appContinuations: AcpAppContinuationOwner
+  private readonly userChoiceProvenanceContexts = new Map<
+    string,
+    Readonly<{
+      sessionId: string
+      provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+    }>
+  >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private durablePermissionContinuations?: Map<
@@ -1342,13 +1349,15 @@ class AcpRuntime {
       }
     }
 
+    const liveProvenance = this.userChoiceProvenanceContexts.get(response.requestId)
     const resolution = this.elicitationOwner.respond(response)
+    this.userChoiceProvenanceContexts.delete(response.requestId)
     if (resolution.detached) {
       const continuation = this.userChoiceContinuation(
         resolution.request,
         resolution.response,
         restoredContinuation?.historyReplay,
-        restoredContinuation?.provenanceContext
+        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext
       )
       if (continuation) {
         this.appContinuations.set(resolution.request.sessionId, {
@@ -1453,6 +1462,12 @@ class AcpRuntime {
     )
 
     if (!pending) return { action: 'cancelled' }
+    if (promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext) {
+      this.userChoiceProvenanceContexts.set(requestId, {
+        sessionId: request.sessionId,
+        provenanceContext: promptInteraction.provenanceContext
+      })
+    }
     return { action: 'pending' }
   }
 
@@ -1695,6 +1710,14 @@ class AcpRuntime {
 
   private cancelPermissionFlowForSession(sessionId: string): void {
     this.permissionContext.cancelForSession(sessionId)
+    const provenanceContexts = this.userChoiceProvenanceContexts
+    if (provenanceContexts) {
+      for (const [requestId, provenance] of provenanceContexts) {
+        if (provenance.sessionId === sessionId) {
+          provenanceContexts.delete(requestId)
+        }
+      }
+    }
     this.elicitationOwner.cancelForSession(sessionId)
     this.appContinuations.delete(sessionId)
   }
