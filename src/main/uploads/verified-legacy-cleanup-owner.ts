@@ -13,6 +13,7 @@ import {
   isFileExistsError,
   isMissingFileError
 } from './storage-helpers'
+import { publishNoReplace } from './atomic-no-replace-publisher'
 
 const LEGACY_CLEANUP_PRIVATE_SUFFIX = '.legacy-cleanup.private'
 const HARD_LINK_FALLBACK_ERROR_CODES = new Set([
@@ -31,6 +32,7 @@ type VerifiedLegacyCleanupOptions = {
   renameLegacyForCleanup?: (source: string, destination: string) => Promise<void>
   linkReadyContent?: typeof link
   copyReadyContent?: typeof copyFile
+  publishReadyContentNoReplace?: typeof publishNoReplace
 }
 
 type VerifiedLegacyCleanupDependencies = {
@@ -52,7 +54,9 @@ type RemoveVerifiedLegacyCopyInput = {
 type LegacyCleanupResult =
   { status: 'absent' | 'removed' } | { status: 'unsafe-residual'; reason: string }
 type ReadyContentCopyResult =
-  { status: 'published' } | { status: 'unsafe-residual'; reason: string }
+  | { status: 'published' }
+  | { status: 'destination-exists' }
+  | { status: 'unsafe-residual'; reason: string }
 
 const isHardLinkUnavailableError = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -185,9 +189,28 @@ class VerifiedLegacyCleanupOwner {
         }
       }
 
-      await rename(temporaryPath, finalPath)
-      ownedTemporaryInfo = undefined
-      return { status: 'published' }
+      if (!(await this.ensureSafeFinalParent(finalPath))) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the ready Version content parent changed before publication'
+        }
+      }
+
+      try {
+        // The native adapter anchors the parent by descriptor/handle and atomically refuses an
+        // existing destination. Path-based rename cannot provide both guarantees cross-platform.
+        await (this.options.publishReadyContentNoReplace ?? publishNoReplace)(
+          this.storageRoot,
+          dirname(finalPath),
+          basename(temporaryPath),
+          basename(finalPath)
+        )
+        ownedTemporaryInfo = undefined
+        return { status: 'published' }
+      } catch (error) {
+        if (isFileExistsError(error)) return { status: 'destination-exists' }
+        throw error
+      }
     } finally {
       if (ownedTemporaryInfo) {
         const currentTemporaryInfo = await lstat(temporaryPath).catch(() => undefined)
@@ -382,7 +405,7 @@ class VerifiedLegacyCleanupOwner {
             version.checksum
           )
           if (copyResult.status === 'unsafe-residual') return copyResult
-          createdFinal = true
+          createdFinal = copyResult.status === 'published'
         }
       }
 

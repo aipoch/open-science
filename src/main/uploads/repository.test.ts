@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -12,7 +14,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -1167,9 +1169,23 @@ describe('upload repository', () => {
     const hardLinkUnavailable = vi.fn(async () => {
       throw Object.assign(new Error('Hard links are unavailable.'), { code: 'EPERM' })
     })
+    const publishReadyContentNoReplace = async (
+      _rootPath: string,
+      parentPath: string,
+      sourceName: string,
+      destinationName: string
+    ): Promise<void> => {
+      const sourcePath = join(parentPath, sourceName)
+      await copyFile(sourcePath, join(parentPath, destinationName), constants.COPYFILE_EXCL)
+      await rm(sourcePath)
+    }
     const fallbackCleanupOwner = new VerifiedLegacyCleanupOwner(
       root,
-      { getClient: () => Promise.resolve(client), linkReadyContent: hardLinkUnavailable },
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace
+      },
       {
         resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
       }
@@ -1215,6 +1231,31 @@ describe('upload repository', () => {
     await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(legacyPath)).resolves.toEqual(racedContent)
 
+    await writeFile(legacyPath, content)
+    const finalRaceContent = Buffer.alloc(content.byteLength, 'z')
+    const finalRaceCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace,
+        copyReadyContent: async (source, destination, mode) => {
+          await copyFile(source, destination, mode)
+          await writeFile(finalPath, finalRaceContent)
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(finalRaceCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the deterministic legacy path changed while restoring Version content'
+    })
+    await expect(readFile(finalPath)).resolves.toEqual(finalRaceContent)
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    await rm(finalPath)
+
     const finalParent = dirname(finalPath)
     const outsideFinalParent = join(root, 'outside-ready-version')
     await rm(finalParent, { recursive: true, force: true })
@@ -1231,12 +1272,50 @@ describe('upload repository', () => {
     })
     await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(legacyPath)).resolves.toEqual(content)
-    expect(hardLinkUnavailable).toHaveBeenCalledOnce()
+    expect(hardLinkUnavailable).toHaveBeenCalledTimes(2)
     await expect(readFile(join(outsideFinalParent, 'content'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
     await expect(stat(outsideFinalParent)).resolves.toMatchObject({})
     await rm(finalParent)
+
+    const movedFinalParent = join(root, 'moved-ready-version')
+    const raceCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace,
+        copyReadyContent: async (source, destination, mode) => {
+          await copyFile(source, destination, mode)
+          const destinationName = basename(String(destination))
+          await rename(finalParent, movedFinalParent)
+          await symlink(
+            outsideFinalParent,
+            finalParent,
+            process.platform === 'win32' ? 'junction' : 'dir'
+          )
+          await copyFile(
+            join(movedFinalParent, destinationName),
+            join(outsideFinalParent, destinationName)
+          )
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(raceCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the ready Version content parent changed before publication'
+    })
+    await expect(readFile(join(outsideFinalParent, 'content'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    expect(hardLinkUnavailable).toHaveBeenCalledTimes(3)
+    await rm(finalParent)
+    await rm(movedFinalParent, { recursive: true, force: true })
   })
 
   it('removes a verified legacy copy when reusing an existing ready Upload Version', async () => {

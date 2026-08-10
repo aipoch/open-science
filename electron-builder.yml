@@ -45,6 +45,7 @@ files:
   - '!node_modules/pdfjs-dist/**/*.map'
 asarUnpack:
   - resources/**
+  - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
   - node_modules/@agentclientprotocol/claude-agent-acp/**
 # The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a
