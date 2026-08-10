@@ -122,6 +122,7 @@ import { createProductionMicromambaRunner } from './notebook/windows-micromamba-
 import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
+import { HostLineageService } from './notebook/host-lineage-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
@@ -1275,6 +1276,10 @@ const createApplicationModules = async (
       hostArtifacts: new HostArtifactsService(projectFilesRepository, {
         artifact: artifactProvenanceRepository,
         upload: uploadRepository
+      }),
+      hostLineage: new HostLineageService({
+        catalog: projectFilesRepository,
+        provenance: artifactProvenanceRepository
       }),
       inputRegistry: notebookInputRegistry,
       agentsService,

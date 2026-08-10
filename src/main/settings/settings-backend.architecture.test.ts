@@ -601,6 +601,7 @@ describe('Settings backend ownership architecture', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
       'capabilitiesCall',
       'artifactsCall',
+      'lineageCall',
       'mcpCall',
       'computeCall',
       'agentsCall',

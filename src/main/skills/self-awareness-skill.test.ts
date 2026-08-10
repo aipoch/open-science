@@ -22,7 +22,7 @@ describe('self-awareness bundled Skill', () => {
     expect(skill?.description).toMatch(/JavaScript control REPL/i)
   })
 
-  it('documents the shipped five-key JavaScript contract and Artifact read limits', async () => {
+  it('documents the shipped six-key JavaScript contract and Artifact lineage read limits', async () => {
     const body = await new SkillRegistry(skillsRoot).body('self-awareness')
 
     for (const phrase of [
@@ -33,6 +33,7 @@ describe('self-awareness bundled Skill', () => {
       '`agents`',
       '`skills`',
       '`artifacts`',
+      '`lineage`',
       'caps.compute === true',
       'caps.artifacts === true',
       'await host.artifacts(options)',
@@ -42,6 +43,15 @@ describe('self-awareness bundled Skill', () => {
       'collisions',
       'never content',
       'fresh frozen projection',
+      'caps.lineage === true',
+      'await host.lineage.graph(versionId)',
+      'await host.lineage.get(versionId)',
+      'graph discovery',
+      'session-bound control token',
+      'another Session',
+      'cross-Project edges',
+      'storage keys',
+      'Python/R `host`',
       'same feature change'
     ]) {
       expect(body).toContain(phrase)

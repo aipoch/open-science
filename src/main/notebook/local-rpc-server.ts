@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
+import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
@@ -137,6 +138,17 @@ type NotebookLocalRpcServerOptions = {
       context: { projectId: string; sessionId: string }
     ): Promise<string>
   }
+  hostLineage?: {
+    graph(
+      versionId: unknown,
+      options: unknown,
+      context: { projectId: string; sessionId: string }
+    ): Promise<HostLineageGraph>
+    get(
+      versionId: unknown,
+      context: { projectId: string; sessionId: string }
+    ): Promise<HostLineageVersion>
+  }
   // host.agents control-plane SDK (issue 02): exposes the Specialist/catalog surface to the
   // JavaScript control-plane REPL via the extensible dispatcher. Never routed through host.mcp();
   // carries the trusted calling session identity captured outside the sandbox so switch()
@@ -191,6 +203,7 @@ const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set([
   'capabilitiesCall',
   'artifactsCall',
+  'lineageCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
@@ -240,6 +253,7 @@ class NotebookLocalRpcServer {
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
+  private readonly hostLineage: NotebookLocalRpcServerOptions['hostLineage']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private server: Server | undefined
@@ -277,6 +291,7 @@ class NotebookLocalRpcServer {
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
+    this.hostLineage = options.hostLineage
     this.agentsService = options.agentsService
     this.skillsService = options.skillsService
   }
@@ -694,7 +709,8 @@ class NotebookLocalRpcServer {
         ? authorization.slice('Bearer '.length)
         : ''
       let hostCapabilities:
-        Record<'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts', boolean> | undefined
+        | Record<'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage', boolean>
+        | undefined
       if (isArtifactRpcMethod(method)) {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
         params = acquired.params
@@ -705,8 +721,25 @@ class NotebookLocalRpcServer {
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
-          if (method === 'artifactsCall' && !sessionBinding.isControl) {
-            throw new RpcHttpError(403, 'host.artifacts requires a control-plane REPL capability.')
+          if (
+            (method === 'artifactsCall' || method === 'lineageCall') &&
+            !sessionBinding.isControl
+          ) {
+            throw new RpcHttpError(
+              403,
+              method === 'lineageCall'
+                ? 'host.lineage requires a control-plane REPL capability.'
+                : 'host.artifacts requires a control-plane REPL capability.'
+            )
+          }
+          if (method === 'lineageCall') {
+            const allowedKeys =
+              params.op === 'graph'
+                ? new Set(['op', 'version_id', 'options'])
+                : new Set(['op', 'version_id'])
+            if (Object.keys(params).some((key) => !allowedKeys.has(key))) {
+              throw new Error('host.lineage RPC params are invalid.')
+            }
           }
           if (
             method === 'agentsCall' &&
@@ -726,7 +759,8 @@ class NotebookLocalRpcServer {
               compute: allows('computeCall') && Boolean(this.computeService),
               agents: allows('agentsCall') && Boolean(this.agentsService),
               skills: allows('skillsCall') && Boolean(this.skillsService),
-              artifacts: allows('artifactsCall') && Boolean(this.hostArtifacts)
+              artifacts: allows('artifactsCall') && Boolean(this.hostArtifacts),
+              lineage: allows('lineageCall') && Boolean(this.hostLineage)
             }
           }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
@@ -872,6 +906,21 @@ class NotebookLocalRpcServer {
         return this.hostArtifacts.resolvePath(params.version_id, context)
       }
       throw new Error('Unknown host Artifact operation.')
+    }
+
+    if (method === 'lineageCall') {
+      if (!this.hostLineage) throw new Error('Host Lineage reads are not configured.')
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!projectId || !sessionId) {
+        throw new Error('Host Lineage reads require a session-bound Project scope.')
+      }
+      const context = { projectId, sessionId }
+      if (params.op === 'graph') {
+        return this.hostLineage.graph(params.version_id, params.options, context)
+      }
+      if (params.op === 'get') return this.hostLineage.get(params.version_id, context)
+      throw new Error('Unknown host.lineage operation.')
     }
 
     if (method === 'resolveNotebookInput') {

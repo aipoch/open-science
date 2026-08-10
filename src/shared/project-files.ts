@@ -119,6 +119,7 @@ export type HostArtifactCatalogItem = {
   source: ProjectFileSource
   sourceFileId: string
   versionId: string
+  versionNumber?: number
   checksum?: string
   projectId: string
   sessionId: string
@@ -126,7 +127,9 @@ export type HostArtifactCatalogItem = {
   contentType?: string
   sizeBytes: number
   sortAtMs: number
+  createdAt?: string
   rootFrameId: string | null
+  agentFrameId?: string | null
 }
 
 export type HostArtifact = {

@@ -189,7 +189,10 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       expect.objectContaining({
         sourceFileId: 'artifact-a',
         versionId: 'history-v1',
-        rootFrameId: 'root-history-v1'
+        versionNumber: 1,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        rootFrameId: 'root-history-v1',
+        agentFrameId: 'agent-frame'
       })
     ])
     await expect(

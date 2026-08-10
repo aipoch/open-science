@@ -46,6 +46,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
 ] as const
 const NOTEBOOK_CONTROL_RPC_METHODS = [
   'capabilitiesCall',
+  'lineageCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
