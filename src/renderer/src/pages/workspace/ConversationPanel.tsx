@@ -790,7 +790,7 @@ const ConversationPanel = ({
                       }
                     />
                   ) : hasPendingPermission ? (
-                    <ResizablePermissionComposer>
+                    <ResizablePermissionComposer key={pendingPermissions[0]?.requestId}>
                       <PermissionApprovalControls
                         requests={pendingPermissions}
                         onRespond={onRespondToPermission}

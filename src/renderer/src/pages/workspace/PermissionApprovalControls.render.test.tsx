@@ -166,7 +166,7 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('motion-safe:slide-in-from-bottom-1')
   })
 
-  it('renders the scope menu outside the embedded scroll surface', () => {
+  it('renders the scope menu outside the embedded scroll surface and restores trigger focus', async () => {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
@@ -182,13 +182,21 @@ describe('PermissionApprovalControls', () => {
         </div>
       )
     })
-    act(() => {
-      host.querySelector<HTMLButtonElement>('[data-testid="scope-chevron"]')?.click()
-    })
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="scope-chevron"]')
+    act(() => trigger?.click())
 
     const menu = document.body.querySelector('[role="menu"][aria-label="Authorization scope"]')
     expect(menu).not.toBeNull()
     expect(host.contains(menu)).toBe(false)
+
+    const once = Array.from(
+      menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []
+    ).find((item) => item.textContent?.includes('Once'))
+    await act(async () => {
+      once?.click()
+      await Promise.resolve()
+    })
+    expect(document.activeElement).toBe(trigger)
 
     act(() => root.unmount())
     host.remove()

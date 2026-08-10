@@ -505,7 +505,7 @@ describe('ConversationPanel composer intake', () => {
 
   it('puts permission approval ahead of Ask-User in a content-bounded composer lane', () => {
     renderPanel({
-      pendingPermissions: [{} as never],
+      pendingPermissions: [{ requestId: 'permission-1' } as never],
       pendingElicitations: [
         {
           requestId: 'elicitation-after-permission',
@@ -574,6 +574,13 @@ describe('ConversationPanel composer intake', () => {
     })
     expect(permissionComposer.style.height).toBe('660px')
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+
+    renderPanel({ pendingPermissions: [{ requestId: 'permission-2' } as never] })
+    const nextPermissionComposer = container.querySelector(
+      '[data-testid="permission-composer"]'
+    ) as HTMLDivElement
+    expect(nextPermissionComposer).not.toBe(permissionComposer)
+    expect(nextPermissionComposer.style.height).toBe('')
   })
 
   it('serializes a pending question ahead of Plan approval in the shared blocking lane', () => {

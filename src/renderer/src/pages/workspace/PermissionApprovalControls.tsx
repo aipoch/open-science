@@ -507,7 +507,7 @@ const ScopeDropdown = ({
           )}
           onClick={() => {
             onSelect(scope)
-            onClose()
+            onClose(true)
           }}
           onKeyDown={(event) => {
             const lastIndex = options.length - 1
@@ -516,7 +516,7 @@ const ScopeDropdown = ({
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
               onSelect(scope)
-              onClose()
+              onClose(true)
               return
             }
             if (event.key === 'ArrowDown') nextIndex = index === lastIndex ? 0 : index + 1
