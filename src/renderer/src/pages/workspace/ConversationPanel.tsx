@@ -149,6 +149,17 @@ const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): Rea
   </ResizableBottomPanel>
 )
 
+const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize Plan panel"
+    testId="plan-composer"
+    scrollTestId="plan-composer-scroll"
+    constrainGrowthToOverflow
+  >
+    {children}
+  </ResizableBottomPanel>
+)
+
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
   if (size < 1024) return `${size} B`
@@ -814,9 +825,10 @@ const ConversationPanel = ({
                       />
                     </ResizablePermissionComposer>
                   ) : pendingElicitation ? (
-                    <ResizableElicitationComposer>
+                    <ResizableElicitationComposer
+                      key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
+                    >
                       <WorkspaceElicitationCard
-                        key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
                         elicitation={pendingElicitation}
                         request={pendingElicitationRequest}
                         embedded
@@ -832,14 +844,16 @@ const ConversationPanel = ({
                       />
                     </ResizableElicitationComposer>
                   ) : pendingPlan ? (
-                    <WorkspacePlanCard
-                      className="relative z-10"
-                      projection={pendingPlan}
-                      onOpen={openPendingPlan}
-                      onRespond={(decision) => respondToPendingPlan({ decision })}
-                      onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                      onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
-                    />
+                    <ResizablePlanComposer key={activePendingPlanKey}>
+                      <WorkspacePlanCard
+                        embedded
+                        projection={pendingPlan}
+                        onOpen={openPendingPlan}
+                        onRespond={(decision) => respondToPendingPlan({ decision })}
+                        onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                        onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                      />
+                    </ResizablePlanComposer>
                   ) : null}
 
                   {/* Composer stays mounted to preserve its draft, but a pending blocking interaction

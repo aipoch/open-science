@@ -489,6 +489,38 @@ describe('ConversationPanel composer intake', () => {
     expect((elicitationComposer as HTMLElement).style.height).toBe('398px')
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
 
+    renderPanel({
+      activeSession: {
+        ...activeSession,
+        activities: [
+          {
+            ...activeSession.activities![0],
+            id: 'tool-ask-2',
+            elicitation: {
+              message: 'Choose the next skill type.',
+              fields,
+              state: 'pending'
+            }
+          }
+        ]
+      },
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-2',
+          sessionId: activeSession.id,
+          toolCallId: 'tool-ask-2',
+          message: 'Choose the next skill type.',
+          fields
+        }
+      ]
+    })
+
+    const nextElicitationComposer = container.querySelector(
+      '[data-testid="elicitation-composer"]'
+    ) as HTMLDivElement
+    expect(nextElicitationComposer).not.toBe(elicitationComposer)
+    expect(nextElicitationComposer.style.height).toBe('')
+
     const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
     expect(surfaceFade?.classList.contains('-top-18')).toBe(true)
     expect(surfaceFade?.classList.contains('h-18')).toBe(true)
@@ -1567,17 +1599,54 @@ describe('ConversationPanel + menu', () => {
     const pendingEditor = container.querySelector('[role="textbox"]')
     expect(pendingEditor?.closest('form')?.classList.contains('hidden')).toBe(true)
     expect(container.textContent).toContain('Plan ready for review')
+    const planComposer = container.querySelector('[data-testid="plan-composer"]') as HTMLDivElement
+    const planScrollSurface = container.querySelector(
+      '[data-testid="plan-composer-scroll"]'
+    ) as HTMLDivElement
+    const planResizeHandle = container.querySelector(
+      '[aria-label="Resize Plan panel"]'
+    ) as HTMLButtonElement
+    expect(planComposer).not.toBeNull()
+    expect(planScrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(planResizeHandle).not.toBeNull()
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('button')].some(
+        (button) => button.textContent === 'Dismiss'
+      )
+    ).toBe(false)
     const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
       article.textContent?.includes('Plan ready for review')
     )
-    expect(pendingPlanCard?.classList.contains('relative')).toBe(true)
-    expect(pendingPlanCard?.classList.contains('z-10')).toBe(true)
+    expect(pendingPlanCard?.classList.contains('border-0')).toBe(true)
+    expect(pendingPlanCard?.classList.contains('shadow-none')).toBe(true)
     expect(
       container
         .querySelector('[data-testid="composer-plus-trigger"]')
         ?.closest('form')
         ?.classList.contains('hidden')
     ).toBe(true)
+
+    planComposer.getBoundingClientRect = () => ({ height: 260 }) as DOMRect
+    Object.defineProperties(planScrollSurface, {
+      clientHeight: { configurable: true, value: 228 },
+      scrollHeight: { configurable: true, value: 228 }
+    })
+    act(() => {
+      planResizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      planResizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      planResizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect(planComposer.style.height).toBe('260px')
+
+    act(() => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Open')
+        ?.click()
+    })
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:session-plan:plan')
 
     await act(async () => {
       ;[...container.querySelectorAll<HTMLButtonElement>('button')]
@@ -1805,41 +1874,35 @@ describe('ConversationPanel + menu', () => {
     )
   })
 
-  it.each([
-    ['Approve', 'approved'],
-    ['Dismiss', 'rejected']
-  ] as const)(
-    'routes restored Plan %s through the durable decision API',
-    async (label, decision) => {
-      const session: ChatSession = {
-        id: `session-restored-${decision}`,
-        projectId: 'project-a',
-        title: 'Restored pending Plan',
-        cwd: '/workspace',
-        status: 'waiting-plan-approval',
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2,
-        activePlanProjection: {
-          ...completedPlanProjection,
-          approval: 'pending',
-          lifecycle: 'awaiting_approval'
-        }
+  it('routes restored Plan approval through the durable decision API', async () => {
+    const session: ChatSession = {
+      id: 'session-restored-approved',
+      projectId: 'project-a',
+      title: 'Restored pending Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
       }
-      const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
-      renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
-
-      await act(async () => {
-        ;[...container.querySelectorAll<HTMLButtonElement>('button')]
-          .find((button) => button.textContent === label)
-          ?.click()
-        await Promise.resolve()
-      })
-
-      expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision })
-      expect(respondToSessionPlanMock).not.toHaveBeenCalled()
     }
-  )
+    const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
+    renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+
+    await act(async () => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Approve')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision: 'approved' })
+    expect(respondToSessionPlanMock).not.toHaveBeenCalled()
+  })
 
   it('Attach files item triggers the hidden file input (onStageAttachmentFiles path)', () => {
     // We can only confirm the item exists and is not disabled; the picker click is browser-native.

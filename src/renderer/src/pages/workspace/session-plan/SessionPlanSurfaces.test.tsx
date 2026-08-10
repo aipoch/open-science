@@ -96,8 +96,9 @@ describe('Session Plan renderer surfaces', () => {
 
     expect(screen.getByText('Plan ready for review')).toBeTruthy()
     expect(screen.getByText('Analyze one dataset')).toBeTruthy()
-    expect(screen.getByText('1 phase · 1 delegation · 1 step')).toBeTruthy()
+    expect(screen.queryByText('1 phase · 1 delegation · 1 step')).toBeNull()
     expect(screen.getByText(/high confidence/u)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getAllByRole('button').every((button) => button.dataset.slot === 'button')).toBe(
       true
     )
@@ -108,19 +109,27 @@ describe('Session Plan renderer surfaces', () => {
     expect(onRespond).toHaveBeenCalledWith('approved')
   })
 
-  it.each([
-    ['Approve', 'approved'],
-    ['Dismiss', 'rejected']
-  ] as const)('removes the card after a successful %s response', async (buttonName, decision) => {
+  it('removes the compact card after a successful approval', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const view = render(
       <WorkspacePlanCard projection={projection} onOpen={vi.fn()} onRespond={onRespond} />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: buttonName }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
-    await waitFor(() => expect(onRespond).toHaveBeenCalledWith(decision))
+    await waitFor(() => expect(onRespond).toHaveBeenCalledWith('approved'))
     expect(view.container.querySelector('article')).toBeNull()
+  })
+
+  it('drops nested card chrome when embedded in the shared composer panel', () => {
+    const view = render(
+      <WorkspacePlanCard embedded projection={projection} onOpen={vi.fn()} onRespond={vi.fn()} />
+    )
+
+    const card = view.container.querySelector('article')
+    expect(card?.classList.contains('rounded-none')).toBe(true)
+    expect(card?.classList.contains('border-0')).toBe(true)
+    expect(card?.classList.contains('shadow-none')).toBe(true)
   })
 
   it('submits inline revision feedback as a user Message', async () => {
