@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { link, lstat, mkdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
@@ -82,8 +82,8 @@ class VerifiedLegacyCleanupOwner {
     }
   }
 
-  // Cleanup is fail-closed: SQLite authority, both byte copies, the deterministic legacy path and
-  // source identity must all remain valid through the final pre-delete check.
+  // Cleanup is fail-closed: SQLite authority, a verified byte source, the deterministic legacy
+  // path and source identity must all remain valid through the final pre-delete check.
   async removeVerifiedLegacyCopy(
     input: RemoveVerifiedLegacyCopyInput
   ): Promise<LegacyCleanupResult> {
@@ -161,11 +161,17 @@ class VerifiedLegacyCleanupOwner {
 
     const finalPath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
     assertPathInsideRoot(this.storageRoot, finalPath, 'Upload storage key escapes storage.')
-    const finalInfo = await stat(finalPath)
+    let finalInfo: FileIdentity | undefined
+    try {
+      finalInfo = await stat(finalPath)
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error
+    }
     if (
-      !finalInfo.isFile() ||
-      finalInfo.size !== Number(version.sizeBytes) ||
-      (await sha256File(finalPath)) !== version.checksum
+      finalInfo &&
+      (!finalInfo.isFile() ||
+        finalInfo.size !== Number(version.sizeBytes) ||
+        (await sha256File(finalPath)) !== version.checksum)
     ) {
       throw new Error(`Ready Upload Version content is unavailable or corrupt: ${versionId}`)
     }
@@ -195,10 +201,10 @@ class VerifiedLegacyCleanupOwner {
         { projectId, sessionId }
       )
       const resolvedLegacyPath = await realpath(expectedLegacyPath)
-      const resolvedFinalPath = await realpath(finalPath)
+      const resolvedFinalPath = finalInfo ? await realpath(finalPath) : undefined
       if (
         sourcePath !== resolvedLegacyPath ||
-        sourcePath === resolvedFinalPath ||
+        (resolvedFinalPath && sourcePath === resolvedFinalPath) ||
         initialLegacyInfo.size !== Number(version.sizeBytes)
       ) {
         return {
@@ -233,6 +239,49 @@ class VerifiedLegacyCleanupOwner {
       throw error
     }
 
+    let recoveredFinalInfo: FileIdentity | undefined
+    if (!finalInfo) {
+      await mkdir(dirname(finalPath), { recursive: true })
+      let createdFinal = false
+      try {
+        // Both paths are below the storage root, so linking publishes the verified inode without
+        // exposing a partially copied immutable file.
+        await link(expectedLegacyPath, finalPath)
+        createdFinal = true
+      } catch (error) {
+        if (!isFileExistsError(error)) throw error
+      }
+
+      const restoredFinalInfo = await lstat(finalPath)
+      const reverifiedLegacyInfo = await lstat(expectedLegacyPath)
+      const restoredContentIsValid =
+        restoredFinalInfo.isFile() &&
+        !restoredFinalInfo.isSymbolicLink() &&
+        restoredFinalInfo.size === Number(version.sizeBytes) &&
+        (await sha256File(finalPath)) === version.checksum
+      const verifiedSourceStayedStable =
+        reverifiedLegacyInfo.isFile() &&
+        !reverifiedLegacyInfo.isSymbolicLink() &&
+        hasSameFileIdentity(reverifiedLegacyInfo, verifiedLegacyInfo) &&
+        reverifiedLegacyInfo.mtimeMs === verifiedLegacyInfo.mtimeMs
+      const createdLinkHasVerifiedIdentity =
+        !createdFinal || hasSameFileIdentity(restoredFinalInfo, verifiedLegacyInfo)
+
+      if (
+        !restoredContentIsValid ||
+        !verifiedSourceStayedStable ||
+        !createdLinkHasVerifiedIdentity
+      ) {
+        if (createdFinal && hasSameFileIdentity(restoredFinalInfo, verifiedLegacyInfo)) {
+          await rm(finalPath, { force: true })
+        }
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path changed while restoring Version content'
+        }
+      }
+      if (createdFinal) recoveredFinalInfo = restoredFinalInfo
+    }
     try {
       // mkdir is the portable no-replace claim; the rename target inside it cannot collide with
       // another cooperating cleanup process.
@@ -275,6 +324,17 @@ class VerifiedLegacyCleanupOwner {
         expectedLegacyPath,
         reverifiedMovedInfo
       )
+      if (recoveredFinalInfo && hasSameFileIdentity(reverifiedMovedInfo, recoveredFinalInfo)) {
+        let currentFinalInfo: FileIdentity | undefined
+        try {
+          currentFinalInfo = await lstat(finalPath)
+        } catch (error) {
+          if (!isMissingFileError(error)) throw error
+        }
+        if (currentFinalInfo && hasSameFileIdentity(currentFinalInfo, recoveredFinalInfo)) {
+          await rm(finalPath, { force: true })
+        }
+      }
       return {
         status: 'unsafe-residual',
         reason: 'the claimed legacy source changed before removal'

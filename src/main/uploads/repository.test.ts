@@ -1072,6 +1072,126 @@ describe('upload repository', () => {
     await expect(client.fileOriginSession.count()).resolves.toBe(1)
   })
 
+  it('restores missing ready content only from a checksum-verified legacy copy', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await ensureProjectSchema(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = Buffer.from('sample,value\na,1\n')
+    const checksum = createHash('sha256').update(content).digest('hex')
+    const checksumMismatch = Buffer.alloc(content.byteLength, 'x')
+    const uploadId = 'legacy-upload-ready'
+    const versionId = 'legacy-ready-version-1'
+    const filename = 'legacy.csv'
+    const contentStorageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      uploadId,
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    const finalPath = join(root, ...contentStorageKey.split('/'))
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', filename)
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(legacyPath, checksumMismatch)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: uploadId,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename,
+        originalFilename: filename,
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey,
+            filename,
+            originalFilename: filename,
+            contentType: 'text/csv',
+            sizeBytes: BigInt(content.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Legacy ready upload',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Inspect this',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: uploadId,
+              versionId,
+              versionNumber: 1,
+              sessionId: 'session-1',
+              name: filename,
+              originalName: filename,
+              mimeType: 'text/csv',
+              size: content.byteLength,
+              checksum,
+              sha256: checksum
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
+
+    await writeFile(legacyPath, content)
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await rm(finalPath)
+    await writeFile(legacyPath, content)
+    const racedContent = Buffer.alloc(content.byteLength, 'y')
+    const inPlaceRaceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await writeFile(source, racedContent)
+        await rename(source, destination)
+      }
+    })
+    await expect(
+      inPlaceRaceRepository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(racedContent)
+  })
+
   it('removes a verified legacy copy when reusing an existing ready Upload Version', async () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
