@@ -14,6 +14,12 @@ type AcpSessionResumePolicyInput = Readonly<{
   resumeCapabilityAdvertised: boolean
 }>
 
+type AcpSessionResumeFailureContext = Readonly<{
+  currentFrameworkId: AgentFrameworkId
+  currentModelRoute?: AgentModelRoute
+  providerSessionIdPersisted: boolean
+}>
+
 type AcpSessionResumeAdoptionReason =
   | 'framework-changed'
   | 'backend-changed'
@@ -50,6 +56,7 @@ type AcpSessionResumeAdoptableFailureReason =
   | 'session-service-failure'
   | 'unresumable-error-kind'
   | 'legacy-unresumable-details'
+  | 'legacy-codex-session-unavailable'
 
 type AcpSessionResumeAuthoritativeFailureReason =
   | 'unrecognized-error'
@@ -230,7 +237,10 @@ class AcpSessionResumePolicy {
     })
   }
 
-  classifyFailure(error: unknown): AcpSessionResumeFailureClassification {
+  classifyFailure(
+    error: unknown,
+    context?: AcpSessionResumeFailureContext
+  ): AcpSessionResumeFailureClassification {
     const code = readProperty(error, 'code')
     if (!code.readable) return authoritativeFailure('uninspectable-error')
     if (code.value === -32002) return adoptableFailure('resource-not-found-code')
@@ -242,6 +252,17 @@ class AcpSessionResumePolicy {
       /resource not found|session not found|no rollout found for thread id/i.test(message.value)
     ) {
       return adoptableFailure('session-not-found-message')
+    }
+
+    if (
+      context?.currentFrameworkId === 'codex' &&
+      context.providerSessionIdPersisted === false &&
+      (context.currentModelRoute === 'codex-responses' ||
+        context.currentModelRoute === 'codex-responses-compatibility') &&
+      typeof message.value === 'string' &&
+      /^unknown error\.?$/i.test(message.value.trim())
+    ) {
+      return adoptableFailure('legacy-codex-session-unavailable')
     }
 
     if (code.value !== -32603) {
@@ -280,6 +301,7 @@ class AcpSessionResumePolicy {
 
 export { AcpSessionResumePolicy }
 export type {
+  AcpSessionResumeFailureContext,
   AcpSessionResumeAdoptionReason,
   AcpSessionResumeAdoptableFailureReason,
   AcpSessionResumeAuthoritativeFailureReason,

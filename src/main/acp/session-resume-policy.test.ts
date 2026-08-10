@@ -224,6 +224,66 @@ describe('ACP Session resume policy', () => {
     })
   })
 
+  it.each(['codex-responses', 'codex-responses-compatibility'] as const)(
+    'classifies a legacy %s Unknown error as adoptable',
+    (currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          {
+            currentFrameworkId: 'codex',
+            currentModelRoute,
+            providerSessionIdPersisted: false
+          }
+        )
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-codex-session-unavailable'
+      })
+    }
+  )
+
+  it.each([
+    ['Claude Code', 'claude-code', undefined],
+    ['OpenCode', 'opencode', 'opencode-openai'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ] as const)(
+    'keeps an Unknown error authoritative for legacy %s Sessions',
+    (_label, currentFrameworkId, currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          { currentFrameworkId, currentModelRoute, providerSessionIdPersisted: false }
+        )
+      ).toEqual({
+        disposition: 'authoritative',
+        reason: 'non-internal-error'
+      })
+    }
+  )
+
+  it('keeps an Unknown error authoritative for a persisted Codex Responses identity', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        { code: -32603, message: 'Unknown error' },
+        {
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-responses',
+          providerSessionIdPersisted: true
+        }
+      )
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'non-internal-error'
+    })
+  })
+
   it('treats the provider session-service marker as an adoptable failure', () => {
     const policy = new AcpSessionResumePolicy()
 

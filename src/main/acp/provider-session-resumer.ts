@@ -179,11 +179,11 @@ export class AcpProviderSessionResumer {
     identity.renew()
 
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
+    const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
     const decision = this.policy.decide({
       appSessionId: request.sessionId,
-      providerSessionId:
-        affinity?.providerSessionId ?? request.providerSessionId ?? request.sessionId,
+      providerSessionId: persistedProviderSessionId ?? request.sessionId,
       previousFrameworkId: affinity?.frameworkId ?? request.previousFrameworkId,
       currentFrameworkId: backend.framework.id,
       previousBackendId: affinity?.backendId ?? request.previousBackendId,
@@ -208,7 +208,8 @@ export class AcpProviderSessionResumer {
       cwd,
       projectName,
       identity,
-      decision.providerSessionId
+      decision.providerSessionId,
+      persistedProviderSessionId !== undefined
     )
   }
 
@@ -218,7 +219,8 @@ export class AcpProviderSessionResumer {
     cwd: string,
     projectName: string,
     identity: AcpPrimarySessionIdentityReservation,
-    providerSessionId: string
+    providerSessionId: string,
+    providerSessionIdPersisted: boolean
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
@@ -257,7 +259,12 @@ export class AcpProviderSessionResumer {
           ...setup.metaArg
         })
       } catch (error) {
-        if (this.policy.classifyFailure(error).disposition !== 'adoptable') throw error
+        const failure = this.policy.classifyFailure(error, {
+          currentFrameworkId: backend.framework.id,
+          currentModelRoute: backend.modelRoute,
+          providerSessionIdPersisted
+        })
+        if (failure.disposition !== 'adoptable') throw error
         try {
           identity.assertCurrent()
         } catch (supersededError) {
