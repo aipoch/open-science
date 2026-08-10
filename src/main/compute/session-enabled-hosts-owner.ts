@@ -73,14 +73,13 @@ class SessionEnabledComputeHostsOwner {
     providerId: string,
     afterPrune?: () => Promise<void>
   ): Promise<PersistedChatSession[]> {
-    this.options.registry.removeProvider(providerId)
     return this.enqueueWrite(async () => {
-      this.options.registry.removeProvider(providerId)
       const validProviderIds = (await this.options.listHostIds()).filter(
         (candidate) => candidate !== providerId
       )
       const repair =
         await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds)
+      this.options.registry.removeProvider(providerId)
       try {
         await afterPrune?.()
       } catch (error) {
@@ -122,7 +121,12 @@ class SessionEnabledComputeHostsOwner {
     isComplete: boolean
   ): Promise<PersistedChatSession[]> {
     return this.enqueueWrite(async () => {
-      const validProviderIds = await this.options.listHostIds()
+      let validProviderIds: readonly string[]
+      try {
+        validProviderIds = await this.options.listHostIds()
+      } catch {
+        return [...sessions]
+      }
       const validProviderIdSet = new Set(validProviderIds)
       const hasMissingHost = sessions.some((session) =>
         session.enabledComputeHosts?.some((providerId) => !validProviderIdSet.has(providerId))

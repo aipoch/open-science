@@ -1,5 +1,8 @@
 import type { ComputeApprovalDecision, DeleteComputeHostRequest } from '../../shared/compute'
-import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
+import {
+  LIFECYCLE_CHANNELS,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+} from '../../shared/lifecycle-events'
 import { encodeRemoteFsError, type SerializableRemoteFsError } from '../../shared/remote-fs'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
@@ -270,12 +273,12 @@ const registerComputeApplicationCommands = (
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
-      'compute:enabled-hosts:set': async ({ args, callerContext }) => {
+      'compute:enabled-hosts:set': async ({ args }) => {
         const session = await dependencies.enabledHosts.set(args[0], args[1])
         try {
           dependencies.events.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
             session,
-            originClientId: callerContext.lifecycleClientId
+            originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
           })
         } catch {
           // Lifecycle delivery cannot roll back committed Session authority.

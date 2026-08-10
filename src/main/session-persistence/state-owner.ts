@@ -471,24 +471,45 @@ class SessionPersistenceStateOwner {
     validProviderIds: ReadonlySet<string>
   ): Promise<PersistedChatSession[]> {
     const durableSessions: PersistedChatSession[] = []
-    for (const session of sessions) {
-      const current = session.enabledComputeHosts ?? []
-      const enabledComputeHosts = current.filter((providerId) => validProviderIds.has(providerId))
-      if (enabledComputeHosts.length === current.length) {
-        durableSessions.push(session)
-        continue
+    const attemptedSessions: PersistedChatSession[] = []
+    try {
+      for (const session of sessions) {
+        const current = session.enabledComputeHosts ?? []
+        const enabledComputeHosts = current.filter((providerId) => validProviderIds.has(providerId))
+        if (enabledComputeHosts.length === current.length) {
+          durableSessions.push(session)
+          continue
+        }
+        this.options.assertMutable(session.projectId, session.id, 'mutate')
+        const durableSession: PersistedChatSession = {
+          ...session,
+          enabledComputeHosts,
+          updatedAt: Math.max(session.updatedAt + 1, Date.now())
+        }
+        attemptedSessions.push(session)
+        await this.options.repository.saveSession(durableSession)
+        this.recordSession(durableSession)
+        durableSessions.push(durableSession)
       }
-      this.options.assertMutable(session.projectId, session.id, 'mutate')
-      const durableSession: PersistedChatSession = {
-        ...session,
-        enabledComputeHosts,
-        updatedAt: Math.max(session.updatedAt + 1, Date.now())
+      return durableSessions
+    } catch (error) {
+      const rollbackErrors: unknown[] = []
+      for (const session of attemptedSessions) {
+        try {
+          await this.options.repository.saveSession(session)
+          this.recordSession(session)
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError)
+        }
       }
-      await this.options.repository.saveSession(durableSession)
-      this.recordSession(durableSession)
-      durableSessions.push(durableSession)
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          'Compute Host pruning failed and affected Sessions could not all be restored.'
+        )
+      }
+      throw error
     }
-    return durableSessions
   }
 
   async saveSession(

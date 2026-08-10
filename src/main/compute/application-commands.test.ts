@@ -202,7 +202,7 @@ describe('Compute application commands', () => {
     expect(enabledHostsResult).toEqual(session)
     expect(dependencies.events.publish).toHaveBeenCalledWith('session:updated', {
       session,
-      originClientId: 'electron:7'
+      originClientId: 'main:enabled-compute-hosts'
     })
     expect(dependencies.bookmarks.set).toHaveBeenCalledWith('ssh:cluster', ['/work'])
   })

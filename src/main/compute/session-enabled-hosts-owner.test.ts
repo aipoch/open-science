@@ -253,7 +253,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(owner.get('session-1')).toEqual([])
   })
 
-  it('removes a deleted or reusable provider before repairing durable Sessions', async () => {
+  it('removes a deleted or reusable provider only after repairing durable Sessions', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:deleted', 'ssh:kept'])
     let finishPrune: ((result: PruneResult) => void) | undefined
@@ -278,7 +278,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     })
 
     const pruning = owner.pruneProvider('ssh:deleted')
-    expect(owner.get('session-1')).toEqual(['ssh:kept'])
+    expect(owner.get('session-1')).toEqual(['ssh:deleted', 'ssh:kept'])
     await vi.waitFor(() =>
       expect(pruneSessionEnabledComputeHosts).toHaveBeenCalledWith(['ssh:kept'])
     )
@@ -287,6 +287,58 @@ describe('SessionEnabledComputeHostsOwner', () => {
     finishPrune?.(createPruneResult([repaired]))
     await expect(pruning).resolves.toEqual([repaired])
     expect(owner.get('session-1')).toEqual(['ssh:kept'])
+  })
+
+  it('keeps the cache unchanged when durable provider pruning fails', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    registry.set('session-1', ['ssh:deleted', 'ssh:kept'])
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:deleted', 'ssh:kept'],
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => {
+          throw new Error('Session prune failed')
+        }
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    await expect(owner.pruneProvider('ssh:deleted')).rejects.toThrow('Session prune failed')
+
+    expect(owner.get('session-1')).toEqual(['ssh:deleted', 'ssh:kept'])
+  })
+
+  it('returns loaded Sessions without changing the cache when the Host catalog is unavailable', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    registry.set('cached-session', ['ssh:cached'])
+    const sessions = [createSession({ enabledComputeHosts: ['ssh:cluster'] })]
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds: async () => {
+        throw new Error('Compute database unavailable')
+      },
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        }
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    await expect(owner.reconcile(sessions, true)).resolves.toEqual(sessions)
+
+    expect(owner.get('cached-session')).toEqual(['ssh:cached'])
+    expect(owner.get('session-1')).toEqual([])
   })
 
   it('holds the owner queue through provider deletion before validating a queued enable', async () => {

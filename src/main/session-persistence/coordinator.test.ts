@@ -1088,6 +1088,41 @@ describe('SessionPersistenceCoordinator', () => {
     )
   })
 
+  it('restores every attempted Session when durable Compute Host pruning fails partway', async () => {
+    const originalSessions = [
+      createSession({ enabledComputeHosts: ['ssh:kept', 'ssh:deleted'] }),
+      createSession({
+        id: 'session-2',
+        enabledComputeHosts: ['ssh:deleted'],
+        updatedAt: 5
+      })
+    ]
+    let sessions = structuredClone(originalSessions)
+    let saveAttempts = 0
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions, manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession: vi.fn(async (session) => {
+        saveAttempts += 1
+        sessions = sessions.map((candidate) =>
+          candidate.id === session.id ? structuredClone(session) : candidate
+        )
+        if (saveAttempts === 2) throw new Error('Session write failed')
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.pruneSessionEnabledComputeHosts(['ssh:kept'])).rejects.toThrow(
+      'Session write failed'
+    )
+
+    expect(sessions.map((session) => session.enabledComputeHosts)).toEqual(
+      originalSessions.map((session) => session.enabledComputeHosts)
+    )
+  })
+
   it('refuses Compute Host pruning from an incomplete Session catalog', async () => {
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn(async () => ({
