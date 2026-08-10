@@ -334,14 +334,14 @@ const WorkspaceElicitationCard = ({
             aria-label={`Question ${activeChoiceIndex + 1} of ${choiceQuestions.length}`}
             className="inline-flex shrink-0 items-center gap-3 bg-bg-000 pl-3 text-xs leading-5 text-text-300 tabular-nums"
           >
-            <span aria-hidden="true" className="flex items-center gap-1.5">
+            <span aria-hidden="true" className="flex w-16 items-center gap-0.5">
               {choiceQuestions.map((question, index) => (
                 <span
                   key={question.choiceField.id}
                   data-testid="elicitation-question-progress-segment"
                   data-state={index === activeChoiceIndex ? 'current' : 'upcoming'}
                   className={cn(
-                    'h-1 w-7 rounded-full',
+                    'h-1 min-w-0 flex-1 rounded-full',
                     index === activeChoiceIndex ? 'bg-text-000' : 'bg-bg-400'
                   )}
                 />

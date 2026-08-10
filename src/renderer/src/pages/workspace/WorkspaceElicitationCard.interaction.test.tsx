@@ -104,6 +104,19 @@ const multiQuestionRequest = {
   message: 'Please answer the following questions.'
 }
 
+const maximumQuestionFields = Array.from({ length: 8 }, (_, index) => [
+  {
+    ...fields[0],
+    id: `question_${index}`,
+    label: `Question ${index + 1}`,
+    description: `Prompt ${index + 1}`
+  },
+  {
+    ...fields[1],
+    id: `question_${index}_custom`
+  }
+]).flat()
+
 const mixedChoiceFields = [
   { ...multiQuestionFields[0], kind: 'multi-select' as const },
   ...multiQuestionFields.slice(1)
@@ -296,6 +309,31 @@ describe('WorkspaceElicitationCard choice question', () => {
         { fieldId: 'question_1', value: 'chinese' }
       ]
     })
+  })
+
+  it('keeps progress segments width-bounded at the maximum accepted question count', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: maximumQuestionFields,
+            state: 'pending'
+          }}
+          request={{ ...multiQuestionRequest, fields: maximumQuestionFields }}
+        />
+      )
+    })
+
+    const segments = Array.from(
+      container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
+    )
+    expect(segments).toHaveLength(8)
+    expect(segments[0]?.parentElement?.classList.contains('w-16')).toBe(true)
+    expect(segments.every((segment) => segment.classList.contains('flex-1'))).toBe(true)
+    expect(
+      container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
+    ).toBe('1 of 8')
   })
 
   it('resumes a pending multi-question choice at the first unanswered step', async () => {
