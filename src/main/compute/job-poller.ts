@@ -8,6 +8,7 @@ import { resolveSshTarget } from './ssh-runner'
 import { quoteRemotePath, type RemoteHandle } from './job-dispatcher'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
 import { emitJobNotification } from './job-notifier'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
 
 // Polling interval: 15 seconds (design.md §8).
 export const POLL_INTERVAL_MS = 15_000
@@ -89,6 +90,7 @@ type VanishState = { ticks: number }
 export class JobPoller {
   private handle: ReturnType<typeof setInterval> | undefined
   private readonly vanishCounters = new Map<string, VanishState>()
+  private readonly pollResultChains = new Map<string, Promise<void>>()
 
   // Injectable timers (tests override to control ticks synchronously).
   private readonly setIntervalFn: (fn: () => void, ms: number) => ReturnType<typeof setInterval>
@@ -99,6 +101,7 @@ export class JobPoller {
   private readonly dispatchTracker: DispatchTracker
   // Optional injectable harvest function (design §3).
   private readonly harvestFn: HarvestFn | undefined
+  private readonly lifecycle: ComputeJobLifecycle
 
   // Harvest concurrency state (design §3):
   //   inFlightHarvests: jobIds whose harvest is currently running — prevents duplicate dispatches
@@ -117,6 +120,7 @@ export class JobPoller {
     this.makeNonceFn = deps.makeNonce ?? (() => randomBytes(12).toString('hex') + '_')
     this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
     this.harvestFn = deps.harvestFn
+    this.lifecycle = new ComputeJobLifecycle(deps.jobRepository, deps.onJobUpdated)
   }
 
   // Starts the poller. Polls once immediately (picks up jobs that were running before restart),
@@ -262,13 +266,9 @@ export class JobPoller {
     }
 
     for (const job of noHandle) {
-      const updated = await this.deps.jobRepository.update(job.job_id, {
-        status: 'error',
-        errorCode: 'dispatch_failed',
-        stderrTail: 'dispatch interrupted by restart',
-        finishedAt: new Date()
-      })
-      this.deps.onJobUpdated?.(updated)
+      const transition = await this.lifecycle.recoverInterruptedDispatch(job.job_id)
+      if (transition.kind === 'ignored') continue
+      const updated = transition.job
       // Emit compute_done notification for execution-error jobs (design §8: error is a final
       // resting state). Fire-and-forget: notification failure must not break the poller tick.
       if (this.deps.broadcast && this.deps.storageRoot) {
@@ -391,11 +391,8 @@ export class JobPoller {
   // Implements design.md §8 boundary 2: "host unreachable ≠ job failed".
   private async _recordPollError(jobs: ComputeJob[], message: string): Promise<void> {
     for (const job of jobs) {
-      const updated = await this.deps.jobRepository.update(job.job_id, {
-        lastPollError: message,
-        retryAfterUserAction: true
-      })
-      this.deps.onJobUpdated?.(updated)
+      if (job.status !== 'submitted' && job.status !== 'running') continue
+      await this.lifecycle.recordPollError(job.job_id, job.status, message)
     }
   }
 
@@ -471,6 +468,32 @@ export class JobPoller {
     },
     target: import('./ssh-runner').ResolvedSshTarget
   ): Promise<void> {
+    const previous = this.pollResultChains.get(job.job_id) ?? Promise.resolve()
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this._applyPollResultExclusive(job, result, target))
+    this.pollResultChains.set(job.job_id, current)
+
+    try {
+      await current
+    } finally {
+      if (this.pollResultChains.get(job.job_id) === current) {
+        this.pollResultChains.delete(job.job_id)
+      }
+    }
+  }
+
+  private async _applyPollResultExclusive(
+    job: ComputeJob,
+    result: {
+      alive: boolean
+      exitCode: number | null
+      hasExitCode: boolean
+      stdoutTail: string
+      stderrTail: string
+    },
+    target: import('./ssh-runner').ResolvedSshTarget
+  ): Promise<void> {
     const { alive, exitCode, hasExitCode, stdoutTail, stderrTail } = result
 
     // Terminal: exit_code file exists — this is authoritative.
@@ -503,18 +526,17 @@ export class JobPoller {
         errorCode = 'job_failed'
       }
 
-      const updated = await this.deps.jobRepository.update(job.job_id, {
+      const transition = await this.lifecycle.finishPolled(job.job_id, {
         status,
         exitCode,
         stdoutTail: stdoutTail || null,
         stderrTail: stderrTail || null,
-        errorCode: errorCode ?? null,
-        finishedAt: new Date()
+        errorCode: errorCode ?? null
       })
-      this.deps.onJobUpdated?.(updated)
+      if (transition.kind === 'ignored') return
       // Async-dispatch harvest for success/failed/timeout (design §3). Not awaited — must not
       // block the tick loop. 'error' status is never reached here (only in the noHandle path).
-      this._dispatchHarvest(updated)
+      this._dispatchHarvest(transition.job)
       return
     }
 
@@ -526,16 +548,14 @@ export class JobPoller {
 
       if (state.ticks >= PROCESS_VANISHED_TICKS) {
         this.vanishCounters.delete(job.job_id)
-        const updated = await this.deps.jobRepository.update(job.job_id, {
+        const transition = await this.lifecycle.finishPolled(job.job_id, {
           status: 'failed',
           errorCode: 'process_vanished',
           stdoutTail: stdoutTail || null,
-          stderrTail: stderrTail || null,
-          finishedAt: new Date()
+          stderrTail: stderrTail || null
         })
-        this.deps.onJobUpdated?.(updated)
         // process_vanished is a terminal state — dispatch harvest (design §3).
-        this._dispatchHarvest(updated)
+        if (transition.kind === 'applied') this._dispatchHarvest(transition.job)
       }
       // else: keep running, check again next tick
       return
@@ -551,7 +571,12 @@ export class JobPoller {
     if (startedAt) {
       const elapsedSecs = (Date.now() - startedAt) / 1000
       if (elapsedSecs >= timeoutSecs + POLLER_KILL_GRACE_SECONDS) {
-        const handle = this._parseHandle(job.remote_handle)
+        // Same-job poll results are serialized. Re-read after acquiring that chain so an earlier
+        // terminal result can suppress this stale destructive observation before any remote kill.
+        const current = await this.deps.jobRepository.get(job.job_id)
+        if (!current || (current.status !== 'submitted' && current.status !== 'running')) return
+
+        const handle = this._parseHandle(current.remote_handle)
         if (handle) {
           // Best-effort kill; ignore errors (process may have already exited).
           try {
@@ -568,40 +593,25 @@ export class JobPoller {
             // Ignore kill errors — the job is marked terminal regardless.
           }
         }
-        const updated = await this.deps.jobRepository.update(job.job_id, {
+        const transition = await this.lifecycle.finishPolled(job.job_id, {
           status: 'timeout',
           errorCode: 'timeout',
           stdoutTail: stdoutTail || null,
-          stderrTail: stderrTail || null,
-          finishedAt: new Date()
+          stderrTail: stderrTail || null
         })
-        this.deps.onJobUpdated?.(updated)
+        if (transition.kind === 'ignored') return
         // Poller-fallback timeout is a terminal state — dispatch harvest (design §3).
-        this._dispatchHarvest(updated)
+        this._dispatchHarvest(transition.job)
         return
       }
     }
 
-    if (job.status !== 'running') {
-      // Transition to running if still in submitted (shouldn't happen but guard).
-      // Clear any stale lastPollError: a successful poll proves connectivity is healthy again
-      // (schema.prisma: "Cleared on the next successful poll").
-      const updated = await this.deps.jobRepository.update(job.job_id, {
-        status: 'running',
-        stdoutTail: stdoutTail || null,
-        stderrTail: stderrTail || null,
-        lastPollError: null
-      })
-      this.deps.onJobUpdated?.(updated)
-    } else {
-      // Just update tails. Also clear any stale lastPollError now that this poll succeeded, so a
-      // transient SSH blip's error banner does not stick to a healthy running job forever.
-      const updated = await this.deps.jobRepository.update(job.job_id, {
-        stdoutTail: stdoutTail || null,
-        stderrTail: stderrTail || null,
-        lastPollError: null
-      })
-      this.deps.onJobUpdated?.(updated)
-    }
+    if (job.status !== 'submitted' && job.status !== 'running') return
+    // Transition a submitted-with-handle recovery to running, or refresh an existing running row.
+    // A successful poll also clears any stale connectivity projection.
+    await this.lifecycle.observeRunning(job.job_id, job.status, {
+      stdoutTail: stdoutTail || null,
+      stderrTail: stderrTail || null
+    })
   }
 }

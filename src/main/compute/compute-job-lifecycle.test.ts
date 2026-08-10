@@ -43,6 +43,17 @@ beforeEach(async () => {
     commandHash: 'hash',
     initialStatus: 'submitted'
   })
+  await repository.create({
+    id: 'running-job',
+    providerId: 'ssh:test',
+    shape: 'direct_ssh',
+    sessionId: 'session-1',
+    projectId: 'project-1',
+    intent: 'test polling',
+    command: 'echo ok',
+    commandHash: 'hash',
+    initialStatus: 'running'
+  })
   publish = vi.fn()
   lifecycle = new ComputeJobLifecycle(repository, publish)
 })
@@ -127,5 +138,71 @@ describe('ComputeJobLifecycle', () => {
     expect(results).toEqual([{ kind: 'ignored' }, { kind: 'ignored' }])
     expect((await repository.get('submitted-job'))?.status).toBe('success')
     expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('lets only one overlapping terminal poll observation apply and publish', async () => {
+    const results = await Promise.all([
+      lifecycle.finishPolled('running-job', {
+        status: 'success',
+        exitCode: 0,
+        stdoutTail: 'done',
+        stderrTail: null,
+        errorCode: null
+      }),
+      lifecycle.finishPolled('running-job', {
+        status: 'timeout',
+        exitCode: 124,
+        stdoutTail: 'late',
+        stderrTail: null,
+        errorCode: 'timeout'
+      })
+    ])
+
+    expect(results.map(({ kind }) => kind).sort()).toEqual(['applied', 'ignored'])
+    expect(publish).toHaveBeenCalledOnce()
+    expect(['success', 'timeout']).toContain((await repository.get('running-job'))?.status)
+  })
+
+  it('updates active polling projections only while the observed status is current', async () => {
+    const result = await lifecycle.observeRunning('running-job', 'running', {
+      stdoutTail: 'progress',
+      stderrTail: null
+    })
+
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') throw new Error('expected an applied transition')
+    expect(result.job.status).toBe('running')
+    expect(result.job.stdout_tail).toBe('progress')
+    expect(result.job.last_poll_error).toBeUndefined()
+    expect(publish).toHaveBeenCalledOnce()
+  })
+
+  it('does not attach a late poll error or active projection to a terminal row', async () => {
+    await repository.update('running-job', { status: 'failed', finishedAt: new Date() })
+
+    const results = await Promise.all([
+      lifecycle.recordPollError('running-job', 'running', 'connection lost'),
+      lifecycle.observeRunning('running-job', 'running', {
+        stdoutTail: 'late output',
+        stderrTail: null
+      })
+    ])
+
+    expect(results).toEqual([{ kind: 'ignored' }, { kind: 'ignored' }])
+    expect((await repository.get('running-job'))?.last_poll_error).toBeUndefined()
+    expect((await repository.get('running-job'))?.stdout_tail).toBeUndefined()
+    expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('records the interrupted-dispatch recovery bundle once', async () => {
+    const result = await lifecycle.recoverInterruptedDispatch('submitted-job')
+
+    expect(result.kind).toBe('applied')
+    if (result.kind !== 'applied') throw new Error('expected an applied transition')
+    expect(result.job.status).toBe('error')
+    expect(result.job.error_code).toBe('dispatch_failed')
+    expect(result.job.stderr_tail).toBe('dispatch interrupted by restart')
+    expect(result.job.finished_at).toBeGreaterThan(0)
+    expect(publish).toHaveBeenCalledOnce()
   })
 })

@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeJob } from '../../shared/compute'
@@ -40,6 +43,13 @@ const withNonce = (lines: string[]): string =>
 const makeSshRunner = (result: Awaited<ReturnType<SshRunner['run']>>): SshRunner => ({
   run: vi.fn(() => Promise.resolve(result))
 })
+
+const guardStatusUpdate = (
+  update: (jobId: string, updates: unknown) => unknown
+): ReturnType<typeof vi.fn> =>
+  vi.fn((jobId: string, _expectedStatuses: unknown, updates: unknown) => update(jobId, updates))
+
+const testStorageRoot = (): string => join(tmpdir(), 'open-science-poller-test-storage')
 
 const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   job_id: 'job-1',
@@ -106,7 +116,8 @@ describe('JobPoller', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       get: vi.fn(() => Promise.resolve(job)),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -149,6 +160,49 @@ describe('JobPoller', () => {
     expect(onJobUpdated).toHaveBeenCalled()
   })
 
+  it('does not publish or harvest a terminal observation that loses the lifecycle race', async () => {
+    const job = makeJob()
+    const updateIfStatus = vi.fn(() => Promise.resolve(null))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const hostRepo = {
+      get: vi.fn(() => Promise.resolve(sampleHost()))
+    } as unknown as ComputeHostRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: withNonce([
+        'JOB_START:job-1',
+        'alive:0',
+        '0',
+        'done',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ]),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const onJobUpdated = vi.fn()
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+
+    await new JobPoller({
+      runner,
+      hostRepository: hostRepo,
+      jobRepository: jobRepo,
+      onJobUpdated,
+      makeNonce: () => NONCE,
+      harvestFn
+    }).tick()
+
+    expect(updateIfStatus).toHaveBeenCalledOnce()
+    expect(onJobUpdated).not.toHaveBeenCalled()
+    expect(harvestFn).not.toHaveBeenCalled()
+  })
+
   it('clears a stale lastPollError on a successful poll of a still-running job', async () => {
     // A running job that previously recorded a transient SSH error must have that error cleared once
     // a poll succeeds again (schema.prisma: "Cleared on the next successful poll"). Regression for
@@ -158,7 +212,8 @@ describe('JobPoller', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       get: vi.fn(() => Promise.resolve(job)),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -199,7 +254,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -242,7 +298,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -285,7 +342,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -343,7 +401,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -394,7 +453,8 @@ describe('JobPoller', () => {
     const update = vi.fn()
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -423,7 +483,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -464,9 +525,12 @@ describe('JobPoller', () => {
       started_at: now - timeoutSecs * 1000 // exactly at the boundary
     })
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const updateIfStatus = guardStatusUpdate(update)
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      get: vi.fn(() => Promise.resolve(job)),
+      update,
+      updateIfStatus
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -515,7 +579,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -565,9 +630,12 @@ describe('JobPoller', () => {
       started_at: now - graceMs
     })
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
+    const updateIfStatus = guardStatusUpdate(update)
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      get: vi.fn(() => Promise.resolve(job)),
+      update,
+      updateIfStatus
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -601,11 +669,13 @@ describe('JobPoller', () => {
       timedOut: false
     })
     const runner: SshRunner = { run: runFn }
+    const onJobUpdated = vi.fn()
 
     const poller = new JobPoller({
       runner,
       hostRepository: hostRepo,
       jobRepository: jobRepo,
+      onJobUpdated,
       makeNonce: () => NONCE
     })
     await poller.tick()
@@ -620,6 +690,130 @@ describe('JobPoller', () => {
     const killCall = runFn.mock.calls[1]
     expect(killCall[1]).toContain('kill')
     expect(killCall[1]).toContain('1234') // pid from makeJob
+    expect(runFn.mock.invocationCallOrder[1]).toBeLessThan(
+      updateIfStatus.mock.invocationCallOrder[0]
+    )
+    expect(updateIfStatus.mock.invocationCallOrder[0]).toBeLessThan(
+      onJobUpdated.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('serializes overlapping results so a late fallback timeout cannot kill after success', async () => {
+    const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+    let current = job
+    const updateIfStatus = vi.fn(
+      async (
+        _jobId: string,
+        expectedStatuses: readonly ComputeJob['status'][],
+        updates: { status?: ComputeJob['status'] }
+      ) => {
+        if (!expectedStatuses.includes(current.status)) return null
+        current = {
+          ...current,
+          ...(updates.status === undefined ? {} : { status: updates.status })
+        }
+        return current
+      }
+    )
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      get: vi.fn(() => Promise.resolve(current)),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const successfulOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:0',
+      '0',
+      'done',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ])
+    const timeoutOutput = withNonce([
+      'JOB_START:job-1',
+      'alive:1',
+      '',
+      '',
+      'STDOUT_END:job-1',
+      '',
+      'STDERR_END:job-1'
+    ])
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: successfulOutput,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: timeoutOutput,
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+    const runner: SshRunner = { run }
+    const onJobUpdated = vi.fn()
+    const harvestFn: HarvestFn = vi.fn(() => Promise.resolve())
+    const poller = new JobPoller({
+      runner,
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      onJobUpdated,
+      makeNonce: () => NONCE,
+      harvestFn
+    })
+
+    await Promise.all([poller.tick(), poller.tick()])
+
+    expect(current.status).toBe('success')
+    expect(updateIfStatus).toHaveBeenCalledOnce()
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(run.mock.calls.some(([, command]) => String(command).includes('kill 1234'))).toBe(false)
+    expect(onJobUpdated).toHaveBeenCalledOnce()
+    expect(harvestFn).toHaveBeenCalledOnce()
+  })
+
+  it('does not kill when a fresh state check sees an already-terminal row', async () => {
+    const job = makeJob({ timeout_seconds: 10, started_at: Date.now() - 71_000 })
+    const updateIfStatus = vi.fn()
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      get: vi.fn(() => Promise.resolve({ ...job, status: 'success' as const })),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: withNonce([
+        'JOB_START:job-1',
+        'alive:1',
+        '',
+        '',
+        'STDOUT_END:job-1',
+        '',
+        'STDERR_END:job-1'
+      ]),
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+
+    await new JobPoller({
+      runner,
+      hostRepository: {
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      makeNonce: () => NONCE
+    }).tick()
+
+    expect(updateIfStatus).not.toHaveBeenCalled()
+    expect(runner.run).toHaveBeenCalledOnce()
   })
 
   it('marks submitted job without pid as error/dispatch_failed on restart', async () => {
@@ -629,7 +823,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -670,7 +865,8 @@ describe('JobPoller', () => {
     const update = vi.fn((_id: string, u: unknown) => Promise.resolve({ ...job, ...(u as object) }))
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -790,7 +986,8 @@ describe('JobPoller — harvest wiring', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -833,7 +1030,8 @@ describe('JobPoller — harvest wiring', () => {
       const jobRepo = {
         findNonTerminal: vi.fn(() => Promise.resolve([job])),
         findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-        update
+        update,
+        updateIfStatus: guardStatusUpdate(update)
       } as unknown as ComputeJobRepository
       const hostRepo = {
         get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -867,7 +1065,8 @@ describe('JobPoller — harvest wiring', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -911,7 +1110,8 @@ describe('JobPoller — harvest wiring', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -971,7 +1171,8 @@ describe('JobPoller — harvest wiring', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve(jobs)),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1021,7 +1222,8 @@ describe('JobPoller — harvest wiring', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1152,7 +1354,8 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
       findErrorUnnotified: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
 
     const hostRepo = {
@@ -1175,12 +1378,11 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       jobRepository: jobRepo,
       dispatchTracker: new DispatchTracker(), // empty = post-restart, triggers dispatch_failed
       broadcast,
-      storageRoot: '/tmp/test-storage'
+      storageRoot: testStorageRoot()
     })
 
     await poller.tick()
-    // Wait for the async notification to settle
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledOnce())
 
     // Status update was called with error/dispatch_failed
     expect(update).toHaveBeenCalledWith(
@@ -1195,12 +1397,42 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     )
 
     // Broadcast was called with the notification summary
-    expect(broadcast).toHaveBeenCalledOnce()
     const summary = broadcast.mock.calls[0][0]
     expect(summary.status).toBe('error')
     expect(summary.notified_at).toBeDefined()
     expect(summary.featured_files).toEqual([])
     expect(summary.featured_file_count).toBe(0)
+  })
+
+  it('does not notify when interrupted-dispatch recovery loses the lifecycle race', async () => {
+    const job = makeJob({ status: 'submitted', remote_handle: undefined })
+    const updateIfStatus = vi.fn(() => Promise.resolve(null))
+    const jobRepo = {
+      findNonTerminal: vi.fn(() => Promise.resolve([job])),
+      findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
+      findErrorUnnotified: vi.fn(() => Promise.resolve([])),
+      updateIfStatus
+    } as unknown as ComputeJobRepository
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broadcast = vi.fn()
+
+    await new JobPoller({
+      runner,
+      hostRepository: { get: vi.fn() } as unknown as ComputeHostRepository,
+      jobRepository: jobRepo,
+      dispatchTracker: new DispatchTracker(),
+      broadcast,
+      storageRoot: testStorageRoot()
+    }).tick()
+
+    expect(updateIfStatus).toHaveBeenCalledOnce()
+    expect(broadcast).not.toHaveBeenCalled()
   })
 
   it('does NOT emit notification if broadcast is not wired', async () => {
@@ -1210,7 +1442,8 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
     const jobRepo = {
       findNonTerminal: vi.fn(() => Promise.resolve([job])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = { get: vi.fn() } as unknown as ComputeHostRepository
 
@@ -1257,7 +1490,8 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       findNonTerminal: vi.fn(() => Promise.resolve([])),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
       findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1276,7 +1510,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       broadcast,
-      storageRoot: '/tmp/test-storage'
+      storageRoot: testStorageRoot()
     })
 
     await poller.tick()
@@ -1318,7 +1552,8 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
       // Both ticks see the row as still unnotified (write is gated).
       findErrorUnnotified: vi.fn(() => Promise.resolve([errorJob])),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
@@ -1337,7 +1572,7 @@ describe('compute_done notification on dispatch_failed (error) jobs', () => {
       hostRepository: hostRepo,
       jobRepository: jobRepo,
       broadcast,
-      storageRoot: '/tmp/test-storage'
+      storageRoot: testStorageRoot()
     })
 
     // Fire two overlapping ticks, then release the gated write.
@@ -1378,7 +1613,8 @@ describe('JobPoller sub-batching (per-job output budget)', () => {
       findNonTerminal: vi.fn(() => Promise.resolve(jobs)),
       findTerminalUnharvested: vi.fn(() => Promise.resolve([])),
       get: vi.fn((id: string) => Promise.resolve(makeJob({ job_id: id }))),
-      update
+      update,
+      updateIfStatus: guardStatusUpdate(update)
     } as unknown as ComputeJobRepository
     const hostRepo = {
       get: vi.fn(() => Promise.resolve(sampleHost()))
