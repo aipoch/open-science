@@ -339,10 +339,14 @@ const createComputeHandlers = (
         }
         await broker.invalidateProvider(providerId)
         try {
-          await repository.delete(providerId)
           await hostLifecycle?.pruneSessionEnabledHosts(providerId)
           await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-          await syncComputeSkillDocument?.()
+          await repository.delete(providerId)
+          try {
+            await syncComputeSkillDocument?.()
+          } catch (error) {
+            log.warn('compute skill sync after host deletion failed', errorLogFields(error))
+          }
         } finally {
           broker.completeProviderInvalidation(providerId)
         }

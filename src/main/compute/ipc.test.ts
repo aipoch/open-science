@@ -462,6 +462,29 @@ describe('host delete guard', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
+  it('keeps the host when enabled Session reference pruning fails', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const pruneSessionEnabledHosts = vi.fn().mockRejectedValue(new Error('Session write failed'))
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('Session write failed')
+    expect(del).not.toHaveBeenCalled()
+  })
+
   it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
     let releaseDeletePrune: (() => void) | undefined
     let pruneCalls = 0

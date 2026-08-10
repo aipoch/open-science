@@ -82,7 +82,8 @@ type ResendEditedWorkspaceMessageOptions = WorkspaceCommandLifecycle & {
 type WorkspaceCommandRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
->
+> &
+  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>>
 type HistoryReplayContext = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
@@ -336,6 +337,17 @@ const startPendingPrompt = (
       try {
         await saveSessionInOrder(toPersistedSession(boundSession))
       } catch (error) {
+        try {
+          const snapshot = await runtime.deleteSession?.(created.sessionId)
+          if (
+            runtime.deleteSession &&
+            (!snapshot || snapshot.sessionIds.includes(created.sessionId))
+          ) {
+            console.warn('Agent Session cleanup after persistence failure did not complete')
+          }
+        } catch (cleanupError) {
+          console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
+        }
         if (ownsPrompt(created.sessionId, bound.messageId)) {
           useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
         }

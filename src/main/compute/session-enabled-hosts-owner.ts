@@ -63,7 +63,9 @@ class SessionEnabledComputeHostsOwner {
     this.options.registry.removeProvider(providerId)
     return this.enqueue(async () => {
       this.options.registry.removeProvider(providerId)
-      const validProviderIds = await this.options.listHostIds()
+      const validProviderIds = (await this.options.listHostIds()).filter(
+        (candidate) => candidate !== providerId
+      )
       const sessions =
         await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds)
       this.options.registry.reconcile(

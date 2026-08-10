@@ -210,7 +210,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     const owner = new SessionEnabledComputeHostsOwner({
       registry,
       hostExists: async () => true,
-      listHostIds: async () => ['ssh:kept'],
+      listHostIds: async () => ['ssh:deleted', 'ssh:kept'],
       sessionAuthority: {
         sessionProjectId: async () => undefined,
         setSessionEnabledComputeHosts: async () => {
