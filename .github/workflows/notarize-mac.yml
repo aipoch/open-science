@@ -261,6 +261,7 @@ jobs:
           --electron-p0 "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
           --visual-regression "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
           --package-smoke passed
+          --database-migration-certification mac/database-migration-certification.json
           --authenticode not-applicable
 
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the

@@ -52,6 +52,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check generated database schema
+        run: npm run db:schema:check
+
       - name: Lint
         run: npm run lint
 
@@ -438,6 +441,7 @@ jobs:
             --electron-p0 "$electron_p0" \
             --visual-regression "$visual_regression" \
             --package-smoke "$package_smoke" \
+            --database-migration-certification dist/database-migration-certification.json \
             --authenticode "$authenticode"
 
       # Upload only the distributables + electron-updater metadata for the caller's publish job.

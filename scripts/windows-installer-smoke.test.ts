@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
   cleanupSmokeRoot,
@@ -48,7 +49,7 @@ describe('Windows installer smoke plan', () => {
     )
   })
 
-  it('drills upgrade, process-lock rollback, and final restart in one install location', async () => {
+  it('drills upgrade, process-lock rollback without old-app health, and final restart', async () => {
     const plan = buildSmokePlan({
       currentInstaller: 'current.exe',
       previousInstaller: 'previous.exe'
@@ -60,8 +61,15 @@ describe('Windows installer smoke plan', () => {
     expect(runCycle.mock.calls).toEqual([
       [{ installer: 'previous.exe', phase: 'previous' }],
       [{ installer: 'current.exe', phase: 'current', runningInstaller: 'previous.exe' }],
-      [{ installer: 'previous.exe', phase: 'rollback', runningInstaller: 'current.exe' }],
-      [{ installer: 'current.exe', phase: 'restart', runningInstaller: 'previous.exe' }]
+      [
+        {
+          installer: 'previous.exe',
+          phase: 'rollback',
+          runningInstaller: 'current.exe',
+          launchInstalledApp: false
+        }
+      ],
+      [{ installer: 'current.exe', phase: 'restart' }]
     ])
   })
 
@@ -288,6 +296,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     })
   })
 
+  it('requires a blocked downgrade when current added a migration unknown to previous', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-ledger-aware-upgrade-'))
+    const readLedger = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: '0001_runtime_schema_baseline' }])
+      .mockResolvedValueOnce([{ id: '0001_runtime_schema_baseline' }, { id: '0002_future_schema' }])
+    const guard = createUpgradeProfileGuard(
+      true,
+      'installer-smoke-ledger-aware-upgrade',
+      readLedger
+    )
+
+    await guard.verifyCycle('previous', configRoot)
+    expect(guard.shouldExpectDowngradeBlock()).toBe(false)
+    await guard.verifyCycle('current', configRoot)
+    expect(guard.shouldExpectDowngradeBlock()).toBe(true)
+    await guard.cleanup()
+  })
+
   it('never overwrites or removes a pre-existing upgrade sentinel collision', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'open-science-upgrade-collision-'))
     const sentinelName = 'installer-smoke-upgrade-sentinel-collision'
@@ -317,6 +344,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         'query_engine-windows.dll.node'
       )
     ])
+  })
+
+  it('requires exactly one native Windows Prisma engine', async () => {
+    const installDirectory = await mkdtemp(join(tmpdir(), 'open-science-windows-engine-'))
+    const resources = join(installDirectory, 'resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    await mkdir(prismaClient, { recursive: true })
+    await Promise.all([
+      writeFile(join(installDirectory, 'open-science.exe'), ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba.exe'), ''),
+      writeFile(join(prismaClient, 'query_engine-windows.dll.node'), '')
+    ])
+
+    await expect(assertPackagedResources(installDirectory)).resolves.toBeUndefined()
+    await writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
+    await expect(assertPackagedResources(installDirectory)).rejects.toThrow(
+      /exactly one Prisma engine/
+    )
   })
 
   it('targets the bundled main entry for packaged MCP subprocesses', () => {

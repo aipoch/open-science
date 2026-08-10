@@ -121,6 +121,9 @@ jobs:
             if (Test-Path 'windows-updater-observation.json') {
               $arguments += @('--updater-observation', 'windows-updater-observation.json')
             }
+            if (Test-Path 'current/database-migration-certification.json') {
+              $arguments += @('--database-migration-certification', 'current/database-migration-certification.json')
+            }
             if (-not $passed) {
               $arguments += @('--reason', 'updater=${{ steps.updater.outcome }},installer=${{ steps.installer.outcome }}')
             }

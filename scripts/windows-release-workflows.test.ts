@@ -187,6 +187,9 @@ describe('post-merge Windows validation', () => {
     expect(evidence.run).toContain('visual_regression=not-applicable')
     expect(evidence.run).toContain('--electron-p0 "$electron_p0"')
     expect(evidence.run).toContain('--visual-regression "$visual_regression"')
+    expect(evidence.run).toContain(
+      '--database-migration-certification dist/database-migration-certification.json'
+    )
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
     )
@@ -198,6 +201,9 @@ describe('post-merge Windows validation', () => {
       ]
     })
     expect(refreshedMacosEvidence.run).toContain('--package-smoke passed')
+    expect(refreshedMacosEvidence.run).toContain(
+      '--database-migration-certification mac/database-migration-certification.json'
+    )
     expect(refreshedMacosEvidence.run).toContain("matrix.arch == 'arm64'")
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
     expect(notarizeDryRun.with?.certified_build).toBe(false)
@@ -320,6 +326,9 @@ describe('post-merge Windows validation', () => {
     )
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       '--updater-observation'
+    )
+    expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
+      '--database-migration-certification'
     )
     expect(findStep(upgrade, 'Record Windows update-drill evidence').run).toContain(
       "elseif ($passed) { 'passed' } else { 'failed' }"

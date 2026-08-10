@@ -6,6 +6,14 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import {
+  parsePackagedSqliteVersion,
+  seedLegacyDatabase,
+  verifyDatabaseMigrationLedger,
+  verifyLegacyProjectPreserved,
+  writeDatabaseMigrationCertification
+} from './database-migration-ledger-smoke.mjs'
+
 const ARTIFACT_PATTERN = /^aipoch-open-science-(.+)-mac-(?:arm64|x64)\.(dmg|zip)$/
 const SMOKE_ROOT_PREFIX = 'open-science-macos-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
@@ -94,6 +102,17 @@ const assertPackagedResources = async (appBundle) => {
     join(resources, 'icon.icns')
   ]
   for (const path of paths) await access(path)
+  const prismaRoot = join(resources, 'node_modules', '.prisma', 'client')
+  const engines = await readdir(prismaRoot).catch(() => [])
+  const nativeEngines = engines.filter(
+    (name) => name.includes('query_engine-') && name.endsWith('.node')
+  )
+  if (nativeEngines.length !== 1) {
+    throw new Error(`Packaged macOS must contain exactly one Prisma engine in ${prismaRoot}.`)
+  }
+  if (!/^libquery_engine-darwin(?:-arm64)?\.dylib\.node$/.test(nativeEngines[0])) {
+    throw new Error(`Packaged macOS Prisma engine is incompatible: ${nativeEngines[0]}.`)
+  }
   return { executable: paths[0], micromamba: paths[2] }
 }
 
@@ -152,13 +171,23 @@ const launchAndProbe = async ({ executable, expectedVersion, env, userDataRoot }
       })
     ])
     if (exitCode !== 0) throw new Error(`Packaged macOS app exited with ${exitCode}.\n${output}`)
+    return parsePackagedSqliteVersion(output)
   } catch (error) {
     child.kill('SIGKILL')
     throw error
   }
 }
 
-const smokeAppBundle = async ({ appBundle, expectedVersion, env, gatekeeper, userDataRoot }) => {
+const smokeAppBundle = async ({
+  appBundle,
+  expectedVersion,
+  env,
+  gatekeeper,
+  userDataRoot,
+  storageRoot,
+  expectLegacyProject = true,
+  launches = 1
+}) => {
   await runProcess(
     '/usr/bin/codesign',
     ['--verify', '--deep', '--strict', '--verbose=2', appBundle],
@@ -177,7 +206,13 @@ const smokeAppBundle = async ({ appBundle, expectedVersion, env, gatekeeper, use
   }
   const { executable, micromamba } = await assertPackagedResources(appBundle)
   await runProcess(micromamba, ['--version'], { env })
-  await launchAndProbe({ executable, expectedVersion, env, userDataRoot })
+  const sqliteVersions = []
+  for (let launch = 0; launch < launches; launch += 1) {
+    sqliteVersions.push(await launchAndProbe({ executable, expectedVersion, env, userDataRoot }))
+  }
+  await verifyDatabaseMigrationLedger(storageRoot)
+  if (expectLegacyProject) await verifyLegacyProjectPreserved(storageRoot)
+  return sqliteVersions
 }
 
 const parseArguments = (argv) => {
@@ -207,15 +242,19 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const mount = join(root, 'dmg-mount')
   const extracted = join(root, 'zip-extracted')
-  const storageRoot = join(root, 'storage')
-  const userDataRoot = join(root, 'electron-profile')
+  const storageRoot = join(root, 'legacy storage 数据')
+  const freshStorageRoot = join(root, 'fresh storage 数据')
+  const userDataRoot = join(root, 'legacy Electron profile 数据')
+  const freshUserDataRoot = join(root, 'fresh Electron profile 数据')
   const env = {
     ...process.env,
     OPEN_SCIENCE_E2E_STORAGE_ROOT: storageRoot
   }
 
   try {
-    await Promise.all([mkdir(mount), mkdir(extracted), mkdir(storageRoot)])
+    const sqliteVersions = []
+    await Promise.all([mkdir(mount), mkdir(extracted), mkdir(storageRoot), mkdir(freshStorageRoot)])
+    await seedLegacyDatabase(storageRoot)
     if (options.gatekeeper) {
       await runProcess(
         '/usr/sbin/spctl',
@@ -240,24 +279,53 @@ const main = async () => {
       dmg
     ])
     try {
-      await smokeAppBundle({
-        appBundle: await findAppBundle(mount),
-        expectedVersion,
-        env,
-        gatekeeper: false,
-        userDataRoot
-      })
+      sqliteVersions.push(
+        ...(await smokeAppBundle({
+          appBundle: await findAppBundle(mount),
+          expectedVersion,
+          env,
+          gatekeeper: false,
+          userDataRoot,
+          storageRoot
+        }))
+      )
     } finally {
       await runProcess('/usr/bin/hdiutil', ['detach', '-force', mount])
     }
 
     await runProcess('/usr/bin/ditto', ['-x', '-k', zip, extracted], { env })
-    await smokeAppBundle({
-      appBundle: await findAppBundle(extracted),
-      expectedVersion,
-      env,
-      gatekeeper: options.gatekeeper,
-      userDataRoot
+    const zipAppBundle = await findAppBundle(extracted)
+    sqliteVersions.push(
+      ...(await smokeAppBundle({
+        appBundle: zipAppBundle,
+        expectedVersion,
+        env,
+        gatekeeper: options.gatekeeper,
+        userDataRoot,
+        storageRoot
+      }))
+    )
+    sqliteVersions.push(
+      ...(await smokeAppBundle({
+        appBundle: zipAppBundle,
+        expectedVersion,
+        env: { ...process.env, OPEN_SCIENCE_E2E_STORAGE_ROOT: freshStorageRoot },
+        gatekeeper: false,
+        userDataRoot: freshUserDataRoot,
+        storageRoot: freshStorageRoot,
+        expectLegacyProject: false,
+        launches: 2
+      }))
+    )
+    await writeDatabaseMigrationCertification({
+      output: join(options.artifactDirectory, 'database-migration-certification.json'),
+      sqliteVersions,
+      checks: {
+        freshInstall: 'passed',
+        legacyAdoption: 'passed',
+        reopen: 'passed',
+        specialPath: 'passed'
+      }
     })
     console.log('macOS DMG and ZIP launch smoke completed successfully.')
   } finally {

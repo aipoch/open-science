@@ -207,6 +207,9 @@ describe('release and scheduled workflow topology', () => {
     expect(step(smoke, 'Download current Windows installer').run).toContain(
       'gh release download $env:CURRENT_TAG'
     )
+    expect(step(smoke, 'Record Windows update-drill evidence').run).toContain(
+      '--database-migration-certification'
+    )
     expect(step(smoke, 'Upload Windows update-drill evidence').if).toBe('always()')
     expect(step(smoke, 'Report Windows update-drill outcome').run).toBe('exit 1')
   })

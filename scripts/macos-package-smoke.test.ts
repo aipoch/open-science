@@ -81,16 +81,19 @@ describe('macOS package smoke', () => {
     const appBundle = join(root, 'Open Science.app')
     const executableDirectory = join(appBundle, 'Contents', 'MacOS')
     const resources = join(appBundle, 'Contents', 'Resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
     await Promise.all([
       mkdir(executableDirectory, { recursive: true }),
-      mkdir(resources, { recursive: true })
+      mkdir(resources, { recursive: true }),
+      mkdir(prismaClient, { recursive: true })
     ])
     await Promise.all([
       writeFile(join(executableDirectory, 'Open Science'), ''),
       writeFile(join(resources, 'app.asar'), ''),
       writeFile(join(resources, 'micromamba'), ''),
       writeFile(join(resources, 'Assets.car'), ''),
-      writeFile(join(resources, 'icon.icns'), '')
+      writeFile(join(resources, 'icon.icns'), ''),
+      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), '')
     ])
 
     await expect(assertPackagedResources(appBundle)).resolves.toEqual({
@@ -100,5 +103,12 @@ describe('macOS package smoke', () => {
 
     await rm(join(resources, 'Assets.car'))
     await expect(assertPackagedResources(appBundle)).rejects.toThrow()
+
+    await writeFile(join(resources, 'Assets.car'), '')
+    await writeFile(join(prismaClient, 'libquery_engine-darwin.dylib.node'), '')
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow(/exactly one Prisma engine/)
+    await rm(join(prismaClient, 'libquery_engine-darwin.dylib.node'))
+    await rm(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'))
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow(/Prisma engine/)
   })
 })

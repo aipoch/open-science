@@ -31,7 +31,25 @@ describe('release certification evidence', () => {
   it('writes one platform record tied to the workflow run and source SHA', async () => {
     const root = await mkdtemp(join(tmpdir(), 'release-evidence-write-'))
     const output = join(root, 'certification-linux-x64.json')
+    const databaseCertification = join(root, 'database-migration-certification.json')
     await writeFile(join(root, 'app.AppImage'), 'artifact')
+    await writeFile(
+      databaseCertification,
+      JSON.stringify({
+        schemaVersion: 1,
+        compatibilityFloor: {
+          migrationId: '0001_runtime_schema_baseline',
+          migrationChecksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525',
+          sqliteVersion: '3.46.0'
+        },
+        checks: {
+          freshInstall: 'passed',
+          legacyAdoption: 'passed',
+          reopen: 'passed',
+          specialPath: 'passed'
+        }
+      })
+    )
 
     await writePlatformEvidence({
       argv: [
@@ -47,6 +65,8 @@ describe('release certification evidence', () => {
         'not-applicable',
         '--package-smoke',
         'passed',
+        '--database-migration-certification',
+        databaseCertification,
         '--authenticode',
         'not-applicable'
       ],
@@ -66,6 +86,10 @@ describe('release certification evidence', () => {
         electronP0: 'not-applicable',
         visualRegression: 'not-applicable',
         packageSmoke: 'passed'
+      },
+      databaseMigration: {
+        compatibilityFloor: { sqliteVersion: '3.46.0' },
+        checks: { reopen: 'passed', specialPath: 'passed' }
       }
     })
   })
@@ -74,6 +98,7 @@ describe('release certification evidence', () => {
     const root = await mkdtemp(join(tmpdir(), 'release-evidence-update-'))
     const output = join(root, 'certification-windows-update.json')
     const updaterObservation = join(root, 'windows-updater-observation.json')
+    const databaseCertification = join(root, 'database-migration-certification.json')
     const environment = {
       GITHUB_SHA: 'abc123',
       GITHUB_RUN_ID: '42',
@@ -96,6 +121,23 @@ describe('release certification evidence', () => {
         currentVersion: '0.11.0'
       })
     )
+    await writeFile(
+      databaseCertification,
+      JSON.stringify({
+        schemaVersion: 1,
+        compatibilityFloor: {
+          migrationId: '0001_runtime_schema_baseline',
+          migrationChecksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525',
+          sqliteVersion: '3.46.0'
+        },
+        checks: {
+          freshInstall: 'passed',
+          legacyAdoption: 'passed',
+          reopen: 'passed',
+          specialPath: 'passed'
+        }
+      })
+    )
 
     await expect(
       writeWindowsUpdateEvidence({
@@ -109,7 +151,9 @@ describe('release certification evidence', () => {
           '--status',
           'passed',
           '--updater-observation',
-          updaterObservation
+          updaterObservation,
+          '--database-migration-certification',
+          databaseCertification
         ],
         environment
       })
@@ -124,7 +168,8 @@ describe('release certification evidence', () => {
         processLock: 'passed',
         rollback: 'passed',
         restart: 'passed'
-      }
+      },
+      databaseMigration: { compatibilityFloor: { sqliteVersion: '3.46.0' } }
     })
     await expect(
       writeWindowsUpdateEvidence({
@@ -159,7 +204,9 @@ describe('release certification evidence', () => {
           '--status',
           'passed',
           '--updater-observation',
-          updaterObservation
+          updaterObservation,
+          '--database-migration-certification',
+          databaseCertification
         ],
         environment
       })
@@ -207,6 +254,20 @@ describe('release certification evidence', () => {
         packageSmoke: 'passed',
         authenticode: platform === 'windows-x64' ? 'not-required' : 'not-applicable'
       },
+      databaseMigration: {
+        schemaVersion: 1,
+        compatibilityFloor: {
+          migrationId: '0001_runtime_schema_baseline',
+          migrationChecksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525',
+          sqliteVersion: platform === 'macos-arm64' ? '3.45.0' : '3.46.0'
+        },
+        checks: {
+          freshInstall: 'passed',
+          legacyAdoption: 'passed',
+          reopen: 'passed',
+          specialPath: 'passed'
+        }
+      },
       artifacts: [{ name: `${platform}.zip`, sha256: artifactDigest }]
     })
     for (const platform of platforms.slice(0, -1)) {
@@ -226,6 +287,7 @@ describe('release certification evidence', () => {
     )
     await expect(aggregateEvidence({ argv: args })).resolves.toMatchObject({
       sourceSha: 'abc123',
+      databaseCompatibilityFloor: { sqliteVersion: '3.45.0' },
       platforms: expect.arrayContaining([expect.objectContaining({ platform: 'windows-x64' })])
     })
 
@@ -285,6 +347,7 @@ describe('release certification evidence', () => {
           rollback: 'passed',
           restart: 'passed'
         },
+        databaseMigration: recordFor('windows-x64').databaseMigration,
         updater: {
           schemaVersion: 1,
           mode: 'electron-updater-differential',
