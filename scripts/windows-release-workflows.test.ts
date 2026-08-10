@@ -78,9 +78,9 @@ describe('post-merge Windows validation', () => {
       'runs-on': 'windows-latest'
     })
     expect(job['continue-on-error']).toBeUndefined()
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
+    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
     expect(findStep(job, 'Test complete suite shard').run).toBe(
-      'npm test -- --shard=${{ matrix.shard }}/4 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
+      'npm test -- --shard=${{ matrix.shard }}/3 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000'
     )
   })
 

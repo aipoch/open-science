@@ -44,15 +44,15 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
-  it('batches latest-main Windows coverage hourly across four serial shards', () => {
+  it('batches latest-main Windows coverage hourly across three serial shards', () => {
     const windows = workflow('windows-full-test.yml')
     const schedule = windows.on?.schedule as Array<{ cron: string }>
     const plan = windows.jobs.plan
     const job = windows.jobs.windows_full_test
     const test = step(job, 'Test complete suite shard')
 
-    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/4')
+    expect(job.strategy?.matrix?.shard).toEqual([1, 2, 3])
+    expect(test.run).toContain('--shard=${{ matrix.shard }}/3')
     expect(test.run).toContain('--maxWorkers=1')
     expect(windows.on).not.toHaveProperty('push')
     expect(schedule).toEqual([{ cron: '47 * * * *' }])
