@@ -56,6 +56,7 @@ class ProjectDeletionRecoveryLoop {
   private timer: ReturnType<typeof setTimeout> | undefined
   private started = false
   private running = false
+  private activeRun: Promise<void> | undefined
 
   constructor(
     private readonly recover: () => Promise<void>,
@@ -71,16 +72,17 @@ class ProjectDeletionRecoveryLoop {
     this.run()
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.started = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
+    await this.activeRun
   }
 
   private run(): void {
     if (!this.started || this.running) return
     this.running = true
-    void Promise.resolve()
+    const activeRun = Promise.resolve()
       .then(() => this.recover())
       .then(
         () => {
@@ -100,6 +102,10 @@ class ProjectDeletionRecoveryLoop {
           }, this.retryDelayMs)
         }
       )
+    this.activeRun = activeRun
+    void activeRun.then(() => {
+      if (this.activeRun === activeRun) this.activeRun = undefined
+    })
   }
 }
 

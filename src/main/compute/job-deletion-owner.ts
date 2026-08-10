@@ -11,6 +11,7 @@ import type { ComputeHostRepository } from './repository'
 import { resolveSshTarget, type ResolvedSshTarget, type SshRunner } from './ssh-runner'
 
 type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
+type ComputeJobOwnerLiveness = boolean | 'unknown'
 
 type ComputeJobDeletionLifecycle = Pick<
   ComputeJobLifecycle,
@@ -190,26 +191,26 @@ class ComputeJobDeletionOwner {
   }
 
   restoreOrphanJobDeletionBarriers(
-    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
   ): Promise<void> {
     return this.enqueue(async () => {
       const owners = await this.deps.jobRepository.listOwners()
       for (const owner of owners) {
-        if (await isOwnerLive(owner)) continue
+        if ((await isOwnerLive(owner)) === true) continue
         await this.armOwner(owner, true)
       }
     })
   }
 
   reconcileOrphanJobs(
-    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
   ): Promise<void> {
     return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive))
   }
 
   reconcileProjectOrphanJobs(
     projectId: string,
-    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
   ): Promise<void> {
     return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive, projectId))
   }
@@ -364,7 +365,7 @@ class ComputeJobDeletionOwner {
   }
 
   private async reconcileOrphanOwners(
-    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<boolean>,
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>,
     projectId?: string
   ): Promise<void> {
     const owners = (await this.deps.jobRepository.listOwners()).filter(
@@ -376,7 +377,18 @@ class ComputeJobDeletionOwner {
       if (preparedIndex > 0) owners.unshift(...owners.splice(preparedIndex, 1))
     }
     for (const owner of owners) {
-      if (await isOwnerLive(owner)) continue
+      const liveness = await isOwnerLive(owner)
+      if (liveness === 'unknown') continue
+      if (liveness) {
+        const key = this.ownerKey(owner)
+        if (
+          this.retainedOwners.has(key) &&
+          (!this.preparedDeletion || !this.sameOwner(this.preparedDeletion.owner, owner))
+        ) {
+          await this.releaseOwnerBarrier(owner)
+        }
+        continue
+      }
       await this.prepareOwner(owner)
       await this.commitOwner(owner)
     }
@@ -428,6 +440,7 @@ export type {
   ComputeJobDeletionLifecycle,
   ComputeJobDeletionOwnerDeps,
   ComputeJobDeletionRepository,
+  ComputeJobOwnerLiveness,
   ComputeJobQueuePause,
   ComputeJobRuntimePause
 }

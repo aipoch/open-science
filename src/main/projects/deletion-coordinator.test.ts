@@ -287,7 +287,26 @@ describe('ProjectDeletionCoordinator', () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(recover).toHaveBeenCalledTimes(2)
 
-    recovery.stop()
+    await recovery.stop()
+  })
+
+  it('awaits active background recovery when stopping', async () => {
+    const active = createDeferred<void>()
+    const recover = vi.fn(() => active.promise)
+    const recovery = new ProjectDeletionRecoveryLoop(recover)
+    recovery.start()
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce())
+
+    let stopped = false
+    const stopping = Promise.resolve(recovery.stop()).then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+
+    active.resolve(undefined)
+    await stopping
+    expect(stopped).toBe(true)
   })
 
   it('adopts an orphaned legacy tombstone into an intent before preparing its Session authority', async () => {

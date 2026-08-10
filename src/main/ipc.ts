@@ -47,6 +47,7 @@ import { ArtifactProvenanceRepository } from './artifacts/provenance-repository'
 import { ProvenanceMessageSnapshotRepository } from './artifacts/provenance-message-snapshot'
 import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
+import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
@@ -526,12 +527,10 @@ const createApplicationModules = async (
   }: {
     projectId: string
     sessionId: string
-  }): Promise<boolean> => {
+  }): Promise<ComputeJobOwnerLiveness> => {
     if (!(await projectRepository.get(projectId))) return false
     const owner = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId)
-    if (owner.status === 'unreadable') {
-      throw new Error(`Cannot reconcile Compute Jobs for unreadable Session ${sessionId}.`)
-    }
+    if (owner.status === 'unreadable') return 'unknown'
     return owner.status === 'found'
   }
   const computeJobDeletionRef: {

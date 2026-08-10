@@ -320,6 +320,19 @@ describe('Compute service architecture', () => {
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundOrphanRecovery)
   })
 
+  it('treats unreadable Session authority as unknown during Compute Job recovery', () => {
+    const source = readSource(computePaths.mainIpc)
+    const livenessStart = source.indexOf('const isComputeJobOwnerLive')
+    const livenessEnd = source.indexOf('const computeJobDeletionRef', livenessStart)
+    const livenessSource = source.slice(livenessStart, livenessEnd)
+
+    expect(livenessStart).toBeGreaterThan(-1)
+    expect(livenessEnd).toBeGreaterThan(livenessStart)
+    expect(livenessSource).toContain("return 'unknown'")
+    expect(livenessSource).not.toContain('throw new Error')
+    expect(source).toContain('restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)')
+  })
+
   it('keeps every private owner behind the public facade', () => {
     const ownerTargets = new Set(privateOwnerPaths.map(modulePath))
     const ownerModuleNames = privateOwnerPaths.map((path) => basename(modulePath(path)))
