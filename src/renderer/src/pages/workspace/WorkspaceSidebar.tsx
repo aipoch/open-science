@@ -485,7 +485,7 @@ const WorkspaceSidebarView = ({
                         <span
                           aria-hidden="true"
                           className={cn(
-                            'pointer-events-none absolute inset-y-0 right-0 z-[1] w-16 rounded-r-md bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg group-hover:via-bg-300 group-hover:to-bg-300',
+                            'pointer-events-none absolute inset-y-0 right-0 z-[1] w-12 rounded-r-md bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg group-hover:via-bg-300 group-hover:to-bg-300',
                             isActive && 'via-bg-300 to-bg-300'
                           )}
                         />

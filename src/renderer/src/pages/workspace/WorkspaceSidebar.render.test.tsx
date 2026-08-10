@@ -464,6 +464,7 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(running?.classList).not.toContain('truncate')
       expect(running?.classList).toContain('font-semibold')
       expect(completed?.classList).not.toContain('font-semibold')
+      expect(fade?.classList).toContain('w-12')
       expect(fade?.classList).toContain('from-transparent')
       expect(fade?.classList).toContain('via-rail-card-bg')
       expect(fade?.classList).toContain('to-rail-card-bg')
