@@ -128,6 +128,7 @@ export type HostArtifactCatalogItem = {
   sizeBytes: number
   sortAtMs: number
   createdAt?: string
+  sourceCreatedAt?: string
   rootFrameId: string | null
   agentFrameId?: string | null
 }

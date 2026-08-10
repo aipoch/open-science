@@ -323,7 +323,7 @@ class HostLineageService {
         source.sourceFileId !== input.source_file_id ||
         source.source !== (input.source_kind === 'artifact-version' ? 'artifact' : 'upload') ||
         source.versionNumber !== input.source_version_number ||
-        source.createdAt !== input.source_created_at ||
+        source.sourceCreatedAt !== input.source_created_at ||
         source.sessionId !== input.source_session_id ||
         source.filename !== input.filename ||
         source.contentType !== input.content_type ||

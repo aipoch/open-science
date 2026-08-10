@@ -305,6 +305,7 @@ class ProjectFilesQueryOwner {
             sizeBytes: toSafeCount(artifactVersion.sizeBytes, 'host Artifact size'),
             sortAtMs: artifactVersion.createdAt.getTime(),
             createdAt: artifactVersion.createdAt.toISOString(),
+            sourceCreatedAt: artifactVersion.createdAt.toISOString(),
             rootFrameId: artifactVersion.rootFrameId,
             agentFrameId: artifactVersion.agentFrameId
           }
@@ -327,6 +328,9 @@ class ProjectFilesQueryOwner {
               sizeBytes: toSafeCount(uploadVersion.sizeBytes, 'host Upload size'),
               sortAtMs: uploadTime.getTime(),
               createdAt: uploadTime.toISOString(),
+              ...(uploadVersion.createdAt
+                ? { sourceCreatedAt: uploadVersion.createdAt.toISOString() }
+                : {}),
               rootFrameId: null,
               agentFrameId: null
             }

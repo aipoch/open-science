@@ -20,6 +20,7 @@ const artifact = (
   sizeBytes: 12,
   sortAtMs: Date.parse('2026-08-01T00:00:00.000Z'),
   createdAt: '2026-08-01T00:00:00.000Z',
+  sourceCreatedAt: '2026-08-01T00:00:00.000Z',
   rootFrameId: 'root-a',
   agentFrameId: 'agent-a',
   ...overrides
@@ -41,6 +42,7 @@ const upload = (
   sizeBytes: 24,
   sortAtMs: Date.parse('2026-08-02T00:00:00.000Z'),
   createdAt: '2026-08-02T00:00:00.000Z',
+  sourceCreatedAt: '2026-08-02T00:00:00.000Z',
   rootFrameId: null,
   agentFrameId: null,
   ...overrides
@@ -561,6 +563,7 @@ describe('HostLineageService', () => {
       review: { state: 'available', value: { secret: 'review' } },
       path: '/private/artifact/path'
     } as unknown as ArtifactVersionCoreProvenance
+    let inputSourceCreatedAt: string | undefined = '2026-08-02T00:00:00.000Z'
     const service = new HostLineageService({
       catalog: {
         readHostArtifactCatalog: async ({ versionId }) =>
@@ -573,7 +576,8 @@ describe('HostLineageService', () => {
                   versionNumber: 1,
                   sizeBytes: 42,
                   checksum: 'f'.repeat(64),
-                  createdAt: '2026-08-02T00:00:00.000Z'
+                  createdAt: '2026-08-02T00:00:00.000Z',
+                  sourceCreatedAt: inputSourceCreatedAt
                 })
               ]
             : [item]
@@ -643,6 +647,15 @@ describe('HostLineageService', () => {
         }
       ]
     })
+
+    const inputEvidence = core.evidence.inputs[0] as { source_created_at?: string }
+    delete inputEvidence.source_created_at
+    inputSourceCreatedAt = undefined
+    const nullableUploadResult = await service.get('artifact-v1', {
+      projectId: 'project-a',
+      sessionId: 'session-current'
+    })
+    expect(nullableUploadResult.inputs[0]).not.toHaveProperty('created_at')
 
     environment.op_log[0].attempts[0].reason = 'secret-reason' as 'unknown'
     await expect(
