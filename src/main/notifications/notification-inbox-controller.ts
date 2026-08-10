@@ -4,7 +4,6 @@ import type {
   NotificationActionState,
   NotificationInboxChanged,
   NotificationInboxSnapshot,
-  NotificationKind,
   NotificationSource,
   UnreadTaskViewState
 } from '../../shared/notifications'
@@ -71,8 +70,6 @@ const authorizationDedupeKey = (source: NotificationSource, originId: string): s
   `authorization:${source}:${originId}`
 
 const agentQuestionDedupeKey = (originId: string): string => `input:agent-question:${originId}`
-
-const isTaskOutcome = (kind: NotificationKind): boolean => kind.startsWith('task.')
 
 export const createNotificationInboxController = (
   dependencies: NotificationInboxControllerDependencies
@@ -169,7 +166,7 @@ export const createNotificationInboxController = (
     if (sessionId && isSessionAvailable && !(await isSessionAvailable(sessionId))) return
 
     let readAt: number | undefined
-    if (sessionId && isTaskOutcome(input.kind) && isAppFocused()) {
+    if (sessionId && isAppFocused()) {
       const visible = await confirmVisibleSession(sessionId)
       if (isAppFocused() && visible) readAt = now()
     }
@@ -225,8 +222,8 @@ export const createNotificationInboxController = (
   const markSessionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionsRead(sessionIds, now()))
 
-  const markVisibleSessionTaskOutcomesRead = (sessionIds: readonly string[]): Promise<void> =>
-    mutate(() => dependencies.repository.markSessionTaskOutcomesRead(sessionIds, now()))
+  const markVisibleSessionNotificationsRead = (sessionIds: readonly string[]): Promise<void> =>
+    mutate(() => dependencies.repository.markSessionsRead(sessionIds, now()))
 
   const markSessionCompletionsRead = (sessionIds: readonly string[]): Promise<void> =>
     mutate(() => dependencies.repository.markSessionCompletionsRead(sessionIds, now()))
@@ -245,7 +242,7 @@ export const createNotificationInboxController = (
   const syncViewState = async (state: UnreadTaskViewState): Promise<void> => {
     visibleSessionId = state.visibleSessionId?.trim() || undefined
     if (isAppFocused() && visibleSessionId) {
-      await markVisibleSessionTaskOutcomesRead([visibleSessionId])
+      await markVisibleSessionNotificationsRead([visibleSessionId])
     } else refreshBadge()
   }
 
@@ -256,7 +253,7 @@ export const createNotificationInboxController = (
     }
     const candidate = visibleSessionId
     const visible = await confirmVisibleSession(candidate)
-    if (isAppFocused() && visible) await markVisibleSessionTaskOutcomesRead([candidate])
+    if (isAppFocused() && visible) await markVisibleSessionNotificationsRead([candidate])
     else refreshBadge()
   }
 

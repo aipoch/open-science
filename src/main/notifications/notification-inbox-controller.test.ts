@@ -110,11 +110,12 @@ describe('createNotificationInboxController', () => {
     expect(onError).toHaveBeenCalledWith(error)
   })
 
-  it('records a focused visible task as read and leaves background tasks unread', async () => {
+  it('records focused visible session notifications as read and leaves background tasks unread', async () => {
     const record = vi
       .fn()
       .mockResolvedValueOnce({ changed: true, unreadCount: 0, latestSequence: 1 })
-      .mockResolvedValueOnce({ changed: true, unreadCount: 1, latestSequence: 2 })
+      .mockResolvedValueOnce({ changed: true, unreadCount: 0, latestSequence: 2 })
+      .mockResolvedValueOnce({ changed: true, unreadCount: 1, latestSequence: 3 })
     const db = repository({ record } as never)
     let focused = true
     const inbox = createNotificationInboxController({
@@ -138,6 +139,16 @@ describe('createNotificationInboxController', () => {
       title: 'Task completed',
       summary: 'Visible task finished.'
     })
+    await inbox.record({
+      dedupeKey: 'authorization:agent-tool:visible',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-visible',
+      originId: 'visible-approval',
+      title: 'Approval needed',
+      summary: 'A visible task needs approval.',
+      actionState: 'pending'
+    })
     focused = false
     await inbox.record({
       dedupeKey: 'task:background',
@@ -149,7 +160,8 @@ describe('createNotificationInboxController', () => {
     })
 
     expect(record.mock.calls[0]?.[0]).toMatchObject({ readAt: 2000 })
-    expect(record.mock.calls[1]?.[0]).not.toHaveProperty('readAt')
+    expect(record.mock.calls[1]?.[0]).toMatchObject({ actionState: 'pending', readAt: 2000 })
+    expect(record.mock.calls[2]?.[0]).not.toHaveProperty('readAt')
   })
 
   it('uses the snapshot sequence when a client explicitly marks all read', async () => {
@@ -269,7 +281,7 @@ describe('createNotificationInboxController', () => {
     expect(settle).toHaveBeenCalledWith('input:agent-question:choice-1', 'resolved', 4500)
   })
 
-  it('auto-acknowledges only task outcomes when a conversation becomes visible', async () => {
+  it('auto-acknowledges all session notifications when a conversation becomes visible', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
       headless: false,
@@ -281,7 +293,7 @@ describe('createNotificationInboxController', () => {
 
     await inbox.syncViewState({ visibleSessionId: 'session-1' })
 
-    expect(db.markSessionTaskOutcomesRead).toHaveBeenCalledWith(['session-1'], 5000)
-    expect(db.markSessionsRead).not.toHaveBeenCalled()
+    expect(db.markSessionsRead).toHaveBeenCalledWith(['session-1'], 5000)
+    expect(db.markSessionTaskOutcomesRead).not.toHaveBeenCalled()
   })
 })
