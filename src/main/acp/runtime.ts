@@ -371,6 +371,7 @@ class AcpRuntime {
   private readonly turnSkills: AcpTurnSkillOwner
   private readonly handoffContinuity: AcpHandoffContinuityOwner
   private readonly permissionContext: AcpPermissionContext
+  private readonly clientInteractions: AcpRuntimeSessionOwners['clientInteractions']
   private readonly publication: AcpRuntimePublicationOwner
   private readonly sessionEnvironment: AcpSessionEnvironmentPolicy
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -419,6 +420,7 @@ class AcpRuntime {
     this.sessionEnvironment = session.sessionEnvironment
     this.publication = session.publication
     this.permissionContext = session.permissionContext
+    this.clientInteractions = session.clientInteractions
     this.elicitationOwner = session.elicitationOwner
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
@@ -885,8 +887,8 @@ class AcpRuntime {
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
     const hooks: AcpAgentConnectionHooks = {
-      createElicitation: (params) => this.handleElicitationRequest(params),
-      requestPermission: (params) => this.permissionContext.handleProviderRequest(params),
+      createElicitation: (params) => this.clientInteractions.createElicitation(params),
+      requestPermission: (params) => this.clientInteractions.requestPermission(params),
       observeSessionUpdate: (notification) =>
         this.permissionContext.observeProviderUpdate(notification),
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
@@ -1679,70 +1681,6 @@ class AcpRuntime {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
     return this.artifactTurns.writeForActiveTurn(sessionId, input)
-  }
-
-  private handleElicitationRequest(
-    params: acp.CreateElicitationRequest
-  ): Promise<acp.CreateElicitationResponse> {
-    if (!('sessionId' in params) || typeof params.sessionId !== 'string') {
-      return Promise.resolve({ action: 'cancel' })
-    }
-
-    const sessionId = this.sessionRegistry.resolveAppSessionId(params.sessionId)
-    if (!this.activeSessionFor(sessionId)) return Promise.resolve({ action: 'cancel' })
-
-    const meta = params._meta
-    const isCodexMcpToolApproval =
-      typeof meta === 'object' && meta !== null && meta.codex_approval_kind === 'mcp_tool_call'
-    const toolCallId = 'toolCallId' in params ? params.toolCallId : undefined
-    const frameworkId = this.getSessionFramework(sessionId)
-    // Codex ACP can surface an MCP approval through elicitation/create instead of
-    // session/request_permission. Keep that provider detail behind the existing permission owner so
-    // the renderer never mistakes an authorization prompt for structured user input.
-    if (frameworkId === 'codex' && isCodexMcpToolApproval) {
-      if (typeof toolCallId !== 'string') return Promise.resolve({ action: 'cancel' })
-      if (
-        this.permissionContext.consumeTrustedCodexMcpToolCall(
-          sessionId,
-          toolCallId,
-          'open-science-notebook/ask_user_question'
-        )
-      ) {
-        return Promise.resolve({ action: 'accept' })
-      }
-      if (!this.permissionContext.hasTrustedCodexMcpToolCall(sessionId, toolCallId)) {
-        return Promise.resolve({ action: 'cancel' })
-      }
-
-      const allowOnceOptionId = 'codex-elicitation-allow-once'
-      return this.permissionContext
-        .handleProviderRequest({
-          sessionId: params.sessionId,
-          toolCall: { toolCallId, kind: 'execute', status: 'pending' },
-          options: [
-            { optionId: allowOnceOptionId, name: 'Allow once', kind: 'allow_once' },
-            {
-              optionId: 'codex-elicitation-reject-once',
-              name: 'Deny',
-              kind: 'reject_once'
-            }
-          ],
-          _meta: { is_mcp_tool_approval: true }
-        })
-        .then((response) => {
-          if (response.outcome.outcome === 'cancelled') return { action: 'cancel' as const }
-          return response.outcome.optionId === allowOnceOptionId
-            ? { action: 'accept' as const }
-            : { action: 'decline' as const }
-        })
-    }
-
-    const promptInteraction = this.sessionInteractions.current(sessionId)
-    const durableChoiceContext =
-      promptInteraction?.kind === 'prompt' && promptInteraction.promptMessageId
-        ? { promptMessageId: promptInteraction.promptMessageId }
-        : undefined
-    return this.elicitationOwner.request(params, { sessionId }, durableChoiceContext)
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {

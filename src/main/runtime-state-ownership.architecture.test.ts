@@ -423,16 +423,28 @@ describe('runtime state ownership architecture', () => {
     expect(composition).not.toMatch(/AcpRuntime\.prototype|from ['"]electron['"]/)
   })
 
-  it('keeps provider permission routing and reviewer preparation behind their owners', () => {
-    const source = readSource('src/main/acp/runtime.ts')
+  it('keeps provider interactions and reviewer preparation behind their owners', () => {
+    const runtime = readSource('src/main/acp/runtime.ts')
+    const interactions = readSource('src/main/acp/client-interaction-owner.ts')
+    const composition = readSource('src/main/acp/runtime-session-composition.ts')
 
-    expect(source).not.toContain('private async handlePermissionRequest')
-    expect(source).not.toContain('private observePermissionToolContext')
-    expect(source).not.toContain('reviewerSessions.create(request, async')
-    expect(source).toContain('this.permissionContext.handleProviderRequest(params)')
-    expect(source).toContain('this.permissionContext.observeProviderUpdate(notification)')
-    expect(source).toContain('this.reviewerSessions.create(request, {')
-    expect(source).toContain('ensureConnected: (cwd) => this.ensureConnected(cwd)')
+    expect(runtime).not.toContain('private async handlePermissionRequest')
+    expect(runtime).not.toContain('private handleElicitationRequest')
+    expect(runtime).not.toContain('private observePermissionToolContext')
+    expect(runtime).not.toContain('reviewerSessions.create(request, async')
+    expect(runtime).not.toContain('codex_approval_kind')
+    expect(runtime).toContain('this.clientInteractions.createElicitation(params)')
+    expect(runtime).toContain('this.clientInteractions.requestPermission(params)')
+    expect(runtime).toContain('this.permissionContext.observeProviderUpdate(notification)')
+    expect(runtime).toContain('this.reviewerSessions.create(request, {')
+    expect(runtime).toContain('ensureConnected: (cwd) => this.ensureConnected(cwd)')
+
+    expect(interactions).toContain("meta.codex_approval_kind === 'mcp_tool_call'")
+    expect(interactions).toContain('this.options.elicitation.request(')
+    expect(interactions).toContain('this.options.permission.handleProviderRequest(params)')
+    expect(composition.match(/new AcpClientInteractionOwner\(/g)).toHaveLength(1)
+    expect(composition).toContain('elicitation: elicitationOwner')
+    expect(composition).toContain('permission: permissionContext')
   })
 
   it('keeps provider selection and Context routing behind their prompt owners', () => {

@@ -2,6 +2,7 @@ import type { SessionPermissionProfileState } from '../../shared/permission-prof
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import { createLogger } from '../logger'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
+import { AcpClientInteractionOwner } from './client-interaction-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 import { AcpElicitationOwner } from './elicitation-owner'
@@ -215,6 +216,20 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     unregisterBridgeSession: (sessionId) =>
       base.connectionResources.unregisterBridgeReviewerSession(sessionId)
   })
+  const clientInteractions = new AcpClientInteractionOwner({
+    routing: {
+      resolveAppSessionId: (sessionId) => sessionRegistry.resolveAppSessionId(sessionId),
+      isActiveSession: (sessionId) => sessionRegistry.lookup(sessionId)?.attachment !== undefined,
+      frameworkForSession: (sessionId) =>
+        sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId,
+      promptMessageIdForSession: (sessionId) => {
+        const interaction = base.sessionInteractions.current(sessionId)
+        return interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined
+      }
+    },
+    elicitation: elicitationOwner,
+    permission: permissionContext
+  })
   const sessionUpdateProjector = new AcpSessionUpdateProjector({
     registry: sessionRegistry,
     contextUsage: base.contextUsageTracker,
@@ -247,6 +262,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     durableContinuationContext,
     permissionWaitOwner,
     permissionContext,
+    clientInteractions,
     reviewerSessions,
     sessionUpdateProjector
   })
