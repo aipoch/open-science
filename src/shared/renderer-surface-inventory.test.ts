@@ -170,6 +170,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-isolated-codex',
     'logout-shared-claude',
     'remove-github-token',
+    'retry-custom-server',
     'save-github-token',
     'set-app-icon-variant',
     'set-close-preference',
@@ -271,7 +272,7 @@ describe('renderer surface inventory', () => {
     const expectedRemoteLocalOnly = expand(REMOTE_LOCAL_ONLY_CHANNELS, ':')
 
     expectSameSet(REMOTE_LOCAL_ONLY_RPC_CHANNELS, expectedRemoteLocalOnly)
-    expect(expectedRemoteLocalOnly).toHaveLength(62)
+    expect(expectedRemoteLocalOnly).toHaveLength(63)
     expect(
       expectedRemoteLocalOnly.every((channel) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
     ).toBe(true)
