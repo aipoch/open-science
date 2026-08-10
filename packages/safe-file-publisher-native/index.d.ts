@@ -5,4 +5,9 @@ export function publishNoReplace(
   destinationName: string
 ): void
 
-export function isRemotePath(path: string): boolean
+export type StoragePathCapabilities = {
+  isRemote: boolean
+  supportsHardLinks: boolean
+}
+
+export function inspectPath(path: string): StoragePathCapabilities

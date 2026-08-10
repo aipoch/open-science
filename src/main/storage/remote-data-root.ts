@@ -1,7 +1,12 @@
 import { createRequire } from 'node:module'
 
 type NativePublisherBinding = {
-  isRemotePath: (path: string) => boolean
+  inspectPath: (path: string) => WindowsStoragePathCapabilities
+}
+
+export type WindowsStoragePathCapabilities = {
+  isRemote: boolean
+  supportsHardLinks: boolean
 }
 
 const require = createRequire(import.meta.url)
@@ -12,7 +17,9 @@ const loadBinding = (): NativePublisherBinding => {
   return binding
 }
 
-export const isRemoteWindowsPath = (path: string): boolean => {
-  if (process.platform !== 'win32') return false
-  return loadBinding().isRemotePath(path)
+export const inspectWindowsStoragePath = (path: string): WindowsStoragePathCapabilities => {
+  if (process.platform !== 'win32') {
+    return { isRemote: false, supportsHardLinks: true }
+  }
+  return loadBinding().inspectPath(path)
 }

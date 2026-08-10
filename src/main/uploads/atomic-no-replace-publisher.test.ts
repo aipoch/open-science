@@ -24,13 +24,16 @@ afterEach(async () => {
 })
 
 describe.skipIf(!nativeBindingAvailable)('atomic no-replace publisher', () => {
-  it('identifies a local storage root as non-remote', async () => {
+  it('reports publication capabilities for a local storage root', async () => {
     cleanupRoot = await mkdtemp(join(tmpdir(), 'safe-file-publisher-'))
     const binding = require('@aipoch/safe-file-publisher-native') as {
-      isRemotePath: (path: string) => boolean
+      inspectPath: (path: string) => { isRemote: boolean; supportsHardLinks: boolean }
     }
 
-    expect(binding.isRemotePath(cleanupRoot)).toBe(false)
+    expect(binding.inspectPath(cleanupRoot)).toEqual({
+      isRemote: false,
+      supportsHardLinks: true
+    })
   })
 
   it('publishes within an anchored parent without replacing an existing destination', async () => {

@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 vi.mock('./remote-data-root', () => ({
-  isRemoteWindowsPath: () => false
+  inspectWindowsStoragePath: () => ({ isRemote: false, supportsHardLinks: true })
 }))
 
 import { existsSync } from 'node:fs'
@@ -165,7 +165,7 @@ describe('classifyDataRoot', () => {
 
     try {
       const result = await classifyDataRoot(emptyParent, currentDataRoot, {
-        isRemotePath: async () => true
+        inspectPath: async () => ({ isRemote: true, supportsHardLinks: true })
       })
 
       expect(result).toEqual({
@@ -173,6 +173,50 @@ describe('classifyDataRoot', () => {
         error:
           'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
       })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('rejects a Windows data root on a local filesystem without hard-link support', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+
+    try {
+      const result = await classifyDataRoot(emptyParent, currentDataRoot, {
+        inspectPath: async () => ({ isRemote: false, supportsHardLinks: false })
+      })
+
+      expect(result).toEqual({
+        kind: 'invalid',
+        error:
+          "This drive's file system does not support safe atomic publication on Windows. Choose a folder on a drive that supports hard links, such as NTFS."
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('rejects an existing derived data root that resolves to remote storage', async () => {
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const target = dataRootFor(emptyParent)
+    await mkdir(target)
+    const inspectPath = vi.fn(async (path: string) => ({
+      isRemote: path === target,
+      supportsHardLinks: true
+    }))
+
+    try {
+      const result = await classifyDataRoot(emptyParent, currentDataRoot, { inspectPath })
+
+      expect(result).toEqual({
+        kind: 'invalid',
+        error:
+          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+      })
+      expect(inspectPath).toHaveBeenNthCalledWith(1, emptyParent)
+      expect(inspectPath).toHaveBeenNthCalledWith(2, target)
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }

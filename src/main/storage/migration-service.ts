@@ -32,7 +32,7 @@ import { validateProvenanceMigrationState } from './provenance-migration-validat
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
-import { isRemoteWindowsPath } from './remote-data-root'
+import { inspectWindowsStoragePath, type WindowsStoragePathCapabilities } from './remote-data-root'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -96,7 +96,9 @@ export const maxManagedEnvRelativePath = (dataRoot: string): number => {
 // Windows).
 type ClassifyDataRootDeps = {
   canWrite?: (dir: string) => Promise<boolean>
-  isRemotePath?: (dir: string) => boolean | Promise<boolean>
+  inspectPath?: (
+    dir: string
+  ) => WindowsStoragePathCapabilities | Promise<WindowsStoragePathCapabilities>
 }
 
 // Real write probe (create + delete a temp file) instead of only fs.access(W_OK): access() checks
@@ -125,6 +127,28 @@ export const classifyDataRoot = async (
   const resolvedParent = resolve(parent)
   const current = resolve(currentDataRoot)
   const target = dataRootForPicked(parent)
+
+  const inspectPath = deps.inspectPath ?? inspectWindowsStoragePath
+  const validateWindowsStoragePath = async (path: string): Promise<ClassifyResult | undefined> => {
+    if (process.platform !== 'win32') return undefined
+
+    const capabilities = await inspectPath(path)
+    if (capabilities.isRemote) {
+      return {
+        kind: 'invalid',
+        error:
+          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+      }
+    }
+    if (!capabilities.supportsHardLinks) {
+      return {
+        kind: 'invalid',
+        error:
+          "This drive's file system does not support safe atomic publication on Windows. Choose a folder on a drive that supports hard links, such as NTFS."
+      }
+    }
+    return undefined
+  }
 
   // Reject control characters on every platform (near-impossible from the OS picker, but the New
   // location field also accepts typed input). Spaces are handled per-platform below: allowed on
@@ -185,14 +209,8 @@ export const classifyDataRoot = async (
   }
 
   try {
-    const isRemotePath = deps.isRemotePath ?? isRemoteWindowsPath
-    if (process.platform === 'win32' && (await isRemotePath(resolvedParent))) {
-      return {
-        kind: 'invalid',
-        error:
-          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
-      }
-    }
+    const invalid = await validateWindowsStoragePath(resolvedParent)
+    if (invalid) return invalid
   } catch {
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
   }
@@ -224,6 +242,9 @@ export const classifyDataRoot = async (
     if (!targetStat.isDirectory()) {
       return { kind: 'invalid', error: 'The selected folder is not usable.' }
     }
+
+    const invalid = await validateWindowsStoragePath(target)
+    if (invalid) return invalid
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { kind: 'move' }
     return { kind: 'invalid', error: 'The selected folder is not usable.' }
