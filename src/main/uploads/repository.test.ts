@@ -1182,15 +1182,17 @@ describe('upload repository', () => {
     await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
 
     await writeFile(legacyPath, content)
+    const staleRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.interrupted.tmp`
+    await mkdir(dirname(finalPath), { recursive: true })
+    await writeFile(staleRecoveryTemporaryPath, content.subarray(0, 1))
     await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
       status: 'removed'
     })
     expect(hardLinkUnavailable).toHaveBeenCalledOnce()
     await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(`${finalPath}.legacy-recovery.copy.tmp`)).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
+    await expect(readFile(staleRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 1))
+    await rm(staleRecoveryTemporaryPath)
 
     await expect(
       repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })

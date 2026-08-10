@@ -1,7 +1,7 @@
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, link, lstat, mkdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
 
@@ -15,7 +15,6 @@ import {
 } from './storage-helpers'
 
 const LEGACY_CLEANUP_PRIVATE_SUFFIX = '.legacy-cleanup.private'
-const LEGACY_RECOVERY_COPY_TEMP_SUFFIX = '.legacy-recovery.copy.tmp'
 const HARD_LINK_FALLBACK_ERROR_CODES = new Set([
   'EACCES',
   'EINVAL',
@@ -144,46 +143,59 @@ class VerifiedLegacyCleanupOwner {
     expectedSize: number,
     expectedChecksum: string
   ): Promise<ReadyContentCopyResult> {
-    const temporaryPath = `${finalPath}${LEGACY_RECOVERY_COPY_TEMP_SUFFIX}`
+    const temporaryPath = `${finalPath}.legacy-recovery.copy.${randomUUID()}.tmp`
     assertPathInsideRoot(this.storageRoot, temporaryPath, 'Upload recovery path escapes storage.')
-    let createdTemporary = false
+    let ownedTemporaryInfo: FileIdentity | undefined
     try {
-      await (this.options.copyReadyContent ?? copyFile)(
-        expectedLegacyPath,
-        temporaryPath,
-        constants.COPYFILE_EXCL
-      )
-      createdTemporary = true
-    } catch (error) {
-      if (!isFileExistsError(error)) throw error
-    }
+      try {
+        // A UUID plus exclusive creation gives this attempt its own publication path. A crash may
+        // leave that path behind, but it cannot block a later attempt with a different UUID.
+        await (this.options.copyReadyContent ?? copyFile)(
+          expectedLegacyPath,
+          temporaryPath,
+          constants.COPYFILE_EXCL
+        )
+      } catch (error) {
+        if (!isFileExistsError(error)) {
+          const partialInfo = await lstat(temporaryPath).catch(() => undefined)
+          if (partialInfo?.isFile() === true && !partialInfo.isSymbolicLink()) {
+            ownedTemporaryInfo = partialInfo
+          }
+        }
+        throw error
+      }
+      ownedTemporaryInfo = await lstat(temporaryPath)
+      const copiedContentIsValid =
+        ownedTemporaryInfo.isFile() &&
+        !ownedTemporaryInfo.isSymbolicLink() &&
+        ownedTemporaryInfo.size === expectedSize &&
+        (await sha256File(temporaryPath)) === expectedChecksum
+      const reverifiedLegacyInfo = await lstat(expectedLegacyPath).catch((error: unknown) => {
+        if (isMissingFileError(error)) return undefined
+        throw error
+      })
+      const sourceStayedStable =
+        reverifiedLegacyInfo?.isFile() === true &&
+        !reverifiedLegacyInfo.isSymbolicLink() &&
+        hasSameFileSnapshot(reverifiedLegacyInfo, verifiedLegacyInfo)
+      if (!copiedContentIsValid || !sourceStayedStable) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the deterministic legacy path changed while copying Version content'
+        }
+      }
 
-    const temporaryInfo = await lstat(temporaryPath)
-    const copiedContentIsValid =
-      temporaryInfo.isFile() &&
-      !temporaryInfo.isSymbolicLink() &&
-      temporaryInfo.size === expectedSize &&
-      (await sha256File(temporaryPath)) === expectedChecksum
-    const reverifiedLegacyInfo = await lstat(expectedLegacyPath)
-    const sourceStayedStable =
-      reverifiedLegacyInfo.isFile() &&
-      !reverifiedLegacyInfo.isSymbolicLink() &&
-      hasSameFileSnapshot(reverifiedLegacyInfo, verifiedLegacyInfo)
-    if (!copiedContentIsValid || !sourceStayedStable) {
-      if (createdTemporary && temporaryInfo.isFile() && !temporaryInfo.isSymbolicLink()) {
+      await rename(temporaryPath, finalPath)
+      ownedTemporaryInfo = undefined
+      return { status: 'published' }
+    } finally {
+      if (ownedTemporaryInfo) {
         const currentTemporaryInfo = await lstat(temporaryPath).catch(() => undefined)
-        if (currentTemporaryInfo && hasSameFileIdentity(currentTemporaryInfo, temporaryInfo)) {
+        if (currentTemporaryInfo && hasSameFileIdentity(currentTemporaryInfo, ownedTemporaryInfo)) {
           await rm(temporaryPath, { force: true })
         }
       }
-      return {
-        status: 'unsafe-residual',
-        reason: 'the deterministic legacy path changed while copying Version content'
-      }
     }
-
-    await rename(temporaryPath, finalPath)
-    return { status: 'published' }
   }
 
   // Cleanup is fail-closed: SQLite authority, a verified byte source, the deterministic legacy
