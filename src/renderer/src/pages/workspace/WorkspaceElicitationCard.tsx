@@ -595,13 +595,14 @@ const WorkspaceElicitationCard = ({
                 MAX_ELICITATION_MESSAGE_CHARS
               )}
               className="max-h-40 min-h-9 min-w-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent px-0 py-1.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value
                 setValues((current) => ({
                   ...current,
                   [choiceQuestion.choiceField.id]: undefined,
-                  [choiceQuestion.customField.id]: event.currentTarget.value
+                  [choiceQuestion.customField.id]: value
                 }))
-              }
+              }}
             />
             <Button
               className="mt-0.5"
