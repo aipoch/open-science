@@ -373,7 +373,7 @@ describe('PR Gate workflow', () => {
       id: 'unit_macos_full',
       'continue-on-error': true,
       if: "${{ needs.unit_shard.result != 'skipped' }}",
-      run: 'npx vitest run --merge-reports=vitest-reports --coverage'
+      run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
     expect(unit.steps?.filter(({ run }) => run === 'npm run test:coverage')).toHaveLength(0)
@@ -504,7 +504,7 @@ describe('PR Gate workflow', () => {
     )
     expect(portable).toMatchObject({
       'continue-on-error': true,
-      run: 'npx vitest run --merge-reports=vitest-reports --coverage'
+      run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
 
     expect(workflow.jobs.windows_core).toMatchObject({

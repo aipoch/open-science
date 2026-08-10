@@ -504,7 +504,9 @@ jobs:
         # the unit bundle without unit_macos. Merge once so thresholds see the complete suite.
         if: ${{ needs.unit_shard.result != 'skipped' }}
         continue-on-error: true
-        run: npx vitest run --merge-reports=vitest-reports --coverage
+        # macOS blob reports retain their source test paths. Ubuntu can merge their results and
+        # coverage, but local discovery finds no tests; keep coverage thresholds authoritative.
+        run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped') }}
         continue-on-error: true
