@@ -230,7 +230,7 @@ export class ComputeJobRepository {
       where: { status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -244,7 +244,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns error-state jobs that have not yet emitted a compute_done notification.
@@ -261,7 +261,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
@@ -430,6 +430,10 @@ export class ComputeJobRepository {
     if (!this.isOwnerMutable(projectId, sessionId)) {
       throw new Error('Cannot create a Compute Job while its owner is being deleted.')
     }
+  }
+
+  private excludeDeletingOwners(jobs: ComputeJob[]): ComputeJob[] {
+    return jobs.filter((job) => this.isOwnerMutable(job.project_id, job.session_id))
   }
 
   private isOwnerMutable(projectId: string, sessionId: string): boolean {

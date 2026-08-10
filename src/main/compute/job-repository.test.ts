@@ -802,6 +802,14 @@ describe('ComputeJob schema migration (integration)', () => {
     await create('owned-job', 'project-1', 'session-1')
     await repo.update('owned-job', { notifiedAt: new Date() })
     await create('survivor', 'project-1', 'session-2')
+    await create('owned-terminal', 'project-1', 'session-1')
+    await repo.update('owned-terminal', { status: 'success', finishedAt: new Date() })
+    await create('owned-error', 'project-1', 'session-1')
+    await repo.update('owned-error', {
+      status: 'error',
+      errorCode: 'dispatch_failed',
+      finishedAt: new Date()
+    })
     const owner = { projectId: 'project-1', sessionId: 'session-1' }
 
     expect(await repo.listOwners()).toEqual([
@@ -811,7 +819,14 @@ describe('ComputeJob schema migration (integration)', () => {
 
     await repo.beginOwnerDeletion(owner)
     await expect(create('late-job', 'project-1', 'session-1')).rejects.toThrow(/being deleted/i)
-    expect((await repo.findByOwner(owner)).map((item) => item.job_id)).toEqual(['owned-job'])
+    expect((await repo.findNonTerminal()).map((item) => item.job_id)).toEqual(['survivor'])
+    expect(await repo.findTerminalUnharvested()).toEqual([])
+    expect(await repo.findErrorUnnotified()).toEqual([])
+    expect((await repo.findByOwner(owner)).map((item) => item.job_id).sort()).toEqual([
+      'owned-error',
+      'owned-job',
+      'owned-terminal'
+    ])
     await repo.deleteByOwner(owner)
 
     await expect(create('post-commit-job', 'project-1', 'session-1')).rejects.toThrow(
