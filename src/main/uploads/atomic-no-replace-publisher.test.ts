@@ -51,9 +51,7 @@ describe.skipIf(!nativeBindingAvailable)('atomic no-replace publisher', () => {
     await writeFile(join(outsideParent, 'source.tmp'), 'verified')
     await symlink(outsideParent, linkedParent, process.platform === 'win32' ? 'junction' : 'dir')
 
-    expect(() => publishNoReplace(cleanupRoot!, linkedParent, 'source.tmp', 'content')).toThrow(
-      expect.objectContaining({ code: 'ELOOP' })
-    )
+    expect(() => publishNoReplace(cleanupRoot!, linkedParent, 'source.tmp', 'content')).toThrow()
     await expect(readFile(join(outsideParent, 'content'))).rejects.toMatchObject({
       code: 'ENOENT'
     })

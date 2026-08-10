@@ -303,6 +303,8 @@ const char* PosixErrorCode(int error) {
     case ENOTSUP:
       return "ENOTSUP";
 #endif
+    case ENOSYS:
+      return "ENOTSUP";
     case EACCES:
     case EPERM:
       return "EPERM";
@@ -356,20 +358,36 @@ napi_value PublishPosix(
   }
 
 #ifdef __linux__
-  const int result = static_cast<int>(syscall(
+  int result = static_cast<int>(syscall(
       SYS_renameat2,
       parent_fd,
       source.c_str(),
       parent_fd,
       destination.c_str(),
       RENAME_NOREPLACE));
+  int rename_error = result == 0 ? 0 : errno;
+  if (result != 0 &&
+      (rename_error == ENOSYS || rename_error == EOPNOTSUPP || rename_error == EINVAL)) {
+    // linkat creates the destination name atomically without replacing an existing entry. This
+    // preserves no-replace publication on older kernels and filesystems that reject renameat2.
+    result = linkat(parent_fd, source.c_str(), parent_fd, destination.c_str(), 0);
+    rename_error = result == 0 ? 0 : errno;
+    if (result != 0 && rename_error != EEXIST && rename_error != ENOTEMPTY) {
+      rename_error = ENOTSUP;
+    }
+    if (result == 0) {
+      // Publication is already complete once linkat succeeds. A failed best-effort unlink leaves
+      // only the verified temporary alias, which recovery can reclaim as a stale attempt later.
+      (void)unlinkat(parent_fd, source.c_str(), 0);
+    }
+  }
 #elif defined(__APPLE__)
   const int result =
       renameatx_np(parent_fd, source.c_str(), parent_fd, destination.c_str(), RENAME_EXCL);
+  const int rename_error = result == 0 ? 0 : errno;
 #else
 #error Unsupported platform for atomic no-replace publication
 #endif
-  const int rename_error = result == 0 ? 0 : errno;
   close(source_fd);
   if (parent_fd != root_fd) close(parent_fd);
   close(root_fd);

@@ -1199,6 +1199,32 @@ describe('upload repository', () => {
     await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
 
     await writeFile(legacyPath, content)
+    const unsupportedPublicationOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: async () => {
+          throw Object.assign(new Error('Hard links are unavailable.'), { code: 'EPERM' })
+        },
+        publishReadyContentNoReplace: () => {
+          throw Object.assign(new Error('Atomic publication is unavailable.'), {
+            code: 'ENOTSUP'
+          })
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(
+      unsupportedPublicationOwner.removeVerifiedLegacyCopy(cleanupInput)
+    ).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'atomic no-replace publication is unavailable on the storage filesystem'
+    })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+
     const staleRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000001.tmp`
     const freshRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000002.tmp`
     await mkdir(dirname(finalPath), { recursive: true })

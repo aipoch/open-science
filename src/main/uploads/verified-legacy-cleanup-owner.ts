@@ -38,6 +38,7 @@ const HARD_LINK_FALLBACK_ERROR_CODES = new Set([
   'EPERM',
   'EXDEV'
 ])
+const ATOMIC_PUBLICATION_UNAVAILABLE_ERROR_CODES = new Set(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'])
 const LEGACY_CLEANUP_CANDIDATE = 'candidate'
 
 type VerifiedLegacyCleanupOptions = {
@@ -77,6 +78,12 @@ const isHardLinkUnavailableError = (error: unknown): boolean =>
   error !== null &&
   'code' in error &&
   HARD_LINK_FALLBACK_ERROR_CODES.has(String((error as { code?: unknown }).code))
+
+const isAtomicPublicationUnavailableError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  ATOMIC_PUBLICATION_UNAVAILABLE_ERROR_CODES.has(String((error as { code?: unknown }).code))
 
 type FileIdentity = Awaited<ReturnType<typeof lstat>>
 
@@ -266,6 +273,12 @@ class VerifiedLegacyCleanupOwner {
         return { status: 'published' }
       } catch (error) {
         if (isFileExistsError(error)) return { status: 'destination-exists' }
+        if (isAtomicPublicationUnavailableError(error)) {
+          return {
+            status: 'unsafe-residual',
+            reason: 'atomic no-replace publication is unavailable on the storage filesystem'
+          }
+        }
         throw error
       }
     } finally {
