@@ -343,21 +343,20 @@ const projectDurablePlanAuthority = (
     return current
   }
 
-  const status =
-    current.compacting ||
-    current.status === 'waiting-for-user' ||
-    current.status === 'waiting-permission'
-      ? current.status
-      : durable.runtimeContext?.plan?.approval === 'pending'
-        ? 'waiting-plan-approval'
-        : current.status === 'waiting-plan-approval'
-          ? current.activeRun || current.agentPromptInFlight
-            ? 'running'
-            : 'idle'
-          : current.status
+  const interactionState = {
+    ...inferSessionInteractionState(current),
+    plan: durable.runtimeContext?.plan?.approval === 'pending'
+  }
+  const status = current.compacting
+    ? current.status
+    : resolveSessionInteractionStatus(
+        { ...current, runtimeContext: durable.runtimeContext },
+        interactionState
+      )
   return {
     ...current,
     status,
+    interactionState,
     runtimeContext: durable.runtimeContext,
     updatedAt: Math.max(current.updatedAt, durable.updatedAt)
   }

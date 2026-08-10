@@ -354,6 +354,107 @@ describe('session store', () => {
     })
   })
 
+  it('reconciles a pending durable Plan while Permission is waiting', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    useSessionStore.getState().setPermissionPending('session-1')
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 10
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      interactionState: { permission: true, plan: true }
+    })
+
+    useSessionStore.getState().clearPermissionPending('session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-plan-approval')
+  })
+
+  it('drops a settled durable Plan while Permission is waiting', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    useSessionStore.getState().setPermissionPending('session-1')
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'idle',
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          plan: {
+            artifactId: 'plan-1',
+            artifactVersionId: 'plan-version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'approved',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 10
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      interactionState: { permission: true, plan: false }
+    })
+
+    useSessionStore.getState().clearPermissionPending('session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+  })
+
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
     const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
