@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -285,7 +286,8 @@ napi_value PublishWindows(
 
   const size_t destination_bytes = destination_name.size() * sizeof(wchar_t);
   const size_t link_prefix_size = offsetof(NativeFileLinkInformation, file_name);
-  if (destination_bytes > MAXULONG - link_prefix_size) {
+  const size_t max_native_buffer = std::numeric_limits<ULONG>::max();
+  if (destination_bytes > max_native_buffer - link_prefix_size) {
     CloseHandle(source_handle);
     CloseHandle(parent_handle);
     CloseHandle(root_handle);
