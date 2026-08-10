@@ -266,7 +266,9 @@ napi_value PublishWindows(
   std::vector<unsigned char> rename_buffer(rename_size);
   auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_buffer.data());
   rename_info->ReplaceIfExists = FALSE;
-  rename_info->RootDirectory = parent_handle;
+  // A simple name with no RootDirectory renames the opened source within its existing directory.
+  // Supplying the same parent as a target directory is rejected by some Windows filesystems.
+  rename_info->RootDirectory = nullptr;
   rename_info->FileNameLength = destination_bytes;
   std::memcpy(rename_info->FileName, destination_name.data(), destination_bytes);
 
