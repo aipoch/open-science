@@ -485,6 +485,37 @@ describe('host delete guard', () => {
     expect(del).not.toHaveBeenCalled()
   })
 
+  it('deletes the host inside the enabled Session lifecycle boundary', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, deleteProvider?: () => Promise<void>) => {
+        expect(del).not.toHaveBeenCalled()
+        expect(deleteProvider).toBeDefined()
+        await deleteProvider?.()
+        expect(del).toHaveBeenCalledOnce()
+      }
+    )
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await handlers.delete('ssh:biowulf')
+
+    expect(pruneSessionEnabledHosts).toHaveBeenCalledWith('ssh:biowulf', expect.any(Function))
+  })
+
   it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
     let releaseDeletePrune: (() => void) | undefined
     let pruneCalls = 0
@@ -507,7 +538,9 @@ describe('host delete guard', () => {
       completeProviderInvalidation
     } as unknown as ComputeApprovalBroker
     const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
-    const pruneSessionEnabledHosts = vi.fn().mockResolvedValue(undefined)
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, afterPrune?: () => Promise<void>) => afterPrune?.()
+    )
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, get, create }),
       undefined,
@@ -542,7 +575,7 @@ describe('host delete guard', () => {
       providerId: 'ssh:biowulf'
     })
     expect(pruneSessionEnabledHosts).toHaveBeenCalledTimes(2)
-    expect(pruneSessionEnabledHosts).toHaveBeenNthCalledWith(1, 'ssh:biowulf')
+    expect(pruneSessionEnabledHosts).toHaveBeenNthCalledWith(1, 'ssh:biowulf', expect.any(Function))
     expect(pruneSessionEnabledHosts).toHaveBeenNthCalledWith(2, 'ssh:biowulf')
     expect(create).toHaveBeenCalledOnce()
   })

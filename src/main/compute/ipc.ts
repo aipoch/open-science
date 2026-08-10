@@ -181,7 +181,7 @@ type ComputeHandlers = {
 }
 
 type ComputeHostLifecycle = Readonly<{
-  pruneSessionEnabledHosts(providerId: string): Promise<void>
+  pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
 }>
 
 // Adapts a repository into thin handlers.
@@ -339,9 +339,15 @@ const createComputeHandlers = (
         }
         await broker.invalidateProvider(providerId)
         try {
-          await hostLifecycle?.pruneSessionEnabledHosts(providerId)
-          await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-          await repository.delete(providerId)
+          const deleteProvider = async (): Promise<void> => {
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+            await repository.delete(providerId)
+          }
+          if (hostLifecycle) {
+            await hostLifecycle.pruneSessionEnabledHosts(providerId, deleteProvider)
+          } else {
+            await deleteProvider()
+          }
           try {
             await syncComputeSkillDocument?.()
           } catch (error) {

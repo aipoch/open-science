@@ -17,6 +17,9 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   ...overrides
 })
 
+const passthroughDataRootWrite = <Result>(operation: () => Promise<Result>): Promise<Result> =>
+  operation()
+
 describe('SessionEnabledComputeHostsOwner', () => {
   it('projects only the enabled hosts committed by Session authority', async () => {
     const registry = new EnabledComputeHostsRegistry()
@@ -34,7 +37,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
         sessionProjectId: async () => 'project-1',
         setSessionEnabledComputeHosts,
         pruneSessionEnabledComputeHosts: async () => []
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     await expect(owner.set('session-1', ['ssh:new'])).resolves.toEqual(durable)
@@ -43,6 +47,45 @@ describe('SessionEnabledComputeHostsOwner', () => {
       'ssh:new'
     ])
     expect(owner.get('session-1')).toEqual(['ssh:new'])
+  })
+
+  it('runs durable mutations inside the data-root write boundary', async () => {
+    let insideWriteBoundary = false
+    let writeBoundaryCalls = 0
+    const withDataRootWrite = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+      writeBoundaryCalls += 1
+      insideWriteBoundary = true
+      try {
+        return await operation()
+      } finally {
+        insideWriteBoundary = false
+      }
+    }
+    const durable = createSession({ enabledComputeHosts: ['ssh:cluster'], updatedAt: 3 })
+    const setSessionEnabledComputeHosts = vi.fn(async () => {
+      expect(insideWriteBoundary).toBe(true)
+      return durable
+    })
+    const pruneSessionEnabledComputeHosts = vi.fn(async () => {
+      expect(insideWriteBoundary).toBe(true)
+      return [durable]
+    })
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:cluster'],
+      sessionAuthority: {
+        sessionProjectId: async () => 'project-1',
+        setSessionEnabledComputeHosts,
+        pruneSessionEnabledComputeHosts
+      },
+      withDataRootWrite
+    })
+
+    await owner.set('session-1', ['ssh:cluster'])
+    await owner.pruneProvider('ssh:deleted')
+
+    expect(writeBoundaryCalls).toBe(2)
   })
 
   it('projects a committed first Session save without accepting another intent', () => {
@@ -57,7 +100,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts: async () => []
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     owner.project(createSession({ enabledComputeHosts: ['ssh:cluster'] }))
@@ -77,7 +121,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts: async () => []
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
     const durable = createSession({ enabledComputeHosts: ['ssh:cluster'], updatedAt: 3 })
     const commit = vi.fn(async () => durable)
@@ -112,7 +157,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts: async () => []
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     await owner.reconcile([createSession({ enabledComputeHosts: ['ssh:cluster'] })], true)
@@ -136,7 +182,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     await expect(
@@ -165,7 +212,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     const sessions = [createSession({ enabledComputeHosts: ['ssh:cluster', 'ssh:deleted'] })]
@@ -189,7 +237,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts: async () => []
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     owner.clear(['session-1'])
@@ -217,7 +266,8 @@ describe('SessionEnabledComputeHostsOwner', () => {
           throw new Error('not expected')
         },
         pruneSessionEnabledComputeHosts
-      }
+      },
+      withDataRootWrite: passthroughDataRootWrite
     })
 
     const pruning = owner.pruneProvider('ssh:deleted')
@@ -230,5 +280,41 @@ describe('SessionEnabledComputeHostsOwner', () => {
     finishPrune?.([repaired])
     await expect(pruning).resolves.toEqual([repaired])
     expect(owner.get('session-1')).toEqual(['ssh:kept'])
+  })
+
+  it('holds the owner queue through provider deletion before validating a queued enable', async () => {
+    let hostExists = true
+    let finishPrune: ((sessions: PersistedChatSession[]) => void) | undefined
+    const pruneSessionEnabledComputeHosts = vi.fn(
+      () =>
+        new Promise<PersistedChatSession[]>((resolve) => {
+          finishPrune = resolve
+        })
+    )
+    const setSessionEnabledComputeHosts = vi.fn(async () => createSession())
+    const deleteProvider = vi.fn(async () => {
+      hostExists = false
+    })
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry: new EnabledComputeHostsRegistry(),
+      hostExists: async () => hostExists,
+      listHostIds: async () => (hostExists ? ['ssh:cluster'] : []),
+      sessionAuthority: {
+        sessionProjectId: async () => 'project-1',
+        setSessionEnabledComputeHosts,
+        pruneSessionEnabledComputeHosts
+      },
+      withDataRootWrite: async (operation) => operation()
+    })
+
+    const deleting = owner.pruneProvider('ssh:cluster', deleteProvider)
+    await vi.waitFor(() => expect(pruneSessionEnabledComputeHosts).toHaveBeenCalledOnce())
+    const enabling = owner.set('session-1', ['ssh:cluster'])
+    finishPrune?.([])
+
+    await expect(deleting).resolves.toEqual([])
+    await expect(enabling).rejects.toThrow('Compute Host not found')
+    expect(deleteProvider).toHaveBeenCalledOnce()
+    expect(setSessionEnabledComputeHosts).not.toHaveBeenCalled()
   })
 })

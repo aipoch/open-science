@@ -18,6 +18,7 @@ type SessionEnabledComputeHostsOwnerOptions = Readonly<{
   hostExists(providerId: string): Promise<boolean>
   listHostIds(): Promise<readonly string[]>
   sessionAuthority: SessionEnabledComputeHostsAuthority
+  withDataRootWrite<Result>(operation: () => Promise<Result>): Promise<Result>
 }>
 
 class SessionEnabledComputeHostsOwner {
@@ -32,6 +33,10 @@ class SessionEnabledComputeHostsOwner {
       () => undefined
     )
     return result
+  }
+
+  private enqueueWrite<Result>(operation: () => Promise<Result>): Promise<Result> {
+    return this.enqueue(() => this.options.withDataRootWrite(operation))
   }
 
   private async validate(providerIds: readonly string[]): Promise<string[]> {
@@ -59,15 +64,19 @@ class SessionEnabledComputeHostsOwner {
     for (const sessionId of sessionIds) this.options.registry.clear(sessionId)
   }
 
-  pruneProvider(providerId: string): Promise<PersistedChatSession[]> {
+  pruneProvider(
+    providerId: string,
+    afterPrune?: () => Promise<void>
+  ): Promise<PersistedChatSession[]> {
     this.options.registry.removeProvider(providerId)
-    return this.enqueue(async () => {
+    return this.enqueueWrite(async () => {
       this.options.registry.removeProvider(providerId)
       const validProviderIds = (await this.options.listHostIds()).filter(
         (candidate) => candidate !== providerId
       )
       const sessions =
         await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds)
+      await afterPrune?.()
       this.options.registry.reconcile(
         sessions.map((session) => [session.id, session.enabledComputeHosts ?? []] as const),
         true
@@ -80,7 +89,7 @@ class SessionEnabledComputeHostsOwner {
     sessions: readonly PersistedChatSession[],
     isComplete: boolean
   ): Promise<PersistedChatSession[]> {
-    return this.enqueue(async () => {
+    return this.enqueueWrite(async () => {
       const validProviderIds = await this.options.listHostIds()
       const validProviderIdSet = new Set(validProviderIds)
       const hasMissingHost = sessions.some((session) =>
@@ -109,7 +118,7 @@ class SessionEnabledComputeHostsOwner {
     session: PersistedChatSession,
     commit: (session: PersistedChatSession) => Promise<PersistedChatSession>
   ): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.enqueueWrite(async () => {
       const enabledComputeHosts = await this.validate(session.enabledComputeHosts ?? [])
       const durableSession = await commit({
         ...session,
@@ -123,7 +132,7 @@ class SessionEnabledComputeHostsOwner {
   }
 
   set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession> {
-    return this.enqueue(async () => {
+    return this.enqueueWrite(async () => {
       const normalized = await this.validate(providerIds)
       const projectId = await this.options.sessionAuthority.sessionProjectId(sessionId)
       if (!projectId) throw new Error(`Session not found: ${sessionId}`)

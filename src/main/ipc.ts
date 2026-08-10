@@ -1145,11 +1145,14 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     settingsRepository,
     {
-      pruneSessionEnabledHosts: async (providerId) => {
+      pruneSessionEnabledHosts: async (providerId, afterPrune) => {
         if (!sessionEnabledComputeHostsOwnerRef.current) {
           throw new Error('Session enabled Compute Host ownership is not initialized.')
         }
-        const sessions = await sessionEnabledComputeHostsOwnerRef.current.pruneProvider(providerId)
+        const sessions = await sessionEnabledComputeHostsOwnerRef.current.pruneProvider(
+          providerId,
+          afterPrune
+        )
         for (const session of sessions) {
           try {
             applicationEvents.publish('session:updated', {
@@ -1175,7 +1178,8 @@ const createApplicationModules = async (
     registry: hostsRegistry,
     hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
     listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
-    sessionAuthority: sessionPersistenceCoordinator
+    sessionAuthority: sessionPersistenceCoordinator,
+    withDataRootWrite
   })
   sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   computeJobDeletionRef.current = jobDeletionOwner
