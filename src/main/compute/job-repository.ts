@@ -1,8 +1,8 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
 
-// Only the computeJob delegate is needed.
-type ComputeJobClient = Pick<PrismaClient, 'computeJob'>
+// Only ComputeJob persistence and a transaction wrapper are needed.
+type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
 
 const asStatus = (value: string): ComputeJobStatus => {
@@ -97,6 +97,31 @@ export type UpdateJobRequest = {
   notificationConsumedAt?: Date | null
 }
 
+type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
+
+const toUpdateData = (updates: UpdateJobRequest): ComputeJobUpdateData => {
+  const data: ComputeJobUpdateData = {}
+
+  if (updates.status !== undefined) data.status = updates.status
+  if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
+  if ('exitCode' in updates) data.exitCode = updates.exitCode
+  if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
+  if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
+  if ('errorCode' in updates) data.errorCode = updates.errorCode
+  if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
+  if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
+  if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
+  if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
+  if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
+  if ('harvestError' in updates) data.harvestError = updates.harvestError
+  if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
+  if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
+  if ('notificationConsumedAt' in updates)
+    data.notificationConsumedAt = updates.notificationConsumedAt
+
+  return data
+}
+
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
   constructor(private readonly getClient: ComputeJobClientProvider) {}
@@ -187,28 +212,29 @@ export class ComputeJobRepository {
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
-    const data: Parameters<typeof client.computeJob.update>[0]['data'] = {}
-
-    if (updates.status !== undefined) data.status = updates.status
-    if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
-    if ('exitCode' in updates) data.exitCode = updates.exitCode
-    if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
-    if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
-    if ('errorCode' in updates) data.errorCode = updates.errorCode
-    if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
-    if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
-    if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
-    if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
-    // Phase 3b harvest fields
-    if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
-    if ('harvestError' in updates) data.harvestError = updates.harvestError
-    if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
-    if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
-    if ('notificationConsumedAt' in updates)
-      data.notificationConsumedAt = updates.notificationConsumedAt
-
-    const row = await client.computeJob.update({ where: { id: jobId }, data })
+    const row = await client.computeJob.update({
+      where: { id: jobId },
+      data: toUpdateData(updates)
+    })
     return toJob(row)
+  }
+
+  async updateIfStatus(
+    jobId: string,
+    expectedStatuses: readonly ComputeJobStatus[],
+    updates: UpdateJobRequest
+  ): Promise<ComputeJob | null> {
+    const client = await this.getClient()
+    return client.$transaction(async (transaction) => {
+      const applied = await transaction.computeJob.updateMany({
+        where: { id: jobId, status: { in: [...expectedStatuses] } },
+        data: toUpdateData(updates)
+      })
+      if (applied.count === 0) return null
+
+      const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
+      return row ? toJob(row) : null
+    })
   }
 
   // Returns all jobs for a session, newest-first. Optionally filtered by status values.

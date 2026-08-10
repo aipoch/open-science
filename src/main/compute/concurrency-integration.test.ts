@@ -76,11 +76,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     })
 
     // Mock dispatch function for ConcurrencyManager
-    const mockDispatch = vi.fn(async (jobId: string) => {
-      // Simulate dispatch by updating job to 'submitted' then 'running'
-      await jobRepo.update(jobId, { status: 'submitted', submittedAt: new Date() })
-      // Don't immediately transition to running in the mock - let the test control this
-    })
+    const mockDispatch = vi.fn(async () => undefined)
 
     onJobUpdatedSpy = vi.fn()
     concurrencyManager = new ConcurrencyManager(jobRepo, hostRepo, mockDispatch, onJobUpdatedSpy)
@@ -272,6 +268,8 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     // Second job should now be submitted
     const job2Updated = await jobRepo.get(result2.job_id)
     expect(job2Updated?.status).toBe('submitted')
+    expect(job2Updated?.submitted_at).toBeGreaterThan(0)
+    expect(onJobUpdatedSpy).toHaveBeenCalledWith(job2Updated)
   })
 
   it('should dispatch queued jobs in FIFO order', async () => {

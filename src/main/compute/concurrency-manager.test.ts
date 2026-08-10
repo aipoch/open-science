@@ -14,6 +14,7 @@ const createMockJobRepo = (): ComputeJobRepository =>
     countQueuedJobs: vi.fn(),
     findQueuedJobs: vi.fn(),
     update: vi.fn(),
+    updateIfStatus: vi.fn(),
     create: vi.fn(),
     get: vi.fn(),
     findNonTerminal: vi.fn(),
@@ -50,6 +51,14 @@ describe('ConcurrencyManager', () => {
     hostRepo = createMockHostRepo()
     dispatchJob = createMockDispatchJob()
     onJobUpdated = vi.fn()
+    vi.mocked(jobRepo.updateIfStatus).mockImplementation(
+      async (jobId, _expected, updates) =>
+        ({
+          job_id: jobId,
+          status: updates.status ?? 'queued',
+          submitted_at: updates.submittedAt?.getTime()
+        }) as ComputeJob
+    )
     manager = new ConcurrencyManager(jobRepo, hostRepo, dispatchJob, onJobUpdated)
   })
 
@@ -261,12 +270,9 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
-      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
-
       await manager.onJobCompleted()
 
       // Should dispatch job-1 first (earlier createdAt)
-      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
       expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
     })
 
@@ -288,13 +294,10 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
-      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
-
       await manager.onJobCompleted()
 
       expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
       expect(jobRepo.countActiveByProvider).toHaveBeenCalledWith('ssh:cluster-a')
-      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
       expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
     })
 
@@ -319,7 +322,7 @@ describe('ConcurrencyManager', () => {
 
       await manager.onJobCompleted()
 
-      expect(jobRepo.update).not.toHaveBeenCalled()
+      expect(jobRepo.updateIfStatus).not.toHaveBeenCalled()
       expect(dispatchJob).not.toHaveBeenCalled()
     })
 
@@ -343,7 +346,7 @@ describe('ConcurrencyManager', () => {
 
       await manager.onJobCompleted()
 
-      expect(jobRepo.update).not.toHaveBeenCalled()
+      expect(jobRepo.updateIfStatus).not.toHaveBeenCalled()
       expect(dispatchJob).not.toHaveBeenCalled()
     })
 
@@ -372,14 +375,33 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({
         concurrencyLimit: 10
       } as ComputeHost)
-      vi.mocked(jobRepo.update).mockResolvedValue({} as ComputeJob)
-
       await manager.onJobCompleted()
 
-      expect(jobRepo.update).toHaveBeenCalledTimes(2)
+      expect(jobRepo.updateIfStatus).toHaveBeenCalledTimes(2)
       expect(dispatchJob).toHaveBeenCalledTimes(2)
       expect(dispatchJob).toHaveBeenNthCalledWith(1, 'job-1', expect.any(Function))
       expect(dispatchJob).toHaveBeenNthCalledWith(2, 'job-2', expect.any(Function))
+    })
+
+    it('does not dispatch a queued projection after another writer changes its status', async () => {
+      vi.mocked(jobRepo.findQueuedJobs).mockResolvedValue([
+        {
+          job_id: 'job-1',
+          session_id: 'session-1',
+          provider_id: 'ssh:cluster-a',
+          created_at: 1000,
+          status: 'queued'
+        } as ComputeJob
+      ])
+      vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
+      vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
+      vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
+      vi.mocked(jobRepo.updateIfStatus).mockResolvedValue(null)
+
+      await manager.onJobCompleted()
+
+      expect(dispatchJob).not.toHaveBeenCalled()
+      expect(onJobUpdated).not.toHaveBeenCalled()
     })
   })
 
@@ -515,17 +537,13 @@ describe('ConcurrencyManager', () => {
         concurrencyLimit: 10
       } as ComputeHost)
       const failedJob = { ...queuedJobs[0], status: 'error' as const }
-      vi.mocked(jobRepo.update)
-        .mockResolvedValueOnce({ ...queuedJobs[0], status: 'submitted' } as ComputeJob)
-        .mockResolvedValueOnce(failedJob)
+      vi.mocked(jobRepo.update).mockResolvedValueOnce(failedJob)
 
       // Simulate dispatchJob failure
       vi.mocked(dispatchJob).mockRejectedValueOnce(new Error('SSH connection failed'))
 
       await manager.onJobCompleted()
 
-      // Should mark job as submitted first
-      expect(jobRepo.update).toHaveBeenCalledWith('job-1', { status: 'submitted' })
       // Then mark as error after dispatch fails
       expect(jobRepo.update).toHaveBeenCalledWith('job-1', {
         status: 'error',
@@ -576,7 +594,6 @@ describe('ConcurrencyManager', () => {
       })
 
       // Second job should still be dispatched
-      expect(jobRepo.update).toHaveBeenCalledWith('job-2', { status: 'submitted' })
       expect(dispatchJob).toHaveBeenCalledWith('job-2', expect.any(Function))
     })
 
@@ -707,9 +724,13 @@ describe('ConcurrencyManager', () => {
         } as ComputeJob
       ])
       // The promotion's reserve commit (status → 'submitted') bumps the active counter.
-      vi.mocked(jobRepo.update).mockImplementation(async (_id, u) => {
-        if ((u as { status?: string }).status === 'submitted') active++
-        return {} as ComputeJob
+      vi.mocked(jobRepo.updateIfStatus).mockImplementation(async (jobId, _expected, updates) => {
+        if (updates.status === 'submitted') active++
+        return {
+          job_id: jobId,
+          status: updates.status ?? 'queued',
+          submitted_at: updates.submittedAt?.getTime()
+        } as ComputeJob
       })
       vi.mocked(dispatchJob).mockResolvedValue(undefined)
 
@@ -726,8 +747,8 @@ describe('ConcurrencyManager', () => {
       // Exactly one of the two paths won the single slot; active never exceeded the ceiling.
       expect(active).toBe(providerCeiling)
       const promotionSubmits = vi
-        .mocked(jobRepo.update)
-        .mock.calls.filter(([, u]) => (u as { status?: string }).status === 'submitted').length
+        .mocked(jobRepo.updateIfStatus)
+        .mock.calls.filter(([, , updates]) => updates.status === 'submitted').length
       const admitSubmits = admitResult === 'submitted' ? 1 : 0
       expect(promotionSubmits + admitSubmits).toBe(1)
     })

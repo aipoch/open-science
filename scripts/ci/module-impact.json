@@ -176,6 +176,7 @@
     "compute_service": {
       "ownerPaths": [
         "src/main/compute/compute-host-profile-owner.ts",
+        "src/main/compute/compute-job-lifecycle.ts",
         "src/main/compute/compute-job-workflow-owner.ts",
         "src/main/compute/compute-remote-operation-owner.ts",
         "src/main/compute/permission-grant-adapter.ts",
@@ -185,6 +186,7 @@
       "consumerModules": [],
       "testFiles": {
         "owner": [
+          "src/main/compute/compute-job-lifecycle.test.ts",
           "src/main/compute/compute-service.architecture.test.ts",
           "src/main/compute/compute-host-profile-owner.test.ts",
           "src/main/compute/compute-job-workflow-owner.test.ts",

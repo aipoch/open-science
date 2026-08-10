@@ -37,6 +37,7 @@ const computePaths = {
   hostOwner: resolve(mainRoot, 'compute/compute-host-profile-owner.ts'),
   remoteOwner: resolve(mainRoot, 'compute/compute-remote-operation-owner.ts'),
   jobOwner: resolve(mainRoot, 'compute/compute-job-workflow-owner.ts'),
+  jobLifecycle: resolve(mainRoot, 'compute/compute-job-lifecycle.ts'),
   ipc: resolve(mainRoot, 'compute/ipc.ts'),
   applicationCommands: resolve(mainRoot, 'compute/application-commands.ts'),
   jobRuntime: resolve(mainRoot, 'compute/job-runtime.ts'),
@@ -198,6 +199,7 @@ describe('Compute service architecture', () => {
         portableProjectPath(ownerPath)
       ).toBeLessThanOrEqual(660)
     }
+    expect(rawLineCount(readSource(computePaths.jobLifecycle))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(computePaths.ipc))).toBeLessThanOrEqual(660)
   })
 
@@ -351,6 +353,7 @@ describe('Compute service architecture', () => {
 
     expect(computeService.ownerPaths).toEqual([
       'src/main/compute/compute-host-profile-owner.ts',
+      'src/main/compute/compute-job-lifecycle.ts',
       'src/main/compute/compute-job-workflow-owner.ts',
       'src/main/compute/compute-remote-operation-owner.ts',
       'src/main/compute/permission-grant-adapter.ts',
@@ -363,6 +366,7 @@ describe('Compute service architecture', () => {
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
+        'src/main/compute/compute-job-lifecycle.test.ts',
         'src/main/compute/compute-host-profile-owner.test.ts',
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',

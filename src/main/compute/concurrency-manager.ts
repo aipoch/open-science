@@ -1,6 +1,7 @@
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJob } from '../../shared/compute'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
 
 export type SessionStatus = {
   session_limit: number | null
@@ -39,13 +40,17 @@ export class ConcurrencyManager {
   // JS is single-threaded, so chaining commit work onto this promise fully serializes the critical
   // section — the row written by one admit is visible to the DB counts read by the next.
   private admitLock: Promise<unknown> = Promise.resolve()
+  private readonly lifecycle: ComputeJobLifecycle
 
   constructor(
     private readonly jobRepository: ComputeJobRepository,
     private readonly hostRepository: ComputeHostRepository,
     private readonly dispatchJob: DispatchQueuedJob,
-    private readonly publishJobUpdated: (job: ComputeJob) => void = () => undefined
-  ) {}
+    private readonly publishJobUpdated: (job: ComputeJob) => void = () => undefined,
+    lifecycle?: ComputeJobLifecycle
+  ) {
+    this.lifecycle = lifecycle ?? new ComputeJobLifecycle(jobRepository, this.handleJobUpdated)
+  }
 
   // Owns the complete update policy used by ComputeService: publish every persisted projection, then
   // free and refill queue capacity for terminal states. Dispatcher and poller both receive this bound
@@ -201,8 +206,8 @@ export class ConcurrencyManager {
         // across SSH work would serialize every submission behind network latency.
         const reserved = await this.runExclusive(async () => {
           if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
-          await this.jobRepository.update(job.job_id, { status: 'submitted' })
-          return true
+          const promotion = await this.lifecycle.promoteQueued(job.job_id)
+          return promotion.kind === 'applied'
         })
         if (!reserved) continue // limits hit — leave queued for a future completion
 
