@@ -121,6 +121,7 @@ const attachmentRemoveButtonClassName = cn(
   'flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
+const attachmentLimitsText = `Any file type · ${formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per file. Large files are linked, not embedded.`
 
 const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
   <ResizableBottomPanel
@@ -1027,11 +1028,21 @@ const ConversationPanel = ({
                                   className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
                                   data-testid="attachment-limits"
                                 >
-                                  Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
-                                  file. Large files are linked, not embedded.
+                                  {attachmentLimitsText}
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
+                            <div
+                              className={cn(
+                                'px-2 py-1.5 text-[11px] leading-4 text-text-300',
+                                canEditDraft && !isUploadingAttachments
+                                  ? 'hidden [@media(pointer:coarse)]:block'
+                                  : 'block'
+                              )}
+                              data-testid="attachment-limits-touch"
+                            >
+                              {attachmentLimitsText}
+                            </div>
                             <DropdownMenuSeparator />
                             {activeSession && activeBranchPlan ? (
                               <>

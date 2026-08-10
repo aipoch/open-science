@@ -655,19 +655,27 @@ describe('ConversationPanel composer intake', () => {
     })
   })
 
-  it('moves file type and per-file size guidance into the Attach files tooltip', () => {
+  it('keeps attachment limits discoverable in the tooltip and touch fallback', () => {
     renderPanel()
 
+    const guidance = 'Any file type · 10 GB per file. Large files are linked, not embedded.'
     expect(container.querySelector('[data-testid="menu-attach-files"]')?.textContent).toBe(
       'Attach files'
     )
     expect(
       [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
-        (node) =>
-          node.textContent ===
-          'Any file type · 10 GB per file. Large files are linked, not embedded.'
+        (node) => node.textContent === guidance
       )
     ).toBe(true)
+
+    const fallback = container.querySelector('[data-testid="attachment-limits-touch"]')
+    expect(fallback?.textContent).toBe(guidance)
+    expect(fallback?.className).toContain('hidden')
+    expect(fallback?.className).toContain('[@media(pointer:coarse)]:block')
+
+    renderPanel({ canEditDraft: false })
+    expect(fallback?.className).toContain('block')
+    expect(fallback?.className).not.toContain('hidden')
   })
 
   it('keeps a pending Plan read-only after the Agent interaction ends without a decision', () => {
