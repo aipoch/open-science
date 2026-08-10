@@ -1187,6 +1187,7 @@ const createApplicationModules = async (
       listSkillCatalog: () => settingsService.listSpecialistSkillCatalog(),
       getConnectors: () => settingsService.getConnectors()
     },
+    customServerAvailability: (id) => connectorRuntimeSettings.customServerAvailability(id),
     sessionBinding: sessionBindingService,
     approvalGateway: specialistApprovalGateway,
     approvalLifecycle: completionHandoffLifecycle,
