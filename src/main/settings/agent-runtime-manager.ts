@@ -609,13 +609,10 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     configRoot: string,
     forcedSkillIds: ReadonlySet<string>
-  ): Promise<void> {
+  ): Promise<string[]> {
     await this.skills.materializeSkills(configRoot, settings.disabledSkillIds ?? [], forcedSkillIds)
-    const connectors = await this.connectors.getConnectors()
-    await syncConnectorSkillDocs(
-      join(configRoot, 'skills'),
-      this.connectors.enabledConnectorIds(connectors)
-    )
+    const bundledIds = this.connectors.enabledConnectorIds(settings.connectors)
+    await syncConnectorSkillDocs(join(configRoot, 'skills'), bundledIds)
     const customSkillSync = await syncMaterializedCustomServerSkillDocs(
       join(getAppClaudeConfigDir(this.storageRoot), 'skills'),
       join(configRoot, 'skills'),
@@ -625,6 +622,7 @@ export class AgentRuntimeManager {
       log.warn('Failed to materialize custom Connector Skill doc', failure)
     }
     await this.syncComputeSkillDocument(join(configRoot, 'skills'))
+    return [...bundledIds.map((id) => `mcp-${id}`), ...customSkillSync.materializedSkillNames]
   }
 
   async materializeAgentConfigFiles(files: AgentConfigFile[] | undefined): Promise<void> {

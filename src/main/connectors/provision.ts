@@ -5,7 +5,6 @@ import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
 import {
-  customConnectorSkillName,
   customConnectorSlug,
   customConnectorSlugFromSkillName
 } from '../../shared/custom-connector'
@@ -188,21 +187,10 @@ export async function syncMaterializedCustomServerSkillDocs(
 
   const materialized = new Set(materializedSkillNames)
   for (const entry of await readdir(targetSkillsDir).catch(() => [] as string[])) {
-    const match = /^mcp-(.+)$/.exec(entry)
-    if (!match || namesBundledConnector(match[1])) continue
-    const canonicalSkillName = customConnectorSkillName(match[1].toLowerCase())
-    if (!materialized.has(canonicalSkillName)) {
+    const slug = customConnectorSlugFromSkillName(entry)
+    if (!slug || namesBundledConnector(slug)) continue
+    if (!materialized.has(entry)) {
       await rm(join(targetSkillsDir, entry), { recursive: true, force: true })
-      continue
-    }
-    if (entry !== canonicalSkillName) {
-      const [canonical, variant] = await Promise.all([
-        stat(join(targetSkillsDir, canonicalSkillName)).catch(() => null),
-        stat(join(targetSkillsDir, entry)).catch(() => null)
-      ])
-      const distinct =
-        canonical && variant && (canonical.dev !== variant.dev || canonical.ino !== variant.ino)
-      if (distinct) await rm(join(targetSkillsDir, entry), { recursive: true, force: true })
     }
   }
 
