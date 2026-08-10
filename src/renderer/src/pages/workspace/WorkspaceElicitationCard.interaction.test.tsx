@@ -146,6 +146,27 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
     ).toBe('1 of 2')
+    expect(
+      container
+        .querySelector('[data-testid="elicitation-question-progress"]')
+        ?.getAttribute('aria-label')
+    ).toBe('Question 1 of 2')
+    expect(
+      container
+        .querySelector('[data-testid="elicitation-question-progress"]')
+        ?.parentElement?.classList.contains('sticky')
+    ).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="elicitation-question-progress"]')
+        ?.parentElement?.classList.contains('top-3')
+    ).toBe(true)
+    expect(container.querySelector('h3')?.classList.contains('pr-36')).toBe(true)
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
+      ).map((segment) => segment.getAttribute('data-state'))
+    ).toEqual(['current', 'upcoming'])
     expect(container.textContent).not.toContain('Which language should the skill use?')
 
     await act(async () => {
@@ -209,6 +230,16 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
     ).toBe('2 of 2')
+    expect(
+      container
+        .querySelector('[data-testid="elicitation-question-progress"]')
+        ?.getAttribute('aria-label')
+    ).toBe('Question 2 of 2')
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
+      ).map((segment) => segment.getAttribute('data-state'))
+    ).toEqual(['upcoming', 'current'])
     expect(container.textContent).not.toContain('Finish')
 
     await act(async () => {
