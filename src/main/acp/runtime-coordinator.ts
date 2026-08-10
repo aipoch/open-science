@@ -119,6 +119,7 @@ class AcpRuntimeCoordinator {
   // after every app launch and can collide with a historical Session's event ids.
   private readonly eventNamespace = randomUUID()
   private runtimeSequence = 0
+  private snapshotRevision = 0
   private initializationGeneration = 0
   private globalCancellationGeneration = 0
   private promptAttemptSequence = 0
@@ -154,6 +155,7 @@ class AcpRuntimeCoordinator {
   }
 
   getSnapshot(): AcpStateSnapshot {
+    this.snapshotRevision += 1
     const snapshots = Array.from(this.runtimes, (runtime) => ({
       runtime,
       snapshot: runtime.getSnapshot()
@@ -219,6 +221,7 @@ class AcpRuntimeCoordinator {
     )
 
     return {
+      revision: this.snapshotRevision,
       status: primary?.status ?? 'idle',
       sessionConnectionStatuses: Object.fromEntries(this.sessionConnectionStatuses),
       cwd: primary?.cwd ?? this.defaultCwd,

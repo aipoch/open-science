@@ -1029,13 +1029,17 @@ class AcpRuntime {
 
     if (!interactionInFlight && !durablePermission) {
       try {
-        if (await this.permissionWaitOwner.cancelPendingSession(request.sessionId)) {
+        const permissionRequestId = await this.permissionWaitOwner.cancelPendingSession(
+          request.sessionId
+        )
+        if (permissionRequestId) {
           this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
           this.permissionContext.clearRestoredDecision(request.sessionId)
           this.pushEvent({
             kind: 'permission',
             level: 'info',
             sessionId: request.sessionId,
+            permissionRequestId,
             title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
             text: 'cancelled'
           })
@@ -1237,6 +1241,7 @@ class AcpRuntime {
             kind: 'permission',
             level: 'info',
             sessionId: restored.sessionId,
+            permissionRequestId: response.requestId,
             title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
           })
         } catch (rearmError) {
@@ -1244,6 +1249,7 @@ class AcpRuntime {
             kind: 'permission',
             level: 'error',
             sessionId: restored.sessionId,
+            permissionRequestId: response.requestId,
             title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
             text: errorMessage(rearmError)
           })
@@ -1568,6 +1574,7 @@ class AcpRuntime {
               kind: 'permission',
               level: 'info',
               sessionId,
+              permissionRequestId: durablePermission.requestId,
               title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
               text: 'completed'
             })
@@ -1577,6 +1584,7 @@ class AcpRuntime {
             kind: 'permission',
             level: 'error',
             sessionId,
+            permissionRequestId: durablePermission.requestId,
             title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
             text: errorMessage(error)
           })
@@ -1596,6 +1604,7 @@ class AcpRuntime {
             kind: 'permission',
             level: 'info',
             sessionId,
+            permissionRequestId: durablePermission.requestId,
             title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
           })
         } catch (error) {
@@ -1603,6 +1612,7 @@ class AcpRuntime {
             kind: 'permission',
             level: 'error',
             sessionId,
+            permissionRequestId: durablePermission.requestId,
             title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
             text: errorMessage(error)
           })
@@ -1703,6 +1713,7 @@ class AcpRuntime {
         kind: 'permission',
         level: 'error',
         sessionId,
+        permissionRequestId: durablePermission.requestId,
         title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
         text: errorMessage(error)
       })
@@ -1716,6 +1727,7 @@ class AcpRuntime {
       kind: 'permission',
       level: 'info',
       sessionId,
+      permissionRequestId: durablePermission.requestId,
       title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
       text: 'cancelled'
     })

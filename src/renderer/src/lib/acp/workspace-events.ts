@@ -497,6 +497,14 @@ const applyWorkspaceRuntimeEvent = async (
   const store = useSessionStore.getState()
 
   if (event.kind === 'permission' && event.sessionId) {
+    const permission = store.sessions.find((session) => session.id === event.sessionId)
+      ?.runtimeContext?.permission
+    if (
+      !event.permissionRequestId ||
+      (permission && permission.request.requestId !== event.permissionRequestId)
+    ) {
+      return false
+    }
     if (event.title === ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE) {
       store.setPermissionPending(event.sessionId, { rearmAuthority: true })
       return true
@@ -506,7 +514,10 @@ const applyWorkspaceRuntimeEvent = async (
       event.title === ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE ||
       event.title === ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE
     ) {
-      store.clearPermissionPending(event.sessionId, { authority: 'settled' })
+      store.clearPermissionPending(event.sessionId, {
+        authority: 'settled',
+        requestId: event.permissionRequestId
+      })
       return true
     }
   }

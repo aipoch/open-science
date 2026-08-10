@@ -276,6 +276,20 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('publishes snapshots with a coordinator-wide monotonic revision', () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+    )
+
+    expect(coordinator.getSnapshot().revision).toBe(1)
+    expect(coordinator.getSnapshot().revision).toBe(2)
+  })
+
   it('combines only the quit-blocking prompts reported by each runtime generation', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>

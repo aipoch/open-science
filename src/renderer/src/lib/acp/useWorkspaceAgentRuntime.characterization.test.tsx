@@ -5,7 +5,15 @@ import { act, type JSX } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
-import type { AcpCreateSessionResponse, AcpStateSnapshot } from '../../../../shared/acp'
+import {
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpCreateSessionResponse,
+  type AcpPermissionRequest,
+  type AcpStateSnapshot
+} from '../../../../shared/acp'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -13,7 +21,11 @@ import {
 } from '../../stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
-import { resetWorkspaceRuntimeEventOwnerForTests } from './workspace-runtime-event-owner'
+import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
+import {
+  drainWorkspaceRuntimeEventsForPersistence,
+  resetWorkspaceRuntimeEventOwnerForTests
+} from './workspace-runtime-event-owner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -107,6 +119,56 @@ describe('workspace Agent Runtime hook contract', () => {
         </WorkspaceAgentRuntimeProvider>
       )
     )
+  }
+
+  const projectRestoredPermissionPending = (request: AcpPermissionRequest): void => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === request.sessionId
+          ? {
+              ...session,
+              status: 'waiting-permission',
+              activeRun: undefined,
+              runtimeContext: {
+                ...session.runtimeContext,
+                version: 1,
+                revision: (session.runtimeContext?.revision ?? 0) + 1,
+                permission: {
+                  state: 'pending',
+                  request,
+                  originatingPromptMessageId: session.messages[0].id,
+                  fingerprint: 'a'.repeat(64),
+                  createdAt: 1
+                }
+              }
+            }
+          : session
+      )
+    }))
+  }
+
+  const arrangeRestoredPermission = (): {
+    request: AcpPermissionRequest
+    runtime: RuntimeMock
+  } => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    const request: AcpPermissionRequest = {
+      requestId: 'permission-restored',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    projectRestoredPermissionPending(request)
+    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtimeMock.current = runtime
+    return { request, runtime }
   }
 
   beforeEach(() => {
@@ -579,72 +641,324 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
   })
 
-  it('preserves a Main rearm that arrives before the restored response settles', async () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'session-1',
-      content: 'Run the verification',
-      cwd: workspacePath,
-      projectId: 'project-1',
-      agentFrameworkId: 'claude-code'
-    })
-    const request = {
-      requestId: 'permission-restored',
-      sessionId: 'session-1',
-      toolCallId: 'tool-1',
-      title: 'Run npm test',
-      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
-    }
-    useSessionStore.setState((state) => ({
-      sessions: state.sessions.map((session) => ({
-        ...session,
-        status: 'waiting-permission',
-        activeRun: undefined,
-        runtimeContext: {
-          version: 1,
-          revision: 1,
-          permission: {
-            state: 'pending',
-            request,
-            originatingPromptMessageId: session.messages[0].id,
-            fingerprint: 'a'.repeat(64),
-            createdAt: 1
-          }
-        }
-      }))
-    }))
+  it('keeps an accepted restored permission hidden across a newer pending projection', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
     const deferred = createDeferred<AcpStateSnapshot>()
-    const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
     runtime.respondToPermission.mockReturnValue(deferred.promise)
-    runtimeMock.current = runtime
     await render()
 
     let first!: Promise<void>
     act(() => {
       first = latest.respondToPermission('permission-restored', 'allow-once')
     })
-    act(() => {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === 'session-1'
-            ? {
-                ...session,
-                status: 'waiting-permission',
-                runtimeContext: { ...session.runtimeContext!, revision: 3 }
-              }
-            : session
-        )
-      }))
-    })
     deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
     await act(async () => first)
-    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
-    expect(useSessionStore.getState().sessions[0].runtimeContext).toMatchObject({
-      revision: 3,
-      permission: { state: 'pending' }
-    })
-    expect(latest.pendingPermissions).toEqual([request])
+    act(() => projectRestoredPermissionPending(request))
+    expect(latest.pendingPermissions).toEqual([])
     expect(runtime.respondToPermission).toHaveBeenCalledOnce()
     await act(async () => latest.respondToPermission('permission-restored', 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+  })
+
+  it('preserves an explicit Main rearm that arrives before the restored response settles', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    const deferred = createDeferred<AcpStateSnapshot>()
+    runtime.respondToPermission.mockReturnValue(deferred.promise)
+    await render()
+
+    let first!: Promise<void>
+    act(() => {
+      first = latest.respondToPermission('permission-restored', 'allow-once')
+      useSessionStore.getState().clearPermissionPending('session-1', {
+        authority: 'continuing',
+        requestId: request.requestId
+      })
+    })
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearmed',
+          timestamp: 3,
+          kind: 'permission',
+          level: 'info',
+          sessionId: 'session-1',
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+
+    deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    await act(async () => first)
+    expect(latest.pendingPermissions).toEqual([request])
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    await act(async () => latest.respondToPermission('permission-restored', 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
+
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], events: [] })
+    await render()
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearmed',
+          timestamp: 3,
+          kind: 'permission',
+          level: 'info',
+          sessionId: 'session-1',
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe(
+      'continuing'
+    )
+    await act(async () => latest.respondToPermission('permission-restored', 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a terminal request hidden when an earlier rearm replays without a local attempt', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearmed-before-attempt',
+          timestamp: 1,
+          kind: 'permission',
+          level: 'info',
+          sessionId: request.sessionId,
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-settled-without-attempt',
+          timestamp: 2,
+          kind: 'permission',
+          level: 'info',
+          sessionId: request.sessionId,
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+    runtime.state = createSnapshot({ sessionIds: ['session-1'], events: [] })
+    await render()
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearmed-before-attempt',
+          timestamp: 1,
+          kind: 'permission',
+          level: 'info',
+          sessionId: request.sessionId,
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+    act(() => projectRestoredPermissionPending(request))
+
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).not.toHaveBeenCalled()
+  })
+
+  it('rejects an older quit-drain rearm that resolves after a newer terminal snapshot', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    const olderPull = createDeferred<AcpStateSnapshot>()
+    window.api = { acp: { getState: vi.fn().mockReturnValue(olderPull.promise) } } as never
+    await render()
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+
+    const drain = drainWorkspaceRuntimeEventsForPersistence(request.sessionId)
+    // The subscription reserves revision 2 synchronously before React commits its state/effects.
+    expect(acceptAcpRuntimeSnapshotRevision({ revision: 2 })).toBe(true)
+    await act(async () => {
+      olderPull.resolve(
+        createSnapshot({
+          revision: 1,
+          sessionIds: [request.sessionId],
+          events: [
+            {
+              id: 'permission-rearmed-older-unseen',
+              timestamp: 1,
+              kind: 'permission',
+              level: 'info',
+              sessionId: request.sessionId,
+              permissionRequestId: request.requestId,
+              title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+            }
+          ]
+        })
+      )
+      await drain
+    })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe(
+      'continuing'
+    )
+
+    runtime.state = createSnapshot({
+      revision: 2,
+      sessionIds: [request.sessionId],
+      events: [
+        {
+          id: 'permission-settled-newer',
+          timestamp: 2,
+          kind: 'permission',
+          level: 'info',
+          sessionId: request.sessionId,
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).not.toBe(
+      'pending'
+    )
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+  })
+
+  it('cleans an accepted tombstone when its continuing Session is deleted', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    await render()
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe(
+      'continuing'
+    )
+
+    const deletedSession = structuredClone(useSessionStore.getState().sessions[0])
+    act(() => useSessionStore.setState({ sessions: [] }))
+    await render()
+    act(() => useSessionStore.setState({ sessions: [deletedSession] }))
+    act(() => projectRestoredPermissionPending(request))
+    await render()
+
+    expect(latest.pendingPermissions).toEqual([request])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases an accepted response only for a matching Main rearm', async () => {
+    const { request, runtime } = arrangeRestoredPermission()
+    await render()
+
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearmed-mismatch',
+          timestamp: 3,
+          kind: 'permission',
+          level: 'info',
+          sessionId: 'session-1',
+          permissionRequestId: 'permission-other',
+          title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-settled',
+          timestamp: 4,
+          kind: 'permission',
+          level: 'info',
+          sessionId: 'session-1',
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+    act(() => projectRestoredPermissionPending(request))
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-rearm-failed',
+          timestamp: 5,
+          kind: 'permission',
+          level: 'error',
+          sessionId: 'session-1',
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+    act(() => projectRestoredPermissionPending(request))
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+
+    const deletedSession = structuredClone(useSessionStore.getState().sessions[0])
+    act(() => useSessionStore.setState({ sessions: [] }))
+    await render()
+    act(() => useSessionStore.setState({ sessions: [deletedSession] }))
+    await render()
+
+    expect(latest.pendingPermissions).toEqual([request])
+    const secondResponse = createDeferred<AcpStateSnapshot>()
+    runtime.respondToPermission.mockReturnValueOnce(secondResponse.promise)
+    let second!: Promise<void>
+    act(() => {
+      second = latest.respondToPermission(request.requestId, 'allow-once')
+    })
+    runtime.state = createSnapshot({
+      sessionIds: ['session-1'],
+      events: [
+        {
+          id: 'permission-clear-failed-before-acceptance',
+          timestamp: 6,
+          kind: 'permission',
+          level: 'error',
+          sessionId: 'session-1',
+          permissionRequestId: request.requestId,
+          title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE
+        }
+      ]
+    })
+    await render()
+    secondResponse.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    await act(async () => second)
+
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
+    act(() => projectRestoredPermissionPending(request))
+    expect(latest.pendingPermissions).toEqual([])
+    await act(async () => latest.respondToPermission(request.requestId, 'allow-once'))
     expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
   })
 })

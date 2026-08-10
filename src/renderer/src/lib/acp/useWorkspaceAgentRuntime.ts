@@ -7,15 +7,21 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type PropsWithChildren,
   type ReactElement
 } from 'react'
 
-import type {
-  AcpContextUsage,
-  AcpPermissionGrant,
-  AcpPermissionRequest,
-  AcpPermissionResponse
+import {
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpContextUsage,
+  type AcpPermissionGrant,
+  type AcpPermissionRequest,
+  type AcpPermissionResponse,
+  type AcpRuntimeEvent
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -37,6 +43,7 @@ import {
   markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
+  subscribeWorkspacePermissionLifecycle,
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
@@ -53,7 +60,181 @@ import {
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
-type PermissionResponseAttempt = { accepted: boolean; promise: Promise<void> }
+type PermissionResponseAttempt = {
+  accepted: boolean
+  rearmed: boolean
+  settled: boolean
+  authorityRemoved: boolean
+  restored: boolean
+  sessionId?: string
+  promise: Promise<void>
+}
+type ObservedPermissionLifecycleEvents = { sessionId?: string; eventIds: Set<string> }
+type RetiredPermissionResponse = ObservedPermissionLifecycleEvents & { promise: Promise<void> }
+type PermissionLifecycleEvent = AcpRuntimeEvent & { permissionRequestId: string }
+type PermissionResponseAttemptOwner = {
+  subscribe: (listener: () => void) => () => void
+  getSnapshot: () => readonly string[]
+  getPromise: (requestId: string) => Promise<void> | undefined
+  begin: (requestId: string) => PermissionResponseAttempt
+  accept: (requestId: string, attempt: PermissionResponseAttempt) => void
+  fail: (requestId: string, attempt: PermissionResponseAttempt) => void
+  shouldApplyLifecycle: (event: PermissionLifecycleEvent) => boolean
+  observeLifecycle: (event: PermissionLifecycleEvent) => void
+  cleanSessions: (sessions: ChatSession[]) => void
+  cleanLive: (requests: AcpPermissionRequest[]) => void
+}
+
+const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner => {
+  const attempts = new Map<string, PermissionResponseAttempt>()
+  const observedLifecycleEvents = new Map<string, ObservedPermissionLifecycleEvents>()
+  const retiredResponses = new Map<string, RetiredPermissionResponse>()
+  const listeners = new Set<() => void>()
+  let hiddenRequestIds: readonly string[] = []
+
+  const publish = (): void => {
+    hiddenRequestIds = [...new Set([...attempts.keys(), ...retiredResponses.keys()])]
+    for (const listener of listeners) listener()
+  }
+  const release = (requestId: string, attempt?: PermissionResponseAttempt): void => {
+    if (attempt && attempts.get(requestId) !== attempt) return
+    const activeChanged = attempts.delete(requestId)
+    const retiredChanged = retiredResponses.delete(requestId)
+    if (activeChanged || retiredChanged) publish()
+  }
+  const retire = (requestId: string, attempt?: PermissionResponseAttempt): void => {
+    if (attempt && attempts.get(requestId) !== attempt) return
+    const observed = observedLifecycleEvents.get(requestId)
+    const retired = retiredResponses.get(requestId)
+    const sessionId = attempt?.sessionId ?? observed?.sessionId ?? retired?.sessionId
+    attempts.delete(requestId)
+    observedLifecycleEvents.delete(requestId)
+    retiredResponses.set(requestId, {
+      sessionId,
+      eventIds: new Set([...(retired?.eventIds ?? []), ...(observed?.eventIds ?? [])]),
+      promise: attempt?.promise ?? retired?.promise ?? Promise.resolve()
+    })
+    publish()
+  }
+
+  return {
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    getSnapshot: (): readonly string[] => hiddenRequestIds,
+    getPromise: (requestId: string): Promise<void> | undefined =>
+      attempts.get(requestId)?.promise ?? retiredResponses.get(requestId)?.promise,
+    begin: (requestId: string): PermissionResponseAttempt => {
+      const attempt: PermissionResponseAttempt = {
+        accepted: false,
+        rearmed: false,
+        settled: false,
+        authorityRemoved: false,
+        restored: false,
+        promise: Promise.resolve()
+      }
+      attempts.set(requestId, attempt)
+      publish()
+      return attempt
+    },
+    accept: (requestId: string, attempt: PermissionResponseAttempt): void => {
+      attempt.accepted = true
+      if (attempt.rearmed) release(requestId, attempt)
+      else if (attempt.settled || attempt.authorityRemoved) retire(requestId, attempt)
+    },
+    fail: (requestId: string, attempt: PermissionResponseAttempt): void => {
+      if (attempt.settled || attempt.authorityRemoved) retire(requestId, attempt)
+      else if (!attempt.accepted) release(requestId, attempt)
+    },
+    shouldApplyLifecycle: (event: PermissionLifecycleEvent): boolean =>
+      event.title !== ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE ||
+      !(
+        observedLifecycleEvents.get(event.permissionRequestId)?.eventIds.has(event.id) ||
+        retiredResponses.get(event.permissionRequestId)?.eventIds.has(event.id)
+      ),
+    observeLifecycle: (event: PermissionLifecycleEvent): void => {
+      const attempt = attempts.get(event.permissionRequestId)
+      const settled =
+        event.title === ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE ||
+        event.title === ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE ||
+        event.title === ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE
+      if (event.title === ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE) {
+        const retired = retiredResponses.get(event.permissionRequestId)
+        if (retired?.eventIds.has(event.id)) return
+        const observed = observedLifecycleEvents.get(event.permissionRequestId) ?? {
+          sessionId: event.sessionId,
+          eventIds: new Set(retired?.eventIds)
+        }
+        if (observed.eventIds.has(event.id)) return
+        observed.eventIds.add(event.id)
+        observedLifecycleEvents.set(event.permissionRequestId, observed)
+        if (retired) release(event.permissionRequestId)
+        if (attempt) {
+          attempt.rearmed = true
+          if (attempt.accepted) release(event.permissionRequestId, attempt)
+        }
+      } else if (settled) {
+        if (attempt) {
+          attempt.settled = true
+          if (attempt.accepted) retire(event.permissionRequestId, attempt)
+        } else {
+          const observed = observedLifecycleEvents.get(event.permissionRequestId)
+          observedLifecycleEvents.set(event.permissionRequestId, {
+            sessionId: event.sessionId ?? observed?.sessionId,
+            eventIds: new Set([
+              ...(retiredResponses.get(event.permissionRequestId)?.eventIds ?? []),
+              ...(observed?.eventIds ?? [])
+            ])
+          })
+          retire(event.permissionRequestId)
+        }
+      }
+    },
+    cleanSessions: (sessions: ChatSession[]): void => {
+      const sessionsById = new Map(sessions.map((session) => [session.id, session]))
+      for (const [requestId, attempt] of attempts) {
+        if (!attempt.sessionId) continue
+        const session = sessionsById.get(attempt.sessionId)
+        if (session) {
+          const currentRequestId = session.runtimeContext?.permission?.request.requestId
+          if (currentRequestId === requestId || !attempt.restored) continue
+          attempt.authorityRemoved = true
+          if (attempt.accepted) retire(requestId, attempt)
+          continue
+        }
+        observedLifecycleEvents.delete(requestId)
+        release(requestId, attempt)
+      }
+      for (const [requestId, observed] of observedLifecycleEvents) {
+        if (!observed.sessionId) continue
+        const session = sessionsById.get(observed.sessionId)
+        if (session) {
+          const currentRequestId = session.runtimeContext?.permission?.request.requestId
+          if (currentRequestId === requestId) continue
+          retire(requestId)
+          continue
+        }
+        observedLifecycleEvents.delete(requestId)
+      }
+      for (const [requestId, retired] of retiredResponses) {
+        if (retired.sessionId && !sessionsById.has(retired.sessionId)) {
+          retiredResponses.delete(requestId)
+          publish()
+        }
+      }
+    },
+    cleanLive: (requests: AcpPermissionRequest[]): void => {
+      const liveRequestIds = new Set(requests.map((request) => request.requestId))
+      for (const [requestId, attempt] of attempts) {
+        if (attempt.accepted && !attempt.restored && !liveRequestIds.has(requestId)) {
+          observedLifecycleEvents.delete(requestId)
+          release(requestId, attempt)
+        }
+      }
+    }
+  }
+}
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
@@ -133,18 +314,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
   const restoredPermissionProjectionKey = useSessionStore((state) =>
     JSON.stringify(
-      state.sessions.flatMap((session) => {
+      state.sessions.map((session) => {
         const permission = session.runtimeContext?.permission
-        return permission?.state === 'pending'
-          ? [
-              [
-                session.id,
-                session.runtimeContext?.revision,
-                permission.request.requestId,
-                session.status
-              ]
-            ]
-          : []
+        return [
+          session.id,
+          permission?.state === 'pending'
+            ? [session.runtimeContext?.revision, permission.request.requestId, session.status]
+            : null
+        ]
       })
     )
   )
@@ -194,15 +371,18 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     () => pendingWorkspacePermissions(restoredPermissionSessions, runtime.state.pendingPermissions),
     [restoredPermissionSessions, runtime.state.pendingPermissions]
   )
-  const [respondingPermissionRequestIds, setRespondingPermissionRequestIds] = useState<string[]>([])
+  const [permissionResponseAttemptOwner] = useState(createPermissionResponseAttemptOwner)
+  const hiddenPermissionRequestIds = useSyncExternalStore(
+    permissionResponseAttemptOwner.subscribe,
+    permissionResponseAttemptOwner.getSnapshot,
+    permissionResponseAttemptOwner.getSnapshot
+  )
   const visiblePendingPermissions = useMemo(
     () =>
-      respondingPermissionRequestIds.length === 0
-        ? pendingPermissions
-        : pendingPermissions.filter(
-            (request) => !respondingPermissionRequestIds.includes(request.requestId)
-          ),
-    [pendingPermissions, respondingPermissionRequestIds]
+      pendingPermissions.filter(
+        (request) => !hiddenPermissionRequestIds.includes(request.requestId)
+      ),
+    [hiddenPermissionRequestIds, pendingPermissions]
   )
   const [sendPreparationInFlightSessionIds, setSendPreparationInFlightSessionIds] = useState<
     string[]
@@ -221,7 +401,6 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const previousStatusRef = useRef(runtime.state.status)
   const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const permissionResponseAttemptsRef = useRef(new Map<string, PermissionResponseAttempt>())
   const durablePermissionSessionIdsKey = JSON.stringify(
     Array.from(
       new Set([
@@ -255,9 +434,26 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
+  useEffect(
+    () =>
+      subscribeWorkspacePermissionLifecycle({
+        shouldApply: permissionResponseAttemptOwner.shouldApplyLifecycle,
+        onApplied: permissionResponseAttemptOwner.observeLifecycle
+      }),
+    [permissionResponseAttemptOwner]
+  )
+
   useEffect(() => {
-    void processWorkspaceRuntimeEvents(runtime.state.events, agentPromptInFlightSessionIds)
-  }, [agentPromptInFlightSessionIds, runtime.state.events])
+    permissionResponseAttemptOwner.cleanSessions(restoredPermissionSessions)
+  }, [permissionResponseAttemptOwner, restoredPermissionSessions])
+
+  useEffect(() => {
+    permissionResponseAttemptOwner.cleanLive(runtime.state.pendingPermissions)
+  }, [permissionResponseAttemptOwner, runtime.state.pendingPermissions])
+
+  useEffect(() => {
+    void processWorkspaceRuntimeEvents(runtime.state)
+  }, [agentPromptInFlightSessionIds, runtime.state])
 
   useEffect(() => {
     syncWorkspacePermissionState(pendingPermissions)
@@ -371,32 +567,18 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   )
   const respondToPermission = useCallback(
     (requestId: string, optionId?: string): Promise<void> => {
-      const existing = permissionResponseAttemptsRef.current.get(requestId)
-      if (existing) {
-        const rearmed =
-          existing.accepted &&
-          useSessionStore
-            .getState()
-            .sessions.some(
-              (session) =>
-                session.runtimeContext?.permission?.state === 'pending' &&
-                session.runtimeContext.permission.request.requestId === requestId
-            )
-        if (!rearmed) return existing.promise
-        permissionResponseAttemptsRef.current.delete(requestId)
-      }
+      const existing = permissionResponseAttemptOwner.getPromise(requestId)
+      if (existing) return existing
 
-      const attempt: PermissionResponseAttempt = { accepted: false, promise: Promise.resolve() }
-      setRespondingPermissionRequestIds((current) =>
-        current.includes(requestId) ? current : [...current, requestId]
-      )
+      const attempt = permissionResponseAttemptOwner.begin(requestId)
       const response = (async (): Promise<void> => {
         const request = pendingPermissions.find((item) => item.requestId === requestId)
         const isRestoredRequest = Boolean(
           request &&
           !runtime.state.pendingPermissions.some((item) => item.requestId === request.requestId)
         )
-        let restoredAuthorityRevision: number | undefined
+        attempt.restored = isRestoredRequest
+        attempt.sessionId = request?.sessionId
         try {
           let restored: AcpPermissionResponse['restored']
           if (request && isRestoredRequest) {
@@ -442,20 +624,21 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
               sessionId: session.id,
               projectId: session.projectId
             }
-            restoredAuthorityRevision = session.runtimeContext?.revision
           }
           await runtime.respondToPermission(requestId, optionId, restored)
-          attempt.accepted = true
+          permissionResponseAttemptOwner.accept(requestId, attempt)
+          if (attempt.rearmed || attempt.settled) return
           const currentSession = request
             ? useSessionStore
                 .getState()
                 .sessions.find((session) => session.id === request.sessionId)
             : undefined
+          const currentPermission = currentSession?.runtimeContext?.permission
           if (
             request &&
             restored &&
-            restoredAuthorityRevision !== undefined &&
-            currentSession?.runtimeContext?.revision === restoredAuthorityRevision
+            currentPermission?.state === 'pending' &&
+            currentPermission.request.requestId === requestId
           ) {
             useSessionStore.getState().clearPermissionPending(request.sessionId, {
               authority: 'continuing',
@@ -479,20 +662,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         }
       })()
       const tracked = response.finally(() => {
-        setRespondingPermissionRequestIds((current) =>
-          current.includes(requestId) ? current.filter((id) => id !== requestId) : current
-        )
         // A permission request id is one-shot authority. Keep successful responses coalesced for
         // stale renders, releasing it only when Main explicitly re-arms the durable request.
-        if (!attempt.accepted && permissionResponseAttemptsRef.current.get(requestId) === attempt) {
-          permissionResponseAttemptsRef.current.delete(requestId)
-        }
+        permissionResponseAttemptOwner.fail(requestId, attempt)
       })
       attempt.promise = tracked
-      permissionResponseAttemptsRef.current.set(requestId, attempt)
       return tracked
     },
-    [pendingPermissions, runtime]
+    [pendingPermissions, permissionResponseAttemptOwner, runtime]
   )
   const setPermissionProfile = useCallback(
     (sessionId: string, profile: PermissionProfileId): Promise<boolean> =>

@@ -2026,6 +2026,15 @@ describe('ACP runtime restored permission continuation', () => {
         })
       )
       expect(onPermissionSettled).toHaveBeenCalledWith('permission-restored', 'resolved')
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'permission',
+            title: 'Restored permission continuation settled',
+            permissionRequestId: 'permission-restored'
+          })
+        ])
+      )
     }
   )
 
@@ -2452,6 +2461,15 @@ describe('ACP runtime restored permission continuation', () => {
       ).toBe(true)
     )
     expect(runtimeContext.permission).toBeDefined()
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'permission',
+          title: 'Restored permission continuation re-armed',
+          permissionRequestId: 'permission-restored'
+        })
+      ])
+    )
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     await expect(runtime.respondToPermission(response)).resolves.toBeDefined()
@@ -2540,7 +2558,9 @@ describe('ACP runtime restored permission continuation', () => {
           .events.some(
             (event) =>
               event.kind === 'permission' &&
-              event.title === 'Permission continuation completed but its wait could not be cleared'
+              event.title ===
+                'Permission continuation completed but its wait could not be cleared' &&
+              event.permissionRequestId === 'permission-restored'
           )
       ).toBe(true)
     )
@@ -2625,6 +2645,7 @@ describe('ACP runtime restored permission continuation', () => {
           kind: 'permission',
           sessionId: 'restored-session',
           title: 'Restored permission continuation settled',
+          permissionRequestId: 'permission-restored',
           text: 'cancelled'
         })
       ])

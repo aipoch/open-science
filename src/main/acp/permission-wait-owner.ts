@@ -129,11 +129,12 @@ class AcpPermissionWaitOwner {
     )
   }
 
-  async cancelPendingSession(sessionId: string): Promise<boolean> {
-    if (!this.sessions?.sessionProjectId) return false
+  async cancelPendingSession(sessionId: string): Promise<string | undefined> {
+    if (!this.sessions?.sessionProjectId) return undefined
     const projectId = await this.sessions.sessionProjectId(sessionId)
-    if (!projectId) return false
-    return this.patch(
+    if (!projectId) return undefined
+    let cancelledRequestId: string | undefined
+    const cleared = await this.patch(
       projectId,
       sessionId,
       (context) => {
@@ -145,10 +146,12 @@ class AcpPermissionWaitOwner {
         ) {
           return permission
         }
+        cancelledRequestId = permission.request.requestId
         return undefined
       },
       'idle'
     )
+    return cleared ? cancelledRequestId : undefined
   }
 
   async beginContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
