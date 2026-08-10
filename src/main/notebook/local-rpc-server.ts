@@ -181,6 +181,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set([
+  'capabilitiesCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
@@ -680,6 +681,7 @@ class NotebookLocalRpcServer {
       const bearerToken = authorization?.startsWith('Bearer ')
         ? authorization.slice('Bearer '.length)
         : ''
+      let hostCapabilities: Record<'mcp' | 'compute' | 'agents' | 'skills', boolean> | undefined
       if (isArtifactRpcMethod(method)) {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
         params = acquired.params
@@ -699,6 +701,16 @@ class NotebookLocalRpcServer {
               403,
               'host.agents.switch requires an active trusted control invocation.'
             )
+          }
+          if (method === 'capabilitiesCall') {
+            const allows = (rpcMethod: string): boolean =>
+              !sessionBinding.allowedMethods || sessionBinding.allowedMethods.has(rpcMethod)
+            hostCapabilities = {
+              mcp: allows('mcpCall') && Boolean(this.connectorService),
+              compute: allows('computeCall') && Boolean(this.computeService),
+              agents: allows('agentsCall') && Boolean(this.agentsService),
+              skills: allows('skillsCall') && Boolean(this.skillsService)
+            }
           }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
           // per-session capability issued while building this session's Notebook environment.
@@ -730,7 +742,8 @@ class NotebookLocalRpcServer {
         }
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
-      const result = await this.dispatch(method, this.resolveSessionAlias(params))
+      const result =
+        hostCapabilities ?? (await this.dispatch(method, this.resolveSessionAlias(params)))
 
       writeJson(response, 200, { result })
     } catch (error) {

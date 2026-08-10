@@ -599,6 +599,7 @@ describe('Settings backend ownership architecture', () => {
       'artifactReplayVersion'
     ])
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
+      'capabilitiesCall',
       'mcpCall',
       'computeCall',
       'agentsCall',

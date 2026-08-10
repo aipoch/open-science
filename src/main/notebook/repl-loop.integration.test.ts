@@ -92,6 +92,73 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
+  it('validates, freezes, and refreshes host.capabilities projections', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        requests.push(JSON.parse(body))
+        const result =
+          requests.length === 3
+            ? { mcp: 'yes', compute: true, agents: true, skills: true }
+            : { mcp: true, compute: true, agents: true, skills: true }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-capabilities-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        'const first = await host.capabilities(); first.mcp = false; ' +
+          'const second = await host.capabilities(); ' +
+          'return JSON.stringify({ first, second, frozen: Object.isFrozen(first), same: first === second })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toEqual({
+        first: { mcp: true, compute: true, agents: true, skills: true },
+        second: { mcp: true, compute: true, agents: true, skills: true },
+        frozen: true,
+        same: false
+      })
+      expect(requests).toEqual([
+        { method: 'capabilitiesCall', params: {} },
+        { method: 'capabilitiesCall', params: {} }
+      ])
+
+      const extraArgument = await send(
+        "try { await host.capabilities('unexpected'); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(extraArgument.result).toBe('TypeError: host.capabilities accepts no arguments')
+      expect(requests).toHaveLength(2)
+
+      const invalidProjection = await send(
+        "try { await host.capabilities(); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidProjection.result).toBe(
+        'host.capabilities returned an invalid capability projection'
+      )
+      expect(requests).toHaveLength(3)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
   it('routes host.skills through its native skillsCall method', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
