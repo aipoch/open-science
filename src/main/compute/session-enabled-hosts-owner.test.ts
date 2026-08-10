@@ -19,6 +19,13 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
 
 const passthroughDataRootWrite = <Result>(operation: () => Promise<Result>): Promise<Result> =>
   operation()
+const createPruneResult = (
+  sessions: PersistedChatSession[] = []
+): { sessions: PersistedChatSession[]; previousSelections: [] } => ({
+  sessions,
+  previousSelections: []
+})
+type PruneResult = ReturnType<typeof createPruneResult>
 
 describe('SessionEnabledComputeHostsOwner', () => {
   it('projects only the enabled hosts committed by Session authority', async () => {
@@ -36,7 +43,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
       sessionAuthority: {
         sessionProjectId: async () => 'project-1',
         setSessionEnabledComputeHosts,
-        pruneSessionEnabledComputeHosts: async () => []
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
     })
@@ -68,7 +75,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     })
     const pruneSessionEnabledComputeHosts = vi.fn(async () => {
       expect(insideWriteBoundary).toBe(true)
-      return [durable]
+      return createPruneResult([durable])
     })
     const owner = new SessionEnabledComputeHostsOwner({
       registry: new EnabledComputeHostsRegistry(),
@@ -99,7 +106,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
         setSessionEnabledComputeHosts: async () => {
           throw new Error('not expected')
         },
-        pruneSessionEnabledComputeHosts: async () => []
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
     })
@@ -120,7 +127,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
         setSessionEnabledComputeHosts: async () => {
           throw new Error('not expected')
         },
-        pruneSessionEnabledComputeHosts: async () => []
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
     })
@@ -156,7 +163,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
         setSessionEnabledComputeHosts: async () => {
           throw new Error('not expected')
         },
-        pruneSessionEnabledComputeHosts: async () => []
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
     })
@@ -171,7 +178,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('stale-session', ['ssh:old'])
     const repaired = createSession({ enabledComputeHosts: ['ssh:cluster'], updatedAt: 3 })
-    const pruneSessionEnabledComputeHosts = vi.fn(async () => [repaired])
+    const pruneSessionEnabledComputeHosts = vi.fn(async () => createPruneResult([repaired]))
     const owner = new SessionEnabledComputeHostsOwner({
       registry,
       hostExists: async () => true,
@@ -201,7 +208,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
   it('filters a partial cache without pruning unseen durable Sessions', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('unseen-session', ['ssh:cluster'])
-    const pruneSessionEnabledComputeHosts = vi.fn(async () => [])
+    const pruneSessionEnabledComputeHosts = vi.fn(async () => createPruneResult())
     const owner = new SessionEnabledComputeHostsOwner({
       registry,
       hostExists: async () => true,
@@ -236,7 +243,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
         setSessionEnabledComputeHosts: async () => {
           throw new Error('not expected')
         },
-        pruneSessionEnabledComputeHosts: async () => []
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
       },
       withDataRootWrite: passthroughDataRootWrite
     })
@@ -249,10 +256,10 @@ describe('SessionEnabledComputeHostsOwner', () => {
   it('removes a deleted or reusable provider before repairing durable Sessions', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:deleted', 'ssh:kept'])
-    let finishPrune: ((sessions: PersistedChatSession[]) => void) | undefined
+    let finishPrune: ((result: PruneResult) => void) | undefined
     const pruneSessionEnabledComputeHosts = vi.fn(
       () =>
-        new Promise<PersistedChatSession[]>((resolve) => {
+        new Promise<PruneResult>((resolve) => {
           finishPrune = resolve
         })
     )
@@ -277,17 +284,17 @@ describe('SessionEnabledComputeHostsOwner', () => {
     )
 
     const repaired = createSession({ enabledComputeHosts: ['ssh:kept'] })
-    finishPrune?.([repaired])
+    finishPrune?.(createPruneResult([repaired]))
     await expect(pruning).resolves.toEqual([repaired])
     expect(owner.get('session-1')).toEqual(['ssh:kept'])
   })
 
   it('holds the owner queue through provider deletion before validating a queued enable', async () => {
     let hostExists = true
-    let finishPrune: ((sessions: PersistedChatSession[]) => void) | undefined
+    let finishPrune: ((result: PruneResult) => void) | undefined
     const pruneSessionEnabledComputeHosts = vi.fn(
       () =>
-        new Promise<PersistedChatSession[]>((resolve) => {
+        new Promise<PruneResult>((resolve) => {
           finishPrune = resolve
         })
     )
@@ -310,11 +317,54 @@ describe('SessionEnabledComputeHostsOwner', () => {
     const deleting = owner.pruneProvider('ssh:cluster', deleteProvider)
     await vi.waitFor(() => expect(pruneSessionEnabledComputeHosts).toHaveBeenCalledOnce())
     const enabling = owner.set('session-1', ['ssh:cluster'])
-    finishPrune?.([])
+    finishPrune?.(createPruneResult())
 
     await expect(deleting).resolves.toEqual([])
     await expect(enabling).rejects.toThrow('Compute Host not found')
     expect(deleteProvider).toHaveBeenCalledOnce()
     expect(setSessionEnabledComputeHosts).not.toHaveBeenCalled()
+  })
+
+  it('restores durable selections and the cache when provider deletion fails', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    registry.set('session-1', ['ssh:cluster', 'ssh:kept'])
+    const repaired = createSession({ enabledComputeHosts: ['ssh:kept'], updatedAt: 3 })
+    const restored = createSession({
+      enabledComputeHosts: ['ssh:cluster', 'ssh:kept'],
+      updatedAt: 4
+    })
+    const setSessionEnabledComputeHosts = vi.fn(async () => restored)
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds: async () => ['ssh:cluster', 'ssh:kept'],
+      sessionAuthority: {
+        sessionProjectId: async () => 'project-1',
+        setSessionEnabledComputeHosts,
+        pruneSessionEnabledComputeHosts: async () => ({
+          sessions: [repaired],
+          previousSelections: [
+            {
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              providerIds: ['ssh:cluster', 'ssh:kept']
+            }
+          ]
+        })
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    await expect(
+      owner.pruneProvider('ssh:cluster', async () => {
+        throw new Error('Host delete failed')
+      })
+    ).rejects.toThrow('Host delete failed')
+
+    expect(setSessionEnabledComputeHosts).toHaveBeenCalledWith('project-1', 'session-1', [
+      'ssh:cluster',
+      'ssh:kept'
+    ])
+    expect(owner.get('session-1')).toEqual(['ssh:cluster', 'ssh:kept'])
   })
 })

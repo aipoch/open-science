@@ -8,9 +8,14 @@ type SessionEnabledComputeHostsAuthority = Readonly<{
     sessionId: string,
     providerIds: readonly string[]
   ): Promise<PersistedChatSession>
-  pruneSessionEnabledComputeHosts(
-    validProviderIds: readonly string[]
-  ): Promise<PersistedChatSession[]>
+  pruneSessionEnabledComputeHosts(validProviderIds: readonly string[]): Promise<{
+    sessions: PersistedChatSession[]
+    previousSelections: Array<{
+      projectId: string
+      sessionId: string
+      providerIds: string[]
+    }>
+  }>
 }>
 
 type SessionEnabledComputeHostsOwnerOptions = Readonly<{
@@ -74,14 +79,41 @@ class SessionEnabledComputeHostsOwner {
       const validProviderIds = (await this.options.listHostIds()).filter(
         (candidate) => candidate !== providerId
       )
-      const sessions =
+      const repair =
         await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds)
-      await afterPrune?.()
+      try {
+        await afterPrune?.()
+      } catch (error) {
+        try {
+          const restoredSessions: PersistedChatSession[] = []
+          for (const selection of repair.previousSelections) {
+            restoredSessions.push(
+              await this.options.sessionAuthority.setSessionEnabledComputeHosts(
+                selection.projectId,
+                selection.sessionId,
+                selection.providerIds
+              )
+            )
+          }
+          this.options.registry.reconcile(
+            restoredSessions.map(
+              (session) => [session.id, session.enabledComputeHosts ?? []] as const
+            ),
+            false
+          )
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Compute Host mutation failed and enabled Session selections could not be restored.'
+          )
+        }
+        throw error
+      }
       this.options.registry.reconcile(
-        sessions.map((session) => [session.id, session.enabledComputeHosts ?? []] as const),
+        repair.sessions.map((session) => [session.id, session.enabledComputeHosts ?? []] as const),
         true
       )
-      return sessions
+      return repair.sessions
     })
   }
 
@@ -97,7 +129,8 @@ class SessionEnabledComputeHostsOwner {
       )
       const authoritativeSessions =
         isComplete && hasMissingHost
-          ? await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds)
+          ? (await this.options.sessionAuthority.pruneSessionEnabledComputeHosts(validProviderIds))
+              .sessions
           : sessions.map((session) => ({
               ...session,
               enabledComputeHosts: session.enabledComputeHosts?.filter((providerId) =>

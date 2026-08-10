@@ -1071,9 +1071,16 @@ describe('SessionPersistenceCoordinator', () => {
 
     const result = await coordinator.pruneSessionEnabledComputeHosts(['ssh:kept'])
 
-    expect(result.map((session) => session.enabledComputeHosts)).toEqual([
+    expect(result.sessions.map((session) => session.enabledComputeHosts)).toEqual([
       ['ssh:kept'],
       ['ssh:kept']
+    ])
+    expect(result.previousSelections).toEqual([
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        providerIds: ['ssh:kept', 'ssh:deleted']
+      }
     ])
     expect(saveSession).toHaveBeenCalledTimes(1)
     expect(saveSession).toHaveBeenCalledWith(
