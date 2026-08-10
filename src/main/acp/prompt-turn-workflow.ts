@@ -442,9 +442,11 @@ class AcpPromptTurnWorkflow {
             this.options.providerReconnectPending() ||
             interactions.current(sessionId) !== interaction
           ) {
-            return
+            return false
           }
-          if (this.options.contextUsage.reconcileUsed(sessionId, used)) this.options.emitState()
+          const reconciled = this.options.contextUsage.reconcileUsed(sessionId, used)
+          if (reconciled) this.options.emitState()
+          return reconciled
         },
         errorMessage: finalization.errorMessage,
         errorKind: finalization.errorKind,

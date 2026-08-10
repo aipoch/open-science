@@ -78,7 +78,10 @@ const createHarness = (
       journal.push('artifact:dispose')
     }),
     failPendingSkillActivities: vi.fn(() => journal.push('skills:fail')),
-    recordContextUsed: vi.fn((used) => journal.push(`context:used:${used}`)),
+    recordContextUsed: vi.fn((used) => {
+      journal.push(`context:used:${used}`)
+      return true
+    }),
     errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
     errorKind: (error) => (error as { data?: { errorKind?: string } } | undefined)?.data?.errorKind,
     pushEvent: vi.fn((event) => {
@@ -158,6 +161,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       'activity'
     ])
     expect(harness.interactions.current('s1')).toBeUndefined()
+  })
+
+  it('does not mark rejected context reconciliation as a provider response', async () => {
+    const harness = createHarness()
+    harness.handles.recordContextUsed = vi.fn(() => false)
+    expect(harness.interactions.captureTerminal(harness.interaction, 'stop')).toBe(true)
+
+    await new AcpPromptOutcomeFinalizer().finalize(harness.handles, stopped())
+
+    expect(harness.context.captureTerminal).toHaveBeenCalledWith(false)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        terminalContextWindow: expect.objectContaining({ source: 'local-estimate' })
+      })
+    )
   })
 
   it('keeps the captured terminal timestamp while Artifact publication is slow', async () => {

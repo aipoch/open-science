@@ -36,7 +36,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   emitArtifact: (onPublished: () => void) => Promise<void>
   disposeArtifact: () => Promise<void>
   failPendingSkillActivities: () => void
-  recordContextUsed: (used: number) => void
+  recordContextUsed: (used: number) => boolean
   errorMessage: (error: unknown) => string
   errorKind: (error: unknown) => string | undefined
   pushEvent: (event: RuntimeEventInput) => void
@@ -230,8 +230,9 @@ export class AcpPromptOutcomeFinalizer {
       }
       const { response, facts } = outcome
       skillOutcome = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
-      if (facts.contextUsedTokens !== undefined) handles.recordContextUsed(facts.contextUsedTokens)
-      const capturedContext = context?.captureTerminal(facts.contextUsedTokens !== undefined)
+      const providerContextReconciled =
+        facts.contextUsedTokens !== undefined && handles.recordContextUsed(facts.contextUsedTokens)
+      const capturedContext = context?.captureTerminal(providerContextReconciled)
       observedStop = {
         response,
         ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
