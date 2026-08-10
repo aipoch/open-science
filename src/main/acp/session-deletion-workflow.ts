@@ -24,6 +24,7 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   supportsSessionClose: () => boolean
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearSession'>
   elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
+  clearUserChoiceProvenanceForSession: (sessionId: string) => void
   appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   interactions: Pick<AcpSessionInteractionOwner, 'supersedeCurrent'>
   capabilities: Pick<AcpSessionCapabilityOwner, 'revokeSession'>
@@ -60,6 +61,7 @@ class AcpSessionDeletionWorkflow {
     const attachment = target?.attachment
 
     this.deps.permission.cancelForSession(appSessionId)
+    this.deps.clearUserChoiceProvenanceForSession(appSessionId)
     this.deps.elicitation.cancelForSession(appSessionId)
     this.deps.appContinuations.delete(appSessionId)
     if (attachment) await this.deleteProviderSession(attachment.session.sessionId)

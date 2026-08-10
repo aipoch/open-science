@@ -113,6 +113,7 @@ import type { AcpContextCompactionWorkflow } from './context-compaction-workflow
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
 import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
+import { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -321,6 +322,7 @@ type AcpRuntimePlanOptions = {
     | 'patchSessionRuntimeContext'
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
+    | 'loadSessionForContinuation'
   >
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
@@ -377,10 +379,12 @@ class AcpRuntime {
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
+  private readonly planContinuationOwner: SessionPlanContinuationOwner | undefined
   private durablePermissionContinuations?: Map<
     string,
     { projectId: string; requestId: string; cancellationRequested?: boolean }
   >
+  private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -440,10 +444,15 @@ class AcpRuntime {
     this.elicitationOwner = session.elicitationOwner
     this.durableContinuationContext = session.durableContinuationContext
     this.permissionWaitOwner = session.permissionWaitOwner
+    this.planContinuationOwner = options.plan
+      ? new SessionPlanContinuationOwner(options.plan.sessions)
+      : undefined
     this.appContinuations = session.appContinuations
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
-    this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session)
+    this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
+      continuations: this.planContinuationOwner
+    })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
@@ -466,7 +475,11 @@ class AcpRuntime {
       options,
       base,
       session,
-      lifecycle
+      lifecycle,
+      {
+        clearUserChoiceProvenanceForSession: (sessionId) =>
+          this.clearUserChoiceProvenanceForSession(sessionId)
+      }
     )
     this.providerSessionCreator = providerSessions.providerSessionCreator
     this.providerSessionResumer = providerSessions.providerSessionResumer
@@ -536,8 +549,14 @@ class AcpRuntime {
     return this.sessionPlanWorkflow.projection(projectId, sessionId)
   }
 
-  respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
-    return this.sessionPlanWorkflow.respond(input)
+  async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
+    const result = await this.sessionPlanWorkflow.respond(input)
+    const continuationProjection =
+      'projection' in result ? result.projection : result.continuationProjection
+    if (continuationProjection?.continuationState === 'queued') {
+      this.scheduleQueuedPlanContinuation(input.projectId, input.sessionId)
+    }
+    return result
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -664,6 +683,10 @@ class AcpRuntime {
         this.restoredContinuationContextResetSessionIds = contextResetSessionIds
         contextResetSessionIds.add(request.sessionId)
       }
+      this.scheduleQueuedPlanContinuation(
+        this.sessionEnvironment.projectName(request.sessionId),
+        request.sessionId
+      )
       return resumed
     })
   }
@@ -1548,6 +1571,167 @@ class AcpRuntime {
     }
   }
 
+  private scheduleQueuedPlanContinuation(projectId: string, sessionId: string): void {
+    queueMicrotask(() => {
+      void this.queueDurablePlanContinuation(projectId, sessionId).catch((error) => {
+        this.pushEvent({
+          kind: 'error',
+          level: 'error',
+          sessionId,
+          title: 'Could not prepare the Plan continuation',
+          text: errorMessage(error)
+        })
+        this.emitState()
+      })
+    })
+  }
+
+  private async queueDurablePlanContinuation(projectId: string, sessionId: string): Promise<void> {
+    const owner = this.planContinuationOwner
+    const sessions = this.options.plan?.sessions
+    if (
+      !owner ||
+      !sessions ||
+      !this.activeSessionFor(sessionId) ||
+      this.durablePlanContinuations?.has(sessionId)
+    ) {
+      return
+    }
+
+    const observed = await sessions.readSessionRuntimeContext(projectId, sessionId)
+    const plan = observed.plan
+    const command = plan?.continuation
+    if (
+      !plan ||
+      command?.state !== 'queued' ||
+      (command.kind === 'approved-plan' && plan.approval !== 'approved') ||
+      (command.kind === 'rejected-plan' && plan.approval !== 'rejected') ||
+      (command.kind === 'review-feedback' &&
+        (plan.approval !== 'pending' ||
+          plan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+    ) {
+      return
+    }
+
+    const continuation = await this.durableContinuationContext.prepare({
+      projectId,
+      sessionId,
+      promptMessageId: command.originatingPromptMessageId,
+      ...(this.restoredContinuationContextResetSessionIds?.has(sessionId)
+        ? {
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+            }
+          }
+        : {})
+    })
+    const reviewFeedback =
+      command.kind === 'review-feedback'
+        ? (await sessions.loadSessionForContinuation(projectId, sessionId)).messages.find(
+            (message) =>
+              message.id === command.originatingPromptMessageId &&
+              message.role === 'user' &&
+              message.status === 'complete'
+          )
+        : undefined
+    if (command.kind === 'review-feedback' && !reviewFeedback) {
+      throw new Error('The durable Plan review feedback Message is unavailable.')
+    }
+    const durablePlanContinuations =
+      this.durablePlanContinuations ?? new Map<string, { projectId: string; commandId: string }>()
+    this.durablePlanContinuations = durablePlanContinuations
+    durablePlanContinuations.set(sessionId, { projectId, commandId: command.commandId })
+    const rejected = command.kind === 'rejected-plan'
+    const reviewed = command.kind === 'review-feedback'
+    const request: AcpPromptRequest = {
+      sessionId,
+      text: reviewed
+        ? 'The user provided review feedback for the pending Session Plan. Interpret the ' +
+          'feedback, then call generate_plan with decision:"approved", decision:"rejected", ' +
+          'or a revised Plan as appropriate. Do not treat the feedback text itself as a decision.\n\n' +
+          `Review feedback:\n${reviewFeedback?.content}`
+        : rejected
+          ? 'The user rejected the pending Session Plan. Acknowledge that decision and do not ' +
+            `execute that rejected Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
+            "Await or follow the user's next request without reviving the rejected Plan."
+          : 'The user approved the pending Session Plan. Continue execution of exactly that ' +
+            `approved Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
+            'Do not regenerate, broaden, or reinterpret the approved Plan.',
+      suppressUserMessage: true,
+      provenanceContext: continuation.provenanceContext,
+      planContinuation: {
+        projectId,
+        artifactVersionId: plan.artifactVersionId,
+        expectedRevision: observed.revision,
+        ...(rejected ? { settledAction: 'rejected' as const } : {}),
+        ...(reviewed ? { pendingAction: 'review' as const } : {})
+      },
+      ...(continuation.historyReplay?.historyPreamble
+        ? { historyPreamble: continuation.historyReplay.historyPreamble }
+        : {}),
+      ...(continuation.historyReplay?.historyAttachments.length
+        ? { historyAttachments: continuation.historyReplay.historyAttachments }
+        : {}),
+      ...(continuation.historyReplay?.historyImages.length
+        ? { historyImages: continuation.historyReplay.historyImages }
+        : {})
+    }
+    this.appContinuations.set(sessionId, {
+      condition: 'always',
+      request,
+      beforeSend: async () => {
+        if (!(await owner.begin(projectId, sessionId, command.commandId))) {
+          durablePlanContinuations.delete(sessionId)
+          const latest = await sessions.readSessionRuntimeContext(projectId, sessionId)
+          if (
+            latest.plan?.continuation?.commandId === command.commandId &&
+            latest.plan.continuation.state === 'queued'
+          ) {
+            setTimeout(() => this.scheduleQueuedPlanContinuation(projectId, sessionId), 0)
+          }
+          return undefined
+        }
+        let dispatchReady = false
+        try {
+          const claimed = await sessions.readSessionRuntimeContext(projectId, sessionId)
+          const claimedPlan = claimed.plan
+          if (
+            !claimedPlan ||
+            claimedPlan.artifactVersionId !== plan.artifactVersionId ||
+            claimedPlan.continuation?.commandId !== command.commandId ||
+            claimedPlan.continuation.state !== 'continuing' ||
+            claimedPlan.continuation.kind !== command.kind ||
+            (command.kind === 'approved-plan' && claimedPlan.approval !== 'approved') ||
+            (command.kind === 'rejected-plan' && claimedPlan.approval !== 'rejected') ||
+            (command.kind === 'review-feedback' &&
+              (claimedPlan.approval !== 'pending' ||
+                claimedPlan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+          ) {
+            throw new Error('The Plan continuation changed before dispatch.')
+          }
+          dispatchReady = true
+          return {
+            ...request,
+            planContinuation: {
+              projectId,
+              artifactVersionId: claimedPlan.artifactVersionId,
+              expectedRevision: claimed.revision,
+              ...(command.kind === 'rejected-plan' ? { settledAction: 'rejected' as const } : {}),
+              ...(command.kind === 'review-feedback' ? { pendingAction: 'review' as const } : {})
+            }
+          }
+        } finally {
+          if (!dispatchReady) {
+            durablePlanContinuations.delete(sessionId)
+            await owner.rearmUndispatched(projectId, sessionId, command.commandId)
+          }
+        }
+      }
+    })
+    this.schedulePendingAppContinuation(sessionId)
+  }
+
   private schedulePendingAppContinuation(sessionId: string, stopReason?: string): void {
     const pending = this.appContinuations.get(sessionId)
     if (!pending) return
@@ -1567,9 +1751,15 @@ class AcpRuntime {
     const continuation = this.appContinuations.takeAndActivate(sessionId)
     if (!continuation) return
     let completed = false
+    let cancelled = false
     try {
-      await this.sendAppContinuation(continuation.request)
-      completed = true
+      const request = continuation.beforeSend
+        ? await continuation.beforeSend()
+        : continuation.request
+      if (!request) return
+      const response = await this.sendAppContinuation(request)
+      cancelled = response.stopReason === 'cancelled'
+      completed = !this.durablePlanContinuations?.has(sessionId) || !cancelled
     } catch (error) {
       this.pushEvent({
         kind: 'error',
@@ -1582,6 +1772,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       const durablePermission = this.durablePermissionContinuations?.get(sessionId)
+      const durablePlan = this.durablePlanContinuations?.get(sessionId)
       this.permissionContext.clearRestoredDecision(sessionId)
       if (durablePermission?.cancellationRequested) {
         await this.settleCancelledDurablePermissionContinuation(sessionId)
@@ -1644,8 +1835,76 @@ class AcpRuntime {
           this.durablePermissionContinuations?.delete(sessionId)
         }
       }
+      if (cancelled && durablePlan && this.planContinuationOwner) {
+        try {
+          await this.planContinuationOwner.interrupt(
+            durablePlan.projectId,
+            sessionId,
+            durablePlan.commandId
+          )
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not mark the Plan continuation as interrupted',
+            text: errorMessage(error)
+          })
+        }
+      } else if (completed && durablePlan && this.planContinuationOwner) {
+        try {
+          await this.clearSettledPlanContinuation(sessionId, durablePlan)
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not settle the Plan continuation',
+            text: errorMessage(error)
+          })
+        }
+      }
+      if (durablePlan) await this.publishCurrentPlanProjection(durablePlan.projectId, sessionId)
+      if (durablePlan) this.durablePlanContinuations?.delete(sessionId)
       this.appContinuations.complete(sessionId)
       this.emitState()
+    }
+  }
+
+  private async clearSettledPlanContinuation(
+    sessionId: string,
+    durablePlan: Readonly<{ projectId: string; commandId: string }>
+  ): Promise<void> {
+    const owner = this.planContinuationOwner
+    const sessions = this.options.plan?.sessions
+    if (!owner || !sessions) return
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await owner.clear(durablePlan.projectId, sessionId, durablePlan.commandId)) return
+      const current = await sessions.readSessionRuntimeContext(durablePlan.projectId, sessionId)
+      const continuation = current.plan?.continuation
+      if (!continuation) return
+      if (continuation.commandId !== durablePlan.commandId || continuation.state !== 'continuing') {
+        throw new Error('The Plan continuation changed before settlement.')
+      }
+    }
+    throw new Error('The Plan continuation could not be settled after concurrent updates.')
+  }
+
+  private async publishCurrentPlanProjection(projectId: string, sessionId: string): Promise<void> {
+    try {
+      const projection = await this.sessionPlanWorkflow.projection(projectId, sessionId)
+      if (!projection) return
+      this.pushEvent({
+        id: `session-plan-${projection.artifactVersionId}-${projection.revision}`,
+        timestamp: Date.now(),
+        kind: 'plan',
+        level: 'info',
+        sessionId,
+        title: 'Session Plan updated',
+        planProjection: projection
+      })
+    } catch (error) {
+      safeLogError('Session Plan continuation projection failed', errorLogFields(error))
     }
   }
 
@@ -1719,16 +1978,19 @@ class AcpRuntime {
 
   private cancelPermissionFlowForSession(sessionId: string): void {
     this.permissionContext.cancelForSession(sessionId)
-    const provenanceContexts = this.userChoiceProvenanceContexts
-    if (provenanceContexts) {
-      for (const [requestId, provenance] of provenanceContexts) {
-        if (provenance.sessionId === sessionId) {
-          provenanceContexts.delete(requestId)
-        }
-      }
-    }
+    this.clearUserChoiceProvenanceForSession(sessionId)
     this.elicitationOwner.cancelForSession(sessionId)
     this.appContinuations.delete(sessionId)
+  }
+
+  private clearUserChoiceProvenanceForSession(sessionId: string): void {
+    const provenanceContexts = this.userChoiceProvenanceContexts
+    if (!provenanceContexts) return
+    for (const [requestId, provenance] of provenanceContexts) {
+      if (provenance.sessionId === sessionId) {
+        provenanceContexts.delete(requestId)
+      }
+    }
   }
 
   private async settleCancelledDurablePermissionContinuation(sessionId: string): Promise<void> {

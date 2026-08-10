@@ -123,6 +123,7 @@ type NotebookLocalRpcServerOptions = {
       sessionId: string
       operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus'
       input?: unknown
+      signal: AbortSignal
     }): Promise<unknown>
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
@@ -197,6 +198,20 @@ type NotebookRpcSessionBinding = {
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
   isControl?: true
+}
+
+type NotebookRpcRequestLifecycle = {
+  request: IncomingMessage
+  response: ServerResponse
+  disconnect: AbortController
+  bodyComplete: boolean
+  method?: string
+}
+
+type NotebookRpcServerLifecycle = {
+  server: Server
+  closing: boolean
+  activeRequests: Set<NotebookRpcRequestLifecycle>
 }
 
 class RpcHttpError extends Error {
@@ -277,7 +292,9 @@ class NotebookLocalRpcServer {
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostLlm: NotebookLocalRpcServerOptions['hostLlm']
   private server: Server | undefined
+  private serverLifecycle: NotebookRpcServerLifecycle | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
+  private closePromise: Promise<void> | undefined
   private readonly sessionAliases = new Map<string, string>()
   private readonly sessionRpcCapabilities = new Map<string, NotebookRpcSessionBinding>()
   private readonly sessionRpcTokens = new Map<string, string>()
@@ -367,11 +384,21 @@ class NotebookLocalRpcServer {
     if (this.startPromise) {
       return this.startPromise
     }
+    if (this.closePromise) {
+      await this.closePromise
+      if (this.startPromise) return this.startPromise
+    }
 
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response)
+      void this.handleRequest(lifecycle, request, response)
     })
+    const lifecycle: NotebookRpcServerLifecycle = {
+      server,
+      closing: false,
+      activeRequests: new Set()
+    }
     this.server = server
+    this.serverLifecycle = lifecycle
     log.info('notebook RPC server starting', {
       transport: this.transport ?? (process.platform === 'win32' ? 'pipe' : 'tcp'),
       listening: server.listening
@@ -397,28 +424,60 @@ class NotebookLocalRpcServer {
   }
 
   // Stops the local HTTP server without touching notebook history or runtime state.
-  async close(): Promise<void> {
-    const server = this.server
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise
+    const lifecycle = this.serverLifecycle
+    const server = lifecycle?.server ?? this.server
 
     this.server = undefined
+    this.serverLifecycle = undefined
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
     this.sessionRpcCapabilities.clear()
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
 
-    if (!server) return
+    if (!server || !lifecycle) return Promise.resolve()
+
+    lifecycle.closing = true
 
     const connection = localRpcServerLogFields(server)
-    log.info('notebook RPC server stopping', connection)
-
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) reject(error)
-        else resolve()
-      })
+    let beginClose!: () => void
+    const operation = new Promise<void>((resolve, reject) => {
+      beginClose = () => {
+        for (const active of lifecycle.activeRequests) {
+          if (!active.bodyComplete) {
+            active.disconnect.abort()
+            active.request.destroy()
+            active.response.destroy()
+          } else if (active.method === 'planCall') {
+            active.disconnect.abort()
+          }
+        }
+        log.info('notebook RPC server stopping', connection)
+        try {
+          server.close((error) => {
+            if (error) reject(error)
+            else {
+              log.info('notebook RPC server stopped', {
+                ...connection,
+                listening: server.listening
+              })
+              resolve()
+            }
+          })
+          server.closeIdleConnections()
+        } catch (error) {
+          reject(error)
+        }
+      }
     })
-    log.info('notebook RPC server stopped', { ...connection, listening: server.listening })
+    const ownedClose = operation.finally(() => {
+      if (this.closePromise === ownedClose) this.closePromise = undefined
+    })
+    this.closePromise = ownedClose
+    beginClose()
+    return ownedClose
   }
 
   // Remembers the final ACP session id for notebook aliases created before session start.
@@ -715,23 +774,45 @@ class NotebookLocalRpcServer {
   }
 
   // Authenticates one HTTP request, dispatches it, and serializes either result or error.
-  private async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== 'POST') {
-      writeJson(response, 405, { error: 'Notebook RPC only accepts POST requests.' })
-      return
+  private async handleRequest(
+    lifecycle: NotebookRpcServerLifecycle,
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    const disconnect = new AbortController()
+    const activeRequest: NotebookRpcRequestLifecycle = {
+      request,
+      response,
+      disconnect,
+      bodyComplete: false
     }
-
+    lifecycle.activeRequests.add(activeRequest)
+    const abortDisconnectedRequest = (): void => disconnect.abort()
+    const abortDisconnectedResponse = (): void => {
+      if (!response.writableFinished) disconnect.abort()
+    }
+    const closeIdleResponseDuringShutdown = (): void => {
+      if (lifecycle.closing) lifecycle.server.closeIdleConnections()
+    }
+    request.once('aborted', abortDisconnectedRequest)
+    response.once('close', abortDisconnectedResponse)
+    response.once('finish', closeIdleResponseDuringShutdown)
     let releaseArtifactRequest: (() => void) | undefined
-    const requestAbort = new AbortController()
-    const abortRequest = (): void => requestAbort.abort()
-    const abortClosedResponse = (): void => {
-      if (!response.writableEnded) abortRequest()
-    }
-    request.once('aborted', abortRequest)
-    response.once('close', abortClosedResponse)
     try {
+      if (lifecycle.closing) {
+        disconnect.abort()
+        request.destroy()
+        response.destroy()
+        return
+      }
+      if (request.method !== 'POST') {
+        writeJson(response, 405, { error: 'Notebook RPC only accepts POST requests.' })
+        return
+      }
       const payload = await readJsonBody(request)
+      activeRequest.bodyComplete = true
       const method = typeof payload.method === 'string' ? payload.method : ''
+      activeRequest.method = method
       let params = isRecord(payload.params) ? payload.params : {}
       const authorization = request.headers.authorization
       const bearerToken = authorization?.startsWith('Bearer ')
@@ -840,9 +921,10 @@ class NotebookLocalRpcServer {
         }
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
+      if (method === 'planCall' && lifecycle.closing) disconnect.abort()
       const result =
         hostCapabilities ??
-        (await this.dispatch(method, this.resolveSessionAlias(params), requestAbort.signal))
+        (await this.dispatch(method, this.resolveSessionAlias(params), disconnect.signal))
 
       writeJson(response, 200, { result })
     } catch (error) {
@@ -853,6 +935,7 @@ class NotebookLocalRpcServer {
         response.destroy()
         return
       }
+      if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
       const serializedError =
         error instanceof PlanCommandError ? { code: error.code, message } : message
@@ -861,8 +944,9 @@ class NotebookLocalRpcServer {
         error: serializedError
       })
     } finally {
-      request.removeListener('aborted', abortRequest)
-      response.removeListener('close', abortClosedResponse)
+      request.off('aborted', abortDisconnectedRequest)
+      response.off('close', abortDisconnectedResponse)
+      lifecycle.activeRequests.delete(activeRequest)
       releaseArtifactRequest?.()
     }
   }
@@ -871,7 +955,7 @@ class NotebookLocalRpcServer {
   private async dispatch(
     method: string,
     params: Record<string, unknown>,
-    signal?: AbortSignal
+    signal: AbortSignal
   ): Promise<unknown> {
     // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
     // save envelope back into the main process, where the Provenance repository owns transactions,
@@ -936,7 +1020,8 @@ class NotebookLocalRpcServer {
         projectId: params.projectId,
         sessionId: params.sessionId,
         operation: params.operation as 'generate' | 'approve' | 'reject' | 'updateStepStatus',
-        input: params.input
+        input: params.input,
+        signal
       })
     }
 

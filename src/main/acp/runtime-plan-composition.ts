@@ -13,12 +13,14 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptTurnPlanContext, AcpPromptTurnPlanWorkflow } from './prompt-turn-workflow'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
+import type { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
 
 type AcpSessionPlanCall = Readonly<{
   projectId: string
   sessionId: string
   operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus'
   input?: unknown
+  signal?: AbortSignal
 }>
 
 const log = createLogger('acp')
@@ -39,18 +41,52 @@ const safeLogInfo = (message: string, fields: Record<string, unknown>): void => 
   }
 }
 
+const waitForPlanApproval = (
+  approval: Promise<unknown>,
+  signal?: AbortSignal,
+  onTransportDetached?: () => void
+): Promise<unknown> => {
+  if (!signal) return approval
+  if (signal.aborted) {
+    onTransportDetached?.()
+    return Promise.reject(new Error('Session Plan RPC transport disconnected.'))
+  }
+  return new Promise((resolve, reject) => {
+    const detached = (): void => {
+      signal.removeEventListener('abort', detached)
+      onTransportDetached?.()
+      reject(new Error('Session Plan RPC transport disconnected.'))
+    }
+    signal.addEventListener('abort', detached, { once: true })
+    void approval.then(
+      (value) => {
+        signal.removeEventListener('abort', detached)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', detached)
+        reject(error)
+      }
+    )
+  })
+}
+
 // Composes ACP-facing Session Plan application policy around the authoritative Plan, interaction,
 // Artifact, durable-branch, and publication owners. It owns no mutable state of its own.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimePlanWorkflow = (
   options: AcpRuntimeOptions,
   base: AcpRuntimeBaseOwners,
-  session: AcpRuntimeSessionOwners
+  session: AcpRuntimeSessionOwners,
+  hooks: Readonly<{
+    continuations?: Pick<SessionPlanContinuationOwner, 'begin' | 'clear' | 'rearmUndispatched'>
+  }> = {}
 ) => {
   const service = base.planService
   const interactions = base.planInteractions
   const sessionInteractions = base.sessionInteractions
   const planSessions = options.plan?.sessions
+  const continuationOwner = hooks.continuations
   const pushEvent = (
     event: Omit<AcpRuntimeEvent, 'id' | 'timestamp'> & Partial<AcpRuntimeEvent>
   ): void => session.publication.pushEvent(event)
@@ -98,6 +134,30 @@ const composeAcpRuntimePlanWorkflow = (
       artifactVersionId
     })
   }
+  const beginContinuationReceipt = async (
+    projectId: string,
+    sessionId: string,
+    commandId: string
+  ): Promise<boolean> =>
+    continuationOwner?.begin(projectId, sessionId, commandId) ?? Promise.resolve(false)
+  const clearContinuationReceipt = async (
+    projectId: string,
+    sessionId: string,
+    commandId: string
+  ): Promise<void> => {
+    if (!(await continuationOwner?.clear(projectId, sessionId, commandId))) {
+      throw new Error('The Plan continuation receipt changed before live handoff completed.')
+    }
+  }
+  const rearmContinuationReceipt = async (
+    projectId: string,
+    sessionId: string,
+    commandId: string
+  ): Promise<void> => {
+    if (!(await continuationOwner?.rearmUndispatched(projectId, sessionId, commandId))) {
+      throw new Error('The Plan continuation receipt could not be rearmed after handoff loss.')
+    }
+  }
   const rejectApprovalForInteraction = (
     sessionId: string,
     interactionId: string,
@@ -141,7 +201,13 @@ const composeAcpRuntimePlanWorkflow = (
         revision: result.projection.revision
       })
       publishProjection(input.sessionId, result.projection)
-      return approval
+      return waitForPlanApproval(approval, input.signal, () =>
+        rejectApprovalForInteraction(
+          input.sessionId,
+          interactionId,
+          'The Session Plan RPC transport disconnected while awaiting approval.'
+        )
+      )
     }
     const projection = await service.getProjection(input.projectId, input.sessionId, {
       interactionIsLive: sessionInteractions.current(input.sessionId) !== undefined
@@ -208,6 +274,18 @@ const composeAcpRuntimePlanWorkflow = (
           }
           throw error
         })
+      if (
+        result.continuationCommandId &&
+        (!interactionIsLive ||
+          !(await beginContinuationReceipt(
+            input.projectId,
+            input.sessionId,
+            result.continuationCommandId
+          )))
+      ) {
+        publishProjection(input.sessionId, result.projection)
+        return result
+      }
       if (decision === 'approved') {
         if (requiresHumanFeedback && authorization) {
           if (result.changed) {
@@ -235,17 +313,31 @@ const composeAcpRuntimePlanWorkflow = (
         interactions.releaseExecution(input.sessionId, executionBinding.interactionSequence)
       }
       interactions.resolveApproval(input.sessionId, result)
+      if (result.continuationCommandId) {
+        await clearContinuationReceipt(
+          input.projectId,
+          input.sessionId,
+          result.continuationCommandId
+        )
+      }
+      const handedOffProjection = result.continuationCommandId
+        ? ((await service.getProjection(input.projectId, input.sessionId, {
+            interactionIsLive: true
+          })) ?? result.projection)
+        : result.projection
+      const handedOffResult = { ...result, projection: handedOffProjection }
+      Reflect.deleteProperty(handedOffResult, 'continuationCommandId')
       safeLogInfo('Session Plan response accepted', {
         projectId: input.projectId,
         sessionId: input.sessionId,
         artifactVersionId: result.projection.artifactVersionId,
-        revision: result.projection.revision,
+        revision: handedOffProjection.revision,
         source: requiresHumanFeedback ? 'agent-after-feedback' : 'agent-continuation',
         decision,
         changed: result.changed
       })
-      publishProjection(input.sessionId, result.projection)
-      return result
+      publishProjection(input.sessionId, handedOffProjection)
+      return handedOffResult
     }
     const update = input.input as {
       title: string
@@ -310,7 +402,8 @@ const composeAcpRuntimePlanWorkflow = (
     const approvalInteractionId = interactions.approvalInteractionIdFor(input.sessionId)
     const feedbackInteraction =
       input.decision === undefined ? sessionInteractions.current(input.sessionId) : undefined
-    if (input.decision === undefined) {
+    const detachedFeedback = input.decision === undefined && approvalInteractionId === undefined
+    if (input.decision === undefined && !detachedFeedback) {
       if (
         !approvalInteractionId ||
         feedbackInteraction?.kind !== 'prompt' ||
@@ -332,6 +425,20 @@ const composeAcpRuntimePlanWorkflow = (
     })
     if (!current) throw new Error('The Session has no active Plan.')
     await assertVisibleToDurableBranch(input.projectId, input.sessionId, current)
+    if (detachedFeedback) {
+      const interactionId = current.originatingPromptMessageId
+      if (!interactionId) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'The durable Session Plan interaction is unavailable for feedback.'
+        )
+      }
+      interactions.register({
+        sessionId: input.sessionId,
+        artifactVersionId: current.artifactVersionId,
+        interactionId
+      })
+    }
     const beforeFeedbackPersist =
       input.decision === undefined &&
       approvalInteractionId &&
@@ -359,52 +466,125 @@ const composeAcpRuntimePlanWorkflow = (
             )
           }
         : undefined
-    const result = await service.respond({
-      ...input,
-      interactionIsLive,
-      ...(beforeFeedbackPersist ? { beforeFeedbackPersist } : {})
-    })
+    const beforeDecisionCommit =
+      input.decision !== undefined && approvalInteractionId
+        ? (): boolean =>
+            interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId &&
+            interactions.interactionIdFor(input.sessionId, current.artifactVersionId) ===
+              approvalInteractionId
+        : undefined
+    let result: PlanResponseResult
+    let retriedAfterDecisionDetach = false
+    try {
+      result = await service.respond({
+        ...input,
+        interactionIsLive,
+        ...(beforeDecisionCommit ? { beforeDecisionCommit } : {}),
+        ...(beforeFeedbackPersist ? { beforeFeedbackPersist } : {})
+      })
+    } catch (error) {
+      if (detachedFeedback) {
+        interactions.release(input.sessionId, current.artifactVersionId)
+      }
+      const waiterDetached =
+        input.decision !== undefined &&
+        approvalInteractionId !== undefined &&
+        interactions.approvalInteractionIdFor(input.sessionId) !== approvalInteractionId
+      if (!waiterDetached) throw error
+      retriedAfterDecisionDetach = true
+      result = await service.respond({
+        ...input,
+        interactionIsLive: false
+      })
+    }
     if ('projection' in result) {
       const interaction = sessionInteractions.current(input.sessionId)
-      if (interactionIsLive && result.projection.approval === 'approved') {
-        bindExecutionToCurrentInteraction(input.sessionId, result.projection.artifactVersionId)
-      }
       if (interaction?.kind === 'prompt') {
         interactions.releaseAgentDecisionAuthorization(input.sessionId, interaction.sequence)
       }
-      if (interactionIsLive) interactions.resolveApproval(input.sessionId, result)
+      const sameWaiterIsLive =
+        interactionIsLive &&
+        !retriedAfterDecisionDetach &&
+        approvalInteractionId !== undefined &&
+        interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId
+      if (result.continuationCommandId && !sameWaiterIsLive) {
+        publishProjection(input.sessionId, result.projection)
+        return result
+      }
+      if (
+        result.continuationCommandId &&
+        !(await beginContinuationReceipt(
+          input.projectId,
+          input.sessionId,
+          result.continuationCommandId
+        ))
+      ) {
+        publishProjection(input.sessionId, result.projection)
+        return result
+      }
+      const handedOffResult = { ...result }
+      const resolved =
+        interactionIsLive && interactions.resolveApproval(input.sessionId, handedOffResult)
+      if (result.continuationCommandId && !resolved) {
+        await rearmContinuationReceipt(
+          input.projectId,
+          input.sessionId,
+          result.continuationCommandId
+        )
+        const queuedProjection =
+          (await service.getProjection(input.projectId, input.sessionId, {
+            interactionIsLive: false
+          })) ?? result.projection
+        const rearmed = { ...result, projection: queuedProjection }
+        publishProjection(input.sessionId, queuedProjection)
+        return rearmed
+      }
+      if (resolved && result.projection.approval === 'approved') {
+        bindExecutionToCurrentInteraction(input.sessionId, result.projection.artifactVersionId)
+      }
+      if (result.continuationCommandId) {
+        await clearContinuationReceipt(
+          input.projectId,
+          input.sessionId,
+          result.continuationCommandId
+        )
+      }
+      const handedOffProjection = result.continuationCommandId
+        ? ((await service.getProjection(input.projectId, input.sessionId, {
+            interactionIsLive: true
+          })) ?? result.projection)
+        : result.projection
+      handedOffResult.projection = handedOffProjection
+      Reflect.deleteProperty(handedOffResult, 'continuationCommandId')
       safeLogInfo('Session Plan response accepted', {
         projectId: input.projectId,
         sessionId: input.sessionId,
         artifactVersionId: result.projection.artifactVersionId,
-        revision: result.projection.revision,
+        revision: handedOffProjection.revision,
         source: 'human-button',
         decision: result.projection.approval,
         changed: result.changed
       })
-      publishProjection(input.sessionId, result.projection)
-      return result
+      publishProjection(input.sessionId, handedOffProjection)
+      return handedOffResult
     }
-    if (
-      !approvalInteractionId ||
-      !feedbackInteraction ||
-      feedbackInteraction.kind !== 'prompt' ||
-      result.routeToInteractionId !== approvalInteractionId
-    ) {
-      if (approvalInteractionId) {
-        rejectApprovalForInteraction(
-          input.sessionId,
-          approvalInteractionId,
-          'The paused Session Plan interaction was superseded while feedback was routed.'
-        )
+    if (!detachedFeedback) {
+      if (
+        !approvalInteractionId ||
+        !feedbackInteraction ||
+        feedbackInteraction.kind !== 'prompt' ||
+        result.routeToInteractionId !== approvalInteractionId
+      ) {
+        if (approvalInteractionId) {
+          rejectApprovalForInteraction(
+            input.sessionId,
+            approvalInteractionId,
+            'The paused Session Plan interaction was superseded while feedback was routed.'
+          )
+        }
+        throw new Error('The paused Session Plan interaction is no longer available.')
       }
-      throw new Error('The paused Session Plan interaction is no longer available.')
     }
-    const currentInteraction = sessionInteractions.current(input.sessionId)
-    const interactionIsCurrent =
-      currentInteraction?.kind === 'prompt' &&
-      currentInteraction.sequence === feedbackInteraction.sequence &&
-      currentInteraction.promptMessageId === feedbackInteraction.promptMessageId
     try {
       pushEvent({
         id: `session-user-message-${result.message.id}`,
@@ -420,6 +600,32 @@ const composeAcpRuntimePlanWorkflow = (
     } catch (error) {
       safeLogError('Routed user Message projection callback failed', error)
     }
+    if (detachedFeedback) {
+      return result
+    }
+    if (!approvalInteractionId || feedbackInteraction?.kind !== 'prompt') {
+      throw new Error('The paused Session Plan interaction is no longer available.')
+    }
+    const currentInteraction = sessionInteractions.current(input.sessionId)
+    const interactionIsCurrent =
+      currentInteraction?.kind === 'prompt' &&
+      currentInteraction.sequence === feedbackInteraction.sequence &&
+      currentInteraction.promptMessageId === feedbackInteraction.promptMessageId
+    const sameFeedbackWaiterIsLive =
+      interactionIsCurrent &&
+      interactions.approvalInteractionIdFor(input.sessionId) === approvalInteractionId
+    if (!sameFeedbackWaiterIsLive) {
+      return result
+    }
+    if (
+      !(await beginContinuationReceipt(
+        input.projectId,
+        input.sessionId,
+        result.continuationCommandId
+      ))
+    ) {
+      return result
+    }
     if (interactionIsCurrent) {
       interactions.authorizeAgentDecision({
         sessionId: input.sessionId,
@@ -427,9 +633,25 @@ const composeAcpRuntimePlanWorkflow = (
         interactionSequence: feedbackInteraction.sequence
       })
     }
-    if (!interactions.resolveApproval(input.sessionId, result) && interactionIsCurrent) {
+    const handedOffFeedback = { ...result }
+    const feedbackResolved = interactions.resolveApproval(input.sessionId, handedOffFeedback)
+    if (!feedbackResolved && interactionIsCurrent) {
       interactions.releaseAgentDecisionAuthorization(input.sessionId, feedbackInteraction.sequence)
     }
+    if (!feedbackResolved) {
+      await rearmContinuationReceipt(input.projectId, input.sessionId, result.continuationCommandId)
+      const queuedProjection = await service.getProjection(input.projectId, input.sessionId, {
+        interactionIsLive: false
+      })
+      if (queuedProjection) {
+        result = { ...result, continuationProjection: queuedProjection }
+        publishProjection(input.sessionId, queuedProjection)
+      }
+      return result
+    }
+    await clearContinuationReceipt(input.projectId, input.sessionId, result.continuationCommandId)
+    Reflect.deleteProperty(handedOffFeedback, 'continuationCommandId')
+    Reflect.deleteProperty(handedOffFeedback, 'continuationProjection')
     safeLogInfo('Session Plan feedback routed', {
       projectId: input.projectId,
       sessionId: input.sessionId,
@@ -437,7 +659,7 @@ const composeAcpRuntimePlanWorkflow = (
       revision: current.revision,
       source: 'human-feedback'
     })
-    return result
+    return handedOffFeedback
   }
 
   const preflight = (
@@ -454,6 +676,33 @@ const composeAcpRuntimePlanWorkflow = (
       throw new Error('Session Plan capability is not configured.')
     }
     const continuation = request.planContinuation
+    if (continuation?.settledAction === 'rejected') {
+      return service!
+        .getProjection(continuation.projectId, request.sessionId, { interactionIsLive: false })
+        .then(async (protectedRejected) => {
+          if (!protectedRejected) {
+            throw new PlanCommandError('no-active-plan', 'The Session has no active Plan.')
+          }
+          if (protectedRejected.artifactVersionId !== continuation.artifactVersionId) {
+            throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+          }
+          if (protectedRejected.revision !== continuation.expectedRevision) {
+            throw new PlanCommandError('revision-conflict', 'The Plan revision is stale.')
+          }
+          if (protectedRejected.approval !== 'rejected') {
+            throw new PlanCommandError(
+              'approval-already-decided',
+              'The Plan rejection changed before continuation.'
+            )
+          }
+          await assertVisibleToDurableBranch(
+            continuation.projectId,
+            request.sessionId,
+            protectedRejected
+          )
+          return Object.freeze({ protectedRejected })
+        })
+    }
     if (continuation?.pendingAction === undefined && continuation) {
       return service!
         .authorizeContinuation({
@@ -499,6 +748,7 @@ const composeAcpRuntimePlanWorkflow = (
     plan: AcpPromptTurnPlanContext
   ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> => {
     let { authorized, protectedPending } = plan
+    const { protectedRejected } = plan
     const continuation = request.planContinuation
     const decision = continuation?.pendingAction
     const committed = (): AcpPromptTurnPlanContext => {
@@ -511,7 +761,8 @@ const composeAcpRuntimePlanWorkflow = (
       }
       return Object.freeze({
         ...(authorized ? { authorized } : {}),
-        ...(protectedPending ? { protectedPending } : {})
+        ...(protectedPending ? { protectedPending } : {}),
+        ...(protectedRejected ? { protectedRejected } : {})
       })
     }
     if (continuation && (decision === 'approve' || decision === 'reject')) {

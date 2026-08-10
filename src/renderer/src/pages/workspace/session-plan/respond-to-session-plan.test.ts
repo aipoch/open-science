@@ -71,6 +71,18 @@ describe('respondToSessionPlan', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(approvedProjection)
   })
 
+  it('preserves the authoritative response projection when refresh returns an older revision', async () => {
+    respondPlan.mockResolvedValue({ changed: true, projection: approvedProjection })
+    getPlanProjection.mockResolvedValue(projection)
+
+    await respondToSessionPlan(
+      { projectId: 'project-1', sessionId: 'session-1', projection },
+      'approved'
+    )
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(approvedProjection)
+  })
+
   it('projects returned feedback immediately as a standard user Message', async () => {
     respondPlan.mockResolvedValue({
       kind: 'feedback',

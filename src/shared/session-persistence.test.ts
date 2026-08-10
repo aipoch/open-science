@@ -1107,6 +1107,250 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.error).toBeUndefined()
   })
 
+  it('preserves the Plan materialization boundary across restart', () => {
+    const plan = { ...createRuntimePlan(), materializedAt: 42 }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 3, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan?.materializedAt).toBe(42)
+  })
+
+  it('restores a queued approved-Plan continuation command for durable dispatch', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      status: 'idle',
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        plan: {
+          ...createRuntimePlan(),
+          approval: 'approved',
+          continuation: {
+            commandId: 'continuation-1',
+            kind: 'approved-plan',
+            state: 'queued',
+            originatingPromptMessageId: 'prompt-plan-1',
+            createdAt: 42
+          }
+        }
+      }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual({
+      commandId: 'continuation-1',
+      kind: 'approved-plan',
+      state: 'queued',
+      originatingPromptMessageId: 'prompt-plan-1',
+      createdAt: 42
+    })
+  })
+
+  it('preserves neutral Plan review feedback across restart while approval remains pending', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      reviewFeedbackMessageId: 'feedback-message-1'
+    }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 4, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toEqual(plan)
+  })
+
+  it.each([
+    { approval: 'approved', kind: 'approved-plan' },
+    { approval: 'rejected', kind: 'rejected-plan' }
+  ] as const)(
+    'restores a queued $kind continuation paired to its $approval Plan',
+    ({ approval, kind }) => {
+      const continuation = {
+        commandId: `continuation-${approval}`,
+        kind,
+        state: 'queued' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+      const restored = normalizeSessionFile(
+        createSessionFile({
+          ...(createSessionWithActivity(undefined) as PersistedChatSession),
+          activities: undefined,
+          runtimeContext: {
+            version: 1,
+            revision: 4,
+            plan: { ...createRuntimePlan(), approval, continuation }
+          }
+        })
+      )
+
+      expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+    }
+  )
+
+  it('restores a queued review-feedback continuation paired to its pending Plan marker', () => {
+    const continuation = {
+      commandId: 'continuation-feedback',
+      kind: 'review-feedback' as const,
+      state: 'queued' as const,
+      originatingPromptMessageId: 'feedback-message-1',
+      createdAt: 42
+    }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          plan: {
+            ...createRuntimePlan(),
+            reviewFeedbackMessageId: 'feedback-message-1',
+            continuation
+          }
+        }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+  })
+
+  it.each([
+    {
+      name: 'review marker on an approved Plan',
+      plan: {
+        ...createRuntimePlan(),
+        approval: 'approved' as const,
+        reviewFeedbackMessageId: 'feedback-message-1'
+      },
+      missing: 'reviewFeedbackMessageId'
+    },
+    {
+      name: 'review continuation whose origin differs from its marker',
+      plan: {
+        ...createRuntimePlan(),
+        reviewFeedbackMessageId: 'feedback-message-1',
+        continuation: {
+          commandId: 'continuation-feedback',
+          kind: 'review-feedback' as const,
+          state: 'queued' as const,
+          originatingPromptMessageId: 'different-message',
+          createdAt: 42
+        }
+      },
+      missing: 'continuation'
+    },
+    {
+      name: 'rejected continuation whose origin differs from the Plan origin',
+      plan: {
+        ...createRuntimePlan(),
+        approval: 'rejected' as const,
+        continuation: {
+          commandId: 'continuation-rejected',
+          kind: 'rejected-plan' as const,
+          state: 'queued' as const,
+          originatingPromptMessageId: 'different-message',
+          createdAt: 42
+        }
+      },
+      missing: 'continuation'
+    }
+  ])('drops an invalid $name without losing the Plan', ({ plan, missing }) => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: { version: 1, revision: 4, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toBeDefined()
+    expect(restored?.runtimeContext?.plan).not.toHaveProperty(missing)
+  })
+
+  it('preserves a continuing approved-Plan command as a fail-closed dispatch tombstone', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      approval: 'approved' as const,
+      continuation: {
+        commandId: 'continuation-1',
+        kind: 'approved-plan' as const,
+        state: 'continuing' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 5, plan }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
+      plan.continuation
+    )
+  })
+
+  it('restores an interrupted approved-Plan command without making it dispatchable', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      approval: 'approved' as const,
+      continuation: {
+        commandId: 'continuation-1',
+        kind: 'approved-plan' as const,
+        state: 'interrupted' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 6, plan }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
+      plan.continuation
+    )
+  })
+
+  it('drops a malformed continuation command without losing the approved Plan', () => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 5,
+          plan: {
+            ...createRuntimePlan(),
+            approval: 'approved',
+            continuation: {
+              commandId: 'continuation-1',
+              kind: 'approved-plan',
+              state: 'unknown' as never,
+              originatingPromptMessageId: 'prompt-plan-1',
+              createdAt: 42
+            }
+          }
+        }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toMatchObject({ approval: 'approved' })
+    expect(restored?.runtimeContext?.plan).not.toHaveProperty('continuation')
+  })
+
   it('normalizes legacy permission authority to pending and accepts only known lifecycle states', () => {
     const permission = {
       request: {

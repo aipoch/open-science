@@ -1,6 +1,14 @@
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import type { ToolActivity } from '@/stores/session-store'
-import { AlertCircle, Check, ChevronRight, LoaderCircle, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  ChevronRight,
+  Circle,
+  LoaderCircle,
+  TriangleAlert,
+  X
+} from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import { projectGeneratePlanActivity } from './generate-plan-activity-projection'
@@ -9,6 +17,7 @@ import { buildToolActivityDetails } from './workspace-tool-activity-details'
 
 type WorkspacePlanActivityRecordProps = Readonly<{
   activity: ToolActivity
+  hasDurablePlanAuthority?: boolean
   contentPaddingClassName?: string
 }>
 
@@ -17,16 +26,18 @@ const COMPACT_STEP_COUNT = 5
 
 const WorkspacePlanActivityRecord = ({
   activity,
+  hasDurablePlanAuthority = false,
   contentPaddingClassName = 'px-4 md:px-6'
 }: WorkspacePlanActivityRecordProps): React.JSX.Element => {
-  const projection = projectGeneratePlanActivity(activity)
+  const projection = projectGeneratePlanActivity(activity, hasDurablePlanAuthority)
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(() => new Set())
   const [showAllSteps, setShowAllSteps] = useState(false)
   const [taskSummaryExpanded, setTaskSummaryExpanded] = useState(false)
   const [taskSummaryOverflows, setTaskSummaryOverflows] = useState(false)
   const [failureDetailsExpanded, setFailureDetailsExpanded] = useState(false)
   const taskSummaryRef = useRef<HTMLParagraphElement>(null)
-  const isActive = activity.status === 'pending' || activity.status === 'in_progress'
+  const isActive =
+    !hasDurablePlanAuthority && (activity.status === 'pending' || activity.status === 'in_progress')
   const failureDetails =
     projection.kind === 'failed' ? buildToolActivityDetails(activity) : undefined
   const projectedTaskSummary = projection.kind === 'content' ? projection.taskSummary : undefined
@@ -104,6 +115,10 @@ const WorkspacePlanActivityRecord = ({
     <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
   ) : projection.kind === 'failed' ? (
     <AlertCircle className="size-3.5" aria-hidden="true" />
+  ) : projection.kind === 'revision-conflict' ? (
+    <TriangleAlert className="size-3.5 text-warning-900" aria-hidden="true" />
+  ) : projection.kind === 'already-pending' ? (
+    <Circle className="size-3.5 text-text-300" aria-hidden="true" />
   ) : projection.kind === 'rejected' ? (
     <X className="size-3.5" aria-hidden="true" />
   ) : (
@@ -222,6 +237,10 @@ const WorkspacePlanActivityRecord = ({
                 </span>
                 <span>{projection.feasibility.summary}</span>
               </div>
+            </div>
+          ) : projection.kind === 'revision-conflict' ? (
+            <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-warning-100/50 bg-warning-100/10 px-[13px] py-[11px] text-[12px] text-text-300">
+              {projection.detail}
             </div>
           ) : projection.kind === 'unavailable' ? (
             <div className="mb-[7px] ml-[31px] mr-[7px] rounded-[9px] border border-border-200 bg-bg-000 px-[13px] py-[11px] text-[12px] text-text-300">

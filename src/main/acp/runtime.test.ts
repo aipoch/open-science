@@ -62,7 +62,11 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../shared/conversation-graph'
-import type { PersistedChatSession, SessionRuntimeContext } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession,
+  type SessionRuntimeContext
+} from '../../shared/session-persistence'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
@@ -3045,6 +3049,402 @@ describe('ACP runtime session management', () => {
     Object.assign(internals, { sessionPlanWorkflow })
     Object.assign(internals.promptTurnWorkflow.options, { plan: sessionPlanWorkflow.prompt })
   }
+
+  it('continues a detached approved Plan with one hidden durable Attempt', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s1'])
+    const promptAttempts: Array<string | undefined> = []
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 4,
+      plan: {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: 'a'.repeat(64),
+        originatingPromptMessageId: 'plan-origin',
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    }
+    const messages: PersistedChatSession['messages'] = [
+      {
+        id: 'plan-origin',
+        role: 'user',
+        content: 'Analyze the dataset.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const persistedSession: PersistedChatSession = {
+      id: 's1',
+      projectId: 'project-1',
+      title: 'Detached Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 's1',
+        messages,
+        frameworkId: opencodeFramework.id,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const sessions = {
+      readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+      patchSessionRuntimeContext: vi.fn(async (command) => {
+        expect(command.expectedRevision).toBe(runtimeContext.revision)
+        runtimeContext = {
+          ...runtimeContext,
+          ...command.patch,
+          revision: runtimeContext.revision + 1
+        }
+        return structuredClone(runtimeContext)
+      }),
+      appendUserMessageToInteraction: vi.fn(),
+      containsMessageOnActiveBranch: vi.fn(async () => true),
+      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPromptStarted: (_sessionId, _turnToken, promptAttemptId) =>
+          promptAttempts.push(promptAttemptId)
+      },
+      plan: {
+        mcpEntryPath: '/unused',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'token' }),
+        sessions
+      },
+      permissionWait: { sessions }
+    })
+    const pending = restoredPlanProjection('pending', 4)
+    const approved = {
+      ...restoredPlanProjection('approved', 5),
+      continuationState: 'queued' as const
+    }
+    installPromptPlanTestWorkflow(runtime, {
+      getProjection: vi.fn(async () => pending),
+      respond: vi.fn(async () => {
+        runtimeContext = {
+          ...runtimeContext,
+          revision: 5,
+          plan: {
+            ...runtimeContext.plan!,
+            approval: 'approved',
+            continuation: {
+              commandId: 'plan-continuation-1',
+              kind: 'approved-plan',
+              state: 'queued',
+              originatingPromptMessageId: 'plan-origin',
+              createdAt: 2
+            }
+          }
+        }
+        return { projection: approved, changed: true }
+      }),
+      authorizeContinuation: vi.fn(async () => restoredPlanProjection('approved', 6))
+    })
+
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+    await runtime.respondSessionPlan({
+      projectId: 'project-1',
+      sessionId: 's1',
+      artifactVersionId: 'version-1',
+      expectedRevision: 4,
+      decision: 'approved'
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
+    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(promptAttempts).toEqual([undefined])
+    await vi.waitFor(() => expect(runtimeContext.plan?.continuation).toBeUndefined())
+  })
+
+  const createDurablePlanResumeHarness = (
+    state: 'queued' | 'continuing',
+    options: Readonly<{
+      stopReason?: PromptResponse['stopReason']
+      kind?: 'approved-plan' | 'rejected-plan' | 'review-feedback'
+    }> = {}
+  ): Readonly<{
+    runtime: AcpRuntime
+    fakeAgent: ReturnType<typeof startFakeAgent>
+    promptAttempts: Array<string | undefined>
+    readSessionRuntimeContext: ReturnType<typeof vi.fn>
+    patchSessionRuntimeContext: ReturnType<typeof vi.fn>
+    runtimeContext: () => SessionRuntimeContext
+  }> => {
+    const continuationKind = options.kind ?? 'approved-plan'
+    const approval =
+      continuationKind === 'approved-plan'
+        ? 'approved'
+        : continuationKind === 'rejected-plan'
+          ? 'rejected'
+          : 'pending'
+    const continuationOrigin =
+      continuationKind === 'review-feedback' ? 'feedback-message-1' : 'plan-origin'
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, [], {
+      supportsResume: true,
+      ...(options.stopReason ? { onPrompt: () => ({ stopReason: options.stopReason! }) } : {})
+    })
+    const promptAttempts: Array<string | undefined> = []
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 5,
+      plan: {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: 'a'.repeat(64),
+        originatingPromptMessageId: 'plan-origin',
+        approval,
+        ...(continuationKind === 'review-feedback'
+          ? { reviewFeedbackMessageId: continuationOrigin }
+          : {}),
+        continuation: {
+          commandId: 'plan-continuation-resume-1',
+          kind: continuationKind,
+          state,
+          originatingPromptMessageId: continuationOrigin,
+          createdAt: 2
+        },
+        stepStatuses: {}
+      }
+    }
+    const messages: PersistedChatSession['messages'] = [
+      {
+        id: 'plan-origin',
+        role: 'user',
+        content: 'Analyze the restored dataset.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      ...(continuationKind === 'review-feedback'
+        ? [
+            {
+              id: continuationOrigin,
+              role: 'user' as const,
+              content: 'Split the analysis by cohort.',
+              status: 'complete' as const,
+              eventIds: [],
+              responseToMessageId: 'plan-origin',
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        : [])
+    ]
+    const initialMessages = messages.slice(0, 1)
+    const persistedSession: PersistedChatSession = materializeSessionConversationGraph({
+      id: 'restored-plan-session',
+      projectId: 'project-1',
+      title: 'Restored approved Plan',
+      cwd: '/workspace',
+      status: 'idle',
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'restored-plan-session',
+        messages: initialMessages,
+        frameworkId: opencodeFramework.id,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const readSessionRuntimeContext = vi.fn(async () => structuredClone(runtimeContext))
+    const patchSessionRuntimeContext = vi.fn(
+      async (
+        command: Parameters<SessionPersistenceCoordinator['patchSessionRuntimeContext']>[0]
+      ) => {
+        expect(command.expectedRevision).toBe(runtimeContext.revision)
+        runtimeContext = {
+          ...runtimeContext,
+          ...command.patch,
+          revision: runtimeContext.revision + 1
+        }
+        return structuredClone(runtimeContext)
+      }
+    )
+    const sessions = {
+      readSessionRuntimeContext,
+      patchSessionRuntimeContext,
+      appendUserMessageToInteraction: vi.fn(),
+      containsMessageOnActiveBranch: vi.fn(async () => true),
+      loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      callbacks: {
+        onPromptStarted: (_sessionId, _turnToken, promptAttemptId) =>
+          promptAttempts.push(promptAttemptId)
+      },
+      plan: {
+        mcpEntryPath: '/unused',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'token' }),
+        sessions
+      },
+      permissionWait: { sessions }
+    })
+    installPromptPlanTestWorkflow(runtime, {
+      authorizeContinuation: vi.fn(async () => restoredPlanProjection('approved', 6)),
+      getProjection: vi.fn(async () => restoredPlanProjection(approval, runtimeContext.revision))
+    })
+    return {
+      runtime,
+      fakeAgent,
+      promptAttempts,
+      readSessionRuntimeContext,
+      patchSessionRuntimeContext,
+      runtimeContext: () => runtimeContext
+    }
+  }
+
+  it('dispatches one hidden queued Plan continuation after Session resume and clears it', async () => {
+    const fixture = createDurablePlanResumeHarness('queued')
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    expect(fixture.fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
+    expect(fixture.promptAttempts).toEqual([undefined])
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.continuation).toBeUndefined())
+  })
+
+  it('dispatches one hidden rejected-Plan continuation after Session resume and clears it', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', { kind: 'rejected-plan' })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    expect(fixture.fakeAgent.prompts[0]?.text).toContain('rejected the pending Session Plan')
+    expect(fixture.fakeAgent.prompts[0]?.text).toContain('approval=rejected')
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.continuation).toBeUndefined())
+  })
+
+  it('dispatches persisted Plan review feedback once without duplicating its user Message', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', { kind: 'review-feedback' })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    expect(fixture.fakeAgent.prompts[0]?.text).toContain('Split the analysis by cohort.')
+    expect(
+      fixture.runtime
+        .getSnapshot()
+        .events.some((event) => event.kind === 'message' && event.role === 'user')
+    ).toBe(false)
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.continuation).toBeUndefined())
+  })
+
+  it('keeps a continuing Plan fail-closed after Session resume without dispatch or writes', async () => {
+    const fixture = createDurablePlanResumeHarness('continuing')
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(fixture.fakeAgent.prompts).toHaveLength(0)
+    expect(fixture.promptAttempts).toEqual([])
+    expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
+    expect(fixture.runtimeContext().plan?.continuation?.state).toBe('continuing')
+  })
+
+  it('keeps continuing review feedback fail-closed after resume without replay', async () => {
+    const fixture = createDurablePlanResumeHarness('continuing', { kind: 'review-feedback' })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.readSessionRuntimeContext).toHaveBeenCalled())
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+    expect(fixture.fakeAgent.prompts).toHaveLength(0)
+    expect(fixture.patchSessionRuntimeContext).not.toHaveBeenCalled()
+  })
+
+  it('settles a cancelled hidden approved-Plan continuation as interrupted without replaying it', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', { stopReason: 'cancelled' })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() =>
+      expect(fixture.runtimeContext().plan?.continuation?.state).toBe('interrupted')
+    )
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+
+    expect(fixture.fakeAgent.prompts).toHaveLength(1)
+  })
+
+  it('settles cancelled hidden review feedback as interrupted', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', {
+      kind: 'review-feedback',
+      stopReason: 'cancelled'
+    })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() =>
+      expect(fixture.runtimeContext().plan?.continuation).toMatchObject({
+        kind: 'review-feedback',
+        state: 'interrupted'
+      })
+    )
+  })
 
   it('activates one interaction before durably approving a restored Plan', async () => {
     const process = new FakeAgentProcess()
@@ -23207,6 +23607,9 @@ describe('Specialist Skill scoping', () => {
             return context
           },
           appendUserMessageToInteraction: async () => {
+            throw new Error('not used in this test')
+          },
+          loadSessionForContinuation: async () => {
             throw new Error('not used in this test')
           },
           containsMessageOnActiveBranch: async () => true

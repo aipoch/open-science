@@ -30,6 +30,7 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearLivePermissionProfile'>
   elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
+  clearUserChoiceProvenanceForSession: (sessionId: string) => void
   appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
@@ -74,6 +75,7 @@ export class AcpSessionReplacementWorkflow {
       }
 
       this.deps.permission.cancelForSession(request.sessionId)
+      this.deps.clearUserChoiceProvenanceForSession(request.sessionId)
       this.deps.elicitation.cancelForSession(request.sessionId)
       this.deps.appContinuations.delete(request.sessionId)
       this.deps.permission.clearLivePermissionProfile(request.sessionId)

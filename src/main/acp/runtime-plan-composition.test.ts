@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -18,7 +19,9 @@ vi.mock('../logger', async (importOriginal) => {
 })
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { SessionRuntimeContext } from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
+import { PlanService } from '../session-plan/plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -73,6 +76,13 @@ const createHarness = (): {
   sessionInteractions: AcpSessionInteractionOwner
   interaction: ReturnType<AcpSessionInteractionOwner['claim']>
   respond: ReturnType<typeof vi.fn>
+  queueSettledDecisionContinuation: ReturnType<typeof vi.fn>
+  queueReviewFeedbackContinuation: ReturnType<typeof vi.fn>
+  continuations: Readonly<{
+    begin: ReturnType<typeof vi.fn>
+    clear: ReturnType<typeof vi.fn>
+    rearmUndispatched: ReturnType<typeof vi.fn>
+  }>
 } => {
   const interactions = new SessionPlanInteractionOwner()
   const sessionInteractions = new AcpSessionInteractionOwner()
@@ -91,13 +101,27 @@ const createHarness = (): {
     return { projection: current, pauseInteraction: true as const }
   })
   const respond = vi.fn(async (rawInput: unknown) => {
-    const input = rawInput as { feedback?: string; decision?: 'approved' | 'rejected' }
+    const input = rawInput as {
+      feedback?: string
+      decision?: 'approved' | 'rejected'
+      beforeDecisionCommit?: () => boolean
+      beforeFeedbackPersist?: () => void
+    }
     if (input.feedback !== undefined) {
+      input.beforeFeedbackPersist?.()
       interactions.release('session-1', current.artifactVersionId)
+      current = {
+        ...current,
+        revision: current.revision + 1,
+        continuationState: 'queued'
+      }
       return {
         kind: 'feedback' as const,
         routeToInteractionId: 'prompt-1',
         artifactVersionId: current.artifactVersionId,
+        planRevision: current.revision,
+        continuationCommandId: 'receipt-1',
+        continuationProjection: current,
         text: input.feedback,
         message: {
           id: 'feedback-message-1',
@@ -108,21 +132,59 @@ const createHarness = (): {
         }
       }
     }
+    if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
+      throw new Error('decision authorization revoked')
+    }
     current =
       input.decision === 'approved'
-        ? approvedProjection(current.revision + 1)
-        : { ...current, approval: 'rejected' as const, lifecycle: 'rejected' as const }
-    return { projection: current, changed: true }
+        ? { ...approvedProjection(current.revision + 1), continuationState: 'queued' as const }
+        : {
+            ...current,
+            revision: current.revision + 1,
+            approval: 'rejected' as const,
+            lifecycle: 'rejected' as const,
+            continuationState: 'queued' as const
+          }
+    return { projection: current, changed: true, continuationCommandId: 'receipt-1' }
   })
   const updateStepStatus = vi.fn(async () => {
     current = approvedProjection(current.revision + 1)
+    return { projection: current, changed: true }
+  })
+  const queueSettledDecisionContinuation = vi.fn(async () => {
+    current = { ...current, continuationState: 'queued' as const }
+    return { projection: current, changed: true }
+  })
+  const queueReviewFeedbackContinuation = vi.fn(async () => {
+    current = { ...current, continuationState: 'queued' as const }
     return { projection: current, changed: true }
   })
   const service = {
     generate,
     respond,
     updateStepStatus,
+    queueSettledDecisionContinuation,
+    queueReviewFeedbackContinuation,
     getProjection: vi.fn(async () => current)
+  }
+  const continuations = {
+    begin: vi.fn(async () => {
+      if (current.continuationState !== 'queued') return false
+      current = { ...current, revision: current.revision + 1, continuationState: 'continuing' }
+      return true
+    }),
+    clear: vi.fn(async () => {
+      if (current.continuationState !== 'continuing') return false
+      const cleared = { ...current }
+      Reflect.deleteProperty(cleared, 'continuationState')
+      current = { ...cleared, revision: current.revision + 1 }
+      return true
+    }),
+    rearmUndispatched: vi.fn(async () => {
+      if (current.continuationState !== 'continuing') return false
+      current = { ...current, revision: current.revision + 1, continuationState: 'queued' }
+      return true
+    })
   }
   const publication = { pushEvent: vi.fn() }
   const workflow = composeAcpRuntimePlanWorkflow(
@@ -140,10 +202,20 @@ const createHarness = (): {
     {
       publication,
       sessionEnvironment: { projectName: vi.fn(() => 'project-1') }
-    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
+    { continuations }
   )
 
-  return { workflow, interactions, sessionInteractions, interaction, respond }
+  return {
+    workflow,
+    interactions,
+    sessionInteractions,
+    interaction,
+    respond,
+    queueSettledDecisionContinuation,
+    queueReviewFeedbackContinuation,
+    continuations
+  }
 }
 
 beforeEach(() => {
@@ -151,6 +223,31 @@ beforeEach(() => {
 })
 
 describe('ACP Session Plan approval causality', () => {
+  it('aborts generate by clearing the real approval waiter while retaining the pending Plan', async () => {
+    const harness = createHarness()
+    const controller = new AbortController()
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {},
+      signal: controller.signal
+    })
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+
+    controller.abort()
+
+    await expect(generation).rejects.toThrow('Session Plan RPC transport disconnected.')
+    expect(harness.interactions.approvalInteractionIdFor('session-1')).toBeUndefined()
+    await expect(harness.workflow.projection('project-1', 'session-1')).resolves.toMatchObject({
+      approval: 'pending'
+    })
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
   it('rejects concurrent Agent self-approval, then accepts one decision after routed human feedback', async () => {
     const harness = createHarness()
     const generation = harness.workflow.call({
@@ -178,6 +275,9 @@ describe('ACP Session Plan approval causality', () => {
       feedback: 'private-feedback-marker'
     })
     await expect(generation).resolves.toEqual(feedback)
+    expect(harness.continuations.begin).toHaveBeenCalledWith('project-1', 'session-1', 'receipt-1')
+    expect(harness.continuations.clear).toHaveBeenCalledWith('project-1', 'session-1', 'receipt-1')
+    expect('continuationProjection' in feedback).toBe(false)
 
     await expect(
       harness.workflow.call({
@@ -248,11 +348,392 @@ describe('ACP Session Plan approval causality', () => {
       'Session Plan response accepted',
       expect.objectContaining({ source: 'human-button', decision: 'approved' })
     )
+    expect(harness.continuations.begin).toHaveBeenCalledOnce()
+    expect(harness.continuations.clear).toHaveBeenCalledOnce()
+    expect(harness.continuations.rearmUndispatched).not.toHaveBeenCalled()
+    expect('projection' in result && result.projection.continuationState).toBeUndefined()
     harness.sessionInteractions.release(harness.interaction)
+  })
+
+  it('retains a queued decision receipt when the app exits before live handoff begins', async () => {
+    const harness = createHarness()
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {}
+    })
+    void generation.catch(() => undefined)
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    harness.continuations.begin.mockRejectedValueOnce(new Error('app exited'))
+
+    await expect(
+      harness.workflow.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 1,
+        decision: 'approved'
+      })
+    ).rejects.toThrow('app exited')
+
+    await expect(harness.workflow.projection('project-1', 'session-1')).resolves.toMatchObject({
+      approval: 'approved',
+      continuationState: 'queued'
+    })
+    expect(harness.continuations.clear).not.toHaveBeenCalled()
+    harness.interactions.rejectApproval('session-1', 'test cleanup')
+  })
+
+  it.each(['decision', 'feedback'] as const)(
+    'keeps a claimed %s receipt continuing when live handoff throws',
+    async (kind) => {
+      const harness = createHarness()
+      const generation = harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+      void generation.catch(() => undefined)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      vi.spyOn(harness.interactions, 'resolveApproval').mockImplementationOnce(() => {
+        throw new Error('handoff failed')
+      })
+
+      const response =
+        kind === 'decision'
+          ? harness.workflow.respond({
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              artifactVersionId: 'version-1',
+              expectedRevision: 1,
+              decision: 'approved'
+            })
+          : harness.workflow.respond({
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              feedback: 'Split the analysis by cohort.'
+            })
+
+      await expect(response).rejects.toThrow('handoff failed')
+      await expect(harness.workflow.projection('project-1', 'session-1')).resolves.toMatchObject({
+        continuationState: 'continuing'
+      })
+      expect(harness.continuations.clear).not.toHaveBeenCalled()
+      expect(harness.continuations.rearmUndispatched).not.toHaveBeenCalled()
+      harness.interactions.rejectApproval('session-1', 'test cleanup')
+    }
+  )
+
+  it.each(['decision', 'feedback'] as const)(
+    'rearms a claimed %s receipt when the live waiter disappears during handoff',
+    async (kind) => {
+      const harness = createHarness()
+      const generation = harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+      void generation.catch(() => undefined)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      vi.spyOn(harness.interactions, 'resolveApproval').mockReturnValueOnce(false)
+
+      const result = await (kind === 'decision'
+        ? harness.workflow.respond({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            artifactVersionId: 'version-1',
+            expectedRevision: 1,
+            decision: 'approved'
+          })
+        : harness.workflow.respond({
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            feedback: 'Split the analysis by cohort.'
+          }))
+
+      expect(harness.continuations.begin).toHaveBeenCalledOnce()
+      expect(harness.continuations.rearmUndispatched).toHaveBeenCalledOnce()
+      expect(harness.continuations.clear).not.toHaveBeenCalled()
+      expect(
+        'projection' in result
+          ? result.projection.continuationState
+          : result.continuationProjection?.continuationState
+      ).toBe('queued')
+      harness.interactions.rejectApproval('session-1', 'test cleanup')
+    }
+  )
+
+  it.each(['approved', 'rejected'] as const)(
+    'queues a durable %s continuation when transport detaches after decision commit',
+    async (decision) => {
+      const harness = createHarness()
+      const generation = harness.workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: {}
+      })
+      void generation.catch(() => undefined)
+      await vi.waitFor(() =>
+        expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+      )
+      harness.respond.mockImplementationOnce(async (rawInput: unknown) => {
+        const input = rawInput as { beforeDecisionCommit?: () => boolean }
+        expect(input.beforeDecisionCommit?.()).toBe(true)
+        harness.interactions.rejectApproval('session-1', 'transport detached')
+        return {
+          projection:
+            decision === 'approved'
+              ? { ...approvedProjection(2), continuationState: 'queued' as const }
+              : {
+                  ...pendingProjection(),
+                  revision: 2,
+                  approval: 'rejected' as const,
+                  lifecycle: 'rejected' as const,
+                  continuationState: 'queued' as const
+                },
+          changed: true,
+          continuationCommandId: 'receipt-1'
+        }
+      })
+
+      const result = await harness.workflow.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: 'version-1',
+        expectedRevision: 1,
+        decision
+      })
+
+      expect(harness.queueSettledDecisionContinuation).not.toHaveBeenCalled()
+      expect(harness.continuations.begin).not.toHaveBeenCalled()
+      expect('projection' in result && result.projection.continuationState).toBe('queued')
+      expect(harness.interactions.executionBindingFor('session-1')).toBeUndefined()
+    }
+  )
+
+  it('queues durable review feedback when transport detaches after its Message commit', async () => {
+    const harness = createHarness()
+    const generation = harness.workflow.call({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      operation: 'generate',
+      input: {}
+    })
+    void generation.catch(() => undefined)
+    await vi.waitFor(() =>
+      expect(harness.interactions.approvalInteractionIdFor('session-1')).toBe('prompt-1')
+    )
+    harness.respond.mockImplementationOnce(async (rawInput: unknown) => {
+      const input = rawInput as { beforeFeedbackPersist?: () => void; feedback: string }
+      input.beforeFeedbackPersist?.()
+      harness.interactions.release('session-1', 'version-1')
+      harness.interactions.rejectApproval('session-1', 'transport detached')
+      return {
+        kind: 'feedback' as const,
+        routeToInteractionId: 'prompt-1',
+        artifactVersionId: 'version-1',
+        planRevision: 2,
+        continuationCommandId: 'receipt-1',
+        continuationProjection: {
+          ...pendingProjection(),
+          revision: 2,
+          continuationState: 'queued' as const
+        },
+        text: input.feedback,
+        message: {
+          id: 'feedback-message-1',
+          role: 'user' as const,
+          content: input.feedback,
+          createdAt: 42,
+          responseToMessageId: 'prompt-1'
+        }
+      }
+    })
+
+    const result = await harness.workflow.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Split the analysis by cohort.'
+    })
+
+    expect(harness.queueReviewFeedbackContinuation).not.toHaveBeenCalled()
+    expect(harness.continuations.begin).not.toHaveBeenCalled()
+    expect('continuationProjection' in result && result.continuationProjection).toMatchObject({
+      approval: 'pending',
+      continuationState: 'queued'
+    })
+    expect(harness.interactions.executionBindingFor('session-1')).toBeUndefined()
   })
 })
 
 describe('ACP Runtime Session Plan composition', () => {
+  it('atomically records detached feedback before allowing a revised Plan generation', async () => {
+    const interactions = new SessionPlanInteractionOwner()
+    const sessionInteractions = new AcpSessionInteractionOwner()
+    let context: SessionRuntimeContext = { version: 1, revision: 0 }
+    let version = 0
+    const artifacts = new Map<string, { content: string; checksum: string }>()
+    const persistUserMessage = vi.fn(
+      async (input: {
+        content: string
+        interactionId: string
+        beforePersist?: () => void
+        markPlanReview?: {
+          expectedRevision: number
+          plan: NonNullable<SessionRuntimeContext['plan']>
+          commandId: string
+          createdAt: number
+        }
+      }) => {
+        input.beforePersist?.()
+        const review = input.markPlanReview
+        if (!review || review.expectedRevision !== context.revision) {
+          throw new Error('revision conflict')
+        }
+        const message = {
+          id: 'feedback-message-1',
+          role: 'user' as const,
+          content: input.content,
+          status: 'complete' as const,
+          eventIds: [],
+          createdAt: 42,
+          updatedAt: 42,
+          responseToMessageId: input.interactionId
+        }
+        context = {
+          version: 1,
+          revision: context.revision + 1,
+          plan: {
+            ...review.plan,
+            reviewFeedbackMessageId: message.id,
+            continuation: {
+              commandId: review.commandId,
+              kind: 'review-feedback',
+              state: 'queued',
+              originatingPromptMessageId: message.id,
+              createdAt: review.createdAt
+            }
+          }
+        }
+        return message
+      }
+    )
+    const service = new PlanService({
+      interactions,
+      writeArtifactForActiveTurn: vi.fn(async (_sessionId, input) => {
+        version += 1
+        const versionId = `version-${version}`
+        const checksum = createHash('sha256').update(input.content).digest('hex')
+        artifacts.set(versionId, { content: input.content, checksum })
+        return { artifactId: 'artifact-1', versionId, checksum, name: input.filename }
+      }),
+      readArtifactVersion: vi.fn(async ({ artifactVersionId }) =>
+        artifacts.get(artifactVersionId)!
+      ),
+      readRuntimeContext: vi.fn(async () => context),
+      patchRuntimeContext: vi.fn(async ({ expectedRevision, plan }) => {
+        if (expectedRevision !== context.revision) throw new Error('revision conflict')
+        context = { version: 1, revision: context.revision + 1, ...(plan ? { plan } : {}) }
+        return context
+      }),
+      isRevisionConflict: (error) =>
+        error instanceof Error && error.message === 'revision conflict',
+      persistUserMessage,
+      now: () => 42,
+      createId: () => `plan-${version + 1}`,
+      createCommandId: () => 'feedback-command-1'
+    })
+    const originalContent = {
+      task_summary: 'Analyze the dataset.',
+      phases: [
+        {
+          name: 'Analysis',
+          delegations: [
+            {
+              name: 'Primary agent',
+              steps: [{ title: 'Analyze', description: 'Analyze the dataset.' }]
+            }
+          ]
+        }
+      ],
+      desired_outputs: ['Result'],
+      feasibility: { confidence: 'high' as const, rationale: 'Ready.' }
+    }
+    const original = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'plan-origin',
+      content: originalContent
+    })
+    interactions.release('session-1', original.projection.artifactVersionId)
+    const workflow = composeAcpRuntimePlanWorkflow(
+      {
+        plan: { sessions: { containsMessageOnActiveBranch: vi.fn(async () => true) } }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService: service,
+        planInteractions: interactions,
+        sessionInteractions,
+        artifactTurns: { promptMessageIdFor: vi.fn(() => 'revision-prompt') }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      {
+        publication: { pushEvent: vi.fn() },
+        sessionEnvironment: { projectName: vi.fn(() => 'project-1') }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    )
+
+    const feedback = await workflow.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Split the analysis by cohort.'
+    })
+
+    expect(feedback).toMatchObject({
+      kind: 'feedback',
+      message: { id: 'feedback-message-1' },
+      continuationProjection: { continuationState: 'queued' }
+    })
+    expect(persistUserMessage).toHaveBeenCalledTimes(1)
+    expect(context.plan).toMatchObject({
+      reviewFeedbackMessageId: 'feedback-message-1',
+      continuation: { kind: 'review-feedback', state: 'queued' }
+    })
+    expect(interactions.executionBindingFor('session-1')).toBeUndefined()
+
+    const revisionInteraction = sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'revision-prompt'
+    })
+    const revised = workflow
+      .call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'generate',
+        input: { ...originalContent, task_summary: 'Analyze the dataset by cohort.' }
+      })
+      .catch((error: unknown) => error)
+    await vi.waitFor(async () =>
+      expect(await workflow.projection('project-1', 'session-1')).toMatchObject({
+        approval: 'pending',
+        document: { task_summary: 'Analyze the dataset by cohort.' }
+      })
+    )
+    interactions.rejectApproval('session-1', 'test cleanup')
+    await expect(revised).resolves.toBeInstanceOf(Error)
+    sessionInteractions.release(revisionInteraction)
+  })
+
   it('clears exact decision authorization when prompt supersession releases first', () => {
     const harness = createHarness()
     if (harness.interaction.kind !== 'prompt') throw new Error('Expected a prompt interaction.')

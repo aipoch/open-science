@@ -366,6 +366,51 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.status).toBe('waiting-plan-approval')
   })
 
+  it('atomically persists Plan feedback and its neutral review marker in one Session save', async () => {
+    let durable = createSession({
+      status: 'waiting-plan-approval',
+      runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const message = await coordinator.appendUserMessageToInteraction({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content: 'Split the analysis by cohort.',
+      runtimeContextPatch: {
+        expectedRevision: 2,
+        patch: (persistedMessage) => ({
+          plan: {
+            ...createRuntimePlan(),
+            reviewFeedbackMessageId: persistedMessage.id
+          }
+        })
+      }
+    })
+
+    expect(repository.saveSession).toHaveBeenCalledTimes(1)
+    expect(durable.messages).toContainEqual(message)
+    expect(durable.runtimeContext).toEqual({
+      version: 1,
+      revision: 3,
+      plan: {
+        ...createRuntimePlan(),
+        reviewFeedbackMessageId: message.id
+      }
+    })
+    expect(durable.status).toBe('waiting-plan-approval')
+  })
+
   it('persists Side chat projection and relays without overwriting concurrent authority', async () => {
     let durable = createSession({
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }

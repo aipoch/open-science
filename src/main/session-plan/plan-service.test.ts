@@ -103,18 +103,46 @@ const setup = (): PlanServiceHarness => {
       return context
     }),
     isRevisionConflict: (error) => error instanceof Error && error.message === 'revision conflict',
-    persistUserMessage: vi.fn(async (message) => ({
-      id: 'message-1',
-      role: 'user' as const,
-      content: message.content,
-      status: 'complete' as const,
-      eventIds: [],
-      responseToMessageId: message.interactionId,
-      createdAt: 42,
-      updatedAt: 42
-    })),
+    persistUserMessage: vi.fn(async (input) => {
+      input.beforePersist?.()
+      const message = {
+        id: 'message-1',
+        role: 'user' as const,
+        content: input.content,
+        status: 'complete' as const,
+        eventIds: [],
+        responseToMessageId: input.interactionId,
+        createdAt: 42,
+        updatedAt: 42
+      }
+      if (input.markPlanReview) {
+        if (input.markPlanReview.expectedRevision !== context.revision) {
+          throw new Error('revision conflict')
+        }
+        context = {
+          version: 1,
+          revision: context.revision + 1,
+          plan: {
+            ...input.markPlanReview.plan,
+            reviewFeedbackMessageId: message.id,
+            continuation: {
+              commandId: input.markPlanReview.commandId,
+              kind: 'review-feedback',
+              state: 'queued',
+              originatingPromptMessageId: message.id,
+              createdAt: input.markPlanReview.createdAt
+            }
+          }
+        }
+      }
+      return message
+    }),
     now: () => 42,
     createId: () => 'a91f30c2',
+    createCommandId: vi
+      .fn<() => string>()
+      .mockReturnValueOnce('continuation-1')
+      .mockReturnValueOnce('continuation-2'),
     onApprovalRequested: vi.fn(),
     onApprovalSettled: vi.fn()
   }
@@ -201,12 +229,14 @@ describe('PlanService', () => {
       artifactId: 'artifact-1',
       artifactVersionId: 'version-1',
       originatingPromptMessageId: 'interaction-1',
+      materializedAt: 42,
       approval: 'pending',
       stepStatuses: {}
     })
     expect(status()).toBe('waiting-plan-approval')
     expect(result.projection.lifecycle).toBe('awaiting_approval')
     expect(result.projection.originatingPromptMessageId).toBe('interaction-1')
+    expect(result.projection.materializedAt).toBe(42)
     expect(result.pauseInteraction).toBe(true)
     expect(dependencies.onApprovalRequested).toHaveBeenCalledWith({
       projectId: 'project-1',
@@ -299,6 +329,7 @@ describe('PlanService', () => {
       expect.objectContaining({ beforePersist: expect.any(Function) })
     )
     expect(context().plan?.approval).toBe('pending')
+    expect(context().plan).not.toHaveProperty('continuation')
   })
 
   it.each(['approved', 'rejected'] as const)(
@@ -578,7 +609,7 @@ describe('PlanService', () => {
   })
 
   it('persists revision feedback as a standard user Message for the live blocked interaction', async () => {
-    const { service, dependencies, interactions } = setup()
+    const { service, dependencies, interactions, context } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -601,16 +632,162 @@ describe('PlanService', () => {
       text: 'Split the analysis by cohort.',
       message: { role: 'user', content: 'Split the analysis by cohort.' }
     })
-    expect(dependencies.persistUserMessage).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      content: 'Split the analysis by cohort.',
-      interactionId: 'interaction-1'
-    })
+    expect(dependencies.persistUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        content: 'Split the analysis by cohort.',
+        interactionId: 'interaction-1'
+      })
+    )
     expect(
       interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)
     ).toBeUndefined()
+    expect(context().plan).toMatchObject({
+      approval: 'pending',
+      reviewFeedbackMessageId: 'message-1'
+    })
   })
+
+  it('keeps feedback neutral so a later Agent approval succeeds and clears review state', async () => {
+    const { service, context } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: '批准执行'
+    })
+    await service.queueReviewFeedbackContinuation({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: context().revision,
+      feedbackMessageId: 'message-1'
+    })
+
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: context().revision,
+      decision: 'approved',
+      interactionIsLive: true
+    })
+
+    expect(approved.projection.approval).toBe('approved')
+    expect(context().plan).not.toHaveProperty('reviewFeedbackMessageId')
+    expect(context().plan?.continuation).toMatchObject({
+      kind: 'approved-plan',
+      state: 'queued'
+    })
+  })
+
+  it('allows a revised Plan only after durable review feedback', async () => {
+    const { service, context, dependencies } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+
+    await expect(
+      service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        interactionId: 'interaction-1',
+        content: { ...content, task_summary: 'Analyze by cohort' }
+      })
+    ).rejects.toMatchObject({ code: 'plan-review-pending' })
+    expect(dependencies.writeArtifactForActiveTurn).toHaveBeenCalledOnce()
+
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Split the analysis by cohort.'
+    })
+    await service.queueReviewFeedbackContinuation({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: context().revision,
+      feedbackMessageId: 'message-1'
+    })
+    const revised = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content: { ...content, task_summary: 'Analyze by cohort' }
+    })
+
+    expect(revised.projection).toMatchObject({
+      approval: 'pending',
+      document: { task_summary: 'Analyze by cohort' }
+    })
+    expect(context().plan).not.toHaveProperty('reviewFeedbackMessageId')
+    expect(context().plan).not.toHaveProperty('continuation')
+  })
+
+  it('registers the current interaction when reviewed generation retries an identical Plan', async () => {
+    const { service, interactions } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Keep the Plan as written.'
+    })
+
+    await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-2',
+      content
+    })
+
+    expect(interactions.interactionIdFor('session-1', generated.projection.artifactVersionId)).toBe(
+      'interaction-2'
+    )
+  })
+
+  it.each(['approved', 'rejected'] as const)(
+    'fails closed when detached %s lacks the originating Message identity',
+    async (decision) => {
+      const { service, context, setContext } = setup()
+      const generated = await service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const plan = context().plan!
+      const withoutOrigin = { ...plan }
+      Reflect.deleteProperty(withoutOrigin, 'originatingPromptMessageId')
+      setContext({ ...context(), plan: withoutOrigin })
+
+      await expect(
+        service.respond({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          artifactVersionId: generated.projection.artifactVersionId,
+          expectedRevision: context().revision,
+          decision,
+          interactionIsLive: false
+        })
+      ).rejects.toMatchObject({ code: 'invalid-plan' })
+      expect(context().plan).toMatchObject({ approval: 'pending' })
+      expect(context().plan).not.toHaveProperty('continuation')
+    }
+  )
 
   it('retains the live interaction when revision feedback persistence fails', async () => {
     const { service, dependencies, interactions } = setup()
@@ -1016,6 +1193,11 @@ describe('PlanService', () => {
       interactionId: 'interaction-1',
       content
     })
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      feedback: 'Please revise the Plan.'
+    })
     vi.mocked(dependencies.writeArtifactForActiveTurn).mockResolvedValueOnce({
       artifactId: 'artifact-2',
       versionId: 'version-2',
@@ -1043,14 +1225,14 @@ describe('PlanService', () => {
   })
 
   it('passively restores approved progress as interrupted without reviving an interaction', async () => {
-    const { service, dependencies } = setup()
+    const { service, dependencies, context, setContext } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
       interactionId: 'interaction-1',
       content
     })
-    const approved = await service.respond({
+    await service.respond({
       projectId: 'project-1',
       sessionId: 'session-1',
       artifactVersionId: generated.projection.artifactVersionId,
@@ -1058,11 +1240,14 @@ describe('PlanService', () => {
       decision: 'approved',
       interactionIsLive: true
     })
+    const handedOffPlan = { ...context().plan! }
+    Reflect.deleteProperty(handedOffPlan, 'continuation')
+    setContext({ ...context(), revision: context().revision + 1, plan: handedOffPlan })
     await service.updateStepStatus({
       projectId: 'project-1',
       sessionId: 'session-1',
       artifactVersionId: generated.projection.artifactVersionId,
-      expectedRevision: approved.projection.revision,
+      expectedRevision: context().revision,
       title: 'Analyze the data',
       status: 'in_progress'
     })
@@ -1078,8 +1263,8 @@ describe('PlanService', () => {
     })
   })
 
-  it('records approval after restart without claiming that execution resumed', async () => {
-    const { service, status } = setup()
+  it('atomically queues one continuation command when an approved Plan has no live interaction', async () => {
+    const { service, status, context, dependencies } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1097,11 +1282,139 @@ describe('PlanService', () => {
     })
 
     expect(status()).toBe('idle')
+    expect(context().plan).toMatchObject({
+      approval: 'approved',
+      continuation: {
+        commandId: 'continuation-1',
+        kind: 'approved-plan',
+        state: 'queued',
+        originatingPromptMessageId: 'interaction-1',
+        createdAt: 42
+      }
+    })
+    expect(dependencies.patchRuntimeContext).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        plan: expect.objectContaining({
+          approval: 'approved',
+          continuation: expect.objectContaining({ state: 'queued' })
+        })
+      })
+    )
     expect(approved.projection).toMatchObject({
       approval: 'approved',
       lifecycle: 'approved',
-      requiresExplicitContinuation: true
+      continuationState: 'queued',
+      requiresExplicitContinuation: false
     })
+  })
+
+  it('returns the existing detached approval command without minting another identity', async () => {
+    const { service, context, dependencies } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved',
+      interactionIsLive: false
+    })
+
+    const duplicate = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: approved.projection.revision,
+      decision: 'approved',
+      interactionIsLive: false
+    })
+
+    expect(duplicate.changed).toBe(false)
+    expect(context().plan?.continuation?.commandId).toBe('continuation-1')
+    expect(dependencies.createCommandId).toHaveBeenCalledOnce()
+  })
+
+  it('commits a queued continuation receipt with a live Plan approval', async () => {
+    const { service, status, context } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved',
+      interactionIsLive: true
+    })
+
+    expect(status()).toBe('running')
+    expect(context().plan).toMatchObject({ approval: 'approved' })
+    expect(context().plan?.continuation).toMatchObject({
+      kind: 'approved-plan',
+      state: 'queued'
+    })
+  })
+
+  it('records a detached Plan rejection with a durable continuation command', async () => {
+    const { service, context } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+
+    await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'rejected',
+      interactionIsLive: false
+    })
+
+    expect(context().plan).toMatchObject({ approval: 'rejected' })
+    expect(context().plan?.continuation).toMatchObject({
+      kind: 'rejected-plan',
+      state: 'queued'
+    })
+  })
+
+  it('fails closed when a legacy detached Plan has no durable originating Message', async () => {
+    const { service, context, setContext } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    setContext({
+      ...context(),
+      plan: { ...context().plan!, originatingPromptMessageId: undefined }
+    })
+
+    await expect(
+      service.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: generated.projection.revision,
+        decision: 'approved',
+        interactionIsLive: false
+      })
+    ).rejects.toMatchObject({ code: 'invalid-plan' })
+    expect(context().plan).toMatchObject({ approval: 'pending' })
+    expect(context().plan).not.toHaveProperty('continuation')
   })
 
   it('authorizes explicit continuation only for the durable approved incomplete version', async () => {
@@ -1141,6 +1454,89 @@ describe('PlanService', () => {
         expectedRevision: approved.projection.revision
       })
     ).rejects.toMatchObject({ code: 'stale-plan' })
+  })
+
+  it('settles an interrupted hidden command when an explicit message rebinds the approved Plan', async () => {
+    const { service, context, setContext } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved',
+      interactionIsLive: false
+    })
+    setContext({
+      ...context(),
+      plan: {
+        ...context().plan!,
+        continuation: { ...context().plan!.continuation!, state: 'interrupted' }
+      }
+    })
+
+    await expect(
+      service.authorizeContinuation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: approved.projection.revision
+      })
+    ).resolves.toMatchObject({
+      revision: approved.projection.revision + 1,
+      approval: 'approved',
+      requiresExplicitContinuation: false
+    })
+    expect(context().plan?.continuation).toBeUndefined()
+  })
+
+  it('settles an interrupted command when a live interaction reaffirms the approved Plan', async () => {
+    const { service, context, setContext } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved',
+      interactionIsLive: false
+    })
+    setContext({
+      ...context(),
+      plan: {
+        ...context().plan!,
+        continuation: { ...context().plan!.continuation!, state: 'interrupted' }
+      }
+    })
+
+    const rebound = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: approved.projection.revision,
+      decision: 'approved',
+      interactionIsLive: true
+    })
+
+    expect(rebound).toMatchObject({
+      changed: true,
+      projection: {
+        revision: approved.projection.revision + 1,
+        approval: 'approved',
+        requiresExplicitContinuation: false
+      }
+    })
+    expect(context().plan?.continuation).toBeUndefined()
   })
 
   it('rejects continuation before approval and after completion', async () => {
@@ -1189,6 +1585,51 @@ describe('PlanService', () => {
         expectedRevision: completed.projection.revision
       })
     ).rejects.toMatchObject({ code: 'invalid-transition' })
+  })
+
+  it('clears the hidden continuation command when the approved Plan reaches a terminal outcome', async () => {
+    const { service, context, setContext } = setup()
+    const generated = await service.generate({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      interactionId: 'interaction-1',
+      content
+    })
+    const approved = await service.respond({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: generated.projection.revision,
+      decision: 'approved',
+      interactionIsLive: false
+    })
+    setContext({
+      ...context(),
+      plan: {
+        ...context().plan!,
+        continuation: { ...context().plan!.continuation!, state: 'continuing' }
+      }
+    })
+    const started = await service.updateStepStatus({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: approved.projection.revision,
+      title: 'Analyze the data',
+      status: 'in_progress'
+    })
+
+    const completed = await service.updateStepStatus({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      artifactVersionId: generated.projection.artifactVersionId,
+      expectedRevision: started.projection.revision,
+      title: 'Analyze the data',
+      status: 'completed'
+    })
+
+    expect(completed.projection.lifecycle).toBe('completed')
+    expect(context().plan?.continuation).toBeUndefined()
   })
 
   it('drops unreadable restored Plan authority instead of exposing it as executable', async () => {

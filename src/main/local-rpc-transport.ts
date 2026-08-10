@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { request as httpRequest, type Server } from 'node:http'
+import {
+  request as httpRequest,
+  type RequestOptions as HttpRequestOptions,
+  type Server
+} from 'node:http'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
@@ -140,6 +144,63 @@ const fetchOverSocket = (socketPath: string): typeof fetch => {
   return socketFetch as typeof fetch
 }
 
+// The global fetch implementation applies an Undici response-headers timeout. A Session Plan may
+// intentionally wait for user review longer than that, so this narrow transport uses node:http,
+// which has no implicit response timeout, while retaining AbortSignal ownership.
+const fetchWithoutHeadersTimeout = (transport: LocalRpcTransport): typeof fetch => {
+  const longLivedFetch = async (
+    input: string | URL | Request,
+    init: RequestInit = {}
+  ): Promise<Response> => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+    const headers = new Headers(init.headers)
+    const body = requestBody(init.body)
+    const requestOptions: HttpRequestOptions = {
+      ...(transport.socketPath
+        ? { socketPath: transport.socketPath }
+        : {
+            protocol: url.protocol,
+            hostname: url.hostname,
+            port: url.port || undefined
+          }),
+      path: `${url.pathname}${url.search}`,
+      method: init.method ?? 'GET',
+      headers: Object.fromEntries(headers.entries())
+    }
+
+    return new Promise<Response>((resolve, reject) => {
+      const request = httpRequest(requestOptions, (response) => {
+        const responseHeaders = new Headers()
+        for (let index = 0; index < response.rawHeaders.length; index += 2) {
+          responseHeaders.append(response.rawHeaders[index], response.rawHeaders[index + 1])
+        }
+        const status = response.statusCode ?? 500
+        const responseBody = status === 204 || status === 304 ? null : Readable.toWeb(response)
+        resolve(
+          new Response(responseBody as ReadableStream<Uint8Array> | null, {
+            status,
+            statusText: response.statusMessage,
+            headers: responseHeaders
+          })
+        )
+      })
+
+      const abort = (): void => {
+        const reason = init.signal?.reason
+        request.destroy(reason instanceof Error ? reason : new Error('The request was aborted.'))
+      }
+      request.once('error', reject)
+      if (init.signal?.aborted) abort()
+      else init.signal?.addEventListener('abort', abort, { once: true })
+
+      request.once('close', () => init.signal?.removeEventListener('abort', abort))
+      if (body !== undefined) request.write(body)
+      request.end()
+    })
+  }
+  return longLivedFetch as typeof fetch
+}
+
 const errorDetail = (error: unknown): string => {
   const root = error as { message?: unknown; code?: unknown; cause?: unknown }
   const cause = root?.cause as { message?: unknown; code?: unknown } | undefined
@@ -171,5 +232,23 @@ const fetchLocalRpc = async (
   }
 }
 
-export { fetchLocalRpc, fetchOverSocket, listenForLocalRpc, localRpcServerLogFields }
+const fetchLongLivedLocalRpc = async (
+  transport: LocalRpcTransport,
+  init: RequestInit,
+  label: string
+): Promise<Response> => {
+  try {
+    return await fetchWithoutHeadersTimeout(transport)(transport.endpoint, init)
+  } catch (error) {
+    throw new Error(`${label} transport failed: ${errorDetail(error)}`, { cause: error })
+  }
+}
+
+export {
+  fetchLocalRpc,
+  fetchLongLivedLocalRpc,
+  fetchOverSocket,
+  listenForLocalRpc,
+  localRpcServerLogFields
+}
 export type { LocalRpcListenOptions, LocalRpcServerLogFields, LocalRpcTransport }

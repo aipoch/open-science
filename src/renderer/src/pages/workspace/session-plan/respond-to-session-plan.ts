@@ -10,6 +10,15 @@ type SessionPlanResponseTarget = Readonly<{
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const projectionFromResponse = (result: unknown): ActivePlanProjection | undefined => {
+  if (!isRecord(result) || !isRecord(result.projection)) return undefined
+  const projection = result.projection
+  if (typeof projection.artifactVersionId !== 'string' || typeof projection.revision !== 'number') {
+    return undefined
+  }
+  return projection as unknown as ActivePlanProjection
+}
+
 const projectReturnedFeedbackMessage = (sessionId: string, result: unknown): boolean => {
   if (!isRecord(result) || result.kind !== 'feedback' || !isRecord(result.message)) return false
   const message = result.message
@@ -35,10 +44,21 @@ const projectReturnedFeedbackMessage = (sessionId: string, result: unknown): boo
 
 const refreshSessionPlanProjection = async ({
   projectId,
-  sessionId
-}: Pick<SessionPlanResponseTarget, 'projectId' | 'sessionId'>): Promise<void> => {
+  sessionId,
+  authoritativeProjection
+}: Pick<SessionPlanResponseTarget, 'projectId' | 'sessionId'> & {
+  authoritativeProjection?: ActivePlanProjection
+}): Promise<void> => {
   const current = await window.api.acp.getPlanProjection(projectId, sessionId)
-  if (current) useSessionStore.getState().setActivePlanProjection(sessionId, current)
+  if (!current) return
+  if (
+    authoritativeProjection &&
+    current.artifactVersionId === authoritativeProjection.artifactVersionId &&
+    current.revision < authoritativeProjection.revision
+  ) {
+    return
+  }
+  useSessionStore.getState().setActivePlanProjection(sessionId, current)
 }
 
 export const respondToSessionPlan = async (
@@ -46,6 +66,7 @@ export const respondToSessionPlan = async (
   response: 'approved' | 'rejected' | { decision: 'approved' | 'rejected' } | { feedback: string }
 ): Promise<void> => {
   const payload = typeof response === 'string' ? { decision: response } : response
+  let authoritativeProjection: ActivePlanProjection | undefined
   try {
     const request =
       'feedback' in payload
@@ -58,6 +79,10 @@ export const respondToSessionPlan = async (
             decision: payload.decision
           }
     const result = await window.api.acp.respondPlan(request)
+    authoritativeProjection = projectionFromResponse(result)
+    if (authoritativeProjection) {
+      useSessionStore.getState().setActivePlanProjection(target.sessionId, authoritativeProjection)
+    }
     const projectedReturnedMessage = projectReturnedFeedbackMessage(target.sessionId, result)
     if ('feedback' in payload && !projectedReturnedMessage) {
       const localMessageId = `local-user-message-${Date.now()}`
@@ -78,5 +103,5 @@ export const respondToSessionPlan = async (
     }
     throw error
   }
-  await refreshSessionPlanProjection(target)
+  await refreshSessionPlanProjection({ ...target, authoritativeProjection })
 }

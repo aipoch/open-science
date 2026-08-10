@@ -22,7 +22,10 @@ const composeAcpRuntimeProviderSessionOwners = (
   options: AcpRuntimeOptions,
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
-  lifecycle: AcpRuntimeLifecycleOwners
+  lifecycle: AcpRuntimeLifecycleOwners,
+  runtime: Readonly<{
+    clearUserChoiceProvenanceForSession: (sessionId: string) => void
+  }>
 ) => {
   const currentConnection = (): ClientConnection | undefined => base.connectionResources.connection
   const currentFramework = (): AgentFramework => base.backendGeneration.current.framework
@@ -118,6 +121,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     adopter: providerSessionAdopter,
     permission: session.permissionContext,
     elicitation: session.elicitationOwner,
+    clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,
     appContinuations: session.appContinuations,
     promptContent: base.promptContentOwner,
     contextUsage: base.contextUsageTracker,
@@ -133,6 +137,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     supportsSessionClose: () => base.connectionResources.capabilities.close,
     permission: session.permissionContext,
     elicitation: session.elicitationOwner,
+    clearUserChoiceProvenanceForSession: runtime.clearUserChoiceProvenanceForSession,
     appContinuations: session.appContinuations,
     interactions: base.sessionInteractions,
     capabilities: base.sessionCapabilities,

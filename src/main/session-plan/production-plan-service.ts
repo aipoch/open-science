@@ -65,7 +65,28 @@ const createProductionPlanService = ({
         sessionId: input.sessionId,
         interactionId: input.interactionId,
         content: input.content,
-        ...(input.beforePersist ? { beforePersist: input.beforePersist } : {})
+        ...(input.beforePersist ? { beforePersist: input.beforePersist } : {}),
+        ...(input.markPlanReview
+          ? {
+              runtimeContextPatch: {
+                expectedRevision: input.markPlanReview.expectedRevision,
+                patch: (message) => ({
+                  plan: {
+                    ...input.markPlanReview!.plan,
+                    reviewFeedbackMessageId: message.id,
+                    continuation: {
+                      commandId: input.markPlanReview!.commandId,
+                      kind: 'review-feedback' as const,
+                      state: 'queued' as const,
+                      originatingPromptMessageId: message.id,
+                      createdAt: input.markPlanReview!.createdAt
+                    }
+                  }
+                }),
+                sessionStatus: 'waiting-plan-approval' as const
+              }
+            }
+          : {})
       }),
     isRevisionConflict: (error) => error instanceof SessionRuntimeContextRevisionConflictError,
     onApprovalRequested,

@@ -61,43 +61,43 @@ const createRuntimeHarness = (options: {
 }): RuntimeHarness => {
   const generated = projection('version-1')
   const approved = { ...generated, approval: 'approved' as const, lifecycle: 'approved' as const }
+  let currentProjection = options.activeProjection ?? generated
   const updateStepStatus = vi.fn(async () => ({ projection: approved, changed: true }))
   const interactions = new SessionPlanInteractionOwner()
   const service = {
     generate: vi.fn(async () => ({ projection: generated, pauseInteraction: true as const })),
-    respond: vi.fn(async (input: { feedback?: string; decision?: 'approved' | 'rejected' }) =>
-      input.feedback
-        ? {
-            kind: 'feedback' as const,
-            routeToInteractionId: 'interaction-1',
-            artifactVersionId: generated.artifactVersionId,
-            text: input.feedback,
-            message: {
-              id: 'message-1',
-              role: 'user' as const,
-              content: input.feedback,
-              status: 'complete' as const,
-              eventIds: [],
-              responseToMessageId: 'interaction-1',
-              createdAt: 10,
-              updatedAt: 10
-            }
+    respond: vi.fn(async (input: { feedback?: string; decision?: 'approved' | 'rejected' }) => {
+      if (input.feedback) {
+        return {
+          kind: 'feedback' as const,
+          routeToInteractionId: 'interaction-1',
+          artifactVersionId: generated.artifactVersionId,
+          text: input.feedback,
+          message: {
+            id: 'message-1',
+            role: 'user' as const,
+            content: input.feedback,
+            status: 'complete' as const,
+            eventIds: [],
+            responseToMessageId: 'interaction-1',
+            createdAt: 10,
+            updatedAt: 10
           }
-        : {
-            projection:
-              input.decision === 'rejected'
-                ? { ...generated, approval: 'rejected' as const, lifecycle: 'rejected' as const }
-                : approved,
-            changed: true
-          }
-    ),
+        }
+      }
+      currentProjection =
+        input.decision === 'rejected'
+          ? { ...generated, approval: 'rejected' as const, lifecycle: 'rejected' as const }
+          : approved
+      return { projection: currentProjection, changed: true }
+    }),
     getProjection: vi.fn(
       async (
         _projectId: string,
         _sessionId: string,
         projectionOptions?: { interactionIsLive?: boolean }
       ) => {
-        const current = options.activeProjection ?? generated
+        const current = currentProjection
         return projectionOptions?.interactionIsLive === false && current.lifecycle === 'in_progress'
           ? { ...current, lifecycle: 'interrupted' as const }
           : current
@@ -139,7 +139,14 @@ const createRuntimeHarness = (options: {
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
     {
       publication: { pushEvent: (event: unknown) => options.onEvent?.(event) }
-    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2],
+    {
+      continuations: {
+        begin: vi.fn(async () => true),
+        clear: vi.fn(async () => true),
+        rearmUndispatched: vi.fn(async () => true)
+      }
+    }
   )
   const target = Object.create(AcpRuntime.prototype) as Record<string, unknown>
   Object.assign(target, {
@@ -765,6 +772,12 @@ describe('AcpRuntime Session Plan seam', () => {
       })
     ).rejects.toMatchObject({ code: 'revision-conflict' })
     expect(interactions.isAgentDecisionAuthorized(authorization)).toBe(true)
+
+    service.getProjection.mockResolvedValueOnce(projection('version-1')).mockResolvedValueOnce({
+      ...projection('version-1'),
+      approval: 'approved',
+      lifecycle: 'approved'
+    })
 
     await expect(
       runtime.callSessionPlan({

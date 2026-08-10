@@ -455,6 +455,159 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
+  it('clears a pending Plan projection when newer durable authority settles it', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'idle',
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'approved',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 1
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBeUndefined()
+  })
+
+  it('clears a Plan projection when durable authority points to a different version', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-2',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 1
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBeUndefined()
+  })
+
+  it('keeps the Plan projection object when durable authority is an exact echo', () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'Plan approval',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ])
+    const projection = createPlanProjection('version-1')
+    useSessionStore.getState().setActivePlanProjection('session-1', projection)
+    const source = useSessionStore.getState().sessions[0]
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        status: 'waiting-plan-approval',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          plan: {
+            artifactId: 'artifact-version-1',
+            artifactVersionId: 'version-1',
+            artifactChecksum: 'a'.repeat(64),
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        },
+        updatedAt: source.updatedAt + 1
+      }
+    })
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
+  })
+
   it('does not replace newer local conversation state when a durable Plan authority arrives', () => {
     const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -1899,6 +2052,27 @@ describe('session store', () => {
     })
   })
 
+  it('blocks ordinary sends while an approved durable Plan continuation is queued', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan'
+    })
+    const queued = {
+      ...createPlanProjection('version-1'),
+      approval: 'approved' as const,
+      lifecycle: 'approved' as const,
+      continuationState: 'queued' as const,
+      requiresExplicitContinuation: false
+    }
+
+    useSessionStore.getState().setActivePlanProjection('transport-session-1', queued)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activePlanProjection: { continuationState: 'queued' }
+    })
+  })
+
   it('keeps Plan approval waiting when the Agent interaction times out', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1935,9 +2109,24 @@ describe('session store', () => {
       providerToolName: 'generate_plan',
       status: 'pending'
     })
-    useSessionStore
-      .getState()
-      .setActivePlanProjection('transport-session-1', createPlanProjection('version-1'))
+    const durablePlan = createPlanProjection('version-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: {
+          version: 1,
+          revision: durablePlan.revision,
+          plan: {
+            artifactId: durablePlan.artifactId,
+            artifactVersionId: durablePlan.artifactVersionId,
+            artifactChecksum: durablePlan.artifactChecksum,
+            originatingPromptMessageId: durablePlan.originatingPromptMessageId,
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        }
+      }))
+    }))
 
     useSessionStore
       .getState()
@@ -1946,9 +2135,9 @@ describe('session store', () => {
     const session = useSessionStore.getState().sessions[0]
     expect(session).toMatchObject({
       status: 'waiting-plan-approval',
-      activeRun: undefined,
-      activePlanProjection: { lifecycle: 'awaiting_approval', approval: 'pending' }
+      activeRun: undefined
     })
+    expect(session.activePlanProjection).toBeUndefined()
     expect(session.error).toBeUndefined()
     expect(session.errorReportable).toBeUndefined()
     expect(session.messages[1]).toMatchObject({ status: 'error', failedAt: expect.any(Number) })

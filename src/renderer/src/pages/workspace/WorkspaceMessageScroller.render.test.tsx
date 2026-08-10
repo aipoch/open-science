@@ -3,6 +3,7 @@ import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { JobSummary } from '../../../../shared/compute'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type {
   HandoffLifecycleEvent,
@@ -179,6 +180,321 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
+
+const planDocument: ActivePlanProjection['document'] = {
+  schema_version: 1,
+  task_summary: 'Prepare the publication package',
+  phases: [
+    {
+      name: 'Analysis',
+      delegations: [
+        {
+          name: 'Evidence',
+          steps: [{ title: 'Inspect sources', description: 'Check every primary source.' }]
+        }
+      ]
+    }
+  ],
+  desired_outputs: ['PDF report'],
+  feasibility: { confidence: 'high', rationale: 'The sources are available.' }
+}
+
+const createPlanAuthoritySession = (
+  activities: ToolActivity[],
+  overrides: Partial<ChatSession> = {},
+  materializedAt = 1710000000100
+): ChatSession => {
+  const artifactChecksum = 'a'.repeat(64)
+  const activePlanProjection: ActivePlanProjection = {
+    artifactId: 'artifact-plan',
+    artifactVersionId: 'version-plan',
+    artifactChecksum,
+    originatingPromptMessageId: 'prompt-plan',
+    materializedAt,
+    revision: 1,
+    approval: 'pending',
+    lifecycle: 'awaiting_approval',
+    requiresExplicitContinuation: false,
+    document: planDocument,
+    stepStatuses: {},
+    stepStates: { 'Inspect sources': { status: 'not_started' } },
+    counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+  }
+
+  return createSession({
+    id: 'session-plan-authority',
+    status: 'waiting-plan-approval',
+    activities,
+    artifacts: [
+      {
+        id: 'version-plan',
+        artifactId: 'artifact-plan',
+        versionId: 'version-plan',
+        kind: 'managed-file',
+        path: '/workspace/plan.json',
+        name: 'plan.json',
+        mtimeMs: 1710000000100,
+        sha256: artifactChecksum
+      }
+    ],
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'artifact-plan',
+        artifactVersionId: 'version-plan',
+        artifactChecksum,
+        originatingPromptMessageId: 'prompt-plan',
+        materializedAt,
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    },
+    activePlanProjection,
+    ...overrides
+  })
+}
+
+const createGeneratePlanActivity = (
+  status: ToolActivity['status'],
+  overrides: Partial<ToolActivity> = {}
+): ToolActivity =>
+  createActivity({
+    id: `generate-plan-${status}`,
+    title: 'generate_plan',
+    providerToolName: 'mcp__open-science-plan__generate_plan',
+    promptMessageId: 'prompt-plan',
+    status,
+    rawInput: planDocument,
+    createdAt: 1710000000050,
+    updatedAt: 1710000000050,
+    ...overrides
+  })
+
+describe('WorkspaceMessageScroller durable Plan activity render', () => {
+  it.each(['in_progress', 'failed'] as const)(
+    'renders a %s generation call as created once its matching Plan authority exists',
+    async (status) => {
+      const html = await renderScroller(
+        createPlanAuthoritySession([createGeneratePlanActivity(status)])
+      )
+
+      expect(html).toContain('Created execution Plan')
+      expect(html).not.toContain('Creating execution Plan')
+      expect(html).not.toContain('Failed to create execution Plan')
+    }
+  )
+
+  it('uses the authoritative Plan projection before Artifact metadata is published', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('uses a live Plan projection before renderer runtime authority is synchronized', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined,
+        runtimeContext: undefined
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('prefers a replacement Plan projection over stale renderer runtime authority', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 0,
+          plan: {
+            artifactId: 'old-artifact',
+            artifactVersionId: 'old-version',
+            artifactChecksum: 'b'.repeat(64),
+            originatingPromptMessageId: 'old-prompt',
+            materializedAt: 1,
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        }
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('keeps a failed generation call failed without matching Plan authority', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [createGeneratePlanActivity('failed')]
+      })
+    )
+
+    expect(html).toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Created execution Plan')
+  })
+
+  it('does not assign an earlier Plan artifact to a later retry from the same prompt', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', { id: 'original-plan-call' }),
+        createGeneratePlanActivity('failed', {
+          id: 'later-plan-retry',
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(1)
+  })
+
+  it('keeps the durable Plan created while projecting a legacy already-pending retry neutrally', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'invalid-plan-retry',
+          rawInput: { ...planDocument, phases: [{ delegations: [] }] },
+          rawOutput: 'phases[0].name is required',
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'legacy-already-pending-plan-retry',
+          rawOutput: 'A Session Plan is already awaiting approval.',
+          createdAt: 1710000000300,
+          updatedAt: 1710000000300
+        })
+      ])
+    )
+
+    expect(html.match(/data-testid="plan-call-record"/gu)).toHaveLength(3)
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Execution Plan already awaiting approval')
+    expect(html.match(/lucide-circle-alert/gu)).toHaveLength(1)
+    expect(html).not.toContain('A Session Plan is already awaiting approval.')
+  })
+
+  it('projects a structured live approval waiter conflict neutrally without exposing its payload', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'structured-already-pending-retry',
+          rawOutput: {
+            isError: true,
+            structuredContent: {
+              error: {
+                code: 'approval-already-pending',
+                message: 'Internal live interaction waiter call_123 is still registered.'
+              }
+            },
+            content: [
+              {
+                type: 'text',
+                text: '{"error":{"code":"approval-already-pending","message":"Internal live interaction waiter call_123 is still registered."}}'
+              }
+            ]
+          },
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Execution Plan already awaiting approval')
+    expect(html).toContain('lucide-circle size-3.5 text-text-300')
+    expect(html).not.toContain('Failed to create execution Plan')
+    expect(html).not.toContain('approval-already-pending')
+    expect(html).not.toContain('Internal live interaction waiter')
+    expect(html).not.toContain('call_123')
+  })
+
+  it('warns that a different pending Plan revision was not submitted from its structured code', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'different-plan-retry',
+          rawInput: { ...planDocument, task_summary: 'Prepare a different report' },
+          rawOutput: {
+            isError: true,
+            structuredContent: {
+              error: {
+                code: 'plan-review-pending',
+                message: 'Internal checksum conflict for Artifact version-plan.'
+              }
+            },
+            content: [
+              {
+                type: 'text',
+                text: '{"error":{"code":"plan-review-pending","message":"Internal checksum conflict for Artifact version-plan."}}'
+              }
+            ]
+          },
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Plan revision not submitted')
+    expect(html).toContain(
+      'Review or dismiss the current execution Plan before submitting a revision.'
+    )
+    expect(html).toContain('lucide-triangle-alert')
+    expect(html).not.toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Execution Plan already awaiting approval')
+    expect(html).not.toContain('plan-review-pending')
+    expect(html).not.toContain('Internal checksum conflict')
+    expect(html).not.toContain('version-plan')
+  })
+
+  it('uses the materialization boundary to assign a successful same-document retry', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession(
+        [
+          createGeneratePlanActivity('failed', { id: 'failed-plan-call' }),
+          createGeneratePlanActivity('in_progress', {
+            id: 'successful-plan-retry',
+            createdAt: 1710000000200,
+            updatedAt: 1710000000200
+          })
+        ],
+        { artifacts: undefined },
+        1710000000250
+      )
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+})
 
 describe('WorkspaceMessageScroller structured input render', () => {
   it('renders a completed custom answer as a standalone transcript card', async () => {

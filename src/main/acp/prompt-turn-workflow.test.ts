@@ -690,4 +690,21 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.planLifecycle.beforeRelease).toHaveBeenCalledWith('s1', interaction)
     expect(harness.planLifecycle.afterRelease).toHaveBeenCalledWith('s1')
   })
+
+  it('passes rejected Plan continuation as protected guidance', async () => {
+    const rejected = {
+      ...planProjection(),
+      approval: 'rejected' as const,
+      lifecycle: 'rejected' as const
+    }
+    const harness = createHarness({ admitPlan: () => ({ protectedRejected: rejected }) })
+
+    await harness.workflow.run(request(), { kind: 'app-continuation' })
+
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        protectedContext: expect.stringContaining('approval=rejected')
+      })
+    )
+  })
 })

@@ -49,6 +49,7 @@ const dependencies = (
   supportsSessionClose: () => capabilities.close,
   permission: { cancelForSession: vi.fn(), clearSession: vi.fn() },
   elicitation: { cancelForSession: vi.fn() },
+  clearUserChoiceProvenanceForSession: vi.fn(),
   appContinuations: { delete: vi.fn() },
   interactions: { supersedeCurrent: vi.fn() },
   capabilities: { revokeSession: vi.fn() },
@@ -90,6 +91,9 @@ describe('AcpSessionDeletionWorkflow', () => {
         clearSession: vi.fn(() => actions.push('permission-clear'))
       },
       elicitation: { cancelForSession: vi.fn(() => actions.push('elicitation-cancel')) },
+      clearUserChoiceProvenanceForSession: vi.fn(() =>
+        actions.push('user-choice-provenance-clear')
+      ),
       appContinuations: {
         delete: vi.fn(() => {
           actions.push('continuation-delete')
@@ -131,6 +135,7 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(actions).toEqual([
       'operation',
       'permission-cancel',
+      'user-choice-provenance-clear',
       'elicitation-cancel',
       'continuation-delete',
       'provider-request',

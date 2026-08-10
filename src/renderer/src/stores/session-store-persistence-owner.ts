@@ -358,6 +358,9 @@ const projectDurablePlanAuthority = (
     status,
     interactionState,
     runtimeContext: durable.runtimeContext,
+    activePlanProjection: matchesPersistedPlanProjection(current.activePlanProjection, durable)
+      ? current.activePlanProjection
+      : undefined,
     updatedAt: Math.max(current.updatedAt, durable.updatedAt)
   }
 }

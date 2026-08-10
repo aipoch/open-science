@@ -1,9 +1,16 @@
+import { createServer } from 'node:http'
+
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PlanCommandError } from '../../shared/session-plan/contract'
-import { callPlanRpc, createPlanMcpServer } from './plan-mcp-server'
+import { listenForLocalRpc } from '../local-rpc-transport'
+import {
+  callPlanRpc,
+  createPlanMcpServer,
+  createPlanMcpServerForEnvironment
+} from './plan-mcp-server'
 
 describe('Session Plan MCP server', () => {
   it('advertises the complete nested Plan content schema', async () => {
@@ -126,6 +133,165 @@ describe('Session Plan MCP server', () => {
       )
     } finally {
       vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps Plan generation pending beyond the global fetch response-headers policy', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ result: { lifecycle: 'approved' } }))
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'plan-long-wait-test',
+      transport: 'tcp'
+    })
+    const globalFetch = vi.fn(async () => {
+      throw new TypeError('fetch failed', {
+        cause: Object.assign(new Error('Headers Timeout Error'), {
+          code: 'UND_ERR_HEADERS_TIMEOUT'
+        })
+      })
+    })
+    vi.stubGlobal('fetch', globalFetch)
+
+    try {
+      await expect(
+        callPlanRpc(
+          {
+            endpoint: `${connection.endpoint}/plan`,
+            token: 'plan-token',
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          },
+          'generate',
+          { task_summary: 'Wait for review' }
+        )
+      ).resolves.toEqual({ lifecycle: 'approved' })
+      expect(globalFetch).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('preserves approval-already-pending as a structured MCP error', async () => {
+    const rpcServer = createServer((_request, response) => {
+      response.writeHead(409, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          error: {
+            code: 'approval-already-pending',
+            message: 'An identical execution Plan is already awaiting approval.'
+          }
+        })
+      )
+    })
+    const connection = await listenForLocalRpc(rpcServer, {
+      name: 'plan-pending-error-test',
+      transport: 'tcp'
+    })
+    const planServer = createPlanMcpServerForEnvironment({
+      endpoint: `${connection.endpoint}/plan`,
+      token: 'plan-token',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const client = new Client({ name: 'plan-pending-error-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([planServer.connect(serverTransport), client.connect(clientTransport)])
+
+    try {
+      const result = await client.callTool({
+        name: 'generate_plan',
+        arguments: {
+          task_summary: 'Wait for review',
+          phases: [
+            {
+              name: 'Review',
+              delegations: [
+                {
+                  name: 'Primary agent',
+                  steps: [{ title: 'Wait', description: 'Wait for the decision.' }]
+                }
+              ]
+            }
+          ],
+          desired_outputs: [],
+          feasibility: { confidence: 'high', rationale: 'Review is available.' }
+        }
+      })
+
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: 'approval-already-pending',
+            message: 'An identical execution Plan is already awaiting approval.'
+          }
+        }
+      })
+    } finally {
+      await client.close()
+      await planServer.close()
+      await new Promise<void>((resolve) => rpcServer.close(() => resolve()))
+    }
+  })
+
+  it('releases the pending Plan RPC request when its MCP connection closes', async () => {
+    let backendRequestAborted = false
+    let backendRequestReceived = false
+    const rpcServer = createServer((request) => {
+      backendRequestReceived = true
+      request.once('aborted', () => {
+        backendRequestAborted = true
+      })
+    })
+    const connection = await listenForLocalRpc(rpcServer, {
+      name: 'plan-abort-test',
+      transport: 'tcp'
+    })
+    const planServer = createPlanMcpServerForEnvironment({
+      endpoint: `${connection.endpoint}/plan`,
+      token: 'plan-token',
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
+    const client = new Client({ name: 'plan-abort-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([planServer.connect(serverTransport), client.connect(clientTransport)])
+
+    const call = client
+      .callTool({
+        name: 'generate_plan',
+        arguments: {
+          task_summary: 'Wait for review',
+          phases: [
+            {
+              name: 'Review',
+              delegations: [
+                {
+                  name: 'Primary agent',
+                  steps: [{ title: 'Wait', description: 'Wait for the decision.' }]
+                }
+              ]
+            }
+          ],
+          desired_outputs: [],
+          feasibility: { confidence: 'high', rationale: 'Review is available.' }
+        }
+      })
+      .catch(() => undefined)
+
+    try {
+      await vi.waitFor(() => expect(backendRequestReceived).toBe(true), { timeout: 500 })
+      const close = client.close()
+      await vi.waitFor(() => expect(backendRequestAborted).toBe(true), { timeout: 500 })
+      await Promise.all([call, close])
+    } finally {
+      rpcServer.closeAllConnections()
+      rpcServer.close()
+      void client.close()
+      void planServer.close()
     }
   })
 

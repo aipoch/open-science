@@ -112,7 +112,10 @@ describe('SessionPlanInteractionOwner', () => {
 
     expect(owner.approvalInteractionIdFor('session-1')).toBe('interaction-1')
     expect(() => owner.parkApproval('session-1', 'interaction-2')).toThrow(
-      'A Session Plan is already awaiting approval.'
+      expect.objectContaining({
+        name: 'PlanCommandError',
+        code: 'approval-already-pending'
+      })
     )
     expect(owner.resolveApproval('session-1', { decision: 'approved' })).toBe(true)
     expect(owner.resolveApproval('session-1', { decision: 'rejected' })).toBe(false)
@@ -126,10 +129,16 @@ describe('SessionPlanInteractionOwner', () => {
 
     expect(owner.approvalInteractionIdFor('session-1')).toBeUndefined()
     expect(() => owner.reserveApproval('session-1', 'interaction-2')).toThrow(
-      'A Session Plan is already awaiting approval.'
+      expect.objectContaining({
+        name: 'PlanCommandError',
+        code: 'approval-already-pending'
+      })
     )
     expect(() => owner.parkApproval('session-1', 'interaction-2')).toThrow(
-      'A Session Plan is already awaiting approval.'
+      expect.objectContaining({
+        name: 'PlanCommandError',
+        code: 'approval-already-pending'
+      })
     )
     const approval = owner.parkReservedApproval('session-1', 'interaction-1')
     expect(owner.approvalInteractionIdFor('session-1')).toBe('interaction-1')

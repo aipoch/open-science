@@ -76,13 +76,26 @@ export type SessionRuntimeContextOwner = 'plan' | 'permission'
 
 export type SessionPlanApproval = 'pending' | 'approved' | 'rejected'
 export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 'skipped'
+export type SessionPlanContinuation = Readonly<{
+  commandId: string
+  kind: 'approved-plan' | 'rejected-plan' | 'review-feedback'
+  state: 'queued' | 'continuing' | 'interrupted'
+  originatingPromptMessageId: string
+  createdAt: number
+}>
 export type SessionPlanRuntimeContext = Readonly<{
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
   // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
   originatingPromptMessageId?: string
+  // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
+  materializedAt?: number
   approval: SessionPlanApproval
+  // A persisted user Message that asks the Agent to revise or interpret this still-pending Plan.
+  // It is neutral review input, not an approval decision.
+  reviewFeedbackMessageId?: string
+  continuation?: SessionPlanContinuation
   stepStatuses: Readonly<
     Record<
       string,
@@ -666,7 +679,10 @@ const sanitizeSessionPlanRuntimeContext = (
           'artifactVersionId',
           'artifactChecksum',
           'originatingPromptMessageId',
+          'materializedAt',
           'approval',
+          'reviewFeedbackMessageId',
+          'continuation',
           'stepStatuses'
         ].includes(field)
     )
@@ -681,18 +697,23 @@ const sanitizeSessionPlanRuntimeContext = (
     value.originatingPromptMessageId === undefined
       ? undefined
       : asString(value.originatingPromptMessageId)
+  const materializedAt =
+    value.materializedAt === undefined ? undefined : asNumber(value.materializedAt)
   const approval = asString(value.approval) as SessionPlanApproval | undefined
   if (
     !artifactId ||
     !artifactVersionId ||
     !artifactChecksum ||
     (value.originatingPromptMessageId !== undefined && !originatingPromptMessageId) ||
+    (value.materializedAt !== undefined && (materializedAt === undefined || materializedAt < 0)) ||
     !approval ||
     !SESSION_PLAN_APPROVALS.has(approval) ||
     !isRecord(value.stepStatuses)
   ) {
     return undefined
   }
+  const reviewFeedbackMessageId =
+    approval === 'pending' ? asString(value.reviewFeedbackMessageId) : undefined
 
   const stepStatuses: Record<
     string,
@@ -723,12 +744,70 @@ const sanitizeSessionPlanRuntimeContext = (
     })
   }
 
+  const rawContinuation = value.continuation
+  const continuation = (() => {
+    if (!isRecord(rawContinuation)) return undefined
+    if (
+      Object.keys(rawContinuation).some(
+        (field) =>
+          !['commandId', 'kind', 'state', 'originatingPromptMessageId', 'createdAt'].includes(field)
+      )
+    ) {
+      return undefined
+    }
+    const commandId = asString(rawContinuation.commandId)
+    const continuationOriginatingPromptMessageId = asString(
+      rawContinuation.originatingPromptMessageId
+    )
+    const state: SessionPlanContinuation['state'] | undefined =
+      rawContinuation.state === 'queued' ||
+      rawContinuation.state === 'continuing' ||
+      rawContinuation.state === 'interrupted'
+        ? rawContinuation.state
+        : undefined
+    const kind: SessionPlanContinuation['kind'] | undefined =
+      rawContinuation.kind === 'approved-plan' ||
+      rawContinuation.kind === 'rejected-plan' ||
+      rawContinuation.kind === 'review-feedback'
+        ? rawContinuation.kind
+        : undefined
+    const createdAt = asNumber(rawContinuation.createdAt)
+    const kindMatchesApproval =
+      (kind === 'approved-plan' && approval === 'approved') ||
+      (kind === 'rejected-plan' && approval === 'rejected') ||
+      (kind === 'review-feedback' && approval === 'pending' && !!reviewFeedbackMessageId)
+    const expectedOriginatingMessageId =
+      kind === 'review-feedback' ? reviewFeedbackMessageId : originatingPromptMessageId
+    if (
+      !kindMatchesApproval ||
+      !kind ||
+      !state ||
+      !commandId ||
+      !continuationOriginatingPromptMessageId ||
+      continuationOriginatingPromptMessageId !== expectedOriginatingMessageId ||
+      createdAt === undefined ||
+      createdAt < 0
+    ) {
+      return undefined
+    }
+    return {
+      commandId,
+      kind,
+      state,
+      originatingPromptMessageId: continuationOriginatingPromptMessageId,
+      createdAt
+    }
+  })()
+
   return {
     artifactId,
     artifactVersionId,
     artifactChecksum,
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
+    ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,
+    ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}),
+    ...(continuation ? { continuation } : {}),
     stepStatuses
   }
 }

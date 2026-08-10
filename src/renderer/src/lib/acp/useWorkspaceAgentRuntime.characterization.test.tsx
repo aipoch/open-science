@@ -251,6 +251,7 @@ describe('workspace Agent Runtime hook contract', () => {
         'sendPreparationInFlightSessionIds',
         'nativeContextCompactionSessionIds',
         'compactContext',
+        'ensureSessionReady',
         'sendMessage',
         'resendEditedMessage',
         'cancelRun',

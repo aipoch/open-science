@@ -1,7 +1,12 @@
 import { createServer } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchLocalRpc, listenForLocalRpc, localRpcServerLogFields } from './local-rpc-transport'
+import {
+  fetchLocalRpc,
+  fetchLongLivedLocalRpc,
+  listenForLocalRpc,
+  localRpcServerLogFields
+} from './local-rpc-transport'
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
@@ -61,6 +66,99 @@ describe('local RPC transport', () => {
       host: '127.0.0.1',
       port: expect.any(Number)
     })
+  })
+
+  it('waits for a long-lived TCP response without inheriting the global fetch timeout policy', async () => {
+    let releaseResponse: (() => void) | undefined
+    const requestReceived = new Promise<void>((resolve) => {
+      releaseResponse = resolve
+    })
+    let finishResponse: (() => void) | undefined
+    const server = createServer((_request, response) => {
+      releaseResponse?.()
+      finishResponse = () => {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ result: 'approved' }))
+      }
+    })
+    servers.push(server)
+    const connection = await listenForLocalRpc(server, {
+      name: 'long-lived-transport-test',
+      transport: 'tcp'
+    })
+    const globalFetch = vi.fn(async () => {
+      throw new TypeError('fetch failed', {
+        cause: Object.assign(new Error('Headers Timeout Error'), {
+          code: 'UND_ERR_HEADERS_TIMEOUT'
+        })
+      })
+    })
+    vi.stubGlobal('fetch', globalFetch)
+
+    try {
+      const responsePromise = fetchLongLivedLocalRpc(
+        { ...connection, endpoint: `${connection.endpoint}/plan` },
+        { method: 'POST', body: '{}' },
+        'Session Plan RPC'
+      )
+
+      await requestReceived
+      expect(globalFetch).not.toHaveBeenCalled()
+      finishResponse?.()
+      const response = await responsePromise
+      await expect(response.json()).resolves.toEqual({ result: 'approved' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('settles a long-lived request when its owner aborts', async () => {
+    let backendRequestAborted = false
+    let backendRequestReceived = false
+    const server = createServer((request) => {
+      backendRequestReceived = true
+      request.once('aborted', () => {
+        backendRequestAborted = true
+      })
+    })
+    servers.push(server)
+    const connection = await listenForLocalRpc(server, {
+      name: 'long-lived-abort-test',
+      transport: 'tcp'
+    })
+    const owner = new AbortController()
+    const response = fetchLongLivedLocalRpc(
+      { ...connection, endpoint: `${connection.endpoint}/plan` },
+      { method: 'POST', body: '{}', signal: owner.signal },
+      'Session Plan RPC'
+    )
+
+    await vi.waitFor(() => expect(backendRequestReceived).toBe(true))
+    owner.abort(new Error('MCP connection closed'))
+
+    await expect(response).rejects.toThrow(
+      'Session Plan RPC transport failed: MCP connection closed'
+    )
+    await vi.waitFor(() => expect(backendRequestAborted).toBe(true))
+  })
+
+  it('settles a long-lived request when the local RPC connection closes', async () => {
+    const server = createServer((request) => {
+      request.socket.destroy()
+    })
+    servers.push(server)
+    const connection = await listenForLocalRpc(server, {
+      name: 'long-lived-disconnect-test',
+      transport: 'tcp'
+    })
+
+    await expect(
+      fetchLongLivedLocalRpc(
+        { ...connection, endpoint: `${connection.endpoint}/plan` },
+        { method: 'POST', body: '{}' },
+        'Session Plan RPC'
+      )
+    ).rejects.toThrow(/Session Plan RPC transport failed:.*(?:ECONNRESET|socket hang up)/i)
   })
 
   it('keeps the underlying socket error in the diagnostic', async () => {

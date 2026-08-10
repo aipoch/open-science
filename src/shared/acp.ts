@@ -698,6 +698,9 @@ export type AcpPromptRequest = {
     // decision after activation or exposes pending context for feedback without granting authority.
     // Missing means an already-approved Plan continuation.
     pendingAction?: 'review' | 'approve' | 'reject'
+    // A rejected Plan continuation is settled but deliberately carries no execution authority.
+    // Runtime admission keeps this mutually exclusive with pendingAction.
+    settledAction?: 'rejected'
   }
   // An application-owned continuation retains the originating user request but must not create a
   // second visible user-message event. It is never accepted from renderer IPC.

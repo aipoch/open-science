@@ -34,6 +34,7 @@ import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
 import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
+import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import type { ArtifactMentionPart } from './WorkspaceMessageItem'
@@ -91,6 +92,58 @@ type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uplo
 const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
 const MENTION_NOTICE_TIMEOUT_MS = 3000
+
+const structurallyMatches = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right)
+
+// The Plan tool call can outlive the durable artifact it created while waiting for review. Attribute
+// that artifact to exactly one generation call so a timeout/restart cannot rewrite success as failure,
+// while a later retry from the same Conversation Turn remains independent.
+const findDurablePlanOwnerActivityId = (
+  session: ChatSession | undefined,
+  conversationItems: ReturnType<typeof createConversationItems>
+): string | undefined => {
+  const projection = session?.activePlanProjection
+  const plan = projection ?? session?.runtimeContext?.plan
+  const originatingPromptMessageId = plan?.originatingPromptMessageId
+  if (!session || !plan || !originatingPromptMessageId) return undefined
+
+  const projectedDocument =
+    projection?.artifactId === plan.artifactId &&
+    projection.artifactVersionId === plan.artifactVersionId &&
+    projection.artifactChecksum === plan.artifactChecksum
+      ? projection.document
+      : undefined
+  const materializedAt = plan.materializedAt ?? projection?.materializedAt
+  if (materializedAt === undefined && !projectedDocument) return undefined
+
+  const planActivities = conversationItems.flatMap((item) =>
+    item.type === 'plan-activity' ? [item.activity] : []
+  )
+  const candidates = planActivities.filter((activity) => {
+    if (
+      activity.promptMessageId !== originatingPromptMessageId ||
+      (materializedAt !== undefined && activity.createdAt > materializedAt)
+    ) {
+      return false
+    }
+    const document = parseGeneratePlanDocument(activity.rawInput)
+    return Boolean(
+      document && (!projectedDocument || structurallyMatches(document, projectedDocument))
+    )
+  })
+
+  const ordered = candidates.sort(
+    (left, right) =>
+      left.createdAt - right.createdAt ||
+      left.sortIndex - right.sortIndex ||
+      left.id.localeCompare(right.id)
+  )
+  // New Plans persist an exact materialization boundary. Legacy projections without it remain
+  // fail-closed unless a single matching call makes ownership unambiguous.
+  if (materializedAt === undefined) return ordered.length === 1 ? ordered[0]?.id : undefined
+  return ordered.at(-1)?.id
+}
 
 // Resolves a message's artifact ids against the session-level artifact metadata store.
 const getMessageArtifacts = (
@@ -430,13 +483,17 @@ const WorkspaceMessageScrollerImpl = ({
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
       : {}
-  const conversationItems = useMemo(
-    () =>
-      groupConversationItems(
-        createConversationItems(activeSession, handoffEvents),
-        activeSession?.activityGroups
-      ),
+  const rawConversationItems = useMemo(
+    () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
+  )
+  const conversationItems = useMemo(
+    () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
+    [activeSession?.activityGroups, rawConversationItems]
+  )
+  const durablePlanOwnerActivityId = useMemo(
+    () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
+    [activeSession, rawConversationItems]
   )
   const interruptedPromptMessageId =
     activeSession?.resumeRecovery?.promptMessageId ??
@@ -891,7 +948,13 @@ const WorkspaceMessageScrollerImpl = ({
                   }
 
                   if (item.type === 'plan-activity') {
-                    return <WorkspacePlanActivityRecord key={item.id} activity={item.activity} />
+                    return (
+                      <WorkspacePlanActivityRecord
+                        key={item.id}
+                        activity={item.activity}
+                        hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
+                      />
+                    )
                   }
 
                   if (item.type === 'compaction-activity') {

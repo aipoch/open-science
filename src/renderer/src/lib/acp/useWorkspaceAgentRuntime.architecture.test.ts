@@ -448,6 +448,7 @@ const hookKeys = [
   'sendPreparationInFlightSessionIds',
   'nativeContextCompactionSessionIds',
   'compactContext',
+  'ensureSessionReady',
   'sendMessage',
   'resendEditedMessage',
   'cancelRun',
@@ -512,7 +513,7 @@ describe('workspace runtime architecture', () => {
       expect(physicalLines(`${ownerTargets.get(name)}.ts`), name).toBeLessThanOrEqual(660)
     }
   })
-  it('keeps the established 18-key hook interface', () => {
+  it('keeps the established 19-key hook interface', () => {
     const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
     const owner = variableArrow(facadeFile, 'useOwnedWorkspaceAgentRuntime')
     const consumer = variableArrow(facadeFile, 'useWorkspaceAgentRuntime')
@@ -560,7 +561,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({
       setPermissionProfile: 1,
-      resumeSession: 1,
+      resumeSession: 2,
       respondToPermission: 1,
       revokePermissionGrant: 1
     })

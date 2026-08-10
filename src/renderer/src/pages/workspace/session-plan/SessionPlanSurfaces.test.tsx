@@ -523,6 +523,29 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByRole('button', { name: /open plan, step 0 of 1/i })).toBeTruthy()
 
     rerender(<PlanPreviewSurface projection={restored} />)
-    expect(screen.queryByText(/explicit continuation message/u)).toBeNull()
+    expect(screen.getByText(/send a message to continue this approved plan/iu)).toBeTruthy()
+  })
+
+  it('explains that an approved Plan execution was interrupted', () => {
+    render(
+      <PlanPreviewSurface
+        projection={{
+          ...projection,
+          approval: 'approved',
+          lifecycle: 'interrupted',
+          continuationState: 'interrupted',
+          requiresExplicitContinuation: true
+        }}
+      />
+    )
+
+    expect(
+      screen.getByText('Plan approved, but execution was interrupted. Send a message to continue.')
+    ).toBeTruthy()
+    expect(
+      screen.queryByText(
+        'Plan execution is not active. Send a message to continue this approved Plan.'
+      )
+    ).toBeNull()
   })
 })

@@ -43,6 +43,11 @@ const CLEARED_AGENT_RUN_STATE = {
   | 'interactionState'
 >
 
+const hasPendingPlanReview = (session: ChatSession): boolean =>
+  (session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
+    session.activePlanProjection.approval === 'pending') ||
+  session.runtimeContext?.plan?.approval === 'pending'
+
 const settleConversationGraphSyncFailure = (
   session: ChatSession,
   input: {
@@ -295,9 +300,7 @@ export const projectFinishedRun = (
       cause
     })
   }
-  const planAwaitingApproval =
-    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
-    session.activePlanProjection.approval === 'pending'
+  const planAwaitingApproval = hasPendingPlanReview(session)
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,
@@ -347,9 +350,7 @@ export const projectFailedRun = (
       runError: error
     })
   }
-  const planAwaitingApproval =
-    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
-    session.activePlanProjection.approval === 'pending'
+  const planAwaitingApproval = hasPendingPlanReview(session)
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,
@@ -463,9 +464,7 @@ export const projectInterruptedRun = (
       resumeRecovery
     }
   }
-  const planAwaitingApproval =
-    session.activePlanProjection?.lifecycle === 'awaiting_approval' &&
-    session.activePlanProjection.approval === 'pending'
+  const planAwaitingApproval = hasPendingPlanReview(session)
   return {
     ...session,
     ...CLEARED_AGENT_RUN_STATE,

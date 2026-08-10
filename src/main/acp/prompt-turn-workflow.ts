@@ -39,6 +39,7 @@ type AcpPromptTurnMode =
 type AcpPromptTurnPlanContext = Readonly<{
   authorized?: ActivePlanProjection
   protectedPending?: ActivePlanProjection
+  protectedRejected?: ActivePlanProjection
 }>
 
 type AcpActivatedPromptTurn = Readonly<{
@@ -319,7 +320,8 @@ class AcpPromptTurnWorkflow {
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
-      const planContext = turn.plan.authorized ?? turn.plan.protectedPending
+      const planContext =
+        turn.plan.authorized ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
         backend,

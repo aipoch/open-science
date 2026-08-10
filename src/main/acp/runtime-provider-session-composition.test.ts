@@ -27,7 +27,9 @@ describe('ACP Runtime Provider Session composition', () => {
         })
       }
       const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, lifecycleHost)
-      const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle)
+      const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
+        clearUserChoiceProvenanceForSession: vi.fn()
+      })
 
       expect(lifecycleHost.connect).not.toHaveBeenCalled()
       expect(lifecycleHost.disconnect).not.toHaveBeenCalled()
@@ -72,7 +74,9 @@ describe('ACP Runtime Provider Session composition', () => {
         throw new Error('not called during composition')
       })
     })
-    const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle)
+    const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle, {
+      clearUserChoiceProvenanceForSession: vi.fn()
+    })
 
     // deps is constructor-private; the composition contract is that each workflow holds the exact
     // option function, so the assertion reads the stored deps through a structural cast.

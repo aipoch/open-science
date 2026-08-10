@@ -148,21 +148,23 @@ export const projectActivePlan = (
     status: session.compacting
       ? session.status
       : (interactionStatus ??
-        (projection.lifecycle === 'rejected'
-          ? session.activeRun
-            ? 'running'
-            : 'idle'
-          : projection.lifecycle === 'blocked'
-            ? 'idle'
-            : projection.lifecycle === 'completed'
-              ? session.activeRun
-                ? 'running'
-                : 'idle'
-              : projection.approval === 'approved'
+        (projection.continuationState === 'queued'
+          ? 'running'
+          : projection.lifecycle === 'rejected'
+            ? session.activeRun
+              ? 'running'
+              : 'idle'
+            : projection.lifecycle === 'blocked'
+              ? 'idle'
+              : projection.lifecycle === 'completed'
                 ? session.activeRun
                   ? 'running'
                   : 'idle'
-                : session.status)),
+                : projection.approval === 'approved'
+                  ? session.activeRun
+                    ? 'running'
+                    : 'idle'
+                  : session.status)),
     updatedAt: Date.now()
   }
 }

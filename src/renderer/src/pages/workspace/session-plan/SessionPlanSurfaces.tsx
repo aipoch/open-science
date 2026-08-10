@@ -381,6 +381,13 @@ const PlanPreviewSurface = ({
           message to let the Agent decide how to continue.
         </div>
       ) : null}
+      {!stale && projection.requiresExplicitContinuation ? (
+        <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
+          {projection.approval === 'approved' && projection.continuationState === 'interrupted'
+            ? 'Plan approved, but execution was interrupted. Send a message to continue.'
+            : 'Plan execution is not active. Send a message to continue this approved Plan.'}
+        </div>
+      ) : null}
       {planDocument ? (
         <ScrollArea className="min-h-0 flex-1">
           <div className="px-8 py-8">

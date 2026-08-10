@@ -37,6 +37,12 @@ type AppendUserMessageToInteractionCommand = Readonly<{
   interactionId: string
   content: string
   beforePersist?: (session: PersistedChatSession) => void
+  runtimeContextPatch?: Readonly<{
+    expectedRevision: number
+    patch:
+      SessionRuntimeContextPatch | ((message: PersistedChatMessage) => SessionRuntimeContextPatch)
+    sessionStatus?: PersistedSessionStatus
+  }>
 }>
 
 type SessionStateRepository = {
@@ -341,6 +347,21 @@ class SessionPersistenceStateOwner {
     if (!content) throw new Error('User Message content must be non-empty.')
     this.options.assertMutable(projectId, sessionId, 'mutate')
     const session = await this.loadRuntimeContextSession(projectId, sessionId, 'patch')
+    const current = session.runtimeContext ?? emptySessionRuntimeContext()
+    const runtimeContextPatch = command.runtimeContextPatch
+    if (
+      runtimeContextPatch &&
+      (!Number.isSafeInteger(runtimeContextPatch.expectedRevision) ||
+        runtimeContextPatch.expectedRevision < 0)
+    ) {
+      throw new Error('Session runtime context expected revision must be a non-negative integer.')
+    }
+    if (runtimeContextPatch && current.revision !== runtimeContextPatch.expectedRevision) {
+      throw new SessionRuntimeContextRevisionConflictError(
+        runtimeContextPatch.expectedRevision,
+        current.revision
+      )
+    }
     command.beforePersist?.(session)
     const timestamp = Math.max(session.updatedAt + 1, Date.now())
     const message: PersistedChatMessage = {
@@ -353,9 +374,30 @@ class SessionPersistenceStateOwner {
       createdAt: timestamp,
       updatedAt: timestamp
     }
+    const patch =
+      typeof runtimeContextPatch?.patch === 'function'
+        ? runtimeContextPatch.patch(message)
+        : runtimeContextPatch?.patch
+    if (patch && Object.keys(patch).some((owner) => owner !== 'plan' && owner !== 'permission')) {
+      throw new Error('Session runtime context patch contains an unknown authority owner.')
+    }
+    const runtimeContext = (() => {
+      if (!patch) return session.runtimeContext
+      const candidate: Record<string, unknown> = { ...current }
+      for (const [owner, value] of Object.entries(patch)) {
+        if (value === undefined) delete candidate[owner]
+        else candidate[owner] = value
+      }
+      candidate.revision = current.revision + 1
+      const sanitized = sanitizeSessionRuntimeContext(candidate)
+      if (!sanitized) throw new Error('Session runtime context patch is not JSON-safe.')
+      return sanitized
+    })()
     const durable = materializeSessionConversationGraph({
       ...session,
+      ...(runtimeContextPatch?.sessionStatus ? { status: runtimeContextPatch.sessionStatus } : {}),
       messages: [...session.messages, message],
+      ...(runtimeContext ? { runtimeContext } : {}),
       updatedAt: timestamp
     })
     await this.options.repository.saveSession(durable)

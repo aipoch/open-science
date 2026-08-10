@@ -113,6 +113,7 @@ type WorkspaceAgentRuntime = {
   sendPreparationInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   compactContext: (sessionId: string) => Promise<boolean>
+  ensureSessionReady: (sessionId: string) => Promise<void>
   sendMessage: (
     input: SendWorkspaceMessageIntent
   ) => Promise<SendWorkspaceMessageResult | undefined>
@@ -364,6 +365,40 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     (sessionId: string): Promise<boolean> => lifecycleOwner.compact(runtime, sessionId),
     [lifecycleOwner, runtime]
   )
+  const ensureSessionReady = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (runtime.state.sessionIds.includes(sessionId)) return
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session) throw new Error(`Session not found: ${sessionId}`)
+      const cwd = session.cwd || runtime.state.cwd
+      if (!cwd) throw new Error('Choose a workspace folder before resuming this Session.')
+      const resumed = await runtime.resumeSession(
+        session.id,
+        cwd,
+        session.projectId,
+        session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+        session.agentFrameworkId,
+        session.agentBackendId,
+        session.specialistId,
+        session.providerSessionId,
+        session.providerContinuityToken
+      )
+      useSessionStore.getState().markResumed(
+        session.id,
+        resumed
+          ? {
+              agentFrameworkId: resumed.frameworkId,
+              agentBackendId: resumed.backendId,
+              providerSessionId: resumed.providerSessionId,
+              providerContinuityToken: resumed.providerContinuityToken
+            }
+          : undefined
+      )
+    },
+    [runtime]
+  )
   const resumeInterruptedSession = useCallback(
     (sessionId: string): Promise<void> =>
       lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
@@ -516,6 +551,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     sendPreparationInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
     compactContext,
+    ensureSessionReady,
     sendMessage,
     resendEditedMessage,
     cancelRun,
