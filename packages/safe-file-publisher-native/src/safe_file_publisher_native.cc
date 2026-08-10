@@ -260,17 +260,23 @@ napi_value PublishWindows(
     return ThrowError(env, "The publication source is outside the anchored parent.", "ELOOP");
   }
 
+  std::wstring destination_path = anchored_parent_path;
+  if (!destination_path.empty() && destination_path.back() != L'\\' &&
+      destination_path.back() != L'/') {
+    destination_path.push_back(L'\\');
+  }
+  destination_path.append(destination_name);
   const DWORD destination_bytes =
-      static_cast<DWORD>(destination_name.size() * sizeof(wchar_t));
+      static_cast<DWORD>(destination_path.size() * sizeof(wchar_t));
   const size_t rename_size = offsetof(FILE_RENAME_INFO, FileName) + destination_bytes;
   std::vector<unsigned char> rename_buffer(rename_size);
   auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_buffer.data());
   rename_info->ReplaceIfExists = FALSE;
-  // A simple name with no RootDirectory renames the opened source within its existing directory.
-  // Supplying the same parent as a target directory is rejected by some Windows filesystems.
+  // With no RootDirectory, Win32 resolves relative rename targets against the process working
+  // directory. Use the anchored parent's absolute path so publication cannot cross volumes.
   rename_info->RootDirectory = nullptr;
   rename_info->FileNameLength = destination_bytes;
-  std::memcpy(rename_info->FileName, destination_name.data(), destination_bytes);
+  std::memcpy(rename_info->FileName, destination_path.data(), destination_bytes);
 
   const BOOL renamed = SetFileInformationByHandle(
       source_handle,
