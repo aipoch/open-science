@@ -3023,6 +3023,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/useWorkspaceElicitation.ts',
       'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
+      'src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
