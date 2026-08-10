@@ -1,4 +1,4 @@
-import { test as base } from '@playwright/test'
+import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -213,6 +213,16 @@ const openMainWindow = async (
   const page = await application.firstWindow()
   await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const bridge = globalThis as unknown as {
+          api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+        }
+        return (await bridge.api.databaseStartup.getState()).phase
+      })
+    )
+    .toBe('ready')
   return page
 }
 

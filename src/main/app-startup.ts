@@ -26,13 +26,33 @@ type StartupWindowSurface = {
 }
 
 export const createStartupWindowSecondInstanceHandler =
-  (window: StartupWindowSurface): (() => void) =>
-  () => {
-    if (window.isDestroyed()) return
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+  (window: StartupWindowSurface, forward: (argv: string[]) => void): ((argv: string[]) => void) =>
+  (argv) => {
+    if (!window.isDestroyed()) {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }
+    forward(argv)
   }
+
+export const createStartupWindowCloseOptions = (
+  quit: () => void
+): {
+  classifyClose: () => 'close' | 'quit'
+  requestQuit: () => void
+  resolveCloseAction: () => Promise<'quit'>
+} => {
+  let quitRequested = false
+  return {
+    classifyClose: (): 'close' | 'quit' => (quitRequested ? 'close' : 'quit'),
+    resolveCloseAction: async (): Promise<'quit'> => 'quit',
+    requestQuit: (): void => {
+      quitRequested = true
+      quit()
+    }
+  }
+}
 
 export const createSecondInstanceRelay = (): SecondInstanceRelay => {
   const pending: string[][] = []

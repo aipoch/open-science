@@ -92,7 +92,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
   const [
     { acquireSingleInstanceLock },
-    { createSecondInstanceRelay, createStartupWindowSecondInstanceHandler, orchestrateAppStartup }
+    {
+      createSecondInstanceRelay,
+      createStartupWindowCloseOptions,
+      createStartupWindowSecondInstanceHandler,
+      orchestrateAppStartup
+    }
   ] = await Promise.all([import('./single-instance'), import('./app-startup')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
@@ -178,11 +183,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // returns the handles the migration guard and lifecycle need; the guard is installed before the
   // lifecycle so its before-quit runs first. A second launch that arrives mid-startup is recorded by the
   // relay and surfaced once the window exists.
+  let forwardSecondInstanceDuringStartup: ((argv: string[]) => void) | undefined
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
     // The OS lock is already held. Bind the orchestrator's relay to the pre-logger relay so any
     // second-instance signal received during bootstrap is preserved until the lifecycle is ready.
     acquireSingleInstanceLock: ({ onSecondInstance }) => {
+      forwardSecondInstanceDuringStartup = onSecondInstance
       preStartupSecondInstanceRelay.bind(onSecondInstance)
       return true
     },
@@ -291,25 +298,30 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           })
         }
       })
+      const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
       const disposeDatabaseStartupIpc = registerDatabaseStartupIpc({
         ipcMain,
         owner: databaseStartupOwner,
-        quit: () => app.quit(),
+        quit: startupWindowCloseOptions.requestQuit,
         getWindows: () => BrowserWindow.getAllWindows()
       })
-      const removeDatabaseStartupQuitGuard = installDatabaseStartupQuitGuard({
+      const databaseStartupQuitGuard = installDatabaseStartupQuitGuard({
         app,
         owner: databaseStartupOwner
       })
       const startupWindow = webMode.headless
         ? undefined
-        : createMainWindow({
-            classifyClose: () => 'quit',
-            resolveCloseAction: async () => 'quit',
-            requestQuit: () => app.quit()
-          })
+        : createMainWindow(startupWindowCloseOptions)
       if (startupWindow) {
-        preStartupSecondInstanceRelay.bind(createStartupWindowSecondInstanceHandler(startupWindow))
+        if (!forwardSecondInstanceDuringStartup) {
+          throw new Error('Second-instance startup relay is not initialized.')
+        }
+        preStartupSecondInstanceRelay.bind(
+          createStartupWindowSecondInstanceHandler(
+            startupWindow,
+            forwardSecondInstanceDuringStartup
+          )
+        )
       }
 
       try {
@@ -318,7 +330,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         if (webMode.headless) {
           const state = await initialDatabaseAttempt
           if (state.phase === 'blocked') {
-            removeDatabaseStartupQuitGuard()
+            databaseStartupQuitGuard.dispose()
             disposeDatabaseStartupIpc()
             throw Object.assign(new Error(state.error.message), state.error)
           }
@@ -438,8 +450,6 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         // A missing or signed-out third-party remote-access installation must never delay the desktop window.
         void remoteAccess.restore()
 
-        removeDatabaseStartupQuitGuard()
-
         return {
           installMigrationQuitGuard,
           isMigrationInProgress,
@@ -480,13 +490,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           webController,
           remoteAccess,
           databaseStartupOwner,
+          databaseStartupQuitGuard,
           disposeIpcHandlerRegistry: () => {
             disposeDatabaseStartupIpc()
             disposeIpcHandlerRegistry()
           }
         }
       } catch (error) {
-        removeDatabaseStartupQuitGuard()
+        databaseStartupQuitGuard.dispose()
         disposeDatabaseStartupIpc()
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
         app.quit()
@@ -611,7 +622,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       preStartupSecondInstanceRelay.bind(onSecondInstance)
       return { onSecondInstance }
     },
-    markReady: (ctx) => ctx.databaseStartupOwner.complete()
+    markReady: (ctx) => {
+      ctx.databaseStartupOwner.complete()
+      ctx.databaseStartupQuitGuard.release()
+    }
   })
 }
 

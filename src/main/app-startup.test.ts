@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createSecondInstanceRelay,
+  createStartupWindowCloseOptions,
   createStartupWindowSecondInstanceHandler,
   orchestrateAppStartup
 } from './app-startup'
@@ -46,6 +47,7 @@ describe('createSecondInstanceRelay', () => {
   })
 
   it('surfaces an existing startup window for a second launch', () => {
+    const forward = vi.fn()
     const window = {
       focus: vi.fn(),
       isDestroyed: vi.fn(() => false),
@@ -54,11 +56,23 @@ describe('createSecondInstanceRelay', () => {
       show: vi.fn()
     }
 
-    createStartupWindowSecondInstanceHandler(window)()
+    createStartupWindowSecondInstanceHandler(window, forward)(['app', '--serve=44100'])
 
     expect(window.restore).toHaveBeenCalledOnce()
     expect(window.show).toHaveBeenCalledOnce()
     expect(window.focus).toHaveBeenCalledOnce()
+    expect(forward).toHaveBeenCalledWith(['app', '--serve=44100'])
+  })
+
+  it('allows the startup window to close after it requests app quit', () => {
+    const quit = vi.fn()
+    const options = createStartupWindowCloseOptions(quit)
+
+    expect(options.classifyClose()).toBe('quit')
+    options.requestQuit()
+
+    expect(quit).toHaveBeenCalledOnce()
+    expect(options.classifyClose()).toBe('close')
   })
 })
 

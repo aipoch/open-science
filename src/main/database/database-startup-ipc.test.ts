@@ -58,7 +58,7 @@ describe('database startup Electron bridge', () => {
     expect(handlers.size).toBe(0)
   })
 
-  it('holds an ordinary quit until an active schema attempt settles', async () => {
+  it('hands a verified startup quit to the installed application lifecycle', async () => {
     let beforeQuit: ((event: { preventDefault: () => void }) => void) | undefined
     let settle: (() => void) | undefined
     const settled = new Promise<void>((resolve) => {
@@ -72,9 +72,13 @@ describe('database startup Electron bridge', () => {
       removeListener: vi.fn(),
       quit
     }
-    installDatabaseStartupQuitGuard({
+    const guard = installDatabaseStartupQuitGuard({
       app: app as never,
-      owner: { isMigrating: () => true, whenAttemptSettled: () => settled }
+      owner: {
+        getState: () => ({ phase: 'migrating', migrationId: '0001' }),
+        isMigrating: () => true,
+        whenAttemptSettled: () => settled
+      }
     })
     const preventDefault = vi.fn()
 
@@ -85,6 +89,49 @@ describe('database startup Electron bridge', () => {
     settle?.()
     await settled
     await Promise.resolve()
+    expect(quit).not.toHaveBeenCalled()
+
+    guard.release()
     expect(quit).toHaveBeenCalledOnce()
+  })
+
+  it('allows a blocked startup to quit without waiting for an application lifecycle', async () => {
+    let beforeQuit: ((event: { preventDefault: () => void }) => void) | undefined
+    let state: DatabaseStartupState = { phase: 'migrating', migrationId: '0001' }
+    let settle: (() => void) | undefined
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const quit = vi.fn()
+    const guard = installDatabaseStartupQuitGuard({
+      app: {
+        on: (_event: string, listener: typeof beforeQuit) => {
+          beforeQuit = listener
+        },
+        removeListener: vi.fn(),
+        quit
+      } as never,
+      owner: {
+        getState: () => state,
+        isMigrating: () => true,
+        whenAttemptSettled: () => settled
+      }
+    })
+
+    beforeQuit?.({ preventDefault: vi.fn() })
+    state = {
+      phase: 'blocked',
+      error: {
+        code: 'database_history_invalid',
+        message: 'The database migration history could not be verified.',
+        retryable: false
+      }
+    }
+    settle?.()
+    await settled
+    await Promise.resolve()
+
+    expect(quit).toHaveBeenCalledOnce()
+    guard.dispose()
   })
 })

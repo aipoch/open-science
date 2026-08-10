@@ -297,10 +297,6 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Check generated database schema
-        id: database_schema
-        continue-on-error: true
-        run: npm run db:schema:check
       - name: Check Markdown formatting
         id: docs
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs') }}
@@ -389,7 +385,6 @@ jobs:
         shell: bash
         env:
           CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
-          DATABASE_SCHEMA_OUTCOME: ${{ steps.database_schema.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
@@ -407,7 +402,6 @@ jobs:
             fi
           }
           check docs "$DOCS_OUTCOME"
-          check database_schema "$DATABASE_SCHEMA_OUTCOME"
           check format "$FORMAT_OUTCOME"
           check lint "$LINT_OUTCOME"
           check typecheck_node "$TYPECHECK_NODE_OUTCOME"

@@ -32,24 +32,52 @@ const registerDatabaseStartupIpc = (deps: DatabaseStartupIpcDeps): (() => void) 
 
 type DatabaseStartupQuitGuardDeps = {
   app: Pick<App, 'on' | 'removeListener'> & { quit: () => void }
-  owner: Pick<DatabaseStartupOwner, 'isMigrating' | 'whenAttemptSettled'>
+  owner: Pick<DatabaseStartupOwner, 'getState' | 'isMigrating' | 'whenAttemptSettled'>
 }
 
-const installDatabaseStartupQuitGuard = (deps: DatabaseStartupQuitGuardDeps): (() => void) => {
+type DatabaseStartupQuitGuard = {
+  dispose: () => void
+  release: () => void
+}
+
+const installDatabaseStartupQuitGuard = (
+  deps: DatabaseStartupQuitGuardDeps
+): DatabaseStartupQuitGuard => {
+  let attemptSettled = false
   let pendingQuit = false
+  let quitIssued = false
+  let released = false
+  const maybeQuit = (): void => {
+    if (!pendingQuit || !attemptSettled || quitIssued) return
+    // A blocked startup never installs the application lifecycle. A verified startup hands the quit
+    // request to that lifecycle so every runtime owner created during composition is torn down normally.
+    if (!released && deps.owner.getState().phase !== 'blocked') return
+    quitIssued = true
+    deps.app.quit()
+  }
   const onBeforeQuit = (event: Electron.Event): void => {
     if (!deps.owner.isMigrating()) return
     event.preventDefault()
     if (pendingQuit) return
     pendingQuit = true
     void deps.owner.whenAttemptSettled().finally(() => {
-      pendingQuit = false
-      deps.app.quit()
+      attemptSettled = true
+      maybeQuit()
     })
   }
   deps.app.on('before-quit', onBeforeQuit)
-  return () => deps.app.removeListener('before-quit', onBeforeQuit)
+  const dispose = (): void => {
+    deps.app.removeListener('before-quit', onBeforeQuit)
+  }
+  return {
+    dispose,
+    release: () => {
+      released = true
+      dispose()
+      maybeQuit()
+    }
+  }
 }
 
 export { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc }
-export type { DatabaseStartupIpcDeps, DatabaseStartupQuitGuardDeps }
+export type { DatabaseStartupIpcDeps, DatabaseStartupQuitGuard, DatabaseStartupQuitGuardDeps }
