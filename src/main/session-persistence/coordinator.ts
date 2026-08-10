@@ -621,7 +621,12 @@ class SessionPersistenceCoordinator {
       try {
         await this.deletionOwner.deleteSession(projectId, sessionId)
       } catch (error) {
-        this.deletedSessions.delete(key)
+        try {
+          const authority = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
+          if (authority.status === 'found') this.deletedSessions.delete(key)
+        } catch {
+          // Authority cannot be proven live, so retain the tombstone fail-closed.
+        }
         throw error
       }
     })

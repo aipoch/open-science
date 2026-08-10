@@ -1622,7 +1622,9 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('restores DB visibility and clears the tombstone when JSON deletion fails', async () => {
+    const session = createSession()
     const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
     })
     const fileIndex = createFileIndex()
@@ -1636,7 +1638,7 @@ describe('SessionPersistenceCoordinator', () => {
       'delete-session-operation'
     )
 
-    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+    await expect(coordinator.saveSession(session)).resolves.toMatchObject({
       id: 'session-1'
     })
     expect(repository.saveSession).toHaveBeenCalledOnce()
@@ -1862,7 +1864,9 @@ describe('SessionPersistenceCoordinator', () => {
   })
 
   it('marks the index incomplete when deletion compensation cannot restore DB visibility', async () => {
+    const session = createSession()
     const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('disk locked'))
     })
     const markReconciliationIncomplete = vi.fn()
@@ -1876,7 +1880,7 @@ describe('SessionPersistenceCoordinator', () => {
       'database unavailable'
     )
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
-    await expect(coordinator.saveSession(createSession())).resolves.toMatchObject({
+    await expect(coordinator.saveSession(session)).resolves.toMatchObject({
       id: 'session-1'
     })
   })
@@ -4395,7 +4399,10 @@ describe('SessionPersistenceCoordinator', () => {
   it('keeps Session authority deleted when post-authority Compute cleanup fails', async () => {
     const session = createSession()
     const repository = createSessionRepository({
-      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'found', session })
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValueOnce({ status: 'found', session })
+        .mockResolvedValue({ status: 'missing' })
     })
     const markReconciliationIncomplete = vi.fn()
     const computeJobs = {
@@ -4423,6 +4430,8 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).not.toHaveBeenCalled()
     expect(computeJobs.abortSessionJobDeletion).not.toHaveBeenCalled()
     expect(markReconciliationIncomplete).toHaveBeenCalledOnce()
+    await expect(coordinator.saveSession(session)).rejects.toThrow(/session.*deleted/i)
+    expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
   it('retains missing Session deletion and the Compute barrier when cleanup fails', async () => {
