@@ -121,7 +121,8 @@ const optionalString = (
 }
 
 const parseUtcTime = (value: string, key: 'after' | 'before'): number => {
-  const normalized = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? `${value}T00:00:00.000Z` : value
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/u.test(value)
+  const normalized = dateOnly ? `${value}T00:00:00.000Z` : value
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/u.test(
       normalized
@@ -129,11 +130,16 @@ const parseUtcTime = (value: string, key: 'after' | 'before'): number => {
   ) {
     throw new Error(`host.frames.list ${key} must be a UTC date or ISO timestamp with an offset.`)
   }
+  const calendarDate = normalized.slice(0, 10)
+  const calendarTime = Date.parse(`${calendarDate}T00:00:00.000Z`)
+  if (
+    !Number.isFinite(calendarTime) ||
+    new Date(calendarTime).toISOString().slice(0, 10) !== calendarDate
+  ) {
+    throw new Error(`host.frames.list ${key} is not a valid ${dateOnly ? 'UTC date' : 'time'}.`)
+  }
   const parsed = Date.parse(normalized)
   if (!Number.isFinite(parsed)) throw new Error(`host.frames.list ${key} is not a valid time.`)
-  if (/^\d{4}-\d{2}-\d{2}$/u.test(value) && new Date(parsed).toISOString().slice(0, 10) !== value) {
-    throw new Error(`host.frames.list ${key} is not a valid UTC date.`)
-  }
   return parsed
 }
 

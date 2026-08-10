@@ -662,6 +662,8 @@ describe('HostFramesService', () => {
       { kind: 'unknown' },
       { archived: 'yes' },
       { after: '2026-02-30' },
+      { after: '2026-02-30T00:00:00Z' },
+      { before: '2025-02-29T12:00:00+08:00' },
       { after: '2026-08-03', before: '2026-08-03' },
       { after: '2026-08-03T10:00:00' },
       { limit: 0 },
