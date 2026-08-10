@@ -2,6 +2,7 @@ import { isDurableAgentUserChoiceRequest, type ElicitationResponse } from '../..
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
 import type { AgentFrameworkId } from '../../../../shared/settings'
+import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import { useSessionStore, type ChatMessage, type ChatSession } from '../../stores/session-store'
 import type { useAcpRuntime } from './useAcpRuntime'
 import {
@@ -26,6 +27,7 @@ type WorkspaceElicitationOptions = {
   historyReplayDescriptor?: HistoryReplayDescriptor
   onSendPreparationStateChange?: (sessionId: string, inFlight: boolean) => void
   drainRuntimeEvents?: (sessionId?: string) => Promise<void>
+  flushPersistence?: () => Promise<void>
 }
 
 const buildElicitationReplay = (
@@ -246,6 +248,7 @@ const reviseWorkspaceElicitation = async (
     if (!useSessionStore.getState().reviseSessionFromElicitation(session.id, activity.id)) {
       throw new Error('The conversation could not rewind to this question.')
     }
+    await (options.flushPersistence ?? flushSessionPersistence)()
     const snapshot = await runtime.respondToElicitation(responseToSend)
     syncWorkspaceInteractionState(snapshot)
     if (
