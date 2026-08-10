@@ -31,6 +31,63 @@ const futureTestMigration = (): MigrationManifestEntry => {
   }
 }
 
+const LEGACY_PERMISSION_GRANT_TABLE_DDL = `CREATE TABLE "PermissionGrant" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "capabilityKind" TEXT NOT NULL,
+    "capabilityKey" TEXT NOT NULL,
+    "qualifierMode" TEXT NOT NULL DEFAULT 'none',
+    "qualifierValue" TEXT,
+    "scopeKind" TEXT NOT NULL,
+    "projectId" TEXT,
+    "sessionId" TEXT,
+    "fingerprint" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL DEFAULT 1,
+    "createdAt" DATETIME,
+    CONSTRAINT "PermissionGrant_capabilityKind_check" CHECK ("capabilityKind" IN ('customize_mutation', 'mcp_tool', 'execution', 'file_operation', 'skill_operation', 'builtin_tool')),
+    CONSTRAINT "PermissionGrant_capabilityKey_check" CHECK (length(trim("capabilityKey")) > 0),
+    CONSTRAINT "PermissionGrant_qualifier_check" CHECK (
+      ("qualifierMode" IN ('none', 'any') AND "qualifierValue" IS NULL) OR
+      ("qualifierMode" IN ('category', 'exact') AND "qualifierValue" IS NOT NULL AND length(trim("qualifierValue")) > 0)
+    ),
+    CONSTRAINT "PermissionGrant_scope_check" CHECK (
+      ("scopeKind" = 'global' AND "projectId" IS NULL AND "sessionId" IS NULL) OR
+      ("scopeKind" = 'project' AND "projectId" IS NOT NULL AND "sessionId" IS NULL) OR
+      ("scopeKind" = 'session' AND "projectId" IS NOT NULL AND "sessionId" IS NOT NULL)
+    ),
+    CONSTRAINT "PermissionGrant_revision_check" CHECK ("revision" >= 1),
+    CONSTRAINT "PermissionGrant_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`
+
+const LEGACY_ARTIFACT_VERSION_INPUT_TABLE_DDL = `CREATE TABLE "ArtifactVersionInput" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "artifactVersionId" TEXT NOT NULL,
+    "ordinal" INTEGER NOT NULL,
+    "inputFileVersionId" TEXT NOT NULL,
+    "sourceKind" TEXT NOT NULL,
+    "sourceFileId" TEXT NOT NULL,
+    "sourceArtifactVersionId" TEXT,
+    "sourceUploadVersionId" TEXT,
+    "sourceVersionNumber" INTEGER,
+    "sourceCreatedAt" DATETIME,
+    "sourceProjectId" TEXT NOT NULL,
+    "sourceSessionId" TEXT NOT NULL,
+    "filename" TEXT NOT NULL,
+    "contentType" TEXT,
+    "sizeBytes" BIGINT NOT NULL,
+    "checksum" TEXT NOT NULL,
+    "storageKey" TEXT NOT NULL,
+    "strongestAssociation" TEXT NOT NULL,
+    CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version')),
+    CONSTRAINT "ArtifactVersionInput_sourceIdentity_check" CHECK (
+      ("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR
+      ("sourceKind" = 'upload-version' AND "sourceUploadVersionId" IS NOT NULL AND "sourceArtifactVersionId" IS NULL AND "inputFileVersionId" = "sourceUploadVersionId")
+    ),
+    CONSTRAINT "ArtifactVersionInput_artifactVersionId_fkey" FOREIGN KEY ("artifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceArtifactVersionId_fkey" FOREIGN KEY ("sourceArtifactVersionId") REFERENCES "ArtifactVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceUploadVersionId_fkey" FOREIGN KEY ("sourceUploadVersionId") REFERENCES "UploadVersion" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ArtifactVersionInput_sourceProjectId_sourceSessionId_fkey" FOREIGN KEY ("sourceProjectId", "sourceSessionId") REFERENCES "FileOriginSession" ("projectId", "sessionId") ON DELETE RESTRICT ON UPDATE CASCADE
+);`
+
 describe('application database migrations', () => {
   let storageRoot: string | undefined
   let client: PrismaClient | undefined
@@ -286,6 +343,91 @@ describe('application database migrations', () => {
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
     ).resolves.toMatchObject({ name: 'Preserved', archivedAt: null })
+  })
+
+  it('adopts the pre-ledger permission grant table emitted by v0.9 through v0.10', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-legacy-permissions-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRawUnsafe(LEGACY_PERMISSION_GRANT_TABLE_DDL)
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+    await client.$executeRaw`
+      INSERT INTO "PermissionGrant" (
+        "id", "capabilityKind", "capabilityKey", "scopeKind", "projectId", "fingerprint"
+      ) VALUES (
+        ${'legacy-grant'}, ${'execution'}, ${'exec:agent/shell'}, ${'project'},
+        ${'legacy-project'}, ${'legacy-fingerprint'}
+      )
+    `
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
+    await expect(
+      client.permissionGrant.findUniqueOrThrow({ where: { id: 'legacy-grant' } })
+    ).resolves.toMatchObject({
+      capabilityKind: 'execution',
+      capabilityKey: 'exec:agent/shell',
+      projectId: 'legacy-project'
+    })
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('rejects a grouped legacy permission constraint with different semantics', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-invalid-permissions-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(
+      LEGACY_PERMISSION_GRANT_TABLE_DDL.replace(
+        '"qualifierValue" IS NULL) OR',
+        '"qualifierValue" IS NOT NULL) OR'
+      )
+    )
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM "sqlite_schema"
+        WHERE "name" = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
+  })
+
+  it('adopts the legacy artifact input identity check with equivalent conjunct order', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-legacy-input-check-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(LEGACY_ARTIFACT_VERSION_INPUT_TABLE_DDL)
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+    await expect(
+      client.$queryRaw<Array<{ sql: string }>>`
+        SELECT "sql" FROM "sqlite_schema"
+        WHERE "type" = 'table' AND "name" = 'ArtifactVersionInput'
+      `
+    ).resolves.toEqual([
+      {
+        sql: expect.stringContaining(
+          '"sourceUploadVersionId" IS NOT NULL AND "sourceArtifactVersionId" IS NULL'
+        )
+      }
+    ])
   })
 
   it('adopts the pre-ledger permission seed table from the final baseline', async () => {

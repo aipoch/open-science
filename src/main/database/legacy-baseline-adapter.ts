@@ -132,6 +132,38 @@ const splitSqlDefinitions = (ddl: string): string[] => {
 const readQuotedIdentifiers = (value: string): string[] =>
   [...value.matchAll(/"((?:[^"]|"")+)"/g)].map((match) => match[1]!.replaceAll('""', '"'))
 
+const hasRedundantOuterParentheses = (value: string): boolean => {
+  if (value[0] !== '(' || value.at(-1) !== ')') return false
+
+  let depth = 0
+  let quote: '"' | "'" | undefined
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!
+    if (quote) {
+      if (char !== quote) continue
+      if (value[index + 1] === quote) index += 1
+      else quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === '(') depth += 1
+    else if (char === ')') depth -= 1
+
+    if (depth === 0 && index < value.length - 1) return false
+    if (depth < 0) return false
+  }
+  return depth === 0 && quote === undefined
+}
+
+const stripRedundantOuterParentheses = (value: string): string => {
+  let normalized = value
+  while (hasRedundantOuterParentheses(normalized)) normalized = normalized.slice(1, -1).trim()
+  return normalized
+}
+
 const normalizeSqlFragment = (value: string | null): string | null => {
   if (value === null) return null
   const literals: string[] = []
@@ -145,10 +177,55 @@ const normalizeSqlFragment = (value: string | null): string | null => {
     .replaceAll(/\s+/g, ' ')
     .replaceAll(/\s*([(),=<>])\s*/g, '$1')
     .toLowerCase()
+  normalized = stripRedundantOuterParentheses(normalized)
   literals.forEach((literal, index) => {
     normalized = normalized.replace(`__open_science_sql_literal_${index}__`, literal)
   })
   return normalized
+}
+
+type KnownEquivalentCheckExpression = {
+  actual: string
+  expected: string
+}
+
+// Pre-ledger runtime DDL sometimes emitted an equivalent boolean expression in a different order.
+// Pair each accepted legacy form with the exact frozen target so a future contract change still fails
+// closed instead of inheriting this compatibility allowance.
+const KNOWN_EQUIVALENT_CHECK_EXPRESSIONS: ReadonlyMap<
+  string,
+  readonly KnownEquivalentCheckExpression[]
+> = new Map([
+  [
+    'ArtifactVersionInput.ArtifactVersionInput_sourceIdentity_check',
+    [
+      {
+        actual: normalizeSqlFragment(`
+          ("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR
+          ("sourceKind" = 'upload-version' AND "sourceUploadVersionId" IS NOT NULL AND "sourceArtifactVersionId" IS NULL AND "inputFileVersionId" = "sourceUploadVersionId")
+        `)!,
+        expected: normalizeSqlFragment(`
+          (("sourceKind" = 'artifact-version' AND "sourceArtifactVersionId" IS NOT NULL AND "sourceUploadVersionId" IS NULL AND "inputFileVersionId" = "sourceArtifactVersionId") OR
+          ("sourceKind" = 'upload-version' AND "sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL AND "inputFileVersionId" = "sourceUploadVersionId"))
+        `)!
+      }
+    ]
+  ]
+])
+
+const checkExpressionsMatch = (
+  tableName: string,
+  constraintName: string,
+  actual: string | undefined,
+  expected: string
+): boolean => {
+  if (actual === expected) return true
+  return Boolean(
+    actual &&
+    KNOWN_EQUIVALENT_CHECK_EXPRESSIONS.get(`${tableName}.${constraintName}`)?.some(
+      (equivalent) => equivalent.actual === actual && equivalent.expected === expected
+    )
+  )
 }
 
 const parseTargetTable = (ddl: string): readonly [string, TargetTable] | undefined => {
@@ -525,7 +602,8 @@ const verifyRuntimeSchemaTarget = async (
     }
     if (
       [...expectedTable.checks.entries()].some(
-        ([name, expression]) => actualTable.checks.get(name) !== expression
+        ([name, expression]) =>
+          !checkExpressionsMatch(tableName, name, actualTable.checks.get(name), expression)
       ) ||
       actualTable.checks.size !== expectedTable.checks.size
     ) {
