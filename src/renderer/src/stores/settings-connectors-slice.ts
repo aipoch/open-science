@@ -79,8 +79,11 @@ export const createSettingsConnectorsSlice = ({
   setState,
   getCommands
 }: SettingsConnectorsSliceOptions): SettingsConnectorsActions => {
+  let reconcileGeneration = 0
   const reconcile = async (command: () => Promise<SettingsConnectorsProjection>): Promise<void> => {
-    setState(await command())
+    const generation = ++reconcileGeneration
+    const projection = await command()
+    if (generation === reconcileGeneration) setState(projection)
   }
   let removeRuntimeChangedListener: (() => void) | undefined
   const subscribeToRuntimeChanges = (): void => {

@@ -136,6 +136,38 @@ describe('settings Connectors slice', () => {
     expect(commands.listConnectors).toHaveBeenCalledTimes(2)
   })
 
+  it('does not let an older runtime snapshot overwrite a newer mutation', async () => {
+    let runtimeChanged: (() => void) | undefined
+    let settleRuntimeSnapshot!: (result: ConnectorsSnapshot) => void
+    const runtimeSnapshot = new Promise<ConnectorsSnapshot>((resolve) => {
+      settleRuntimeSnapshot = resolve
+    })
+    const runtimeCommands: ConnectorCommands = {
+      ...createCommands(),
+      listConnectors: vi
+        .fn()
+        .mockResolvedValueOnce(snapshot([], [server('custom')]))
+        .mockReturnValueOnce(runtimeSnapshot),
+      setCustomServerEnabled: vi.fn(async () => snapshot([], [server('custom', false)])),
+      onConnectorRuntimeChanged: vi.fn((listener: () => void) => {
+        runtimeChanged = listener
+        return () => undefined
+      })
+    }
+    ;({ store, commands } = createHarness(runtimeCommands))
+
+    await store.getState().loadConnectors()
+    runtimeChanged?.()
+    await vi.waitFor(() => expect(commands.listConnectors).toHaveBeenCalledTimes(2))
+    await store.getState().setCustomServerEnabled('custom', false)
+
+    settleRuntimeSnapshot(snapshot([], [server('custom')]))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.getState().customServers).toEqual([server('custom', false)])
+  })
+
   it('optimistically enables a Connector before authoritative reconciliation', async () => {
     let settle!: (result: ConnectorsSnapshot) => void
     vi.mocked(commands.setConnectorEnabled).mockReturnValue(
