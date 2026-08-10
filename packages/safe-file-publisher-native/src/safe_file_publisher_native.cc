@@ -299,7 +299,7 @@ napi_value PublishWindows(
 
   const size_t destination_bytes = destination_name.size() * sizeof(wchar_t);
   const size_t link_prefix_size = offsetof(NativeFileLinkInformation, file_name);
-  const size_t max_native_buffer = std::numeric_limits<ULONG>::max();
+  const size_t max_native_buffer = (std::numeric_limits<ULONG>::max)();
   if (destination_bytes > max_native_buffer - link_prefix_size) {
     CloseHandle(source_handle);
     CloseHandle(parent_handle);
