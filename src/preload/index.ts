@@ -317,6 +317,8 @@ const api: OpenScienceAPI = {
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
+    onConnectorRuntimeChanged: (listener) =>
+      electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
     onSkillImportApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onSkillImportApprovalRequest', listener),
     onSkillImportApprovalSettled: (listener) =>

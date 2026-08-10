@@ -1696,7 +1696,9 @@ const createApplicationModules = async (
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
       clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
-      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId)
+      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId),
+      notifyConnectorRuntimeChanged: () =>
+        broadcastToRenderers('settings:connector-runtime-changed', undefined)
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })

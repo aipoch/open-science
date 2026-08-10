@@ -56,6 +56,7 @@ export type ApplicationEventMap = {
   'specialist:pending-switch': PendingSwitchBroadcast
   'specialist:handoff-lifecycle-changed': CompletionHandoffLifecycleEvent
   'specialist:handoff-lifecycle': CompletionGateLifecycleEvent
+  'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent

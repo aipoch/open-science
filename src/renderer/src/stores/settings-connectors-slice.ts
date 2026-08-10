@@ -51,6 +51,7 @@ type SettingsConnectorsCommands = Pick<
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
   | 'retryCustomServer'
+  | 'onConnectorRuntimeChanged'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'respondConnectorApproval'
@@ -81,9 +82,18 @@ export const createSettingsConnectorsSlice = ({
   const reconcile = async (command: () => Promise<SettingsConnectorsProjection>): Promise<void> => {
     setState(await command())
   }
+  let removeRuntimeChangedListener: (() => void) | undefined
+  const subscribeToRuntimeChanges = (): void => {
+    removeRuntimeChangedListener ??= getCommands().onConnectorRuntimeChanged(() => {
+      void reconcile(() => getCommands().listConnectors()).catch(() => undefined)
+    })
+  }
 
   return {
-    loadConnectors: () => reconcile(() => getCommands().listConnectors()),
+    loadConnectors: () => {
+      subscribeToRuntimeChanges()
+      return reconcile(() => getCommands().listConnectors())
+    },
     setConnectorEnabled: async (id, enabled) => {
       setState((state) => ({
         connectors: state.connectors.map((connector) =>

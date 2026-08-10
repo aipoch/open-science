@@ -36,6 +36,7 @@ type ConnectorSettingsWorkflowEffects = {
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
   clearCustomServerFailure: (serverId: string) => void
   resetCustomServerClient: (serverId: string) => Promise<void>
+  notifyConnectorRuntimeChanged: () => void
 }
 
 type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promise<
@@ -125,10 +126,7 @@ class ConnectorSettingsWorkflows {
     await this.effects.resetCustomServerClient(request.id)
     this.effects.clearCustomServerFailure(request.id)
     this.effects.invalidatePermissionProjection()
-    await wireConnectorReload(
-      this.effects.refreshConnectorSkillDocs,
-      this.effects.requestSkillsReload
-    )
+    await this.refreshConnectorProjection()
     return this.settings.listConnectors()
   }
 
@@ -140,10 +138,14 @@ class ConnectorSettingsWorkflows {
 
   private connectorsChanged(): void {
     this.effects.invalidatePermissionProjection()
-    void wireConnectorReload(
+    void this.refreshConnectorProjection()
+  }
+
+  private refreshConnectorProjection(): Promise<unknown> {
+    return wireConnectorReload(
       this.effects.refreshConnectorSkillDocs,
       this.effects.requestSkillsReload
-    )
+    ).finally(this.effects.notifyConnectorRuntimeChanged)
   }
 
   private async prepareCustomServerSecurityChange(

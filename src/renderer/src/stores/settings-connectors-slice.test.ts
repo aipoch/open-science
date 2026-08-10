@@ -66,6 +66,7 @@ const createCommands = (): ConnectorCommands => ({
   updateCustomServer: vi.fn(async () => snapshot()),
   authenticateCustomServer: vi.fn(async () => snapshot()),
   retryCustomServer: vi.fn(async () => snapshot()),
+  onConnectorRuntimeChanged: vi.fn(() => () => undefined),
   cancelCustomServerAuthentication: vi.fn(async () => undefined),
   setCustomServerEnabled: vi.fn(async () => snapshot()),
   removeCustomServer: vi.fn(async () => snapshot()),
@@ -104,6 +105,35 @@ describe('settings Connectors slice', () => {
     await store.getState().loadConnectors()
 
     expect(store.getState()).toMatchObject(result)
+  })
+
+  it('reloads the authoritative snapshot when runtime availability changes', async () => {
+    let runtimeChanged: (() => void) | undefined
+    const onConnectorRuntimeChanged = vi.fn((listener: () => void) => {
+      runtimeChanged = listener
+      return () => {
+        runtimeChanged = undefined
+      }
+    })
+    const runtimeCommands: ConnectorCommands = {
+      ...createCommands(),
+      onConnectorRuntimeChanged
+    }
+    ;({ store, commands } = createHarness(runtimeCommands))
+    vi.mocked(commands.listConnectors)
+      .mockResolvedValueOnce(snapshot([], [server('custom')]))
+      .mockResolvedValueOnce(snapshot([], [{ ...server('custom'), availability: 'unavailable' }]))
+
+    await store.getState().loadConnectors()
+    runtimeChanged?.()
+
+    await vi.waitFor(() =>
+      expect(store.getState().customServers).toEqual([
+        { ...server('custom'), availability: 'unavailable' }
+      ])
+    )
+    expect(onConnectorRuntimeChanged).toHaveBeenCalledOnce()
+    expect(commands.listConnectors).toHaveBeenCalledTimes(2)
   })
 
   it('optimistically enables a Connector before authoritative reconciliation', async () => {

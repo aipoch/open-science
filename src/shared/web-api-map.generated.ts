@@ -273,6 +273,7 @@ export const WEB_EVENT_CHANNELS = {
   'sessions.onDeleted': 'session:deleted',
   'sessions.onUpdated': 'session:updated',
   'settings.onConnectorApprovalRequest': 'connectors:approval-request',
+  'settings.onConnectorRuntimeChanged': 'settings:connector-runtime-changed',
   'settings.onInstallLog': 'settings:install-log',
   'settings.onSkillImportApprovalRequest': 'skills:conversation-import-request',
   'settings.onSkillImportApprovalSettled': 'skills:conversation-import-settled',

@@ -37,7 +37,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
     beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
     clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined),
-    resetCustomServerClient: effects.resetCustomServerClient ?? (async () => undefined)
+    resetCustomServerClient: effects.resetCustomServerClient ?? (async () => undefined),
+    notifyConnectorRuntimeChanged: effects.notifyConnectorRuntimeChanged ?? (() => undefined)
   },
   appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
 })
@@ -529,7 +530,8 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
         calls.push('refresh')
         return refresh
       },
-      requestSkillsReload: () => calls.push('reload')
+      requestSkillsReload: () => calls.push('reload'),
+      notifyConnectorRuntimeChanged: () => calls.push('notify')
     })
 
     await createSettingsWorkflows(capability, effects).connectors.setConnectorEnabled({
@@ -539,7 +541,9 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     expect(calls).toEqual(['persist', 'invalidate', 'refresh'])
 
     finishRefresh?.()
-    await vi.waitFor(() => expect(calls).toEqual(['persist', 'invalidate', 'refresh', 'reload']))
+    await vi.waitFor(() =>
+      expect(calls).toEqual(['persist', 'invalidate', 'refresh', 'reload', 'notify'])
+    )
   })
 
   it('refreshes Connector projections after OAuth authentication', async () => {
@@ -556,12 +560,15 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
         invalidatePermissionProjection: () => calls.push('invalidate'),
         refreshConnectorSkillDocs: async () => {
           calls.push('refresh')
-        }
+        },
+        notifyConnectorRuntimeChanged: () => calls.push('notify')
       })
     ).connectors
 
     await workflows.authenticateCustomServer({ id: 'server-1' })
-    expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
+    await vi.waitFor(() =>
+      expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh', 'notify'])
+    )
   })
 
   it('cancels OAuth authentication without refreshing Connector projections', async () => {
@@ -594,7 +601,8 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
         refreshConnectorSkillDocs: async () => {
           calls.push('refresh')
         },
-        requestSkillsReload: () => calls.push('reload')
+        requestSkillsReload: () => calls.push('reload'),
+        notifyConnectorRuntimeChanged: () => calls.push('notify')
       })
     ).connectors
 
@@ -606,6 +614,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       'invalidate',
       'refresh',
       'reload',
+      'notify',
       'snapshot'
     ])
   })

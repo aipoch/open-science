@@ -508,6 +508,7 @@ export interface OpenScienceAPI {
     cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
     retryCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    onConnectorRuntimeChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>
     ): RemoveListener
