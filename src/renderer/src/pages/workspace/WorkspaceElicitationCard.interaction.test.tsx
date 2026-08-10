@@ -239,6 +239,17 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(onDraftChange).toHaveBeenLastCalledWith([
       { fieldId: 'question_0', value: 'multi-omics' }
     ])
+    expect(container.querySelector('h3')?.textContent).toBe(
+      'What should this skill primarily cover?'
+    )
+
+    const advance = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Next'
+    )
+    expect(advance?.disabled).toBe(false)
+    expect(advance?.querySelector('svg.lucide-chevron-right')).not.toBeNull()
+    await act(async () => advance?.click())
+
     expect(container.querySelector('h3')?.textContent).toBe('Which language should the skill use?')
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent

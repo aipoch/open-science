@@ -298,7 +298,6 @@ const WorkspaceElicitationCard = ({
     setError(undefined)
 
     onDraftChange?.(nextAnswers)
-    if (!isFinalChoiceQuestion) setActiveChoiceIndex((index) => index + 1)
   }
 
   return (
