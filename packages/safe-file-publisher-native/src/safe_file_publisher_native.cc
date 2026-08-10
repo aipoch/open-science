@@ -127,6 +127,16 @@ bool SamePath(const std::wstring& left, const std::wstring& right) {
   return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
 }
 
+bool SameFileIdentity(HANDLE left, HANDLE right) {
+  BY_HANDLE_FILE_INFORMATION left_info{};
+  BY_HANDLE_FILE_INFORMATION right_info{};
+  if (!GetFileInformationByHandle(left, &left_info) ||
+      !GetFileInformationByHandle(right, &right_info)) return false;
+  return left_info.dwVolumeSerialNumber == right_info.dwVolumeSerialNumber &&
+         left_info.nFileIndexHigh == right_info.nFileIndexHigh &&
+         left_info.nFileIndexLow == right_info.nFileIndexLow;
+}
+
 bool IsSameOrDescendant(const std::wstring& root, const std::wstring& candidate) {
   if (SamePath(root, candidate)) return true;
   if (candidate.size() <= root.size() ||
@@ -295,14 +305,28 @@ napi_value PublishWindows(
       rename_info,
       static_cast<DWORD>(rename_buffer.size()));
   const DWORD rename_error = renamed ? ERROR_SUCCESS : GetLastError();
-  const std::wstring renamed_path = renamed ? HandlePath(source_handle) : std::wstring();
+  HANDLE destination_handle = INVALID_HANDLE_VALUE;
+  if (renamed) {
+    destination_handle = CreateFileW(
+        destination_path.c_str(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr);
+  }
+  const bool landed_at_destination =
+      destination_handle != INVALID_HANDLE_VALUE &&
+      SameFileIdentity(source_handle, destination_handle);
+  if (destination_handle != INVALID_HANDLE_VALUE) CloseHandle(destination_handle);
   CloseHandle(source_handle);
   CloseHandle(parent_handle);
   CloseHandle(root_handle);
   if (!renamed) {
     return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(rename_error));
   }
-  if (renamed_path.empty() || !SamePath(destination_path, renamed_path)) {
+  if (!landed_at_destination) {
     return ThrowError(env, "Atomic publication landed outside its destination.", "EIO");
   }
 
