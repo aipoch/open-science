@@ -976,7 +976,7 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
-const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills']
+const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills', 'artifacts']
 
 async function hostCapabilities(...args) {
   if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
@@ -1003,6 +1003,110 @@ async function hostCapabilities(...args) {
   return Object.freeze(
     Object.fromEntries(HOST_CAPABILITY_NAMES.map((name) => [name, result[name]]))
   )
+}
+
+async function artifactsRpc(op, params) {
+  if (!RPC_ENDPOINT)
+    throw new Error(
+      `host.${op === 'list' ? 'artifacts' : 'artifact_path'} is unavailable: RPC endpoint not set`
+    )
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'artifactsCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(
+      `host.${op === 'list' ? 'artifacts' : 'artifact_path'}: ${body.error || 'HTTP ' + res.status}`
+    )
+  }
+  return body.result
+}
+
+const HOST_ARTIFACT_REQUIRED_KEYS = [
+  'id',
+  'filename',
+  'size_bytes',
+  'latest_version_id',
+  'session_id',
+  'root_frame_id',
+  'is_user_upload',
+  'latest_version_created_at'
+]
+const HOST_ARTIFACT_OPTIONAL_KEYS = ['content_type', 'checksum']
+
+const validatedHostArtifact = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.artifacts returned an invalid Artifact')
+  }
+  const keys = Object.keys(value)
+  if (
+    HOST_ARTIFACT_REQUIRED_KEYS.some((key) => !keys.includes(key)) ||
+    keys.some(
+      (key) =>
+        !HOST_ARTIFACT_REQUIRED_KEYS.includes(key) && !HOST_ARTIFACT_OPTIONAL_KEYS.includes(key)
+    ) ||
+    typeof value.id !== 'string' ||
+    typeof value.filename !== 'string' ||
+    typeof value.size_bytes !== 'number' ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    typeof value.latest_version_id !== 'string' ||
+    typeof value.session_id !== 'string' ||
+    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
+    typeof value.is_user_upload !== 'boolean' ||
+    typeof value.latest_version_created_at !== 'string' ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
+    (value.checksum !== undefined && typeof value.checksum !== 'string')
+  ) {
+    throw new Error('host.artifacts returned an invalid Artifact')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...HOST_ARTIFACT_REQUIRED_KEYS, ...HOST_ARTIFACT_OPTIONAL_KEYS]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+async function hostArtifacts(options = {}) {
+  if (arguments.length > 1) throw new TypeError('host.artifacts accepts at most one options object')
+  const result = await artifactsRpc('list', { options })
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    !Number.isSafeInteger(result.count) ||
+    typeof result.project_id !== 'string' ||
+    typeof result.truncated !== 'boolean' ||
+    (result.next_cursor !== undefined && typeof result.next_cursor !== 'string') ||
+    !Array.isArray(result.artifacts) ||
+    result.count !== result.artifacts.length ||
+    result.truncated !== (result.next_cursor !== undefined) ||
+    Object.keys(result).some(
+      (key) => !['count', 'project_id', 'truncated', 'next_cursor', 'artifacts'].includes(key)
+    )
+  ) {
+    throw new Error('host.artifacts returned an invalid result')
+  }
+  const artifacts = Object.freeze(result.artifacts.map(validatedHostArtifact))
+  return Object.freeze({
+    count: result.count,
+    project_id: result.project_id,
+    truncated: result.truncated,
+    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {}),
+    artifacts
+  })
+}
+
+async function hostArtifactPath(versionId) {
+  if (arguments.length !== 1) throw new TypeError('host.artifact_path accepts one version_id')
+  const result = await artifactsRpc('path', { version_id: versionId })
+  if (typeof result !== 'string' || !path.isAbsolute(result)) {
+    throw new Error('host.artifact_path returned an invalid path')
+  }
+  return result
 }
 
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
@@ -1303,6 +1407,8 @@ const hostCompute = {
 const sandbox = {
   host: {
     capabilities: hostCapabilities,
+    artifacts: hostArtifacts,
+    artifact_path: hostArtifactPath,
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,

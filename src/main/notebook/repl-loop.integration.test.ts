@@ -101,8 +101,8 @@ describe('repl_loop local RPC transport', () => {
         requests.push(JSON.parse(body))
         const result =
           requests.length === 3
-            ? { mcp: 'yes', compute: true, agents: true, skills: true }
-            : { mcp: true, compute: true, agents: true, skills: true }
+            ? { mcp: 'yes', compute: true, agents: true, skills: true, artifacts: true }
+            : { mcp: true, compute: true, agents: true, skills: true, artifacts: true }
         response
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ result }))
@@ -126,8 +126,8 @@ describe('repl_loop local RPC transport', () => {
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toEqual({
-        first: { mcp: true, compute: true, agents: true, skills: true },
-        second: { mcp: true, compute: true, agents: true, skills: true },
+        first: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
+        second: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
         frozen: true,
         same: false
       })
@@ -151,6 +151,95 @@ describe('repl_loop local RPC transport', () => {
         'host.capabilities returned an invalid capability projection'
       )
       expect(requests).toHaveLength(3)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('validates and freezes host.artifacts results and resolves host.artifact_path', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const managedPath = join(tmpdir(), 'managed', 'report.pdf')
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(parsed)
+        const result =
+          parsed.params?.op === 'path'
+            ? managedPath
+            : {
+                count: 2,
+                project_id: 'project-a',
+                truncated: false,
+                artifacts: [
+                  {
+                    id: 'artifact-1',
+                    filename: 'result.csv',
+                    content_type: 'text/csv',
+                    size_bytes: 12,
+                    latest_version_id: 'artifact-version-1',
+                    checksum: 'a'.repeat(64),
+                    session_id: 'session-a',
+                    root_frame_id: 'root-1',
+                    is_user_upload: false,
+                    latest_version_created_at: '2026-08-01T00:00:00.000Z'
+                  },
+                  {
+                    id: 'upload-1',
+                    filename: 'report.pdf',
+                    size_bytes: 24,
+                    latest_version_id: 'upload-version-1',
+                    session_id: 'session-b',
+                    root_frame_id: null,
+                    is_user_upload: true,
+                    latest_version_created_at: '2026-08-02T00:00:00.000Z'
+                  }
+                ]
+              }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-artifacts-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        "const page = await host.artifacts({ search: 'report', limit: 2 }); " +
+          'const localPath = await host.artifact_path(page.artifacts[1].latest_version_id); ' +
+          'return JSON.stringify({ page, localPath, pageFrozen: Object.isFrozen(page), ' +
+          'artifactsFrozen: Object.isFrozen(page.artifacts), itemFrozen: Object.isFrozen(page.artifacts[0]) })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
+        page: { count: 2, project_id: 'project-a', truncated: false },
+        localPath: managedPath,
+        pageFrozen: true,
+        artifactsFrozen: true,
+        itemFrozen: true
+      })
+      expect(requests).toEqual([
+        {
+          method: 'artifactsCall',
+          params: { op: 'list', options: { search: 'report', limit: 2 } }
+        },
+        { method: 'artifactsCall', params: { op: 'path', version_id: 'upload-version-1' } }
+      ])
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

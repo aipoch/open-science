@@ -22,6 +22,8 @@ type ProjectFilesClient = Pick<
   | 'fileOriginSession'
   | 'artifactLineage'
   | 'uploadFile'
+  | 'artifactVersion'
+  | 'uploadVersion'
   | '$queryRaw'
   | '$transaction'
 >

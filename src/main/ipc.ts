@@ -120,6 +120,7 @@ import { createProductionProvisioner, type RuntimeProvisioner } from './notebook
 import { createProductionMicromambaRunner } from './notebook/windows-micromamba-runner'
 import { createRuntimeSelectionWorkflows } from './notebook/runtime-selection-workflows'
 import { runtimeRoot } from './notebook/runtime-paths'
+import { HostArtifactsService } from './notebook/host-artifacts-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
@@ -1162,6 +1163,10 @@ const createApplicationModules = async (
             () => artifactProvenanceRepository.replayVersion(request)
           )
       },
+      hostArtifacts: new HostArtifactsService(projectFilesRepository, {
+        artifact: artifactProvenanceRepository,
+        upload: uploadRepository
+      }),
       inputRegistry: notebookInputRegistry,
       agentsService,
       skillsService: hostSkillsService

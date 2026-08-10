@@ -3,6 +3,7 @@ import { Prisma, type ManagedFile } from '@prisma/client'
 import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
+  HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFileItem,
@@ -255,6 +256,127 @@ class ProjectFilesQueryOwner {
         this.readIndexComplete(projectId)
       )
     }
+  }
+
+  async readHostArtifactCatalog(request: {
+    projectId: string
+    versionId?: string
+  }): Promise<HostArtifactCatalogItem[]> {
+    requireIdentifier(request.projectId, 'projectId')
+    const client = await this.getClient()
+    if (request.versionId !== undefined) {
+      requireIdentifier(request.versionId, 'versionId')
+      const [artifactVersions, uploadVersions] = await Promise.all([
+        client.artifactVersion.findMany({
+          where: {
+            id: request.versionId,
+            state: { in: ['pending', 'finalized'] },
+            artifact: { is: { projectId: request.projectId } }
+          },
+          include: { artifact: true },
+          take: 2
+        }),
+        client.uploadVersion.findMany({
+          where: {
+            id: request.versionId,
+            state: 'ready',
+            uploadFile: { is: { projectId: request.projectId } }
+          },
+          include: { uploadFile: true },
+          take: 2
+        })
+      ])
+      if (artifactVersions.length + uploadVersions.length > 1) {
+        throw new Error('Artifact Version id is ambiguous across generated Artifacts and Uploads.')
+      }
+      const artifactVersion = artifactVersions[0]
+      if (artifactVersion) {
+        return [
+          {
+            source: 'artifact',
+            sourceFileId: artifactVersion.artifactId,
+            versionId: artifactVersion.id,
+            checksum: artifactVersion.checksum,
+            projectId: artifactVersion.artifact.projectId,
+            sessionId: artifactVersion.artifact.sessionId,
+            filename: artifactVersion.filename,
+            contentType: artifactVersion.contentType ?? undefined,
+            sizeBytes: toSafeCount(artifactVersion.sizeBytes, 'host Artifact size'),
+            sortAtMs: artifactVersion.createdAt.getTime(),
+            rootFrameId: artifactVersion.rootFrameId
+          }
+        ]
+      }
+      const uploadVersion = uploadVersions[0]
+      const uploadTime = uploadVersion?.createdAt ?? uploadVersion?.registeredAt
+      return uploadVersion && uploadTime
+        ? [
+            {
+              source: 'upload',
+              sourceFileId: uploadVersion.uploadFileId,
+              versionId: uploadVersion.id,
+              checksum: uploadVersion.checksum,
+              projectId: uploadVersion.uploadFile.projectId,
+              sessionId: uploadVersion.uploadFile.sessionId,
+              filename: uploadVersion.originalFilename || uploadVersion.filename,
+              contentType: uploadVersion.contentType ?? undefined,
+              sizeBytes: toSafeCount(uploadVersion.sizeBytes, 'host Upload size'),
+              sortAtMs: uploadTime.getTime(),
+              rootFrameId: null
+            }
+          ]
+        : []
+    }
+
+    // ponytail: fuzzy search needs the whole current Project catalog; move filtering into SQLite
+    // only if measured Project sizes make this bounded metadata scan material.
+    const rows = await client.managedFile.findMany({
+      where: {
+        projectId: request.projectId,
+        deletedAt: null,
+        sourceVersionId: { not: null },
+        source: { in: ['artifact', 'upload'] }
+      },
+      orderBy: [{ sortAtMs: 'desc' }, { seq: 'desc' }]
+    })
+    const artifactVersionIds = rows.flatMap((row) =>
+      row.source === 'artifact' && row.sourceVersionId ? [row.sourceVersionId] : []
+    )
+    const artifactVersions =
+      artifactVersionIds.length === 0
+        ? []
+        : await client.artifactVersion.findMany({
+            where: {
+              id: { in: artifactVersionIds },
+              state: { in: ['pending', 'finalized'] },
+              artifact: { is: { projectId: request.projectId } }
+            },
+            select: { id: true, rootFrameId: true }
+          })
+    const rootFrameIds = new Map(
+      artifactVersions.map((version) => [version.id, version.rootFrameId])
+    )
+
+    return rows.flatMap((row) => {
+      if (!row.sourceVersionId) return []
+      const rootFrameId = row.source === 'artifact' ? rootFrameIds.get(row.sourceVersionId) : null
+      if (row.source === 'artifact' && rootFrameId === undefined) return []
+      return [
+        {
+          source: row.source as 'artifact' | 'upload',
+          sourceFileId: row.sourceFileId,
+          versionId: row.sourceVersionId,
+          checksum: row.checksum ?? undefined,
+          projectId: row.projectId,
+          sessionId: row.sessionId,
+          filename: row.displayName,
+          contentType: row.mimeType ?? undefined,
+          sizeBytes: toSafeCount(row.sizeBytes, 'host managed file size'),
+          sortAtMs: toSafeCount(row.sortAtMs, 'host managed file sort time'),
+          rootFrameId: rootFrameId ?? null
+        }
+      ]
+    })
   }
 
   async listArtifactGroups(request: ListArtifactGroupsRequest): Promise<ArtifactGroupPage> {

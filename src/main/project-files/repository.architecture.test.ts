@@ -137,6 +137,7 @@ describe('Project Files repository architecture', () => {
         'listArtifactGroups',
         'listFiles',
         'markReconciliationIncomplete',
+        'readHostArtifactCatalog',
         'reconcileActiveSessions',
         'restoreProject',
         'restoreSession',
@@ -182,7 +183,13 @@ describe('Project Files repository architecture', () => {
     ])
     expect(fields(queryOwner)).toEqual(['dataRoot', 'getClient', 'readIndexComplete'])
     expect(publicMethods(queryOwner)).toEqual(
-      ['getOverview', 'listArtifactGroups', 'listFiles', 'searchArtifacts'].sort()
+      [
+        'getOverview',
+        'listArtifactGroups',
+        'listFiles',
+        'readHostArtifactCatalog',
+        'searchArtifacts'
+      ].sort()
     )
   })
 

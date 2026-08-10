@@ -2,6 +2,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type {
   ArtifactGroupPage,
   GetProjectFilesOverviewRequest,
+  HostArtifactCatalogItem,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
   ProjectFilesOverview,
@@ -78,6 +79,13 @@ class ManagedFileIndexRepository {
 
   async listFiles(request: ListProjectFilesRequest): Promise<ProjectFilesPage> {
     return this.queryOwner.listFiles(request)
+  }
+
+  async readHostArtifactCatalog(request: {
+    projectId: string
+    versionId?: string
+  }): Promise<HostArtifactCatalogItem[]> {
+    return this.queryOwner.readHostArtifactCatalog(request)
   }
 
   async searchArtifacts(request: SearchArtifactsRequest): Promise<SearchArtifactsResult> {

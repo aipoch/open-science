@@ -130,6 +130,13 @@ type NotebookLocalRpcServerOptions = {
   }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
     Partial<Pick<NotebookInputRegistry, 'openRun'>>
+  hostArtifacts?: {
+    list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
+    resolvePath(
+      versionId: unknown,
+      context: { projectId: string; sessionId: string }
+    ): Promise<string>
+  }
   // host.agents control-plane SDK (issue 02): exposes the Specialist/catalog surface to the
   // JavaScript control-plane REPL via the extensible dispatcher. Never routed through host.mcp();
   // carries the trusted calling session identity captured outside the sandbox so switch()
@@ -161,6 +168,7 @@ type NotebookRpcSessionBinding = {
   projectId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
+  isControl?: true
 }
 
 class RpcHttpError extends Error {
@@ -182,6 +190,7 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 const CONTROL_RPC_METHODS = new Set([
   'capabilitiesCall',
+  'artifactsCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
@@ -230,6 +239,7 @@ class NotebookLocalRpcServer {
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
+  private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private server: Server | undefined
@@ -266,6 +276,7 @@ class NotebookLocalRpcServer {
     this.requestUserInput = options.requestUserInput
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
+    this.hostArtifacts = options.hostArtifacts
     this.agentsService = options.agentsService
     this.skillsService = options.skillsService
   }
@@ -535,7 +546,8 @@ class NotebookLocalRpcServer {
     const binding: NotebookRpcSessionBinding = {
       sessionId,
       projectId,
-      allowedMethods: CONTROL_RPC_METHODS
+      allowedMethods: CONTROL_RPC_METHODS,
+      isControl: true
     }
     this.sessionRpcCapabilities.set(token, binding)
 
@@ -681,7 +693,8 @@ class NotebookLocalRpcServer {
       const bearerToken = authorization?.startsWith('Bearer ')
         ? authorization.slice('Bearer '.length)
         : ''
-      let hostCapabilities: Record<'mcp' | 'compute' | 'agents' | 'skills', boolean> | undefined
+      let hostCapabilities:
+        Record<'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts', boolean> | undefined
       if (isArtifactRpcMethod(method)) {
         const acquired = this.acquireArtifactRpcRequest(method, bearerToken, params)
         params = acquired.params
@@ -691,6 +704,9 @@ class NotebookLocalRpcServer {
         if (sessionBinding) {
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
+          }
+          if (method === 'artifactsCall' && !sessionBinding.isControl) {
+            throw new RpcHttpError(403, 'host.artifacts requires a control-plane REPL capability.')
           }
           if (
             method === 'agentsCall' &&
@@ -709,7 +725,8 @@ class NotebookLocalRpcServer {
               mcp: allows('mcpCall') && Boolean(this.connectorService),
               compute: allows('computeCall') && Boolean(this.computeService),
               agents: allows('agentsCall') && Boolean(this.agentsService),
-              skills: allows('skillsCall') && Boolean(this.skillsService)
+              skills: allows('skillsCall') && Boolean(this.skillsService),
+              artifacts: allows('artifactsCall') && Boolean(this.hostArtifacts)
             }
           }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
@@ -840,6 +857,21 @@ class NotebookLocalRpcServer {
       const request = sanitizeAgentUserChoiceRequest(params)
       if (!request) throw new Error('Invalid user choice request.')
       return this.requestUserInput(request)
+    }
+
+    if (method === 'artifactsCall') {
+      if (!this.hostArtifacts) throw new Error('Host Artifact reads are not configured.')
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!projectId || !sessionId) {
+        throw new Error('Host Artifact reads require a session-bound Project scope.')
+      }
+      const context = { projectId, sessionId }
+      if (params.op === 'list') return this.hostArtifacts.list(params.options, context)
+      if (params.op === 'path') {
+        return this.hostArtifacts.resolvePath(params.version_id, context)
+      }
+      throw new Error('Unknown host Artifact operation.')
     }
 
     if (method === 'resolveNotebookInput') {

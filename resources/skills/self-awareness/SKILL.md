@@ -1,6 +1,6 @@
 ---
 name: self-awareness
-description: Inspect Open Science's JavaScript control REPL and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover which host namespaces are available, decide whether an optional host operation may be called, or understand where host APIs run.
+description: Inspect Open Science's JavaScript control REPL, discover managed Project files, and safely feature-gate host.* calls with host.capabilities(). Use when an Agent needs to discover available host APIs or locate an Artifact or Upload Version in the current Project.
 ---
 
 # Self-awareness
@@ -14,12 +14,13 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The v1 result contains exactly four boolean keys:
+The v1 result contains exactly five boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
 - `agents` gates the `host.agents` namespace.
 - `skills` gates the `host.skills` namespace.
+- `artifacts` gates `host.artifacts` and `host.artifact_path`.
 
 Interpret the result narrowly:
 
@@ -39,6 +40,30 @@ if (caps.compute === true) {
 Do not infer capabilities by reflecting over `host`, and do not treat this result as a resource,
 credential, permission, or readiness inventory. Call it again when current availability matters; each
 call returns a fresh frozen projection.
+
+## Discover managed Project files
+
+When `caps.artifacts === true`, use `await host.artifacts(options)` to list generated Artifacts and
+user Uploads across the current Project. Optional snake_case fields are `version_id`, `session_id`,
+`filename`, `exact`, `search`, `content_type`, `after`, `before`, `cursor`, and `limit` (default 20,
+maximum 100). `version_id` is exclusive; `exact` requires `filename`; `search` and `filename` cannot
+be combined. Bare dates are UTC midnight, `after` is inclusive, and `before` is exclusive.
+
+```javascript
+const page = await host.artifacts({ search: 'report', limit: 20 })
+const localPath = page.artifacts[0]
+  ? await host.artifact_path(page.artifacts[0].latest_version_id)
+  : undefined
+```
+
+`session_id` only narrows the token-owned current Project. There is no Project override or all-
+Projects scope. Results contain metadata and immutable Version identity, never content; use
+`host.artifact_path(version_id)` to resolve a checksum-validated local absolute path for an exact
+generated Artifact Version or Upload Version, then use the existing file workflow. Version ID
+collisions, missing Versions, cross-Project ownership, and checksum mismatches fail closed.
+
+The public result is a fresh frozen projection. It does not expose fuzzy scores, storage keys,
+lineage, provenance, markers, or a content-read API.
 
 ## Continue with the owning Skill
 
