@@ -53,6 +53,7 @@ import {
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
+type PermissionResponseAttempt = { accepted: boolean; promise: Promise<void> }
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
@@ -210,7 +211,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const previousStatusRef = useRef(runtime.state.status)
   const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const permissionResponsesInFlightRef = useRef(new Map<string, Promise<void>>())
+  const permissionResponseAttemptsRef = useRef(new Map<string, PermissionResponseAttempt>())
   const durablePermissionSessionIdsKey = JSON.stringify(
     Array.from(
       new Set([
@@ -360,15 +361,29 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   )
   const respondToPermission = useCallback(
     (requestId: string, optionId?: string): Promise<void> => {
-      const existing = permissionResponsesInFlightRef.current.get(requestId)
-      if (existing) return existing
+      const existing = permissionResponseAttemptsRef.current.get(requestId)
+      if (existing) {
+        const rearmed =
+          existing.accepted &&
+          useSessionStore
+            .getState()
+            .sessions.some(
+              (session) =>
+                session.runtimeContext?.permission?.state === 'pending' &&
+                session.runtimeContext.permission.request.requestId === requestId
+            )
+        if (!rearmed) return existing.promise
+        permissionResponseAttemptsRef.current.delete(requestId)
+      }
 
+      const attempt: PermissionResponseAttempt = { accepted: false, promise: Promise.resolve() }
       const response = (async (): Promise<void> => {
         const request = pendingPermissions.find((item) => item.requestId === requestId)
         const isRestoredRequest = Boolean(
           request &&
           !runtime.state.pendingPermissions.some((item) => item.requestId === request.requestId)
         )
+        let restoredAuthorityRevision: number | undefined
         try {
           let restored: AcpPermissionResponse['restored']
           if (request && isRestoredRequest) {
@@ -414,9 +429,21 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
               sessionId: session.id,
               projectId: session.projectId
             }
+            restoredAuthorityRevision = session.runtimeContext?.revision
           }
           await runtime.respondToPermission(requestId, optionId, restored)
-          if (request && restored) {
+          attempt.accepted = true
+          const currentSession = request
+            ? useSessionStore
+                .getState()
+                .sessions.find((session) => session.id === request.sessionId)
+            : undefined
+          if (
+            request &&
+            restored &&
+            restoredAuthorityRevision !== undefined &&
+            currentSession?.runtimeContext?.revision === restoredAuthorityRevision
+          ) {
             useSessionStore.getState().clearPermissionPending(request.sessionId, {
               authority: 'continuing',
               requestId
@@ -439,11 +466,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         }
       })()
       const tracked = response.finally(() => {
-        if (permissionResponsesInFlightRef.current.get(requestId) === tracked) {
-          permissionResponsesInFlightRef.current.delete(requestId)
+        // A permission request id is one-shot authority. Keep successful responses coalesced for
+        // stale renders, releasing it only when Main explicitly re-arms the durable request.
+        if (!attempt.accepted && permissionResponseAttemptsRef.current.get(requestId) === attempt) {
+          permissionResponseAttemptsRef.current.delete(requestId)
         }
       })
-      permissionResponsesInFlightRef.current.set(requestId, tracked)
+      attempt.promise = tracked
+      permissionResponseAttemptsRef.current.set(requestId, attempt)
       return tracked
     },
     [pendingPermissions, runtime]

@@ -352,6 +352,7 @@ describe('workspace Agent Runtime hook contract', () => {
     })
     runtimeMock.current = runtime
     await render()
+    const staleResponder = latest.respondToPermission
 
     expect(latest.pendingPermissions).toEqual([request])
     await act(async () => {
@@ -374,6 +375,8 @@ describe('workspace Agent Runtime hook contract', () => {
       projectId: 'project-1'
     })
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    await act(async () => staleResponder('permission-restored', 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
   })
 
   it('keeps a restored permission card actionable when its response fails', async () => {
@@ -541,7 +544,7 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
   })
 
-  it('mirrors restored continuation settlement before re-arming an asynchronous failure', async () => {
+  it('preserves a Main rearm that arrives before the restored response settles', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Run the verification',
@@ -574,27 +577,39 @@ describe('workspace Agent Runtime hook contract', () => {
         }
       }))
     }))
+    const deferred = createDeferred<AcpStateSnapshot>()
     const runtime = createRuntime(createSnapshot({ sessionIds: ['session-1'] }))
+    runtime.respondToPermission.mockReturnValue(deferred.promise)
     runtimeMock.current = runtime
     await render()
 
-    await act(async () => {
-      await latest.respondToPermission('permission-restored', 'allow-once')
+    let first!: Promise<void>
+    act(() => {
+      first = latest.respondToPermission('permission-restored', 'allow-once')
     })
-    expect(latest.pendingPermissions).toEqual([])
-    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission?.state).toBe(
-      'continuing'
-    )
-
-    act(() => useSessionStore.getState().failRun('session-1', 'Unrelated later failure'))
-    await act(async () => Promise.resolve())
-    expect(latest.pendingPermissions).toEqual([])
-
-    act(() =>
-      useSessionStore.getState().setPermissionPending('session-1', { rearmAuthority: true })
-    )
-    await act(async () => Promise.resolve())
+    act(() => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'session-1'
+            ? {
+                ...session,
+                status: 'waiting-permission',
+                runtimeContext: { ...session.runtimeContext!, revision: 3 }
+              }
+            : session
+        )
+      }))
+    })
+    deferred.resolve(createSnapshot({ sessionIds: ['session-1'] }))
+    await act(async () => first)
     expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
+    expect(useSessionStore.getState().sessions[0].runtimeContext).toMatchObject({
+      revision: 3,
+      permission: { state: 'pending' }
+    })
     expect(latest.pendingPermissions).toEqual([request])
+    expect(runtime.respondToPermission).toHaveBeenCalledOnce()
+    await act(async () => latest.respondToPermission('permission-restored', 'allow-once'))
+    expect(runtime.respondToPermission).toHaveBeenCalledTimes(2)
   })
 })
