@@ -186,6 +186,26 @@ describe('syncCustomServerSkillDocs', () => {
     expect(new Set(folded).size).toBe(entries.length)
     expect(folded).toEqual(['mcp-chemistry'])
   })
+
+  it('fails closed without overwriting an unowned case-variant custom directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'custom-skill-case-conflict-'))
+    await mkdir(join(dir, 'mcp-XT'), { recursive: true })
+    await writeFile(join(dir, 'mcp-XT', 'SKILL.md'), 'unowned uppercase content')
+
+    const result = await syncCustomServerSkillDocs(
+      dir,
+      [makeServer({ slug: 'xt', name: 'XT' })],
+      async () => FAKE_TOOLS
+    )
+
+    expect(result.materializedSlugs).toEqual([])
+    expect(result.failures).toHaveLength(1)
+    const entries = await readdir(dir)
+    expect(entries).toEqual(['mcp-XT'])
+    expect(await readFile(join(dir, entries[0], 'SKILL.md'), 'utf8')).toBe(
+      'unowned uppercase content'
+    )
+  })
 })
 
 describe('bundled and custom skill-doc sync coexist', () => {
@@ -274,7 +294,7 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
     expect(await readFile(join(target, 'mcp-pubmed', 'SKILL.md'), 'utf8')).toBe('bundled')
   })
 
-  it('does not delete an unowned case-variant while publishing the canonical doc', async () => {
+  it('fails closed without overwriting an unowned case-variant target directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'custom-skill-copy-case-'))
     const source = join(root, 'source')
     const target = join(root, 'target')
@@ -289,9 +309,12 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
       writeFile(join(target, 'mcp-XT', 'SKILL.md'), 'stale')
     ])
 
-    await syncMaterializedCustomServerSkillDocs(source, target, ['mcp-xt'])
+    const result = await syncMaterializedCustomServerSkillDocs(source, target, ['mcp-xt'])
 
-    expect(await readFile(join(target, 'mcp-xt', 'SKILL.md'), 'utf8')).toBe(xtDoc)
-    expect(await readdir(target)).toContain('mcp-XT')
+    expect(result.materializedSkillNames).toEqual([])
+    expect(result.failures.map(({ skillName }) => skillName)).toEqual(['mcp-xt'])
+    const entries = await readdir(target)
+    expect(entries).toEqual(['mcp-XT'])
+    expect(await readFile(join(target, entries[0], 'SKILL.md'), 'utf8')).toBe('stale')
   })
 })
