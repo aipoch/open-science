@@ -419,6 +419,16 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       if (!current) return state
 
       if (mode === 'permission-authority') {
+        const currentRevision = current.runtimeContext?.revision
+        const incomingRevision = session.runtimeContext?.revision
+        if (
+          currentRevision !== undefined &&
+          incomingRevision !== undefined &&
+          incomingRevision < currentRevision
+        ) {
+          return state
+        }
+
         const permissionPending = session.runtimeContext?.permission?.state === 'pending'
         const status = permissionPending
           ? current.status === 'waiting-for-user' || current.status === 'waiting-plan-approval'

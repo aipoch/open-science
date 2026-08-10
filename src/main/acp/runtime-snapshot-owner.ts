@@ -79,6 +79,9 @@ class AcpRuntimeSnapshotOwner {
       providerError: event.providerError,
       turnUsage: event.turnUsage,
       terminalContextWindow: event.terminalContextWindow,
+      ...(event.permissionRequestId !== undefined
+        ? { permissionRequestId: event.permissionRequestId }
+        : {}),
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

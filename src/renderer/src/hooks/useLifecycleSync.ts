@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
@@ -118,7 +119,19 @@ const useLifecycleSync = ({
         // live projection here can discard a prompt and the Runtime Segment used by its artifact
         // claim. Events from other clients remain authoritative synchronization input; same-client
         // command results return through their direct IPC path.
-        if (originClientId === MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID) {
+        if (originClientId === MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'replace-persisted-if-current'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID) {
           const store = useSessionStore.getState()
           const source = store.sessions.find((candidate) => candidate.id === session.id)
           if (source) {

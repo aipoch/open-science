@@ -4,13 +4,18 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
   type ProjectDeletedEvent,
   type SessionDeletedEvent,
   type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
-import { getActiveConversationContext } from '../../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  getActiveConversationContext,
+  synchronizeActiveConversationMessages
+} from '../../../shared/conversation-graph'
 import { validateDurableMessageOwnership } from '../../../main/artifacts/provenance-message-finalization'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -196,31 +201,33 @@ describe('useLifecycleSync', () => {
       content: 'Preparing the command.'
     })
 
+    const pendingAuthoritySession = {
+      ...durableBeforeOutput,
+      status: 'waiting-permission' as const,
+      updatedAt: durableBeforeOutput.updatedAt + 1,
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: session.id,
+            toolCallId: 'tool-1',
+            title: 'Run npm test',
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: prompt!.messageId,
+          fingerprint: 'a'.repeat(64),
+          createdAt: 1
+        }
+      }
+    }
+
     await act(async () => {
       listeners.sessionUpdated?.({
         originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
-        session: {
-          ...durableBeforeOutput,
-          status: 'waiting-permission',
-          updatedAt: durableBeforeOutput.updatedAt + 1,
-          runtimeContext: {
-            version: 1,
-            revision: 1,
-            permission: {
-              state: 'pending',
-              request: {
-                requestId: 'permission-1',
-                sessionId: session.id,
-                toolCallId: 'tool-1',
-                title: 'Run npm test',
-                options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
-              },
-              originatingPromptMessageId: prompt!.messageId,
-              fingerprint: 'a'.repeat(64),
-              createdAt: 1
-            }
-          }
-        }
+        session: pendingAuthoritySession
       })
     })
 
@@ -252,6 +259,118 @@ describe('useLifecycleSync', () => {
       'Run the verification',
       'Preparing the command.'
     ])
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...pendingAuthoritySession,
+          updatedAt: durableBeforeOutput.updatedAt + 3
+        }
+      })
+    })
+
+    const afterStalePendingReplay = useSessionStore.getState().sessions[0]
+    expect(afterStalePendingReplay.status).toBe('running')
+    expect(afterStalePendingReplay.runtimeContext?.revision).toBe(2)
+    expect(afterStalePendingReplay.runtimeContext?.permission).toBeUndefined()
+    expect(afterStalePendingReplay.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+  })
+
+  it('applies a Main-owned continuation prompt before projecting later artifact events', async () => {
+    const prompt = {
+      id: 'prompt-original',
+      role: 'user' as const,
+      content: 'Choose an approach.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const preamble = {
+      id: 'agent-question-preamble',
+      role: 'agent' as const,
+      content: 'Please choose one option.',
+      status: 'complete' as const,
+      responseToMessageId: prompt.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = {
+      ...session,
+      messages: [prompt, preamble],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: session.id,
+        messages: [prompt, preamble],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      updatedAt: 2
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    const revisionPrompt = {
+      id: 'prompt-revision',
+      role: 'user' as const,
+      content: 'The user revised the previous structured answer: Approach: Expanded',
+      status: 'complete' as const,
+      responseToMessageId: preamble.id,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const durable = {
+      ...base,
+      messages: [...base.messages, revisionPrompt],
+      conversationGraph: synchronizeActiveConversationMessages(
+        base.conversationGraph,
+        [...base.messages, revisionPrompt],
+        3
+      ),
+      updatedAt: 3
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: durable,
+        originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+      })
+    })
+
+    const projected = toPersistedSession(useSessionStore.getState().sessions[0])
+    expect(projected.messages.at(-1)).toMatchObject({ id: revisionPrompt.id })
+    expect(projected.conversationGraph?.messages.at(-1)).toMatchObject({
+      id: revisionPrompt.id,
+      introducedOnBranchId: `message-branch-${session.id}`
+    })
+    const context = getActiveConversationContext(projected.conversationGraph!, revisionPrompt.id)
+    const finalMessage = {
+      id: 'agent-final',
+      role: 'agent' as const,
+      content: 'Created the revised artifact.',
+      status: 'complete' as const,
+      responseToMessageId: revisionPrompt.id,
+      eventIds: [],
+      createdAt: 4,
+      updatedAt: 4
+    }
+    projected.messages.push(finalMessage)
+    projected.conversationGraph = synchronizeActiveConversationMessages(
+      projected.conversationGraph!,
+      projected.messages,
+      4,
+      context.runtimeSegmentId
+    )
+    expect(() =>
+      validateDurableMessageOwnership(projected, {
+        ...context,
+        messageId: finalMessage.id
+      })
+    ).not.toThrow()
   })
 
   it("does not roll back live conversation state from this renderer's save echo", async () => {

@@ -4,7 +4,10 @@ import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
-import { MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID } from '../../shared/lifecycle-events'
+import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+} from '../../shared/lifecycle-events'
 import {
   filterSpecialistConnectorSkills,
   resolveEffectiveSpecialistSkills
@@ -87,7 +90,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'patchSessionRuntimeContext'
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
-    | 'loadSessionForPermissionReplay'
+    | 'loadSessionForContinuation'
     | 'sessionProjectId'
   >
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
@@ -224,6 +227,19 @@ const createAcpRuntime = ({
                   } catch (error) {
                     // The durable commit remains authoritative when a renderer projection is gone.
                     log.warn('permission wait Session publication failed', errorLogFields(error))
+                  }
+                },
+                onContinuationSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    log.warn(
+                      'durable continuation Session publication failed',
+                      errorLogFields(error)
+                    )
                   }
                 }
               }

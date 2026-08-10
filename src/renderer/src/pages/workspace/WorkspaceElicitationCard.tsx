@@ -202,6 +202,12 @@ const WorkspaceElicitationCard = ({
     (elicitation.state === 'pending' || isReviewingChoice || choiceQuestions?.length === 1)
       ? choiceQuestion.choiceField.description || choiceQuestion.choiceField.label
       : undefined
+  const showChoiceProgress = Boolean(
+    choiceQuestions &&
+    choiceQuestions.length > 1 &&
+    !isPendingPlaceholder &&
+    (elicitation.state === 'pending' || isReviewingChoice)
+  )
 
   const respond = async (response: ElicitationResponse): Promise<boolean> => {
     if (!onRespond || isSubmitting) return false
@@ -320,21 +326,43 @@ const WorkspaceElicitationCard = ({
         </div>
       ) : null}
 
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
-          {choiceTitle ?? elicitation.message}
-        </h3>
-        {choiceQuestions &&
-        choiceQuestions.length > 1 &&
-        !isPendingPlaceholder &&
-        (elicitation.state === 'pending' || isReviewingChoice) ? (
+      {showChoiceProgress && choiceQuestions ? (
+        <div className="pointer-events-none sticky top-3 z-10 -mb-5 flex h-5 justify-end sm:top-4">
           <span
             data-testid="elicitation-question-progress"
-            className="shrink-0 pt-0.5 text-xs leading-5 text-text-300"
+            role="status"
+            aria-label={`Question ${activeChoiceIndex + 1} of ${choiceQuestions.length}`}
+            className="inline-flex shrink-0 items-center gap-3 bg-bg-000 pl-3 text-xs leading-5 text-text-300 tabular-nums"
           >
-            {activeChoiceIndex + 1} of {choiceQuestions.length}
+            <span aria-hidden="true" className="flex w-16 items-center gap-0.5">
+              {choiceQuestions.map((question, index) => (
+                <span
+                  key={question.choiceField.id}
+                  data-testid="elicitation-question-progress-segment"
+                  data-state={index === activeChoiceIndex ? 'current' : 'upcoming'}
+                  className={cn(
+                    'h-1 min-w-0 flex-1 rounded-full',
+                    index === activeChoiceIndex ? 'bg-text-000' : 'bg-bg-400'
+                  )}
+                />
+              ))}
+            </span>
+            <span aria-hidden="true">
+              {activeChoiceIndex + 1} of {choiceQuestions.length}
+            </span>
           </span>
-        ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex items-start">
+        <h3
+          className={cn(
+            'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
+            showChoiceProgress && 'pr-36'
+          )}
+        >
+          {choiceTitle ?? elicitation.message}
+        </h3>
       </div>
 
       {isPendingPlaceholder ? (

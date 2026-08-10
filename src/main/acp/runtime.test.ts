@@ -47,6 +47,7 @@ import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { validateDurableMessageOwnership } from '../artifacts/provenance-message-finalization'
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import type { ArtifactRunClaim } from '../artifacts/run-registry'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
@@ -54,8 +55,15 @@ import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { BEGIN_ACTIVITY_GROUP_TOOL_NAME } from '../../shared/activity-groups'
 import type { UploadedAttachment } from '../../shared/uploads'
-import { projectConversationMessage } from '../../shared/conversation-graph'
+import {
+  createLinearConversationGraph,
+  forkConversationAfterActivity,
+  projectConversationMessage,
+  synchronizeActiveConversationActivities,
+  synchronizeActiveConversationMessages
+} from '../../shared/conversation-graph'
 import type { PersistedChatSession, SessionRuntimeContext } from '../../shared/session-persistence'
+import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
@@ -1596,6 +1604,164 @@ describe('ACP runtime provider prompt acceptance', () => {
   )
 })
 
+const createRestoredContinuationSession = (
+  promptMessageId = 'prompt-1',
+  sessionId = 'restored-session',
+  projectId = 'project-1'
+): PersistedChatSession => {
+  const messages: PersistedChatSession['messages'] = [
+    {
+      id: promptMessageId,
+      role: 'user',
+      content: 'Continue the restored task.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+  ]
+  return {
+    id: sessionId,
+    projectId,
+    title: 'Restored task',
+    cwd: '/workspace',
+    status: 'waiting-permission',
+    messages,
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'pending-session',
+      messages,
+      frameworkId: 'claude-code',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  }
+}
+
+const addPendingRestoredChoice = (
+  session: PersistedChatSession,
+  input: {
+    requestId?: string
+    toolCallId?: string
+    promptMessageId?: string
+    message?: string
+  } = {}
+): PersistedChatSession => {
+  const requestId = input.requestId ?? 'choice-restored-1'
+  const toolCallId = input.toolCallId ?? 'tool-choice-restored-1'
+  const promptMessageId = input.promptMessageId ?? 'prompt-restored-1'
+  const message = input.message ?? 'Choose an approach'
+  session.status = 'waiting-for-user'
+  session.activities = [
+    {
+      id: toolCallId,
+      kind: 'tool',
+      title: message,
+      status: 'in_progress',
+      sortIndex: 0,
+      eventIds: [],
+      promptMessageId,
+      elicitation: {
+        message,
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId, promptMessageId }
+      },
+      createdAt: 2,
+      updatedAt: 2
+    }
+  ]
+  if (session.conversationGraph) {
+    session.conversationGraph = synchronizeActiveConversationActivities(
+      session.conversationGraph,
+      session.activities,
+      []
+    )
+  }
+  return session
+}
+
+const createRestoredChoiceRevisionSession = (): PersistedChatSession => {
+  const messages: PersistedChatSession['messages'] = [
+    {
+      id: 'prompt-restored-1',
+      role: 'user',
+      content: 'Choose an approach.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    },
+    {
+      id: 'agent-question-preamble',
+      role: 'agent',
+      content: 'Please choose one option.',
+      status: 'complete',
+      responseToMessageId: 'prompt-restored-1',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+  ]
+  const activity: NonNullable<PersistedChatSession['activities']>[number] = {
+    id: 'tool-choice-restored-1',
+    kind: 'tool',
+    title: 'Choose an approach',
+    status: 'completed',
+    sortIndex: 0,
+    eventIds: [],
+    promptMessageId: 'prompt-restored-1',
+    elicitation: {
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+      state: 'answered',
+      durable: {
+        kind: 'agent-user-choice',
+        requestId: 'choice-restored-1',
+        promptMessageId: 'prompt-restored-1'
+      },
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    },
+    createdAt: 2,
+    updatedAt: 2
+  }
+  let graph = createLinearConversationGraph({
+    sessionId: 'pending-session',
+    messages,
+    frameworkId: 'claude-code',
+    createdAt: 1,
+    updatedAt: 2
+  })
+  graph = synchronizeActiveConversationActivities(graph, [activity], [])
+  graph = forkConversationAfterActivity(
+    graph,
+    'agent-question-preamble',
+    activity.id,
+    'message-branch-revision',
+    3
+  )
+  return {
+    id: 'restored-choice-session',
+    projectId: 'project-1',
+    title: 'Restored choice revision',
+    cwd: '/workspace',
+    status: 'idle',
+    messages,
+    conversationGraph: graph,
+    activities: [],
+    createdAt: 1,
+    updatedAt: 3
+  }
+}
+
+const RESTORED_CONTINUATION_FRAMEWORKS = [
+  ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+  ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+  ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+  ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+] as const
+
 describe('ACP runtime restored permission continuation', () => {
   it('cancels restored pending authority without a live ACP interaction', async () => {
     let runtimeContext: SessionRuntimeContext = {
@@ -1631,7 +1797,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(),
+          loadSessionForContinuation: vi.fn(),
           sessionProjectId: vi.fn(async () => 'project-1')
         }
       }
@@ -1650,22 +1816,33 @@ describe('ACP runtime restored permission continuation', () => {
     )
   })
 
-  it.each([
-    ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
-    ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
-    ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
-    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
-  ] as const)(
+  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
     'continues an approved restored wait through %s and then clears its authority',
     async (_name, framework, modelRoute, backendId) => {
+      const root = await createTemporaryRoot()
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
+      let artifactContext: Record<string, unknown> | undefined
       const fakeAgent = startFakeAgent(process, ['restored-session'], {
         ...(framework.id === 'codex'
           ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
           : {}),
-        onPrompt: ({ prompt }) => {
+        onPrompt: async ({ prompt }) => {
           receivedPrompts.push(prompt)
+          const [artifactSessionId] = await readdir(join(root, 'artifacts', 'project-1'))
+          artifactContext = JSON.parse(
+            await readFile(
+              join(
+                root,
+                'artifacts',
+                'project-1',
+                artifactSessionId,
+                '.pending',
+                'current-run.json'
+              ),
+              'utf8'
+            )
+          ) as Record<string, unknown>
         }
       })
       const bridgeLease =
@@ -1712,18 +1889,51 @@ describe('ACP runtime restored permission continuation', () => {
         }
       )
       const onPermissionSettled = vi.fn()
+      const messages: PersistedChatSession['messages'] = [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Run the requested test command.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+      const persistedSession: PersistedChatSession = {
+        id: 'restored-session',
+        projectId: 'project-1',
+        title: 'Restored permission',
+        cwd: '/workspace',
+        status: 'waiting-permission',
+        messages,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'pending-session',
+          messages,
+          frameworkId: framework.id,
+          backendId,
+          createdAt: 1,
+          updatedAt: 1
+        }),
+        createdAt: 1,
+        updatedAt: 1
+      }
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
         callbacks: { onPermissionSettled },
+        artifacts: {
+          configRoot: root,
+          dataRoot: root,
+          projectName: 'project-1',
+          mcpEntryPath: '/app/out/main/index.js'
+        },
         permissionWait: {
           sessions: {
             readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
             patchSessionRuntimeContext,
             containsMessageOnActiveBranch: vi.fn(async () => true),
-            loadSessionForPermissionReplay: vi.fn(async () => {
-              throw new Error('Unexpected permission replay load')
-            })
+            loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
           }
         },
         resolveBackend: () => ({
@@ -1767,6 +1977,44 @@ describe('ACP runtime restored permission continuation', () => {
       } as unknown as AcpPermissionResponse)
 
       await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      await vi.waitFor(() => expect(artifactContext).toBeDefined())
+      expect(artifactContext).toMatchObject({
+        rootFrameId: 'root-frame-pending-session',
+        agentFrameId: 'root-frame-pending-session',
+        messageBranchId: 'message-branch-pending-session',
+        messageBranchAncestry: ['message-branch-pending-session'],
+        messageAncestry: ['prompt-1'],
+        runtimeSegmentId: 'runtime-segment-pending-session',
+        promptMessageId: 'prompt-1'
+      })
+      const finalMessage: PersistedChatSession['messages'][number] = {
+        id: 'agent-final',
+        role: 'agent',
+        content: 'The requested command completed.',
+        status: 'complete',
+        responseToMessageId: 'prompt-1',
+        eventIds: [],
+        createdAt: 4,
+        updatedAt: 4
+      }
+      const finalizationSession = structuredClone(persistedSession)
+      finalizationSession.messages.push(finalMessage)
+      finalizationSession.conversationGraph = synchronizeActiveConversationMessages(
+        finalizationSession.conversationGraph!,
+        finalizationSession.messages,
+        4,
+        artifactContext!.runtimeSegmentId as string
+      )
+      expect(() =>
+        validateDurableMessageOwnership(finalizationSession, {
+          rootFrameId: artifactContext!.rootFrameId as string,
+          agentFrameId: artifactContext!.agentFrameId as string,
+          messageBranchId: artifactContext!.messageBranchId as string,
+          runtimeSegmentId: artifactContext!.runtimeSegmentId as string,
+          promptMessageId: artifactContext!.promptMessageId as string,
+          messageId: finalMessage.id
+        })
+      ).not.toThrow()
       expect(fakeAgent.prompts[0]?.text).not.toContain('Renderer-forged conversation context.')
       expect(receivedPrompts[0]?.every((content) => content.type === 'text')).toBe(true)
       expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
@@ -1778,6 +2026,15 @@ describe('ACP runtime restored permission continuation', () => {
         })
       )
       expect(onPermissionSettled).toHaveBeenCalledWith('permission-restored', 'resolved')
+      expect(runtime.getSnapshot().events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'permission',
+            title: 'Restored permission continuation settled',
+            permissionRequestId: 'permission-restored'
+          })
+        ])
+      )
     }
   )
 
@@ -1844,9 +2101,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
-            throw new Error('Unexpected permission replay load')
-          })
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
         }
       },
       resolveBackend: () => ({
@@ -1884,120 +2139,152 @@ describe('ACP runtime restored permission continuation', () => {
     )
   })
 
-  it('builds restored permission replay from Main-owned Session history after context reset', async () => {
-    const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
-      resumeNotFound: true
-    })
-    let runtimeContext: SessionRuntimeContext = {
-      version: 1,
-      revision: 1,
-      permission: {
-        state: 'pending',
-        request: {
-          requestId: 'permission-restored',
-          sessionId: 'restored-session',
-          toolCallId: 'tool-restored',
-          title: 'Run npm test',
-          providerToolName: 'Bash',
-          rawInput: { command: 'npm test' },
-          options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
-        },
-        originatingPromptMessageId: 'prompt-1',
-        fingerprint: 'a'.repeat(64),
-        createdAt: 1
-      }
-    }
-    const persistedSession: PersistedChatSession = {
-      id: 'restored-session',
-      projectId: 'project-1',
-      title: 'Restored permission',
-      cwd: '/workspace',
-      status: 'waiting-permission',
-      messages: [
-        {
-          id: 'prompt-0',
-          role: 'user',
-          content: 'Main-owned earlier request.',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 1
-        },
-        {
-          id: 'reply-0',
-          role: 'agent',
-          content: 'Main-owned earlier response.',
-          status: 'complete',
-          responseToMessageId: 'prompt-0',
-          eventIds: [],
-          createdAt: 2,
-          updatedAt: 2
-        },
-        {
-          id: 'prompt-1',
-          role: 'user',
-          content: 'Run the requested test command.',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 3,
-          updatedAt: 3
+  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
+    'builds restored permission replay through %s from Main-owned Session history after context reset',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const receivedPrompts: ContentBlock[][] = []
+      const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
+        resumeNotFound: true,
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPrompt: ({ prompt }) => {
+          receivedPrompts.push(prompt)
         }
-      ],
-      createdAt: 1,
-      updatedAt: 3
-    }
-    const patchSessionRuntimeContext = vi.fn(
-      async (command: { patch: { permission?: SessionRuntimeContext['permission'] } }) => {
-        runtimeContext = {
-          ...runtimeContext,
-          ...command.patch,
-          revision: runtimeContext.revision + 1
-        }
-        return structuredClone(runtimeContext)
-      }
-    )
-    const loadSessionForPermissionReplay = vi.fn(async () => structuredClone(persistedSession))
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      permissionWait: {
-        sessions: {
-          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
-          patchSessionRuntimeContext,
-          containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay
-        }
-      },
-      resolveBackend: () => ({
-        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
-        backendId: 'claude-code:provider-a',
-        modelRoute: 'claude-anthropic',
-        executablePath: '/bin/agent',
-        env: {},
-        contextWindow: 200_000,
-        supportsImageInput: true
       })
-    })
-
-    await expect(
-      runtime.resumeSession({
-        sessionId: 'restored-session',
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      let runtimeContext: SessionRuntimeContext = {
+        version: 1,
+        revision: 1,
+        permission: {
+          state: 'pending',
+          request: {
+            requestId: 'permission-restored',
+            sessionId: 'restored-session',
+            toolCallId: 'tool-restored',
+            title: 'Run npm test',
+            providerToolName: 'Bash',
+            rawInput: { command: 'npm test' },
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          createdAt: 1
+        }
+      }
+      const persistedSession: PersistedChatSession = {
+        id: 'restored-session',
+        projectId: 'project-1',
+        title: 'Restored permission',
         cwd: '/workspace',
-        projectName: 'project-1'
+        status: 'waiting-permission',
+        messages: [
+          {
+            id: 'prompt-0',
+            role: 'user',
+            content: 'Main-owned earlier request.',
+            status: 'complete',
+            images: [
+              {
+                id: 'permission-replay-image',
+                mimeType: 'image/png',
+                data: createPngBytes('permission-replay').toString('base64'),
+                byteLength: createPngBytes('permission-replay').byteLength
+              }
+            ],
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'reply-0',
+            role: 'agent',
+            content: 'Main-owned earlier response.',
+            status: 'complete',
+            responseToMessageId: 'prompt-0',
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 2
+          },
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Run the requested test command.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 3,
+            updatedAt: 3
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      }
+      persistedSession.conversationGraph = createLinearConversationGraph({
+        sessionId: 'pending-session',
+        messages: persistedSession.messages,
+        frameworkId: framework.id,
+        backendId,
+        createdAt: 1,
+        updatedAt: 3
       })
-    ).resolves.toMatchObject({ sessionId: 'restored-session', contextReset: true })
-    await runtime.respondToPermission({
-      requestId: 'permission-restored',
-      optionId: 'allow-once',
-      restored: { sessionId: 'restored-session', projectId: 'project-1' }
-    })
+      const patchSessionRuntimeContext = vi.fn(
+        async (command: { patch: { permission?: SessionRuntimeContext['permission'] } }) => {
+          runtimeContext = {
+            ...runtimeContext,
+            ...command.patch,
+            revision: runtimeContext.revision + 1
+          }
+          return structuredClone(runtimeContext)
+        }
+      )
+      const loadSessionForContinuation = vi.fn(async () => structuredClone(persistedSession))
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+            patchSessionRuntimeContext,
+            containsMessageOnActiveBranch: vi.fn(async () => true),
+            loadSessionForContinuation
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          contextWindow: 200_000,
+          supportsImageInput: true,
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
 
-    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
-    expect(loadSessionForPermissionReplay).toHaveBeenCalledWith('project-1', 'restored-session')
-    expect(fakeAgent.prompts[0]?.text).toContain('Main-owned earlier request.')
-    expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
-  })
+      await expect(
+        runtime.resumeSession({
+          sessionId: 'restored-session',
+          cwd: '/workspace',
+          projectName: 'project-1'
+        })
+      ).resolves.toMatchObject({ sessionId: 'restored-session', contextReset: true })
+      await runtime.respondToPermission({
+        requestId: 'permission-restored',
+        optionId: 'allow-once',
+        restored: { sessionId: 'restored-session', projectId: 'project-1' }
+      })
+
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      expect(loadSessionForContinuation).toHaveBeenCalledWith('project-1', 'restored-session')
+      expect(fakeAgent.prompts[0]?.text).toContain('Main-owned earlier request.')
+      expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
+      expect(receivedPrompts[0]).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+      )
+    }
+  )
 
   it('marks restored authority continuing before committing a persistent grant', async () => {
     const process = new FakeAgentProcess()
@@ -2065,9 +2352,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
-            throw new Error('Unexpected permission replay load')
-          })
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
         }
       },
       resolveBackend: () => ({
@@ -2146,9 +2431,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
-            throw new Error('Unexpected permission replay load')
-          })
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
         }
       },
       resolveBackend: () => ({
@@ -2178,6 +2461,15 @@ describe('ACP runtime restored permission continuation', () => {
       ).toBe(true)
     )
     expect(runtimeContext.permission).toBeDefined()
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'permission',
+          title: 'Restored permission continuation re-armed',
+          permissionRequestId: 'permission-restored'
+        })
+      ])
+    )
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     await expect(runtime.respondToPermission(response)).resolves.toBeDefined()
@@ -2239,9 +2531,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
-            throw new Error('Unexpected permission replay load')
-          })
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
         }
       },
       resolveBackend: () => ({
@@ -2268,7 +2558,9 @@ describe('ACP runtime restored permission continuation', () => {
           .events.some(
             (event) =>
               event.kind === 'permission' &&
-              event.title === 'Permission continuation completed but its wait could not be cleared'
+              event.title ===
+                'Permission continuation completed but its wait could not be cleared' &&
+              event.permissionRequestId === 'permission-restored'
           )
       ).toBe(true)
     )
@@ -2320,9 +2612,7 @@ describe('ACP runtime restored permission continuation', () => {
           readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
           patchSessionRuntimeContext,
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
-            throw new Error('Unexpected permission replay load')
-          })
+          loadSessionForContinuation: vi.fn(async () => createRestoredContinuationSession())
         }
       },
       resolveBackend: () => ({
@@ -2355,6 +2645,7 @@ describe('ACP runtime restored permission continuation', () => {
           kind: 'permission',
           sessionId: 'restored-session',
           title: 'Restored permission continuation settled',
+          permissionRequestId: 'permission-restored',
           text: 'cancelled'
         })
       ])
@@ -4308,7 +4599,7 @@ describe('ACP runtime session management', () => {
       durable: { kind: 'agent-user-choice', requestId: expect.any(String) }
     })
 
-    const accepted = runtime.respondToElicitation({
+    const accepted = await runtime.respondToElicitation({
       requestId: request!.requestId,
       action: 'accept',
       answers: [{ fieldId: 'question_0', value: 'Minimal' }]
@@ -4621,30 +4912,59 @@ describe('ACP runtime session management', () => {
   })
 
   it('rehydrates a persisted app-owned choice before silently continuing', async () => {
+    const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+    let artifactContext: Record<string, unknown> | undefined
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
+      onPrompt: async () => {
+        const [artifactSessionId] = await readdir(join(root, 'artifacts', 'project-1'))
+        artifactContext = JSON.parse(
+          await readFile(
+            join(root, 'artifacts', 'project-1', artifactSessionId, '.pending', 'current-run.json'),
+            'utf8'
+          )
+        ) as Record<string, unknown>
+      }
+    })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      artifacts: {
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js'
+      },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: vi.fn(async () =>
+            addPendingRestoredChoice(
+              createRestoredContinuationSession(
+                'prompt-restored-1',
+                'restored-choice-session',
+                'project-1'
+              )
+            )
+          )
+        }
+      }
     })
-    const session = await runtime.createSession({ cwd: '/workspace' })
+    const session = await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
     const request = {
       requestId: 'choice-restored-1',
       sessionId: session.sessionId,
       toolCallId: 'tool-choice-restored-1',
-      message: 'Choose an approach',
+      message: 'Renderer-forged question',
       fields: [
         {
           id: 'question_0',
-          label: 'Approach',
-          kind: 'single-select' as const,
-          options: [
-            { value: 'Minimal', label: 'Minimal' },
-            { value: 'Expanded', label: 'Expanded' }
-          ]
-        },
-        { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+          label: 'Renderer-forged field',
+          kind: 'text' as const
+        }
       ],
       durable: {
         kind: 'agent-user-choice' as const,
@@ -4653,15 +4973,27 @@ describe('ACP runtime session management', () => {
       }
     }
 
-    runtime.respondToElicitation({
+    await runtime.respondToElicitation({
       requestId: request.requestId,
       action: 'accept',
       answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      historyReplay: { historyPreamble: 'Renderer-forged conversation context.' },
       request
     })
 
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => expect(artifactContext).toBeDefined())
+    expect(artifactContext).toMatchObject({
+      rootFrameId: 'root-frame-pending-session',
+      agentFrameId: 'root-frame-pending-session',
+      messageBranchId: 'message-branch-pending-session',
+      runtimeSegmentId: 'runtime-segment-pending-session',
+      promptMessageId: 'prompt-restored-1'
+    })
     expect(fakeAgent.prompts[0].text).toContain('Expanded')
+    expect(fakeAgent.prompts[0].text).toContain('Choose an approach')
+    expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged question')
+    expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged conversation context.')
     expect(runtime.getSnapshot().events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4680,6 +5012,242 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it('validates a revised choice against the durable fork before continuing', async () => {
+    const process = new FakeAgentProcess()
+    const journal: string[] = []
+    const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
+      onPrompt: () => {
+        journal.push('provider-prompt')
+      }
+    })
+    let persistedSession = createRestoredChoiceRevisionSession()
+    const appendUserMessageToInteraction = vi.fn(
+      async (
+        command: Parameters<SessionPersistenceCoordinator['appendUserMessageToInteraction']>[0]
+      ) => {
+        command.beforePersist?.(structuredClone(persistedSession))
+        const revisedPrompt: PersistedChatSession['messages'][number] = {
+          id: 'prompt-revision',
+          role: 'user',
+          content: command.content,
+          status: 'complete',
+          responseToMessageId: command.interactionId,
+          eventIds: [],
+          createdAt: 4,
+          updatedAt: 4
+        }
+        persistedSession = {
+          ...persistedSession,
+          messages: [...persistedSession.messages, revisedPrompt],
+          conversationGraph: synchronizeActiveConversationMessages(
+            persistedSession.conversationGraph!,
+            [...persistedSession.messages, revisedPrompt],
+            4
+          ),
+          updatedAt: 4
+        }
+        return structuredClone(revisedPrompt)
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession)),
+          appendUserMessageToInteraction
+        },
+        onContinuationSessionUpdated: (session) => {
+          expect(session.messages.at(-1)).toMatchObject({ id: 'prompt-revision' })
+          journal.push('session-published')
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await runtime.respondToElicitation({
+      requestId: 'choice-restored-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      replacePreviousAnswer: true,
+      request: {
+        requestId: 'choice-restored-1',
+        sessionId: 'restored-choice-session',
+        toolCallId: 'renderer-generated-revision-tool',
+        message: 'Renderer-forged question',
+        fields: [{ id: 'question_0', label: 'Renderer-forged field', kind: 'text' }],
+        durable: {
+          kind: 'agent-user-choice',
+          requestId: 'choice-restored-1',
+          promptMessageId: 'prompt-restored-1'
+        }
+      }
+    })
+
+    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+    expect(journal).toEqual(['session-published', 'provider-prompt'])
+    expect(appendUserMessageToInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'restored-choice-session',
+        interactionId: 'agent-question-preamble',
+        content: expect.stringContaining('Approach: Expanded')
+      })
+    )
+    expect(fakeAgent.prompts[0].text).toContain('Expanded')
+    expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged question')
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool',
+          toolCallId: expect.stringMatching(/^ask-user-question-revision-/),
+          promptMessageId: 'prompt-revision',
+          elicitation: expect.objectContaining({ state: 'answered' })
+        })
+      ])
+    )
+  })
+
+  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
+    'builds restored choice replay through %s from Main-owned Session history after context reset',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const receivedPrompts: ContentBlock[][] = []
+      const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
+        resumeNotFound: true,
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPrompt: ({ prompt }) => {
+          receivedPrompts.push(prompt)
+        }
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const messages: PersistedChatSession['messages'] = [
+        {
+          id: 'prompt-earlier',
+          role: 'user',
+          content: 'Main-owned earlier request.',
+          status: 'complete',
+          images: [
+            {
+              id: 'choice-replay-image',
+              mimeType: 'image/png',
+              data: createPngBytes('choice-replay').toString('base64'),
+              byteLength: createPngBytes('choice-replay').byteLength
+            }
+          ],
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'reply-earlier',
+          role: 'agent',
+          content: 'Main-owned earlier response.',
+          status: 'complete',
+          responseToMessageId: 'prompt-earlier',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'prompt-restored-1',
+          role: 'user',
+          content: 'Choose an approach.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+      const persistedSession: PersistedChatSession = {
+        id: 'restored-choice-session',
+        projectId: 'project-1',
+        title: 'Restored choice',
+        cwd: '/workspace',
+        status: 'waiting-for-user',
+        messages,
+        conversationGraph: createLinearConversationGraph({
+          sessionId: 'pending-session',
+          messages,
+          frameworkId: framework.id,
+          backendId,
+          createdAt: 1,
+          updatedAt: 3
+        }),
+        createdAt: 1,
+        updatedAt: 3
+      }
+      addPendingRestoredChoice(persistedSession)
+      const loadSessionForContinuation = vi.fn(async () => structuredClone(persistedSession))
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          contextWindow: 200_000,
+          supportsImageInput: true,
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      await expect(
+        runtime.resumeSession({
+          sessionId: 'restored-choice-session',
+          cwd: '/workspace',
+          projectName: 'project-1'
+        })
+      ).resolves.toMatchObject({ sessionId: 'restored-choice-session', contextReset: true })
+      await runtime.respondToElicitation({
+        requestId: 'choice-restored-1',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+        historyReplay: { historyPreamble: 'Renderer-forged conversation context.' },
+        request: {
+          requestId: 'choice-restored-1',
+          sessionId: 'restored-choice-session',
+          toolCallId: 'tool-choice-restored-1',
+          message: 'Choose an approach',
+          fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-restored-1',
+            promptMessageId: 'prompt-restored-1'
+          }
+        }
+      })
+
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      expect(loadSessionForContinuation).toHaveBeenCalledWith(
+        'project-1',
+        'restored-choice-session'
+      )
+      expect(fakeAgent.prompts[0].text).toContain('Main-owned earlier request.')
+      expect(fakeAgent.prompts[0].text).not.toContain('Renderer-forged conversation context.')
+      expect(receivedPrompts[0]).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+      )
+    }
+  )
+
   it('rejects a mismatched restored choice without leaving a pending request', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['mismatched-choice-session'])
@@ -4690,7 +5258,7 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
 
-    expect(() =>
+    await expect(
       runtime.respondToElicitation({
         requestId: 'outer-choice-id',
         action: 'accept',
@@ -4714,8 +5282,69 @@ describe('ACP runtime session management', () => {
           durable: { kind: 'agent-user-choice', requestId: 'inner-choice-id' }
         }
       })
-    ).toThrow('Restored structured input request id does not match the response')
+    ).rejects.toThrow('Restored structured input request id does not match the response')
     expect(runtime.getSnapshot().pendingElicitations).toEqual([])
+  })
+
+  it('rejects a restored choice missing from the active graph without caching it', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['restored-choice-session'])
+    const persistedSession = createRestoredContinuationSession(
+      'prompt-active',
+      'restored-choice-session'
+    )
+    persistedSession.messages.push({
+      id: 'prompt-inactive',
+      role: 'user',
+      content: 'Use the abandoned approach.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    })
+    addPendingRestoredChoice(persistedSession, { promptMessageId: 'prompt-inactive' })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(),
+          patchSessionRuntimeContext: vi.fn(),
+          containsMessageOnActiveBranch: vi.fn(),
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+        }
+      }
+    })
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await expect(
+      runtime.respondToElicitation({
+        requestId: 'choice-restored-1',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+        request: {
+          requestId: 'choice-restored-1',
+          sessionId: 'restored-choice-session',
+          toolCallId: 'tool-choice-restored-1',
+          message: 'Choose an approach',
+          fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-restored-1',
+            promptMessageId: 'prompt-inactive'
+          }
+        }
+      })
+    ).rejects.toThrow('pending Session activity')
+    expect(runtime.getSnapshot().pendingElicitations).toEqual([])
+    await expect(
+      runtime.respondToElicitation({
+        requestId: 'choice-restored-1',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+      })
+    ).rejects.toThrow('Unknown structured input request')
   })
 
   it('waits for the asking turn to stop before silently continuing with the answer', async () => {
@@ -8489,7 +9118,7 @@ describe('ACP runtime session management', () => {
             }
           ),
           containsMessageOnActiveBranch: vi.fn(async () => true),
-          loadSessionForPermissionReplay: vi.fn(async () => {
+          loadSessionForContinuation: vi.fn(async () => {
             throw new Error('Unexpected permission replay load')
           })
         }

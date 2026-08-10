@@ -5,6 +5,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAcpRuntime } from './useAcpRuntime'
+import {
+  acceptAcpRuntimeSnapshotRevision,
+  resetAcpRuntimeSnapshotRevisionForTests
+} from './runtime-snapshot-revision-owner'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -100,6 +104,7 @@ const mountRuntime = async (): Promise<{
 }
 
 beforeEach(() => {
+  resetAcpRuntimeSnapshotRevisionForTests()
   capturedStateListener = undefined
   removeStateListener = vi.fn()
   acpApi = {
@@ -435,6 +440,50 @@ describe('useAcpRuntime state subscription', () => {
     unmount()
 
     expect(removeStateListener).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let an older initial snapshot overwrite a newer pushed lifecycle event', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result } = await mountRuntime()
+    const terminal = createSnapshot({
+      revision: 2,
+      events: [
+        {
+          id: 'permission-settled',
+          timestamp: 2,
+          kind: 'permission',
+          level: 'info',
+          permissionRequestId: 'permission-restored',
+          title: 'Restored permission settled'
+        }
+      ]
+    })
+
+    act(() => {
+      capturedStateListener?.(terminal)
+    })
+    expect(acceptAcpRuntimeSnapshotRevision({ revision: 1 })).toBe(false)
+    await act(async () => {
+      initial.resolve(
+        createSnapshot({
+          revision: 1,
+          events: [
+            {
+              id: 'permission-rearmed',
+              timestamp: 1,
+              kind: 'permission',
+              level: 'info',
+              permissionRequestId: 'permission-restored',
+              title: 'Restored permission rearmed'
+            }
+          ]
+        })
+      )
+      await initial.promise
+    })
+
+    expect(result.current.state).toEqual(terminal)
   })
 })
 

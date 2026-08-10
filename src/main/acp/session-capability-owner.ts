@@ -44,7 +44,13 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'host-skills',
   'host-message'
 ] as const
-const NOTEBOOK_CONTROL_RPC_METHODS = ['mcpCall', 'computeCall', 'agentsCall', 'skillsCall'] as const
+const NOTEBOOK_CONTROL_RPC_METHODS = [
+  'capabilitiesCall',
+  'mcpCall',
+  'computeCall',
+  'agentsCall',
+  'skillsCall'
+] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
 

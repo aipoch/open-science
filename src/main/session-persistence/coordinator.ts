@@ -206,14 +206,11 @@ class SessionPersistenceCoordinator {
     )
   }
 
-  loadSessionForPermissionReplay(
-    projectId: string,
-    sessionId: string
-  ): Promise<PersistedChatSession> {
+  loadSessionForContinuation(projectId: string, sessionId: string): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       const loaded = await this.repository.loadSessionWithDiagnostics(projectId, sessionId)
       if (loaded.status !== 'found') {
-        throw new Error(`Cannot build permission replay for a ${loaded.status} Session.`)
+        throw new Error(`Cannot prepare a durable continuation for a ${loaded.status} Session.`)
       }
       return structuredClone(loaded.session)
     })

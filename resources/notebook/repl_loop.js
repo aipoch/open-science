@@ -976,6 +976,35 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
+const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills']
+
+async function hostCapabilities(...args) {
+  if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
+  if (!RPC_ENDPOINT) throw new Error('host.capabilities is unavailable: RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'capabilitiesCall', params: {} })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(body.error || 'host.capabilities HTTP ' + res.status)
+  }
+  const result = body.result
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    Object.keys(result).length !== HOST_CAPABILITY_NAMES.length ||
+    HOST_CAPABILITY_NAMES.some((name) => typeof result[name] !== 'boolean')
+  ) {
+    throw new Error('host.capabilities returned an invalid capability projection')
+  }
+  return Object.freeze(
+    Object.fromEntries(HOST_CAPABILITY_NAMES.map((name) => [name, result[name]]))
+  )
+}
+
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
@@ -1272,7 +1301,13 @@ const hostCompute = {
 
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).
 const sandbox = {
-  host: { mcp: hostMcp, compute: hostCompute, agents: hostAgents, skills: hostSkills },
+  host: {
+    capabilities: hostCapabilities,
+    mcp: hostMcp,
+    compute: hostCompute,
+    agents: hostAgents,
+    skills: hostSkills
+  },
   console,
   process,
   require,

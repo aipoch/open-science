@@ -404,7 +404,7 @@ describe('Session persistence coordinator architecture', () => {
         'listLegacyProjectSessionTombstones',
         'loadAll',
         'loadAllReadOnly',
-        'loadSessionForPermissionReplay',
+        'loadSessionForContinuation',
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
         'patchSessionRuntimeContext',

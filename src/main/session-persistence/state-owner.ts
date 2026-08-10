@@ -36,7 +36,7 @@ type AppendUserMessageToInteractionCommand = Readonly<{
   sessionId: string
   interactionId: string
   content: string
-  beforePersist?: () => void
+  beforePersist?: (session: PersistedChatSession) => void
 }>
 
 type SessionStateRepository = {
@@ -341,7 +341,7 @@ class SessionPersistenceStateOwner {
     if (!content) throw new Error('User Message content must be non-empty.')
     this.options.assertMutable(projectId, sessionId, 'mutate')
     const session = await this.loadRuntimeContextSession(projectId, sessionId, 'patch')
-    command.beforePersist?.()
+    command.beforePersist?.(session)
     const timestamp = Math.max(session.updatedAt + 1, Date.now())
     const message: PersistedChatMessage = {
       id: `message-${randomUUID()}`,

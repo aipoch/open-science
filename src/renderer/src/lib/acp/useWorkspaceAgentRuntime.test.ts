@@ -1109,6 +1109,8 @@ describe('workspace durable elicitation', () => {
     })
     const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot([session.id]))
     const onSendPreparationStateChange = vi.fn()
+    const persistedRevision = createDeferred<void>()
+    const flushPersistence = vi.fn(() => persistedRevision.promise)
     const response = {
       requestId: 'choice-revision',
       action: 'accept' as const,
@@ -1151,7 +1153,8 @@ describe('workspace durable elicitation', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:provider-2',
         agentModel: 'new-model',
-        onSendPreparationStateChange
+        onSendPreparationStateChange,
+        flushPersistence
       }
     )
     const competingSendPrompt = vi.fn()
@@ -1173,6 +1176,9 @@ describe('workspace durable elicitation', () => {
     )
     expect(competing).toBeUndefined()
     expect(competingSendPrompt).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(flushPersistence).toHaveBeenCalledOnce())
+    expect(respondToElicitation).not.toHaveBeenCalled()
+    persistedRevision.resolve(undefined)
     await revision
 
     expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1182,6 +1188,9 @@ describe('workspace durable elicitation', () => {
       resetSessionContext.mock.invocationCallOrder[0]
     )
     expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      flushPersistence.mock.invocationCallOrder[0]
+    )
+    expect(flushPersistence.mock.invocationCallOrder[0]).toBeLessThan(
       respondToElicitation.mock.invocationCallOrder[0]
     )
     expect(resumeSession).toHaveBeenCalledWith(

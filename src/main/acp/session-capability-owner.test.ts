@@ -662,6 +662,7 @@ describe('ACP session capability owner', () => {
       'open-science-skills'
     ])
     expect(primary.descriptor.controlRpcMethods).toEqual([
+      'capabilitiesCall',
       'mcpCall',
       'computeCall',
       'agentsCall',
@@ -676,6 +677,29 @@ describe('ACP session capability owner', () => {
       policyAllowsSessionCapability(CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY, 'future-delegation')
     ).toBe(false)
   })
+
+  it.each([
+    ['claude-code', claudeCodeFramework, true, false],
+    ['opencode', opencodeFramework, true, false],
+    ['codex-response', codexFramework, true, false],
+    ['codex-bridge', codexFramework, false, true]
+  ] as const)(
+    'publishes capabilitiesCall through the %s primary control descriptor',
+    async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
+      const owner = createOwner()
+      const built = await owner.provision({
+        stableAppSessionId: 'session-1',
+        framework,
+        nativeMcpEnabled,
+        bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectName: 'project'
+      })
+
+      expect(built.descriptor.controlRpcMethods).toContain('capabilitiesCall')
+    }
+  )
 
   it('returns an immutable, credential-free descriptor', async () => {
     const owner = createOwner()

@@ -451,6 +451,8 @@ export type AcpRuntimeEvent = {
   timestamp: number
   kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
+  // Correlates transient restored-permission lifecycle events without extending durable Session data.
+  permissionRequestId?: string
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
   contextUsage?: AcpContextUsage
@@ -581,6 +583,9 @@ export type AcpPermissionGrant = {
 }
 
 export type AcpStateSnapshot = {
+  // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
+  // transient runtime state and is not persisted with Session data.
+  revision?: number
   status: AcpConnectionStatus
   // A coordinator may keep multiple framework generations alive. Callers handling one session should
   // prefer its owning runtime status over the active generation's top-level compatibility status.

@@ -14,12 +14,15 @@ import type { AgentModelChangeTarget } from '../agent-framework'
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
   resolve: (value: Value) => void
+  reject: (error: unknown) => void
 } => {
   let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((promiseResolve) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((promiseResolve, promiseReject) => {
     resolve = promiseResolve
+    reject = promiseReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const emptySnapshot = (): AcpStateSnapshot => ({
@@ -273,6 +276,20 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('publishes snapshots with a coordinator-wide monotonic revision', () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+    )
+
+    expect(coordinator.getSnapshot().revision).toBe(1)
+    expect(coordinator.getSnapshot().revision).toBe(2)
+  })
+
   it('combines only the quit-blocking prompts reported by each runtime generation', async () => {
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) =>
@@ -808,8 +825,35 @@ describe('AcpRuntimeCoordinator', () => {
     await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
     expect(created.cancelPrompt).not.toHaveBeenCalled()
 
-    prompt.resolve({ stopReason: 'cancelled' })
-    await running
+    await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+    prompt.reject(new Error('provider connection closed during quit'))
+    await expect(running).resolves.toMatchObject({ stopReason: 'cancelled' })
+  })
+
+  it('preserves an unexpected durable prompt failure before provider quit teardown', async () => {
+    const prompt = createDeferred<unknown>()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => prompt.promise,
+          activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+          quitBlockingSessions: []
+        }).runtime
+    )
+    const session = await coordinator.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1'
+    })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
+    await Promise.resolve()
+
+    await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
+    prompt.reject(new Error('unexpected persistence failure'))
+
+    await expect(running).rejects.toThrow('unexpected persistence failure')
   })
 
   it('bounds quit preparation when an agent never returns a terminal response', async () => {

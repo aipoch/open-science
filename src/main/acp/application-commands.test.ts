@@ -50,7 +50,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     cancelPrompt: vi.fn(async () => snapshot),
     deleteSession: vi.fn(async () => snapshot),
     respondToPermission: vi.fn(async () => snapshot),
-    respondToElicitation: vi.fn(() => snapshot),
+    respondToElicitation: vi.fn(async () => snapshot),
     getSessionPlanProjection: vi.fn(async () => null),
     respondSessionPlan: vi.fn(async () => ({ projection: {} as never, changed: true })),
     setPermissionProfile: vi.fn(async () => snapshot),

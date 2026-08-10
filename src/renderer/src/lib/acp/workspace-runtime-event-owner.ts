@@ -1,4 +1,8 @@
 import {
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   isDurableAgentUserChoiceRequest,
   type AcpConnectionStatus,
   type AcpContextUsage,
@@ -8,6 +12,10 @@ import {
   type PendingElicitationRequest
 } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
+import {
+  acceptAcpRuntimeSnapshotRevision,
+  resetAcpRuntimeSnapshotRevisionForTests
+} from './runtime-snapshot-revision-owner'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 
 // Snapshot projections retain only transition edges; durable chat facts remain in Session Store.
@@ -16,11 +24,20 @@ const pendingElicitationSessionIds = new Set<string>()
 const firstOutputWaitingSessionIds = new Set<string>()
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
+type WorkspacePermissionLifecycleEvent = AcpRuntimeEvent & { permissionRequestId: string }
+type WorkspacePermissionLifecycleObserver = {
+  shouldApply: (event: WorkspacePermissionLifecycleEvent) => boolean
+  onApplied: (event: WorkspacePermissionLifecycleEvent) => void
+}
 
 type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
   drain: (sessionId?: string) => Promise<void>
 }
+type WorkspaceRuntimeEventSnapshot = Pick<
+  AcpStateSnapshot,
+  'agentPromptInFlightSessionIds' | 'events' | 'revision'
+>
 
 const processVisibleWorkspaceRuntimeEvents = async (
   events: AcpRuntimeEvent[],
@@ -201,7 +218,46 @@ const createWorkspaceRuntimeEventProcessor = (
   }
 }
 
-const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor()
+const permissionLifecycleEventTitles = new Set([
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE
+])
+const permissionLifecycleObservers = new Set<WorkspacePermissionLifecycleObserver>()
+
+const isWorkspacePermissionLifecycleEvent = (
+  event: AcpRuntimeEvent
+): event is AcpRuntimeEvent & { permissionRequestId: string } =>
+  event.kind === 'permission' &&
+  typeof event.permissionRequestId === 'string' &&
+  permissionLifecycleEventTitles.has(event.title ?? '')
+
+const subscribeWorkspacePermissionLifecycle = (
+  observer: WorkspacePermissionLifecycleObserver
+): (() => void) => {
+  permissionLifecycleObservers.add(observer)
+  return () => permissionLifecycleObservers.delete(observer)
+}
+
+const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(async (event) => {
+  const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event) ? event : undefined
+  if (
+    permissionLifecycleEvent &&
+    [...permissionLifecycleObservers].some(
+      (observer) => !observer.shouldApply(permissionLifecycleEvent)
+    )
+  ) {
+    return true
+  }
+  const applied = await applyWorkspaceRuntimeEvent(event)
+  if (applied && permissionLifecycleEvent) {
+    for (const observer of permissionLifecycleObservers) {
+      observer.onApplied(permissionLifecycleEvent)
+    }
+  }
+  return applied
+})
 
 // Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
 // ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.
@@ -291,17 +347,31 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   pendingPermissionSessionIds.clear()
   pendingElicitationSessionIds.clear()
   firstOutputWaitingSessionIds.clear()
+  resetAcpRuntimeSnapshotRevisionForTests()
+}
+
+// Accepts Main snapshots once in construction order. This gate is shared by React subscription and
+// quit-persistence pulls so a delayed older snapshot cannot replay stale lifecycle authority.
+const acceptWorkspaceRuntimeSnapshot = (snapshot: Pick<AcpStateSnapshot, 'revision'>): boolean => {
+  return acceptAcpRuntimeSnapshotRevision(snapshot)
+}
+
+const ingestWorkspaceRuntimeSnapshot = async (
+  snapshot: WorkspaceRuntimeEventSnapshot,
+  syncFirstOutput: boolean
+): Promise<boolean> => {
+  if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
+  if (syncFirstOutput) {
+    syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
+  }
+  await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  return true
 }
 
 // Publishes prompt ownership before applying the same snapshot's events so first output can only
 // clear, never re-arm, the renderer waiting state.
-const processWorkspaceRuntimeEvents = (
-  events: AcpRuntimeEvent[],
-  agentPromptInFlightSessionIds: string[]
-): Promise<void> => {
-  syncWorkspaceAgentFirstOutputState(agentPromptInFlightSessionIds)
-  return liveWorkspaceRuntimeEventProcessor.process(events)
-}
+const processWorkspaceRuntimeEvents = (snapshot: WorkspaceRuntimeEventSnapshot): Promise<boolean> =>
+  ingestWorkspaceRuntimeSnapshot(snapshot, true)
 
 // Flags sessions with a live Agent operation as disconnected on a transition into a dropped
 // connection state. Durable permission waits are intentionally quiescent: their provider RPC can
@@ -352,9 +422,9 @@ const syncWorkspaceContextUsage = (
 
 const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
   const snapshot = await window.api.acp.getState()
-  void liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+  const accepted = await ingestWorkspaceRuntimeSnapshot(snapshot, false)
   await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
-  syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
+  if (accepted) syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
 }
 
 export {
@@ -364,6 +434,7 @@ export {
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
   resetWorkspaceRuntimeEventOwnerForTests,
+  subscribeWorkspacePermissionLifecycle,
   syncWorkspaceAgentFirstOutputState,
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
