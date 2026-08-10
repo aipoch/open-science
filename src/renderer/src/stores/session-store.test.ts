@@ -1627,6 +1627,65 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('waiting-plan-approval')
   })
 
+  it('does not restore obsolete Ask and Plan waits after a new turn starts', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-restored-interactions',
+          projectId: 'project-1',
+          title: 'Restored interactions',
+          cwd: '/workspace',
+          status: 'waiting-for-user',
+          interactionState: { permission: false, elicitation: true, plan: true },
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      selectedSessionId: 'session-restored-interactions'
+    })
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-restored-interactions',
+      content: 'Continue with the selected choices'
+    })
+    useSessionStore.getState().setPermissionPending('session-restored-interactions')
+    useSessionStore.getState().clearPermissionPending('session-restored-interactions')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      interactionState: { permission: false, elicitation: false, plan: false }
+    })
+  })
+
+  it('does not restore obsolete Ask and Plan waits after a Session resumes', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-restored-interactions',
+          projectId: 'project-1',
+          title: 'Restored interactions',
+          cwd: '/workspace',
+          status: 'waiting-for-user',
+          interactionState: { permission: false, elicitation: true, plan: true },
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
+      selectedSessionId: 'session-restored-interactions'
+    })
+
+    useSessionStore.getState().markResumed('session-restored-interactions')
+    useSessionStore.getState().setPermissionPending('session-restored-interactions')
+    useSessionStore.getState().clearPermissionPending('session-restored-interactions')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      interactionState: { permission: false, elicitation: false, plan: false }
+    })
+  })
+
   it('restores simultaneous durable Permission, Ask, and Plan state without persisting the transient index', () => {
     const restored: PersistedChatSession = {
       id: 'session-restored-interactions',

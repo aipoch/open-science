@@ -20,16 +20,18 @@ const hasPendingDurableElicitation = (session: ChatSession): boolean =>
   ) === true
 
 export const inferSessionInteractionState = (session: ChatSession): SessionInteractionState =>
-  session.interactionState ?? {
-    permission:
-      session.runtimeContext?.permission?.state === 'pending' ||
-      session.status === 'waiting-permission',
-    elicitation: session.status === 'waiting-for-user' || hasPendingDurableElicitation(session),
-    plan:
-      session.status === 'waiting-plan-approval' ||
-      ((session.status === 'waiting-permission' || session.status === 'waiting-for-user') &&
-        session.runtimeContext?.plan?.approval === 'pending')
-  }
+  session.interactionState && isWaitingStatus(session.status)
+    ? session.interactionState
+    : {
+        permission:
+          session.runtimeContext?.permission?.state === 'pending' ||
+          session.status === 'waiting-permission',
+        elicitation: session.status === 'waiting-for-user' || hasPendingDurableElicitation(session),
+        plan:
+          session.status === 'waiting-plan-approval' ||
+          ((session.status === 'waiting-permission' || session.status === 'waiting-for-user') &&
+            session.runtimeContext?.plan?.approval === 'pending')
+      }
 
 export const resolveSessionInteractionStatus = (
   session: ChatSession,
