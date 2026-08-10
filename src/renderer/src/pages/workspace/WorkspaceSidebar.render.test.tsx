@@ -465,7 +465,9 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(running?.classList).toContain('font-semibold')
       expect(completed?.classList).not.toContain('font-semibold')
       expect(fade?.classList).toContain('from-transparent')
+      expect(fade?.classList).toContain('via-rail-card-bg')
       expect(fade?.classList).toContain('to-rail-card-bg')
+      expect(fade?.classList).toContain('group-hover:via-bg-300')
       expect(fade?.classList).toContain('group-hover:to-bg-300')
     } finally {
       vi.useRealTimers()
