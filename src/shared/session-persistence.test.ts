@@ -11,6 +11,7 @@ import {
   sanitizeToolActivity,
   type PersistedChatSession,
   type PersistedSideChat,
+  type PersistedToolActivity,
   type SessionPermissionRuntimeContext,
   type SessionPlanRuntimeContext
 } from './session-persistence'
@@ -37,6 +38,62 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
+
+const createOpenToolActivity = (
+  id = 'tool-1',
+  overrides: Partial<PersistedToolActivity> = {}
+): PersistedToolActivity => ({
+  id,
+  kind: 'tool',
+  title: 'Run npm test',
+  status: 'in_progress',
+  sortIndex: 1,
+  eventIds: [`${id}-started`],
+  promptMessageId: 'prompt-1',
+  createdAt: 2,
+  updatedAt: 2,
+  ...overrides
+})
+
+const createContinuingPermissionFile = (
+  activities: PersistedToolActivity[],
+  originatingPromptMessageId = 'prompt-1'
+): ReturnType<typeof createSessionFile> =>
+  createSessionFile({
+    ...(createSessionWithActivity(undefined) as PersistedChatSession),
+    activities,
+    status: 'running',
+    activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
+    messages: [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Run the tests',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    runtimeContext: {
+      version: 1,
+      revision: 4,
+      permission: {
+        state: 'continuing',
+        request: {
+          requestId: 'permission-1',
+          sessionId: 'session-1',
+          toolCallId: 'tool-1',
+          title: 'Run npm test',
+          isMcp: true,
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+        },
+        originatingPromptMessageId,
+        fingerprint: 'a'.repeat(64),
+        createdAt: 2
+      }
+    }
+  })
 
 const createRuntimePlan = (): SessionPlanRuntimeContext => ({
   artifactId: 'plan-1',
@@ -1080,101 +1137,179 @@ describe('normalizeSessionFile with activities', () => {
     expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
   })
 
-  it('rearms a prompt-bound continuing permission after restart', () => {
-    const restored = normalizeSessionFile(
-      createSessionFile({
-        ...(createSessionWithActivity(undefined) as PersistedChatSession),
-        activities: undefined,
-        status: 'running',
-        activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
-        messages: [
-          {
-            id: 'prompt-1',
-            role: 'user',
-            content: 'Run the tests',
-            status: 'complete',
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ],
+  it.each(['pending', 'in_progress'] as const)(
+    'rearms a prompt-bound continuing MCP permission without failing its %s tool activity',
+    (status) => {
+      const restored = normalizeSessionFile(
+        createContinuingPermissionFile([
+          createOpenToolActivity('tool-1', { status }),
+          createOpenToolActivity('unrelated-tool', {
+            title: 'Read another file',
+            sortIndex: 2,
+            createdAt: 3,
+            updatedAt: 3
+          })
+        ])
+      )
+
+      expect(restored).toMatchObject({
+        status: 'waiting-permission',
         runtimeContext: {
           version: 1,
           revision: 4,
           permission: {
-            state: 'continuing',
-            request: {
-              requestId: 'permission-1',
-              sessionId: 'session-1',
-              toolCallId: 'tool-1',
-              title: 'Run npm test',
-              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
-            },
-            originatingPromptMessageId: 'prompt-1',
-            fingerprint: 'a'.repeat(64),
-            createdAt: 2
+            state: 'pending',
+            originatingPromptMessageId: 'prompt-1'
           }
         }
       })
+      expect(restored?.activeRun).toBeUndefined()
+      expect(restored?.resumeRecovery).toBeUndefined()
+      expect(restored?.error).toBeUndefined()
+      expect(restored?.messages[0]?.interrupted).toBeUndefined()
+      expect(restored?.activities?.[0]?.status).toBe(status)
+      expect(restored?.conversationGraph?.activities[0]?.status).toBe(status)
+      expect(restored?.activities?.[1]?.status).toBe('failed')
+      expect(restored?.conversationGraph?.activities[1]?.status).toBe('failed')
+    }
+  )
+
+  it('fails a permission tool activity hidden by the active conversation branch', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    expect(persisted.session.conversationGraph).toBeDefined()
+    const conversationGraph = forkConversationAfterActivity(
+      persisted.session.conversationGraph!,
+      'prompt-1',
+      'tool-1',
+      'revised-branch',
+      3
     )
 
-    expect(restored).toMatchObject({
-      status: 'waiting-permission',
-      runtimeContext: {
-        version: 1,
-        revision: 4,
-        permission: {
-          state: 'pending',
-          originatingPromptMessageId: 'prompt-1'
-        }
-      }
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: { ...persisted.session, conversationGraph }
     })
-    expect(restored?.activeRun).toBeUndefined()
-    expect(restored?.resumeRecovery).toBeUndefined()
-    expect(restored?.error).toBeUndefined()
-    expect(restored?.messages[0]?.interrupted).toBeUndefined()
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
   })
 
-  it('releases an invalid continuing permission before generic restart recovery', () => {
+  it('releases a non-MCP permission instead of preserving its open tool activity', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    persisted.session.runtimeContext!.permission!.request.isMcp = false
+
+    const restored = normalizeSessionFile(persisted)
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases a permission whose exact tool activity is missing', () => {
     const restored = normalizeSessionFile(
-      createSessionFile({
-        ...(createSessionWithActivity(undefined) as PersistedChatSession),
-        activities: undefined,
-        status: 'running',
-        activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
-        messages: [
-          {
-            id: 'prompt-1',
-            role: 'user',
-            content: 'Run the tests',
-            status: 'complete',
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ],
-        runtimeContext: {
-          version: 1,
-          revision: 4,
-          permission: {
-            state: 'continuing',
-            request: {
-              requestId: 'permission-1',
-              sessionId: 'session-1',
-              toolCallId: 'tool-1',
-              title: 'Run npm test',
-              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
-            },
-            originatingPromptMessageId: 'missing-prompt',
-            fingerprint: 'a'.repeat(64),
-            createdAt: 2
-          }
-        }
-      })
+      createContinuingPermissionFile([createOpenToolActivity('unrelated-tool')])
     )
 
     expect(restored?.status).toBe('error')
     expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases a permission whose exact tool activity is already terminal', () => {
+    const restored = normalizeSessionFile(
+      createContinuingPermissionFile([
+        createOpenToolActivity('tool-1', { status: 'completed', updatedAt: 3 })
+      ])
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('completed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('completed')
+  })
+
+  it('releases pending permission authority attached to a non-waiting Session', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const permission = persisted.session.runtimeContext!.permission!
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        runtimeContext: {
+          ...persisted.session.runtimeContext!,
+          permission: { ...permission, state: 'pending' }
+        }
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases continuing permission authority attached to a non-running Session', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: { ...persisted.session, status: 'idle' }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases permission authority with duplicated flat tool call correlation', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const activity = persisted.session.activities![0]
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        activities: [activity, { ...activity, title: 'Duplicate tool projection' }]
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.map((candidate) => candidate.status)).toEqual(['failed', 'failed'])
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('fails a mismatched flat permission activity instead of trusting its tool call id', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        activities: persisted.session.activities?.map((activity) => ({
+          ...activity,
+          promptMessageId: 'stale-prompt'
+        }))
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases an invalid continuing permission before generic restart recovery', () => {
+    const restored = normalizeSessionFile(
+      createContinuingPermissionFile([createOpenToolActivity()], 'missing-prompt')
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
     expect(restored?.resumeRecovery).toEqual({
       kind: 'resume-required',
       cause: 'app-restart',

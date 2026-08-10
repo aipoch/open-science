@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
 import { DEV_SESSION_DIR_NAME, SessionRepository, getSessionPersistenceDir } from './repository'
 
 let storageRoot: string | undefined
@@ -39,6 +39,18 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   createdAt: 1710000000000,
   updatedAt: 1710000000100,
   ...overrides
+})
+
+const createPendingMcpToolActivity = (): PersistedToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Run npm test',
+  status: 'in_progress',
+  sortIndex: 1,
+  eventIds: ['tool-1-started'],
+  promptMessageId: 'message-1',
+  createdAt: 1710000000200,
+  updatedAt: 1710000000200
 })
 
 afterEach(async () => {
@@ -652,6 +664,7 @@ describe('session persistence repository (per-session files)', () => {
       createSession({
         status: 'waiting-permission',
         activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
+        activities: [createPendingMcpToolActivity()],
         runtimeContext: {
           version: 1,
           revision: 1,
@@ -662,7 +675,8 @@ describe('session persistence repository (per-session files)', () => {
               sessionId: 'session-1',
               toolCallId: 'tool-1',
               title: 'Run npm test',
-              providerToolName: 'Bash',
+              providerToolName: 'notebook_execute',
+              isMcp: true,
               rawInput: { command: 'npm test' },
               options: [
                 {
@@ -727,6 +741,7 @@ describe('session persistence repository (per-session files)', () => {
       createSession({
         status: 'running',
         activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
+        activities: [createPendingMcpToolActivity()],
         runtimeContext: {
           version: 1,
           revision: 2,
@@ -737,6 +752,7 @@ describe('session persistence repository (per-session files)', () => {
               sessionId: 'session-1',
               toolCallId: 'tool-1',
               title: 'Run npm test',
+              isMcp: true,
               options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
             },
             originatingPromptMessageId: 'message-1',

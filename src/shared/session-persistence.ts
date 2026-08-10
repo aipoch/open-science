@@ -32,6 +32,7 @@ import {
 import {
   createLinearConversationGraph,
   projectConversationMessage,
+  resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages,
@@ -1117,14 +1118,52 @@ const isPermissionAuthorityBoundToActivePrompt = (
   )
 }
 
-const hasRestorablePermissionWait = (session: PersistedChatSession): boolean => {
+type RestorablePermissionToolAuthority = Readonly<{
+  permission: SessionPermissionRuntimeContext
+  activity: PersistedBranchActivity
+}>
+
+const resolveRestorablePermissionToolAuthority = (
+  session: PersistedChatSession
+): RestorablePermissionToolAuthority | undefined => {
   const permission = session.runtimeContext?.permission
-  return Boolean(
-    session.status === 'waiting-permission' &&
-    permission?.state === 'pending' &&
-    isPermissionAuthorityBoundToActivePrompt(session, permission)
+  if (
+    !permission ||
+    permission.request.isMcp !== true ||
+    !session.conversationGraph ||
+    !isPermissionAuthorityBoundToActivePrompt(session, permission)
+  ) {
+    return undefined
+  }
+  const activity = session.conversationGraph.activities.find(
+    (candidate) => candidate.id === permission.request.toolCallId
   )
+  const flatActivities =
+    session.activities?.filter((candidate) => candidate.id === permission.request.toolCallId) ?? []
+  const flatActivity = flatActivities.length === 1 ? flatActivities[0] : undefined
+  const visibleActivity = resolveActiveConversationActivities(
+    session.conversationGraph
+  ).activities.find((candidate) => candidate.id === permission.request.toolCallId)
+  if (
+    !activity ||
+    !flatActivity ||
+    !visibleActivity ||
+    activity.promptMessageId !== permission.originatingPromptMessageId ||
+    flatActivity.promptMessageId !== permission.originatingPromptMessageId ||
+    (activity.status !== 'pending' && activity.status !== 'in_progress') ||
+    (flatActivity.status !== 'pending' && flatActivity.status !== 'in_progress')
+  ) {
+    return undefined
+  }
+  return { permission, activity }
 }
+
+const hasRestorablePermissionWait = (session: PersistedChatSession): boolean =>
+  Boolean(
+    session.status === 'waiting-permission' &&
+    session.runtimeContext?.permission?.state === 'pending' &&
+    resolveRestorablePermissionToolAuthority(session)
+  )
 
 // Identifies UI states that cannot survive an app process shutdown. Permission waits are durable
 // only when their main-owned authority and active-branch prompt binding survived with the Session.
@@ -1158,11 +1197,47 @@ const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefin
   [...messages].reverse().find((message) => message.role === 'user')?.id
 
 // Rehydrates durable waits and converts runtime-only work into recoverable states after restart.
-const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedChatSession => {
+const recoverInterruptedPermissionAfterRestore = (
+  session: PersistedChatSession
+): PersistedChatSession => {
+  const persistedRuntimeContext = session.runtimeContext
+  if (!persistedRuntimeContext) return session
+  const runtimeContext = { ...persistedRuntimeContext }
+  delete runtimeContext.permission
+  const promptMessageId = latestUserMessageId(session.messages)
+  return {
+    ...session,
+    status: 'error',
+    activeRun: undefined,
+    runtimeContext,
+    resumeRecovery: {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId
+    },
+    error: session.error ?? INTERRUPTED_SESSION_ERROR,
+    messages: markInterruptedPrompt(
+      session.messages.map(normalizeMessageAfterRestore),
+      promptMessageId
+    )
+  }
+}
+
+const normalizeSessionAfterRestore = (
+  session: PersistedChatSession,
+  options: { deferPermissionValidation?: boolean } = {}
+): PersistedChatSession => {
   const persistedRuntimeContext = session.runtimeContext
   const continuingPermission = persistedRuntimeContext?.permission
+  if (options.deferPermissionValidation && continuingPermission) {
+    return {
+      ...session,
+      messages: session.messages.map(normalizeMessageAfterRestore)
+    }
+  }
+  const permissionAuthority = resolveRestorablePermissionToolAuthority(session)
   if (persistedRuntimeContext && continuingPermission?.state === 'continuing') {
-    if (isPermissionAuthorityBoundToActivePrompt(session, continuingPermission)) {
+    if (permissionAuthority && session.status === 'running') {
       // The provider continuation died with the process. Re-present its durable request instead
       // of automatically replaying privileged work that may already have partially completed.
       return {
@@ -1182,26 +1257,7 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
         messages: session.messages.map(normalizeMessageAfterRestore)
       }
     }
-
-    const runtimeContext = { ...persistedRuntimeContext }
-    delete runtimeContext.permission
-    const promptMessageId = latestUserMessageId(session.messages)
-    return {
-      ...session,
-      status: 'error',
-      activeRun: undefined,
-      runtimeContext,
-      resumeRecovery: {
-        kind: 'resume-required',
-        cause: 'app-restart',
-        promptMessageId
-      },
-      error: session.error ?? INTERRUPTED_SESSION_ERROR,
-      messages: markInterruptedPrompt(
-        session.messages.map(normalizeMessageAfterRestore),
-        promptMessageId
-      )
-    }
+    return recoverInterruptedPermissionAfterRestore(session)
   }
   if (hasRestorablePermissionWait(session)) {
     return {
@@ -1214,6 +1270,7 @@ const normalizeSessionAfterRestore = (session: PersistedChatSession): PersistedC
       messages: session.messages.map(normalizeMessageAfterRestore)
     }
   }
+  if (continuingPermission) return recoverInterruptedPermissionAfterRestore(session)
   if (
     session.status === 'waiting-plan-approval' &&
     session.runtimeContext?.plan?.approval === 'pending'
@@ -1553,11 +1610,17 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   return sanitized
 }
 
-// Runtime activity state cannot resume after a restart, so restore open activities as failed.
-const normalizeActivityAfterRestore = (activity: PersistedToolActivity): PersistedToolActivity => ({
+// Runtime activity state cannot resume after restart unless the exact active-Branch tool call is
+// parked behind durable permission authority. Restore every other open activity as failed.
+const normalizeActivityAfterRestore = (
+  activity: PersistedToolActivity,
+  permissionAuthority?: RestorablePermissionToolAuthority
+): PersistedToolActivity => ({
   ...activity,
   ...((activity.status === 'pending' || activity.status === 'in_progress') &&
-  !activity.elicitation?.durable
+  !activity.elicitation?.durable &&
+  (activity.id !== permissionAuthority?.activity.id ||
+    activity.promptMessageId !== permissionAuthority.permission.originatingPromptMessageId)
     ? { status: 'failed' as const }
     : {}),
   ...(activity.elicitation?.state === 'pending' && !activity.elicitation.durable
@@ -1979,9 +2042,7 @@ const sanitizeConversationGraph = (
         return activity && agentFrameId && messageBranchId && promptMessageId && runtimeSegmentId
           ? [
               {
-                ...(options.preserveRuntimeState
-                  ? activity
-                  : normalizeActivityAfterRestore(activity)),
+                ...activity,
                 agentFrameId,
                 messageBranchId,
                 promptMessageId,
@@ -2118,9 +2179,6 @@ const sanitizeSession = (
     ? session.activities
         .map(sanitizeToolActivity)
         .filter((item): item is PersistedToolActivity => !!item)
-        .map((activity) =>
-          options.preserveRuntimeState ? activity : normalizeActivityAfterRestore(activity)
-        )
     : []
   const activityGroups = Array.isArray(session.activityGroups)
     ? session.activityGroups
@@ -2229,7 +2287,9 @@ const sanitizeSession = (
 
   // Normalize before graph creation so a legacy flat transcript never seeds a streaming message or
   // loses the active prompt identity while activeRun is cleared.
-  if (!options.preserveRuntimeState) sanitized = normalizeSessionAfterRestore(sanitized)
+  if (!options.preserveRuntimeState) {
+    sanitized = normalizeSessionAfterRestore(sanitized, { deferPermissionValidation: true })
+  }
 
   if (session.conversationGraph !== undefined) {
     const graph = sanitizeConversationGraph(session.conversationGraph, options)
@@ -2251,6 +2311,30 @@ const sanitizeSession = (
   // Normalize only after resolving the canonical active Branch. Recovery references and the durable
   // interrupted marker must never be inferred from an abandoned Branch.
   if (!options.preserveRuntimeState) sanitized = normalizeSessionAfterRestore(sanitized)
+  if (!options.preserveRuntimeState) {
+    const permissionAuthority = resolveRestorablePermissionToolAuthority(sanitized)
+    sanitized = {
+      ...sanitized,
+      ...(sanitized.activities
+        ? {
+            activities: sanitized.activities.map((activity) =>
+              normalizeActivityAfterRestore(activity, permissionAuthority)
+            )
+          }
+        : {}),
+      ...(sanitized.conversationGraph
+        ? {
+            conversationGraph: {
+              ...sanitized.conversationGraph,
+              activities: sanitized.conversationGraph.activities.map((activity) => ({
+                ...activity,
+                ...normalizeActivityAfterRestore(activity, permissionAuthority)
+              }))
+            }
+          }
+        : {})
+    }
+  }
   const activeUserMessageIds = new Set(
     sanitized.messages.filter((message) => message.role === 'user').map((message) => message.id)
   )
