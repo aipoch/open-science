@@ -92,7 +92,6 @@ import {
   type AgentBackendSelection,
   type ExplicitAgentBackendTarget
 } from './backend-resolver'
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SkillExportArchive } from '../skills/export'
@@ -546,21 +545,9 @@ class SettingsService {
   async codexSkillCatalog(
     codexHome: string | undefined
   ): Promise<Array<{ name: string; description: string; path: string; source?: 'connector' }>> {
-    return this.skills.codexSkillCatalog(codexHome, (settings) => {
-      return this.connectors.enabledConnectorIds(settings.connectors).flatMap((id) => {
-        const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
-        return connector
-          ? [
-              {
-                directory: `mcp-${id}`,
-                name: `mcp-${id}`,
-                description: connector.useWhen,
-                source: 'connector' as const
-              }
-            ]
-          : []
-      })
-    })
+    return this.skills.codexSkillCatalog(codexHome, (settings) =>
+      this.connectors.connectorSkillCatalogEntries(settings.connectors)
+    )
   }
 
   // Returns one skill's view plus its SKILL.md body for the detail view (any source).

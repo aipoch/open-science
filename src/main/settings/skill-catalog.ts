@@ -1,6 +1,6 @@
 import { readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   AgentHomeSkillRef,
@@ -60,7 +60,10 @@ type SkillCatalogEntry = {
   path: string
   source?: 'connector'
 }
-type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory: string }
+type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path' | 'description'> & {
+  directory: string
+  description?: string
+}
 type AdditionalSkillCatalogEntries =
   | readonly AdditionalSkillCatalogEntry[]
   | ((
@@ -287,9 +290,22 @@ class SkillCatalogModule {
       const filePath = join(skillsRoot, item.directory, 'SKILL.md')
       const realFile = await realpath(filePath).catch(() => undefined)
       if (!realFile || !realFile.startsWith(rootWithSep)) continue
+      let description = item.description?.trim()
+      if (!description) {
+        const parsed = await readSkillFile(dirname(realFile)).catch(() => undefined)
+        if (
+          !parsed ||
+          parsed.fields.name !== item.name ||
+          (item.source !== undefined && parsed.fields.source !== item.source)
+        ) {
+          continue
+        }
+        description = parsed.fields.description?.trim()
+      }
+      if (!description) continue
       result.push({
         name: item.name,
-        description: item.description,
+        description,
         path: filePath,
         ...(item.source ? { source: item.source } : {})
       })

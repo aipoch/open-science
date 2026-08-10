@@ -6,7 +6,7 @@ import {
 } from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
-import { customConnectorSlug } from '../../shared/custom-connector'
+import { customConnectorSkillName, customConnectorSlug } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import type { StoredConnectors } from '../settings/types'
 
@@ -99,7 +99,7 @@ class ConnectorRuntimeSettingsProjection {
         customServers,
         (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
-      this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
+      this.materializedCustomSkills = customSync.materializedSlugs.map(customConnectorSkillName)
       this.discoveryAvailabilities = new Map(
         customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
       )

@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { renderCustomSkillDoc } from './skill-doc'
-import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
+import {
+  syncConnectorSkillDocs,
+  syncCustomServerSkillDocs,
+  syncMaterializedCustomServerSkillDocs
+} from './provision'
 import type { StoredCustomMcpServer } from '../settings/types'
 
 const FAKE_TOOLS = [
@@ -216,5 +220,69 @@ describe('bundled and custom skill-doc sync coexist', () => {
     await syncCustomServerSkillDocs(dir, [], listTools)
     entries = (await readdir(dir)).sort()
     expect(entries).toEqual(['mcp-chemistry'])
+  })
+})
+
+describe('syncMaterializedCustomServerSkillDocs', () => {
+  it('copies only valid projected docs and cleans stale custom docs without touching other owners', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'custom-skill-copy-'))
+    const source = join(root, 'source')
+    const target = join(root, 'target')
+    await Promise.all([
+      mkdir(join(source, 'mcp-xt'), { recursive: true }),
+      mkdir(join(source, 'mcp-malformed'), { recursive: true }),
+      mkdir(join(target, 'mcp-stale'), { recursive: true }),
+      mkdir(join(target, 'mcp-pubmed'), { recursive: true }),
+      mkdir(join(target, 'user-skill'), { recursive: true })
+    ])
+    const xtDoc =
+      '---\nname: mcp-xt\ndescription: Use XT records.\nsource: connector\n---\n\n# XT\n'
+    await Promise.all([
+      writeFile(join(source, 'mcp-xt', 'SKILL.md'), xtDoc),
+      writeFile(join(source, 'mcp-malformed', 'SKILL.md'), '# missing frontmatter'),
+      writeFile(join(target, 'mcp-stale', 'SKILL.md'), 'stale'),
+      writeFile(join(target, 'mcp-pubmed', 'SKILL.md'), 'bundled'),
+      writeFile(join(target, 'user-skill', 'SKILL.md'), 'user')
+    ])
+
+    const result = await syncMaterializedCustomServerSkillDocs(source, target, [
+      'mcp-xt',
+      'mcp-xt',
+      'mcp-malformed',
+      'mcp-missing',
+      'mcp-pubmed',
+      'mcp-../../escape'
+    ])
+
+    expect(result.materializedSkillNames).toEqual(['mcp-xt'])
+    expect(result.failures.map(({ skillName }) => skillName)).toEqual([
+      'mcp-malformed',
+      'mcp-missing'
+    ])
+    expect((await readdir(target)).sort()).toEqual(['mcp-pubmed', 'mcp-xt', 'user-skill'])
+    expect(await readFile(join(target, 'mcp-xt', 'SKILL.md'), 'utf8')).toBe(xtDoc)
+    expect(await readFile(join(target, 'mcp-pubmed', 'SKILL.md'), 'utf8')).toBe('bundled')
+  })
+
+  it('canonicalizes a stale case-variant without deleting the copied doc', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'custom-skill-copy-case-'))
+    const source = join(root, 'source')
+    const target = join(root, 'target')
+    await Promise.all([
+      mkdir(join(source, 'mcp-xt'), { recursive: true }),
+      mkdir(join(target, 'mcp-XT'), { recursive: true })
+    ])
+    const xtDoc =
+      '---\nname: mcp-xt\ndescription: Use XT records.\nsource: connector\n---\n\n# XT\n'
+    await Promise.all([
+      writeFile(join(source, 'mcp-xt', 'SKILL.md'), xtDoc),
+      writeFile(join(target, 'mcp-XT', 'SKILL.md'), 'stale')
+    ])
+
+    await syncMaterializedCustomServerSkillDocs(source, target, ['mcp-xt'])
+
+    expect(await readFile(join(target, 'mcp-xt', 'SKILL.md'), 'utf8')).toBe(xtDoc)
+    const entries = await readdir(target)
+    expect(new Set(entries.map((entry) => entry.toLowerCase())).size).toBe(entries.length)
   })
 })

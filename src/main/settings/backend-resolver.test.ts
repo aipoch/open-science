@@ -244,8 +244,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexProxyEnvironment: vi.fn(async () => undefined)
   } satisfies AgentBackendRuntimePort
   const connectors = {
-    enabledConnectorIds: vi.fn(() => options.connectorIds ?? []),
-    provisionedConnectorSkillNames: vi.fn(async () => options.connectorSkillNames ?? [])
+    connectorSkillNames: vi.fn(
+      () => options.connectorSkillNames ?? (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+    )
   } satisfies AgentBackendConnectorPort
 
   const responsesBridges: ResponsesBridgeDouble[] = []
@@ -344,8 +345,7 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.readFrameworkOverride).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeReasoningEffortProfile).not.toHaveBeenCalled()
-    expect(harness.connectors.enabledConnectorIds).not.toHaveBeenCalled()
-    expect(harness.connectors.provisionedConnectorSkillNames).not.toHaveBeenCalled()
+    expect(harness.connectors.connectorSkillNames).not.toHaveBeenCalled()
     expect(harness.createResponsesBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
     expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
@@ -1190,14 +1190,10 @@ describe('AgentBackendResolver bridge predicates', () => {
         : backend.persistentSystemPrompt
 
     expect(instructions).toContain(
-      testCase.frameworkId === 'claude-code'
-        ? 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
-        : 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.'
+      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
     )
     expect(instructions).toContain('Allowed Specialist Skills for this session')
-    if (testCase.frameworkId !== 'claude-code') {
-      expect(instructions).not.toContain('`mcp-custom-chemistry`')
-    }
+    expect(instructions).not.toContain('host.mcp("custom-chemistry"')
     expect(instructions).not.toContain('`mcp-openalex`')
     await backend.anthropicBridgeLease?.release()
     await backend.responsesBridgeLease?.release()
