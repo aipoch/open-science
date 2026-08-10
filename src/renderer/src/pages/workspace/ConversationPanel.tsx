@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   ArrowUp,
   BookOpen,
+  ChartNoAxesCombined,
   ChevronDown,
   CircleHelp,
   FileText,
@@ -66,6 +67,7 @@ import { docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
 import { normalizeRunFailureError } from './error-report'
@@ -321,6 +323,7 @@ const ConversationPanel = ({
   const isResuming = activeSession?.id === resumingSessionId
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
+  const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState<number>()
 
@@ -973,7 +976,7 @@ const ConversationPanel = ({
                       </div>
 
                       <div className="@container/composer flex items-center gap-1">
-                        {/* The + button opens a dropdown for Attach files and Request review actions. */}
+                        {/* The + button opens a dropdown for attachments and session actions. */}
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
@@ -982,13 +985,14 @@ const ConversationPanel = ({
                                   <button
                                     type="button"
                                     disabled={
-                                      isUploadingAttachments || (!canEditDraft && !activeBranchPlan)
+                                      isUploadingAttachments ||
+                                      (!canEditDraft && !activeBranchPlan && !activeSession)
                                     }
                                     className={composerIconButtonClassName}
                                     aria-label={
                                       activeBranchPlan
-                                        ? 'Add attachment, view plan, or request review'
-                                        : 'Add attachment or request review'
+                                        ? 'Add attachment, view context window, view plan, or request review'
+                                        : 'Add attachment, view context window, or request review'
                                     }
                                     data-testid="composer-plus-trigger"
                                   >
@@ -998,8 +1002,8 @@ const ConversationPanel = ({
                               </TooltipTrigger>
                               <TooltipContent side="top">
                                 {activeBranchPlan
-                                  ? 'Add attachment, view plan, or request review'
-                                  : 'Add attachment or request review'}
+                                  ? 'Add attachment, view context window, view plan, or request review'
+                                  : 'Add attachment, view context window, or request review'}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1082,6 +1086,20 @@ const ConversationPanel = ({
                             >
                               <ScanEye className="mr-2 size-4 text-text-300" aria-hidden="true" />
                               Request review
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              data-testid="menu-context-window"
+                              disabled={!activeSession}
+                              onSelect={() => {
+                                if (activeSession) setIsContextWindowOpen(true)
+                              }}
+                            >
+                              <ChartNoAxesCombined
+                                className="mr-2 size-4 text-text-300"
+                                aria-hidden="true"
+                              />
+                              Context window
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1362,6 +1380,11 @@ const ConversationPanel = ({
             model: activeSession?.agentModel
           }}
           onClose={() => setIsReportOpen(false)}
+        />
+        <ContextWindowDialog
+          open={isContextWindowOpen}
+          session={activeSession}
+          onOpenChange={setIsContextWindowOpen}
         />
       </section>
     </ResizablePanel>

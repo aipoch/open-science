@@ -151,6 +151,15 @@ const AppContent = (): React.JSX.Element | null => {
       setIsGlobalSearchOpen(false)
       return true
     }
+    const contextWindowDialog = document.querySelector<HTMLElement>(
+      '[data-slot="context-window-dialog"][data-state="open"]'
+    )
+    if (contextWindowDialog) {
+      contextWindowDialog.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+      return true
+    }
     return settingsPageRef.current?.closeActivePane() ?? false
   }, [isGlobalSearchOpen])
   useCloseActivePaneShortcut(closeActiveModal)

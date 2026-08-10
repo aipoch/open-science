@@ -521,6 +521,25 @@ describe('App startup routing', () => {
     expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
   })
 
+  it('dispatches the close-pane Escape to an open Context window dialog', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.dataset.slot = 'context-window-dialog'
+    dialog.dataset.state = 'open'
+    const onKeyDown = vi.fn()
+    dialog.addEventListener('keydown', onKeyDown)
+    document.body.appendChild(dialog)
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+    })
+
+    expect(onKeyDown).toHaveBeenCalledOnce()
+    expect((onKeyDown.mock.calls[0]?.[0] as KeyboardEvent).key).toBe('Escape')
+    dialog.remove()
+  })
+
   it('does not open global search while a file preview modal is open', async () => {
     mocks.settings.isLoaded = true
     mocks.navigation.view = 'workspace'

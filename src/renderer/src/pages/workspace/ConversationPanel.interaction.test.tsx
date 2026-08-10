@@ -1411,14 +1411,20 @@ describe('ConversationPanel interrupted Session recovery', () => {
 })
 
 describe('ConversationPanel + menu', () => {
-  it('renders both Attach files and Request review items', () => {
+  it('renders Context window as the separated final menu item', () => {
     renderPanel()
 
     const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
+    const contextWindowItem = container.querySelector('[data-testid="menu-context-window"]')
     const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
 
     expect(attachItem).not.toBeNull()
+    expect(contextWindowItem).not.toBeNull()
     expect(reviewItem).not.toBeNull()
+    expect(reviewItem?.compareDocumentPosition(contextWindowItem as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(contextWindowItem?.previousElementSibling?.tagName).toBe('HR')
   })
 
   it('describes the composer add icon with a tooltip', () => {
@@ -1426,7 +1432,7 @@ describe('ConversationPanel + menu', () => {
 
     expect(
       [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
-        (node) => node.textContent === 'Add attachment or request review'
+        (node) => node.textContent === 'Add attachment, view context window, or request review'
       )
     ).toBe(true)
   })
