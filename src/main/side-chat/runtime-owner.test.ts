@@ -895,7 +895,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(resumeSession).toHaveBeenCalledWith({
       sessionId: 'side-chat-restored',
       providerSessionId: 'provider-restored',
-      cwd: expect.stringContaining('/side-chat-restored/cwd'),
+      cwd: join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-restored', 'cwd'),
       projectName: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
@@ -1449,7 +1449,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(resumeSession).toHaveBeenLastCalledWith({
       sessionId: 'side-session-reconfigure',
       providerSessionId: 'side-session-reconfigure',
-      cwd: expect.stringContaining('/cwd'),
+      cwd: join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId, 'cwd'),
       projectName: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
