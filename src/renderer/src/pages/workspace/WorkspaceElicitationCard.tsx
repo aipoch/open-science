@@ -283,7 +283,6 @@ const WorkspaceElicitationCard = ({
       }
       setValues(nextValues)
       setError(undefined)
-      onDraftChange?.(choiceAnswers(choiceQuestions, nextValues))
       return
     }
 
@@ -293,11 +292,8 @@ const WorkspaceElicitationCard = ({
       [choiceQuestion.customField.id]: undefined,
       [answer.fieldId]: answer.value
     }
-    const nextAnswers = choiceAnswers(choiceQuestions, nextValues)
     setValues(nextValues)
     setError(undefined)
-
-    onDraftChange?.(nextAnswers)
   }
 
   return (

@@ -236,9 +236,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
 
     expect(onRespond).not.toHaveBeenCalled()
-    expect(onDraftChange).toHaveBeenLastCalledWith([
-      { fieldId: 'question_0', value: 'multi-omics' }
-    ])
+    expect(onDraftChange).not.toHaveBeenCalled()
     expect(container.querySelector('h3')?.textContent).toBe(
       'What should this skill primarily cover?'
     )
@@ -250,6 +248,10 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(advance?.querySelector('svg.lucide-chevron-right')).not.toBeNull()
     await act(async () => advance?.click())
 
+    expect(onDraftChange).toHaveBeenCalledOnce()
+    expect(onDraftChange).toHaveBeenLastCalledWith([
+      { fieldId: 'question_0', value: 'multi-omics' }
+    ])
     expect(container.querySelector('h3')?.textContent).toBe('Which language should the skill use?')
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
@@ -273,9 +275,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
 
     expect(onRespond).not.toHaveBeenCalled()
+    expect(onDraftChange).toHaveBeenCalledOnce()
     expect(onDraftChange).toHaveBeenLastCalledWith([
-      { fieldId: 'question_0', value: 'multi-omics' },
-      { fieldId: 'question_1', value: 'chinese' }
+      { fieldId: 'question_0', value: 'multi-omics' }
     ])
     const finish = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Finish'
