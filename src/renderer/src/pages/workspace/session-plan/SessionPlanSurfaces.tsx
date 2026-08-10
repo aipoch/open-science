@@ -29,6 +29,11 @@ import {
 
 type PlanSurfaceProps = Readonly<{ projection: ActivePlanProjection; stale?: boolean }>
 
+type RestoredPlanResponder = Readonly<{
+  sessionId: string
+  respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+}>
+
 const lifecycleLabel = (projection: ActivePlanProjection): string => {
   switch (projection.lifecycle) {
     case 'awaiting_approval':
@@ -484,3 +489,4 @@ const PlanPreviewSurface = ({
 }
 
 export { PlanPreviewSurface, PlanProgressChip, WorkspacePlanCard }
+export type { RestoredPlanResponder }

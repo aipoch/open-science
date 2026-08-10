@@ -8,7 +8,7 @@ import type { NotebookPreviewItem } from '../NotebookPreview'
 import { ProjectFilesView } from '../ProjectFilesView'
 import { SessionReviewerPanel } from '../SessionReviewerPanel'
 import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
-import { PlanPreviewSurface } from '../session-plan/SessionPlanSurfaces'
+import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
 import { useIsSideChatOpenForSession } from '../use-side-chat-controller'
 
 const isNotebookPreviewItem = (item: PreviewToolItem): item is NotebookPreviewItem =>
@@ -42,9 +42,11 @@ const SessionReviewerContent = ({
 }
 
 export const PreviewToolContent = ({
-  item
+  item,
+  restoredPlanResponder
 }: {
   item: PreviewToolItem
+  restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
   const isSideChatOpen = useIsSideChatOpenForSession(item.sessionId)
@@ -65,15 +67,20 @@ export const PreviewToolContent = ({
 
   const respondPlan = async (decision: 'approved' | 'rejected'): Promise<void> => {
     if (!planProjection || !item.projectId) return
-    await respondToSessionPlan(
-      { projectId: item.projectId, sessionId: item.sessionId, projection: planProjection },
-      { decision }
-    )
+    if (planSession?.activeRun) {
+      await respondToSessionPlan(
+        { projectId: item.projectId, sessionId: item.sessionId, projection: planProjection },
+        { decision }
+      )
+      return
+    }
+    if (restoredPlanResponder?.sessionId !== item.sessionId) return
+    await restoredPlanResponder.respond({ decision })
   }
+  const hasPlanResponsePath =
+    planSession?.activeRun !== undefined || restoredPlanResponder?.sessionId === item.sessionId
   const canRespondToPlan =
-    planSession?.status === 'waiting-plan-approval' &&
-    planSession.activeRun !== undefined &&
-    !isSideChatOpen
+    planSession?.status === 'waiting-plan-approval' && hasPlanResponsePath && !isSideChatOpen
 
   // Remount the Files tool per project so its transient dialog cannot outlive the project it opened.
   if (item.toolKind === 'files') {

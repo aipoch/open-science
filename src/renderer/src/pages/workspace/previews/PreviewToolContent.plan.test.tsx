@@ -57,12 +57,14 @@ const approvedProjection: ActivePlanProjection = {
 }
 
 const respondPlan = vi.fn()
+const respondToRestoredPlan = vi.fn()
 const getPlanProjection = vi.fn()
 const saveBlobFile = vi.fn()
 
 beforeEach(() => {
   sideChatState.parentSessionId = undefined
   respondPlan.mockReset().mockResolvedValue({ projection: approvedProjection, changed: true })
+  respondToRestoredPlan.mockReset().mockResolvedValue(undefined)
   getPlanProjection.mockReset().mockResolvedValue(approvedProjection)
   saveBlobFile.mockReset().mockResolvedValue({ saved: true })
   Object.defineProperty(window, 'api', {
@@ -208,6 +210,54 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
     expect(screen.getByText(/original Agent interaction has ended/u)).toBeTruthy()
+  })
+
+  it('routes restored pending Plan decisions through the session-bound responder', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          status: 'waiting-plan-approval',
+          activePlanProjection: pendingProjection
+        } as never
+      ]
+    })
+
+    const item = {
+      id: 'tool:session-1:plan',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      type: 'tool' as const,
+      toolKind: 'plan' as const,
+      title: 'Session Plan'
+    }
+    const { rerender } = render(
+      <PreviewToolContent
+        item={item}
+        restoredPlanResponder={{
+          sessionId: 'session-2',
+          respond: respondToRestoredPlan
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    rerender(
+      <PreviewToolContent
+        item={item}
+        restoredPlanResponder={{
+          sessionId: 'session-1',
+          respond: respondToRestoredPlan
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() =>
+      expect(respondToRestoredPlan).toHaveBeenCalledWith({ decision: 'rejected' })
+    )
+    expect(respondPlan).not.toHaveBeenCalled()
   })
 
   it('keeps the parent Plan read-only while its Side chat is open', () => {

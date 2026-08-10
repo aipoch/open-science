@@ -16,6 +16,7 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
+import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type PreviewPanelProps = {
@@ -23,17 +24,21 @@ type PreviewPanelProps = {
   defaultSize: string
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
+  restoredPlanResponder?: RestoredPlanResponder
 }
 
 type PreviewPanelSurfaceProps = {
   className?: string
+  restoredPlanResponder?: RestoredPlanResponder
 }
 
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
-  item
+  item,
+  restoredPlanResponder
 }: {
   item: PreviewItem | undefined
+  restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   if (!item) {
     return (
@@ -43,7 +48,9 @@ const PreviewActiveContent = ({
     )
   }
 
-  if (item.type === 'tool') return <PreviewToolContent item={item} />
+  if (item.type === 'tool') {
+    return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
+  }
 
   return <PreviewFileContent item={item} />
 }
@@ -412,10 +419,12 @@ const PreviewFilePanel = ({
 // returning a different element from this map position would let React unmount the subtree.
 const PreviewToolPanel = ({
   item,
-  isActive
+  isActive,
+  restoredPlanResponder
 }: {
   item: PreviewToolItem
   isActive: boolean
+  restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element => {
   const isExpanded = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId === item.id && isActive
@@ -462,7 +471,7 @@ const PreviewToolPanel = ({
             : 'h-full min-h-0 w-full overflow-y-auto'
         }
       >
-        <PreviewActiveContent item={item} />
+        <PreviewActiveContent item={item} restoredPlanResponder={restoredPlanResponder} />
       </section>
     </>
   )
@@ -470,7 +479,10 @@ const PreviewToolPanel = ({
 
 // Shared workbench surface. Desktop wraps it in a resizable panel; mobile presents the exact same
 // tabs and active content inside a bottom sheet.
-const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX.Element => {
+const PreviewPanelSurface = ({
+  className,
+  restoredPlanResponder
+}: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
@@ -512,14 +524,27 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
         </div>
       ) : null}
       <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
-        {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}
+        {!activeItem ? (
+          <PreviewActiveContent
+            key={activeContentKey}
+            item={activeItem}
+            restoredPlanResponder={restoredPlanResponder}
+          />
+        ) : null}
         {items.map((item) => {
           const isActivePanel = item.id === activeItemId && panelState === 'open'
           // Tool panels render at this map position whether active or not, so React keeps the
           // subtree mounted across tab switches. File panels re-create on activation anyway
           // (contentKey encodes path+mtime), so an inactive one collapses to an empty region.
           if (item.type === 'tool') {
-            return <PreviewToolPanel key={item.id} item={item} isActive={isActivePanel} />
+            return (
+              <PreviewToolPanel
+                key={item.id}
+                item={item}
+                isActive={isActivePanel}
+                restoredPlanResponder={restoredPlanResponder}
+              />
+            )
           }
 
           return isActivePanel ? (
@@ -549,7 +574,8 @@ const PreviewPanel = ({
   panelRef,
   defaultSize,
   minSize,
-  onResize
+  onResize,
+  restoredPlanResponder
 }: PreviewPanelProps): React.JSX.Element => {
   const handleResize = (
     panelSize: PanelSize,
@@ -570,7 +596,7 @@ const PreviewPanel = ({
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface />
+      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} />
     </ResizablePanel>
   )
 }

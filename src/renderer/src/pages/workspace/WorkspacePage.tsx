@@ -767,6 +767,14 @@ const WorkspacePage = ({
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
+        restoredPlanResponder={
+          activeSession
+            ? {
+                sessionId: activeSession.id,
+                respond: conversation.actions.submit.restoredPlan
+              }
+            : undefined
+        }
         preview={{
           state: previewPanelState,
           openRequestVersion: previewOpenRequestVersion,

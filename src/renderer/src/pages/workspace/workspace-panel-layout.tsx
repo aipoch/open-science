@@ -8,6 +8,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 import { PreviewPanel } from './PreviewPanel'
+import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 
 const PANEL_COLLAPSED_SIZE = 0
 const PANEL_COLLAPSED_SIZE_CSS = `${PANEL_COLLAPSED_SIZE}%`
@@ -391,6 +392,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
 
 type WorkspacePanelLayoutProps = {
   hasPreviewItems: boolean
+  restoredPlanResponder?: RestoredPlanResponder
   preview: PreviewPanelLayoutPort
   desktopSidebar: React.ReactNode
   renderMobileSidebar: (options: { isOpen: boolean; close: () => void }) => React.ReactNode
@@ -404,6 +406,7 @@ type WorkspacePanelLayoutProps = {
 // Adapts the controller to the desktop split view and mobile drawer/sheet without owning page data.
 const WorkspacePanelLayout = ({
   hasPreviewItems,
+  restoredPlanResponder,
   preview: previewPort,
   desktopSidebar,
   renderMobileSidebar,
@@ -482,6 +485,7 @@ const WorkspacePanelLayout = ({
                 defaultSize={preview.defaultSize}
                 minSize={preview.minSize}
                 onResize={preview.onResize}
+                restoredPlanResponder={restoredPlanResponder}
               />
             </>
           ) : null}
@@ -491,7 +495,11 @@ const WorkspacePanelLayout = ({
       </div>
 
       {isMobile ? (
-        <MobilePreviewSheet open={preview.state === 'open'} onClose={preview.collapse} />
+        <MobilePreviewSheet
+          open={preview.state === 'open'}
+          onClose={preview.collapse}
+          restoredPlanResponder={restoredPlanResponder}
+        />
       ) : null}
     </>
   )
