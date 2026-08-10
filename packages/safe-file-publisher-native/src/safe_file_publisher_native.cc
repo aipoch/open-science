@@ -108,6 +108,16 @@ std::wstring HandlePath(HANDLE handle) {
   return std::wstring(buffer.data(), written);
 }
 
+std::wstring RenameTargetPath(const std::wstring& path) {
+  constexpr wchar_t kExtendedUncPrefix[] = L"\\\\?\\UNC\\";
+  constexpr wchar_t kExtendedPrefix[] = L"\\\\?\\";
+  if (path.rfind(kExtendedUncPrefix, 0) == 0) {
+    return std::wstring(L"\\\\") + path.substr(8);
+  }
+  if (path.rfind(kExtendedPrefix, 0) == 0) return path.substr(4);
+  return path;
+}
+
 std::wstring ParentPath(const std::wstring& path) {
   const size_t separator = path.find_last_of(L"\\/");
   return separator == std::wstring::npos ? std::wstring() : path.substr(0, separator);
@@ -266,17 +276,18 @@ napi_value PublishWindows(
     destination_path.push_back(L'\\');
   }
   destination_path.append(destination_name);
+  const std::wstring rename_target_path = RenameTargetPath(destination_path);
   const DWORD destination_bytes =
-      static_cast<DWORD>(destination_path.size() * sizeof(wchar_t));
+      static_cast<DWORD>(rename_target_path.size() * sizeof(wchar_t));
   const size_t rename_size = offsetof(FILE_RENAME_INFO, FileName) + destination_bytes;
   std::vector<unsigned char> rename_buffer(rename_size);
   auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_buffer.data());
   rename_info->ReplaceIfExists = FALSE;
   // With no RootDirectory, Win32 resolves relative rename targets against the process working
-  // directory. Use the anchored parent's absolute path so publication cannot cross volumes.
+  // directory. Pass the anchored parent's absolute DOS path without HandlePath's extended prefix.
   rename_info->RootDirectory = nullptr;
   rename_info->FileNameLength = destination_bytes;
-  std::memcpy(rename_info->FileName, destination_path.data(), destination_bytes);
+  std::memcpy(rename_info->FileName, rename_target_path.data(), destination_bytes);
 
   const BOOL renamed = SetFileInformationByHandle(
       source_handle,
@@ -284,11 +295,15 @@ napi_value PublishWindows(
       rename_info,
       static_cast<DWORD>(rename_buffer.size()));
   const DWORD rename_error = renamed ? ERROR_SUCCESS : GetLastError();
+  const std::wstring renamed_path = renamed ? HandlePath(source_handle) : std::wstring();
   CloseHandle(source_handle);
   CloseHandle(parent_handle);
   CloseHandle(root_handle);
   if (!renamed) {
     return ThrowError(env, "Atomic no-replace publication failed.", WindowsErrorCode(rename_error));
+  }
+  if (renamed_path.empty() || !SamePath(destination_path, renamed_path)) {
+    return ThrowError(env, "Atomic publication landed outside its destination.", "EIO");
   }
 
   napi_value undefined;
