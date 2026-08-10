@@ -19,6 +19,20 @@ import { parseFrontmatter } from '../skills/frontmatter'
 const namesBundledConnector = (dirId: string): boolean =>
   ALL_CONNECTOR_IDS.includes(dirId.toLowerCase())
 
+// Skill identities are lowercase ASCII, but APFS and NTFS commonly resolve paths without regard
+// to case. If an externally-owned case variant already exists, writing the canonical name would
+// overwrite that same directory on those filesystems. Detect the alias from the directory listing
+// so every platform preserves the same ownership boundary.
+const findCaseFoldedAlias = async (
+  parentDir: string,
+  canonicalName: string
+): Promise<string | undefined> => {
+  const foldedCanonicalName = canonicalName.toLowerCase()
+  return (await readdir(parentDir).catch(() => [] as string[])).find(
+    (entry) => entry !== canonicalName && entry.toLowerCase() === foldedCanonicalName
+  )
+}
+
 // Writes skills/mcp-<connector>/SKILL.md for enabled connectors; removes the directory for
 // disabled ones. Claude Code discovers skills as `<name>/SKILL.md` directories, not flat files.
 // Custom-server directories (see syncCustomServerSkillDocs below) live in the same skills dir;
@@ -95,7 +109,18 @@ export async function syncCustomServerSkillDocs(
   const materializedSlugs: string[] = []
   const failures: CustomServerSkillSyncResult['failures'] = []
   for (const { server, slug } of safeServers) {
-    const dir = join(skillsDir, `mcp-${slug}`)
+    const skillName = `mcp-${slug}`
+    const dir = join(skillsDir, skillName)
+    const caseFoldedAlias = await findCaseFoldedAlias(skillsDir, skillName)
+    if (caseFoldedAlias) {
+      failures.push({
+        server,
+        error: new Error(
+          `custom Connector Skill ${skillName} conflicts with existing case-variant ${caseFoldedAlias}`
+        )
+      })
+      continue
+    }
     let tools: CustomSkillDocTool[]
     try {
       tools = await listTools(server)
@@ -113,11 +138,12 @@ export async function syncCustomServerSkillDocs(
   const enabledSlugs = new Set(materializedSlugs)
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
-    const m = /^mcp-(.+)$/.exec(entry)
+    const slug = customConnectorSlugFromSkillName(entry)
     // A bundled-connector dir (case-insensitive) belongs to syncConnectorSkillDocs — never delete it
     // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.
-    if (!m || namesBundledConnector(m[1])) continue
-    if (!enabledSlugs.has(m[1])) {
+    // Invalid/non-canonical names are also unowned and must be preserved.
+    if (!slug || namesBundledConnector(slug)) continue
+    if (!enabledSlugs.has(slug)) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
@@ -148,6 +174,16 @@ export async function syncMaterializedCustomServerSkillDocs(
   for (const skillName of requested) {
     const sourceFile = join(sourceSkillsDir, skillName, 'SKILL.md')
     const targetDir = join(targetSkillsDir, skillName)
+    const caseFoldedAlias = await findCaseFoldedAlias(targetSkillsDir, skillName)
+    if (caseFoldedAlias) {
+      failures.push({
+        skillName,
+        error: new Error(
+          `custom Connector Skill ${skillName} conflicts with existing case-variant ${caseFoldedAlias}`
+        )
+      })
+      continue
+    }
     try {
       const sourceMetadata = await lstat(sourceFile)
       if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()) {
