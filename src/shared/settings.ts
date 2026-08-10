@@ -1132,6 +1132,8 @@ export type CustomServerView = {
   // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
   // remain visible to a Specialist but can never be selected or dispatched.
   availability?: 'unavailable' | 'unauthenticated'
+  // Background discovery is transient and does not make the Connector unavailable by itself.
+  checking?: boolean
   // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
   // are intentionally omitted — they may hold secrets and stay write-only from the UI.
   command?: string

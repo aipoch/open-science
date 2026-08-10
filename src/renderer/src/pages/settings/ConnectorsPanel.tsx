@@ -527,18 +527,22 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         ) : null}
                         <span
                           className={`block truncate text-xs ${
-                            server.availability ? 'text-destructive' : 'text-muted-foreground'
+                            server.availability && !server.checking && !retryingIds.has(server.id)
+                              ? 'text-destructive'
+                              : 'text-muted-foreground'
                           }`}
                         >
                           {retryingIds.has(server.id)
                             ? 'Checking…'
-                            : server.availability === 'unavailable'
-                              ? 'Unavailable'
-                              : server.availability === 'unauthenticated'
-                                ? 'Sign-in required'
-                                : server.enabled
-                                  ? 'Connected'
-                                  : 'Disabled'}
+                            : server.checking
+                              ? 'Checking…'
+                              : server.availability === 'unavailable'
+                                ? 'Unavailable'
+                                : server.availability === 'unauthenticated'
+                                  ? 'Sign-in required'
+                                  : server.enabled
+                                    ? 'Connected'
+                                    : 'Disabled'}
                         </span>
                       </div>
                       <SettingsIconAction

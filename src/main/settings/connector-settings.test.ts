@@ -181,7 +181,7 @@ describe('ConnectorSettingsModule', () => {
     service.setCustomServerRuntimeProjectionProvider({
       materializedSkillNames: () => ['mcp-custom-catalog'],
       availability: () => undefined,
-      waitForCurrentRefresh: () => Promise.resolve()
+      isRefreshing: () => false
     })
 
     expect(await service.provisionedConnectorSkillNames()).toContain('mcp-custom-catalog')
@@ -197,7 +197,7 @@ describe('ConnectorSettingsModule', () => {
     service.setCustomServerRuntimeProjectionProvider({
       materializedSkillNames: () => [],
       availability: (serverId) => (serverId === id ? 'unavailable' : undefined),
-      waitForCurrentRefresh: () => Promise.resolve()
+      isRefreshing: () => false
     })
 
     const [server] = (await service.listConnectors()).customServers
@@ -209,28 +209,23 @@ describe('ConnectorSettingsModule', () => {
     expect(disabled.availability).toBeUndefined()
   })
 
-  it('waits for the current runtime refresh before listing custom-server availability', async () => {
+  it('does not block listing while the current runtime refresh is still pending', async () => {
     const added = await service.addCustomServer({
       name: 'late-offline-server',
       transport: 'stdio',
       command: 'example-mcp'
     })
     const id = added.customServers[0].id
-    let availability: 'unavailable' | undefined
-    const waitForCurrentRefresh = vi.fn(async () => {
-      availability = 'unavailable'
-    })
     const runtimeProjection = {
       materializedSkillNames: () => [],
-      availability: (serverId: string) => (serverId === id ? availability : undefined),
-      waitForCurrentRefresh
+      availability: () => undefined,
+      isRefreshing: () => true
     }
     service.setCustomServerRuntimeProjectionProvider(runtimeProjection)
 
     const [server] = (await service.listConnectors()).customServers
 
-    expect(waitForCurrentRefresh).toHaveBeenCalledOnce()
-    expect(server).toMatchObject({ id, enabled: true, availability: 'unavailable' })
+    expect(server).toMatchObject({ id, enabled: true, checking: true })
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {

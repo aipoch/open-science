@@ -66,6 +66,7 @@ type SettingsApi = {
   previewGitHubSkill: ReturnType<typeof vi.fn>
   previewAgentHomeSkill: ReturnType<typeof vi.fn>
   listConnectors: ReturnType<typeof vi.fn>
+  onConnectorRuntimeChanged: ReturnType<typeof vi.fn>
   getConnectorDetail: ReturnType<typeof vi.fn>
   setConnectorEnabled: ReturnType<typeof vi.fn>
   setConnectorAutoAllow: ReturnType<typeof vi.fn>
@@ -231,6 +232,7 @@ beforeEach(() => {
     listConnectors: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
     getConnectorDetail: vi.fn(),
     setConnectorEnabled: vi
       .fn()

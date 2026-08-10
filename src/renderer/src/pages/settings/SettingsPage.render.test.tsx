@@ -91,6 +91,7 @@ const installApi = (): void => {
         customServers: [],
         ncbi: { hasApiKey: false }
       }),
+      onConnectorRuntimeChanged: vi.fn().mockReturnValue(() => undefined),
       getPackageMirror: vi.fn().mockResolvedValue({}),
       setPackageMirror: vi.fn().mockResolvedValue({})
     },

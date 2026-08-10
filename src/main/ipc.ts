@@ -983,12 +983,13 @@ const createApplicationModules = async (
   const connectorRuntimeSettings = new ConnectorRuntimeSettingsProjection({
     readConnectors: () => settingsService.getConnectors(),
     skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
-    mcpClientManager
+    mcpClientManager,
+    notifyStatusChanged: () => broadcastToRenderers('settings:connector-runtime-changed', undefined)
   })
   settingsService.setCustomServerRuntimeProjectionProvider({
     materializedSkillNames: () => connectorRuntimeSettings.materializedCustomSkillNames(),
     availability: (id) => connectorRuntimeSettings.customServerAvailability(id),
-    waitForCurrentRefresh: () => connectorRuntimeSettings.waitForCurrentRefresh()
+    isRefreshing: () => connectorRuntimeSettings.isRefreshing()
   })
   settingsService.setCustomServerAuthenticator(
     async (serverId) => {
@@ -1069,6 +1070,8 @@ const createApplicationModules = async (
         return undefined
       }
     },
+    onCustomServerAvailabilityChanged: (serverId, availability) =>
+      connectorRuntimeSettings.setCustomServerDispatchAvailability(serverId, availability),
     localToolHandlers: { 'molecule/preview_molecule': moleculePreviewHandler }
   })
   // Register compute IPC handlers early so computeService can be wired into the notebook RPC server.
@@ -1696,9 +1699,7 @@ const createApplicationModules = async (
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
       clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
-      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId),
-      notifyConnectorRuntimeChanged: () =>
-        broadcastToRenderers('settings:connector-runtime-changed', undefined)
+      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId)
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })

@@ -167,6 +167,62 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.materializedCustomSkillNames()).toEqual(['mcp-recovering'])
   })
 
+  it('publishes checking and settled states without blocking snapshot reads', async () => {
+    let finishSync: (() => void) | undefined
+    const sync = new Promise<{ materializedSlugs: string[]; failures: [] }>((resolve) => {
+      finishSync = () => resolve({ materializedSlugs: ['checking'], failures: [] })
+    })
+    const notifyStatusChanged = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(connectors()),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockReturnValue(sync),
+      notifyStatusChanged
+    })
+
+    const refresh = projection.refresh()
+    expect(projection.isRefreshing()).toBe(true)
+    expect(notifyStatusChanged).toHaveBeenCalledOnce()
+
+    finishSync?.()
+    await refresh
+
+    expect(projection.isRefreshing()).toBe(false)
+    expect(notifyStatusChanged).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps discovery status when a newer dispatch failure is cleared', async () => {
+    const server = {
+      id: 'server-id',
+      name: 'Server',
+      transport: 'stdio' as const,
+      command: 'mcp',
+      enabled: true
+    }
+    const notifyStatusChanged = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({
+        materializedSlugs: [],
+        failures: [{ server, error: new Error('Connection closed') }]
+      }),
+      notifyStatusChanged
+    })
+
+    await projection.refresh()
+    projection.setCustomServerDispatchAvailability('server-id', 'unauthenticated')
+    expect(projection.customServerAvailability('server-id')).toBe('unauthenticated')
+
+    projection.setCustomServerDispatchAvailability('server-id', undefined)
+    expect(projection.customServerAvailability('server-id')).toBe('unavailable')
+    expect(notifyStatusChanged).toHaveBeenCalledTimes(4)
+  })
+
   it('contains refresh errors while retaining the last snapshot reached by the refresh', async () => {
     const first = connectors({ disabledConnectorIds: ['chemistry'] })
     const second = connectors({ disabledConnectorIds: ['literature'] })
@@ -235,7 +291,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     await vi.waitFor(() => expect(syncBundledSkillDocs).toHaveBeenCalledOnce())
     const newerRefresh = projection.refresh()
     let currentRefreshSettled = false
-    const currentRefresh = projection.waitForCurrentRefresh().then(() => {
+    const currentRefresh = newerRefresh.then(() => {
       currentRefreshSettled = true
     })
 
@@ -253,6 +309,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(readConnectors).toHaveBeenCalledTimes(2)
     expect(projection.current()).toBe(second)
     expect(currentRefreshSettled).toBe(true)
+    expect(projection.isRefreshing()).toBe(false)
   })
 
   it('continues the refresh queue after an earlier pipeline fails', async () => {

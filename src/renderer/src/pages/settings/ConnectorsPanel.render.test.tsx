@@ -417,6 +417,27 @@ describe('ConnectorsPanel (groups)', () => {
     await act(async () => finishRetry())
   })
 
+  it('shows checking while background discovery is still pending', () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'checking-mcp',
+          slug: 'checking-mcp',
+          name: 'Checking MCP',
+          transport: 'stdio',
+          enabled: true,
+          command: 'mcp',
+          checking: true
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Checking…')
+    expect(document.body.textContent).not.toContain('Connected')
+  })
+
   it('offers sign-in again when a stored OAuth token is rejected at runtime', async () => {
     useSettingsStore.setState({
       customServers: [

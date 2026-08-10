@@ -42,7 +42,7 @@ type CustomServerSecurityChangeGuard = {
 type CustomServerRuntimeProjectionProvider = {
   materializedSkillNames: () => readonly string[]
   availability: (id: string) => CustomServerView['availability']
-  waitForCurrentRefresh: () => Promise<void>
+  isRefreshing: () => boolean
 }
 
 const normalizeOAuthConfig = (
@@ -63,7 +63,7 @@ class ConnectorSettingsModule {
   private customServerRuntimeProjectionProvider: CustomServerRuntimeProjectionProvider = {
     materializedSkillNames: () => [],
     availability: () => undefined,
-    waitForCurrentRefresh: () => Promise.resolve()
+    isRefreshing: () => false
   }
 
   constructor(private readonly repository: SettingsRepository) {}
@@ -137,7 +137,6 @@ class ConnectorSettingsModule {
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {
-    await this.customServerRuntimeProjectionProvider.waitForCurrentRefresh()
     return this.connectorsSnapshot()
   }
 
@@ -504,11 +503,16 @@ class ConnectorSettingsModule {
           : unauthenticated
             ? ('unauthenticated' as const)
             : undefined
-        const availability =
-          configurationAvailability ??
-          (server.enabled
-            ? this.customServerRuntimeProjectionProvider.availability(server.id)
-            : undefined)
+        const runtimeAvailability = server.enabled
+          ? this.customServerRuntimeProjectionProvider.availability(server.id)
+          : undefined
+        const availability = configurationAvailability ?? runtimeAvailability
+        const checking = Boolean(
+          server.enabled &&
+          !configurationAvailability &&
+          !runtimeAvailability &&
+          this.customServerRuntimeProjectionProvider.isRefreshing()
+        )
         return {
           id: server.id,
           slug: customConnectorSlug(server),
@@ -538,7 +542,8 @@ class ConnectorSettingsModule {
                 }
               }
             : {}),
-          ...(availability ? { availability } : {})
+          ...(availability ? { availability } : {}),
+          ...(checking ? { checking: true } : {})
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))

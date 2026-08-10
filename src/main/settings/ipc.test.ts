@@ -264,8 +264,7 @@ const registerTestSettingsIpcHandlers = ({
             : async () => undefined),
         beginCustomServerSecurityChange: () => undefined,
         clearCustomServerFailure: () => undefined,
-        resetCustomServerClient: async () => undefined,
-        notifyConnectorRuntimeChanged: () => undefined
+        resetCustomServerClient: async () => undefined
       },
       appearance: {
         applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined)
