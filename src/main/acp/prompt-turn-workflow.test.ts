@@ -6,7 +6,7 @@ import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
@@ -24,7 +24,7 @@ type Harness = {
     dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
-  context: ContextUsageTurnHandle
+  context: ContextWindowTurnHandle
   contextUsage: { reconcileUsed: Mock<(sessionId: string, used: number) => boolean> }
   emitSkillActivities: Mock<AcpPromptTurnWorkflowOptions['environment']['emitSkillActivities']>
   executor: Mock<AcpPromptTurnWorkflowOptions['executor']['execute']>
@@ -205,7 +205,7 @@ const createHarness = (
     complete: vi.fn(() => true),
     fail: vi.fn(),
     supersede: vi.fn()
-  } as unknown as ContextUsageTurnHandle
+  } as unknown as ContextWindowTurnHandle
   const prepared = {
     status: 'ready',
     content: 'provider content',

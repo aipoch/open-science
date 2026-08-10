@@ -4,7 +4,7 @@ import type {
   AcpProviderTurnProbe,
   AcpProviderTurnResult
 } from './provider-turn-adapter'
-import { sumOpenCodeTurnUsage, type OpenCodeUsageSnapshot } from './opencode-turn-usage'
+import { diffOpenCodeTurnUsage, type OpenCodeUsageSnapshot } from './opencode-turn-usage'
 
 export type OpenCodeUsageSnapshotReader = (
   providerSessionId: string,
@@ -29,13 +29,20 @@ const normalizeTurnUsage = (
   before: OpenCodeUsageSnapshot | undefined,
   after: OpenCodeUsageSnapshot | undefined
 ): AcpProviderTurnResult => {
-  const usage = sumOpenCodeTurnUsage(before, after)
-  if (!usage) return EMPTY_RESULT
+  const diff = diffOpenCodeTurnUsage(before, after)
+  if (!diff) return EMPTY_RESULT
 
-  const { turnCount: modelTurnCount, ...turnUsage } = usage
+  const { turnCount: modelTurnCount, ...turnUsage } = diff.turnUsage
+  const cachedReadTokens = diff.lastModelStepUsage.cachedReadTokens
+  const contextUsedTokens =
+    cachedReadTokens === undefined
+      ? undefined
+      : diff.lastModelStepUsage.inputTokens + cachedReadTokens
   return Object.freeze({
     turnUsage: Object.freeze(turnUsage),
-    modelTurnCount
+    modelTurnCount,
+    ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {}),
+    lastModelStepUsage: Object.freeze(diff.lastModelStepUsage)
   })
 }
 

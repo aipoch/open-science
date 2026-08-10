@@ -1,4 +1,10 @@
-import type { ToolCallContent, ToolCallLocation, ToolKind, Usage } from '@agentclientprotocol/sdk'
+import type {
+  PromptResponse,
+  ToolCallContent,
+  ToolCallLocation,
+  ToolKind,
+  Usage
+} from '@agentclientprotocol/sdk'
 import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
@@ -283,6 +289,34 @@ export type AcpTurnTokenUsage = {
   turnCount?: number
 }
 
+export type AcpModelStepTokenUsage = Omit<AcpTurnTokenUsage, 'turnCount'>
+
+export type AcpPromptStopReason = PromptResponse['stopReason']
+
+export type AcpPromptTermination =
+  { kind: 'stop'; stopReason: AcpPromptStopReason } | { kind: 'error' }
+
+export type AcpContextWindowSampleSource =
+  'provider-response' | 'provider-update' | 'local-estimate'
+
+// Frozen context facts for one visible prompt execution. Main publishes this with the terminal
+// runtime event before context cleanup can restore a checkpoint; Renderer later supplies durable
+// event/runtime identity when binding it to the owning user Message.
+export type AcpTerminalContextWindow = {
+  termination: AcpPromptTermination
+  contextWindow: AcpContextUsage
+  modelStepUsage?: AcpModelStepTokenUsage
+  source: AcpContextWindowSampleSource
+}
+
+// Branch-bound terminal sample persisted on the user Message. This is a last-model-step context
+// snapshot, never a sum across model steps; whole-turn totals remain in `AcpTurnTokenUsage`.
+export type AcpContextWindowSample = AcpTerminalContextWindow & {
+  id: string
+  timestamp: number
+  runtimeSegmentId?: string
+}
+
 // Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
@@ -352,6 +386,66 @@ export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | u
   }
 }
 
+const ACP_PROMPT_STOP_REASONS = new Set<AcpPromptStopReason>([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled'
+])
+const ACP_CONTEXT_WINDOW_SAMPLE_SOURCES = new Set<AcpContextWindowSampleSource>([
+  'provider-response',
+  'provider-update',
+  'local-estimate'
+])
+
+const sanitizeAcpPromptTermination = (value: unknown): AcpPromptTermination | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const termination = value as Record<string, unknown>
+  if (termination.kind === 'error') return { kind: 'error' }
+  if (termination.kind !== 'stop') return undefined
+  const stopReason = termination.stopReason as AcpPromptStopReason
+  return ACP_PROMPT_STOP_REASONS.has(stopReason) ? { kind: 'stop', stopReason } : undefined
+}
+
+export const sanitizeAcpContextWindowSample = (
+  value: unknown
+): AcpContextWindowSample | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const sample = value as Record<string, unknown>
+  const id = typeof sample.id === 'string' && sample.id ? sample.id : undefined
+  const timestamp = asTokenCount(sample.timestamp)
+  const termination = sanitizeAcpPromptTermination(sample.termination)
+  const contextWindow = sanitizeAcpContextUsage(sample.contextWindow)
+  const source = sample.source as AcpContextWindowSampleSource
+  if (
+    !id ||
+    timestamp === undefined ||
+    !termination ||
+    !contextWindow ||
+    !ACP_CONTEXT_WINDOW_SAMPLE_SOURCES.has(source)
+  ) {
+    return undefined
+  }
+
+  const runtimeSegmentId =
+    typeof sample.runtimeSegmentId === 'string' && sample.runtimeSegmentId
+      ? sample.runtimeSegmentId
+      : undefined
+  const modelStepUsage = sanitizeAcpTurnTokenUsage(sample.modelStepUsage)
+  if (modelStepUsage) delete modelStepUsage.turnCount
+
+  return {
+    id,
+    timestamp,
+    termination,
+    contextWindow,
+    ...(modelStepUsage ? { modelStepUsage } : {}),
+    source,
+    ...(runtimeSegmentId ? { runtimeSegmentId } : {})
+  }
+}
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
@@ -362,6 +456,9 @@ export type AcpRuntimeEvent = {
   contextUsage?: AcpContextUsage
   // Present on a completed prompt's stop event when the Agent reports whole-turn token totals.
   turnUsage?: AcpTurnTokenUsage
+  // Frozen last-model-step context facts for a visible prompt stop/error. Renderer discards an
+  // intermediate recoverable overflow when compaction takes ownership of retrying the same Run.
+  terminalContextWindow?: AcpTerminalContextWindow
   // Identifies who owns a native compaction lifecycle so overflow recovery can keep its retry gate
   // active until the replacement prompt takes over, even if control-turn events arrive first.
   compactionReason?: 'automatic' | 'manual' | 'overflow-recovery'

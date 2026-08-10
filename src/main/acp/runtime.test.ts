@@ -13378,7 +13378,7 @@ describe('ACP runtime session management', () => {
         // Every session (new or resumed) is restricted to the app-owned "user" settings scope.
         _meta: {
           claudeCode: {
-            emitRawSDKMessages: [{ type: 'result' }],
+            emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
             options: {
               settingSources: ['user'],
               tools: { type: 'preset', preset: 'claude_code' }
@@ -15866,6 +15866,8 @@ describe('ACP runtime session management', () => {
     expect(runtime.getSnapshot().events.find((event) => event.kind === 'stop')?.turnUsage).toEqual({
       inputTokens: 12,
       cacheTokens: 3,
+      cachedReadTokens: 3,
+      cachedWriteTokens: 0,
       outputTokens: 3
     })
   })

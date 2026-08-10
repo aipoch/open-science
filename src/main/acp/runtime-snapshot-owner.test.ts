@@ -24,6 +24,27 @@ const planProjection: ActivePlanProjection = {
 }
 
 describe('AcpRuntimeSnapshotOwner', () => {
+  it('retains the terminal context window in the renderer-visible event', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    const terminalContextWindow = {
+      termination: { kind: 'stop' as const, stopReason: 'end_turn' as const },
+      contextWindow: { used: 31_732, size: 1_000_000 },
+      modelStepUsage: { inputTokens: 116, cacheTokens: 31_616, outputTokens: 154 },
+      source: 'provider-response' as const
+    }
+
+    expect(
+      owner.appendEvent({
+        kind: 'stop',
+        level: 'info',
+        sessionId: 'session-1',
+        title: 'Prompt stopped',
+        text: 'end_turn',
+        terminalContextWindow
+      })
+    ).toMatchObject({ terminalContextWindow })
+  })
+
   it('retains a Plan projection in the renderer-visible event snapshot', () => {
     const owner = new AcpRuntimeSnapshotOwner('/workspace')
 

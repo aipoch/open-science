@@ -4,6 +4,7 @@ import {
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpContextWindowSample,
   type AcpRuntimeEvent,
   type AcpTurnTokenUsage
 } from '../../../../shared/acp'
@@ -149,6 +150,17 @@ const clearSuppressNextAutoReview = (sessionId: string): void => {
 // Chooses the best user-facing error text from a runtime event.
 const getEventErrorText = (event: AcpRuntimeEvent): string =>
   event.text?.trim() || event.title?.trim() || 'Agent run failed'
+
+const getTerminalContextWindowSample = (
+  event: AcpRuntimeEvent
+): Omit<AcpContextWindowSample, 'runtimeSegmentId'> | undefined =>
+  event.terminalContextWindow
+    ? {
+        id: event.id,
+        timestamp: event.timestamp,
+        ...event.terminalContextWindow
+      }
+    : undefined
 
 // Normalizes IPC/finalization failures into storeable session error text.
 const getErrorText = (error: unknown): string =>
@@ -601,6 +613,7 @@ const applyWorkspaceRuntimeEvent = async (
     const activeSession = store.sessions.find((session) => session.id === event.sessionId)
     const terminalPromptMessageId =
       event.promptMessageId ?? activeSession?.activeRun?.promptMessageId
+    const contextWindowSample = getTerminalContextWindowSample(event)
     if (event.text === 'cancelled') {
       deferredArtifactEventsBySession.delete(event.sessionId)
       pendingArtifactTurnUsageBySession.delete(event.sessionId)
@@ -608,7 +621,8 @@ const applyWorkspaceRuntimeEvent = async (
         event.sessionId,
         'cancelled',
         INTERRUPTED_TURN_ERROR,
-        terminalPromptMessageId
+        terminalPromptMessageId,
+        contextWindowSample
       )
       return true
     }
@@ -631,7 +645,7 @@ const applyWorkspaceRuntimeEvent = async (
       }
     }
 
-    store.finishRun(event.sessionId, event.turnUsage, event.promptMessageId)
+    store.finishRun(event.sessionId, event.turnUsage, terminalPromptMessageId, contextWindowSample)
 
     const terminalSession = useSessionStore
       .getState()
@@ -782,9 +796,8 @@ const applyWorkspaceRuntimeEvent = async (
     // effect runs before this event is applied). If the session is not compacting, no recovery started
     // for this overflow (a repeat overflow inside the cooldown, nothing to replay, or a detached
     // session), so surface a normal error instead of leaving a stuck "Compacting…".
-    const isCompacting = store.sessions.find(
-      (session) => session.id === event.sessionId
-    )?.compacting
+    const activeSession = store.sessions.find((session) => session.id === event.sessionId)
+    const isCompacting = activeSession?.compacting
     // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
     // agree on which errors are recoverable.
     const isOverflow =
@@ -804,7 +817,9 @@ const applyWorkspaceRuntimeEvent = async (
     // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
     // failures still fall through the text tier to reportable.
     store.failRun(event.sessionId, getEventErrorText(event), {
-      reportable: event.providerError ? false : undefined
+      reportable: event.providerError ? false : undefined,
+      promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
+      contextWindowSample: getTerminalContextWindowSample(event)
     })
     const failedSession = useSessionStore
       .getState()

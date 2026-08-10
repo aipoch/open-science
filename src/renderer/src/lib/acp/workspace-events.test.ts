@@ -323,6 +323,101 @@ describe('workspace runtime events', () => {
     expect(session.messages[1].completedAt).toBeUndefined()
   })
 
+  it('keeps both cancelled and resumed-completed context points on the owning prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    if (!promptMessageId) throw new Error('expected active prompt')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-cancelled',
+        timestamp: 100,
+        kind: 'stop',
+        text: 'cancelled',
+        promptMessageId,
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'cancelled' },
+          contextWindow: { used: 31_000, size: 128_000 },
+          source: 'provider-update'
+        }
+      })
+    )
+
+    useSessionStore
+      .getState()
+      .prepareInterruptedTurnContinuation('transport-session-1', promptMessageId, undefined, false)
+    useSessionStore.getState().completeInterruptedTurnResume('transport-session-1')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-completed',
+        timestamp: 200,
+        kind: 'stop',
+        text: 'end_turn',
+        promptMessageId,
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'end_turn' },
+          contextWindow: { used: 34_000, size: 128_000 },
+          modelStepUsage: { inputTokens: 2_000, cacheTokens: 32_000, outputTokens: 100 },
+          source: 'provider-response'
+        }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    const samples = session.messages[0].contextWindowSamples
+    expect(samples).toEqual([
+      expect.objectContaining({
+        id: 'usage-cancelled',
+        timestamp: 100,
+        termination: { kind: 'stop', stopReason: 'cancelled' },
+        contextWindow: { used: 31_000, size: 128_000 },
+        runtimeSegmentId: expect.any(String)
+      }),
+      expect.objectContaining({
+        id: 'usage-completed',
+        timestamp: 200,
+        termination: { kind: 'stop', stopReason: 'end_turn' },
+        contextWindow: { used: 34_000, size: 128_000 },
+        runtimeSegmentId: expect.any(String)
+      })
+    ])
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === promptMessageId)
+        ?.contextWindowSamples
+    ).toEqual(samples)
+    expect(toPersistedSession(session).messages[0].contextWindowSamples).toEqual(samples)
+  })
+
+  it('records a terminal error context point on the active prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-error',
+        timestamp: 300,
+        kind: 'error',
+        title: 'Prompt failed',
+        text: 'Network failed',
+        terminalContextWindow: {
+          termination: { kind: 'error' },
+          contextWindow: { used: 18_000, size: 128_000 },
+          source: 'local-estimate'
+        }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
+      id: promptMessageId,
+      contextWindowSamples: [
+        expect.objectContaining({
+          id: 'usage-error',
+          termination: { kind: 'error' },
+          contextWindow: { used: 18_000, size: 128_000 }
+        })
+      ]
+    })
+  })
+
   it('binds a cancelled app continuation to its originating prompt', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
     useSessionStore.getState().finishRun('transport-session-1')
@@ -659,7 +754,14 @@ describe('workspace runtime events', () => {
     // The recovery effect flips the session to compacting before this event is applied.
     useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
-    const applied = await applyWorkspaceRuntimeEvent(overflowEvent())
+    const applied = await applyWorkspaceRuntimeEvent({
+      ...overflowEvent(),
+      terminalContextWindow: {
+        termination: { kind: 'error' },
+        contextWindow: { used: 127_000, size: 128_000 },
+        source: 'provider-update'
+      }
+    })
 
     expect(applied).toBe(true)
     const session = useSessionStore.getState().sessions[0]
@@ -667,6 +769,7 @@ describe('workspace runtime events', () => {
     expect(session.compacting).toBe(true)
     expect(session.status).not.toBe('error')
     expect(session.error).toBeUndefined()
+    expect(session.messages[0].contextWindowSamples).toBeUndefined()
   })
 
   it('surfaces a real error for a recoverable overflow when no recovery started (e.g. cooldown)', async () => {

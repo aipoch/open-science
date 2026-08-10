@@ -1,4 +1,8 @@
-import type { AcpTurnTokenUsage } from '../../../shared/acp'
+import {
+  sanitizeAcpContextWindowSample,
+  type AcpContextWindowSample,
+  type AcpTurnTokenUsage
+} from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
 import type {
   PersistedActivityGroup,
@@ -16,6 +20,8 @@ import type { ChatMessage, ChatSession, ToolActivity } from './session-store-per
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
 const CONVERSATION_GRAPH_SYNC_ERROR =
   'Conversation history could not be finalized safely. Restart the app to restore the last saved conversation state, then report this issue.'
+
+export type RunTerminalContextWindowSample = Omit<AcpContextWindowSample, 'runtimeSegmentId'>
 
 const CLEARED_AGENT_RUN_STATE = {
   activeRun: undefined,
@@ -115,6 +121,40 @@ const failStreamingMessages = (messages: ChatMessage[], now = Date.now()): ChatM
         }
       : message
   )
+
+const appendContextWindowSample = (
+  session: ChatSession,
+  messages: ChatMessage[],
+  promptMessageId: string | undefined,
+  sample: RunTerminalContextWindowSample | undefined,
+  now: number
+): ChatMessage[] => {
+  if (!promptMessageId || !sample) return messages
+  const runtimeSegmentId =
+    session.activeRunRuntimeSegmentId ??
+    session.conversationGraph?.messages.find((message) => message.id === promptMessageId)
+      ?.runtimeSegmentId
+  const sanitized = sanitizeAcpContextWindowSample({
+    ...sample,
+    ...(runtimeSegmentId ? { runtimeSegmentId } : {})
+  })
+  if (!sanitized) return messages
+
+  return messages.map((message) => {
+    if (
+      message.id !== promptMessageId ||
+      message.role !== 'user' ||
+      message.contextWindowSamples?.some((candidate) => candidate.id === sanitized.id)
+    ) {
+      return message
+    }
+    return {
+      ...message,
+      contextWindowSamples: [...(message.contextWindowSamples ?? []), sanitized],
+      updatedAt: Math.max(now, message.updatedAt + 1)
+    }
+  })
+}
 
 export const projectAwaitingFirstAgentOutput = (
   session: ChatSession,
@@ -237,14 +277,17 @@ export const projectArtifactErrorCleared = (session: ChatSession): ChatSession =
 export const projectFinishedRun = (
   session: ChatSession,
   turnUsage?: AcpTurnTokenUsage,
-  promptMessageId?: string
+  promptMessageId?: string,
+  contextWindowSample?: RunTerminalContextWindowSample
 ): ChatSession => {
   const keepArtifactError = session.error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
   const now = Math.max(Date.now(), session.updatedAt + 1)
-  const messages = completeStreamingMessages(
-    session.messages,
-    promptMessageId ?? session.activeRun?.promptMessageId,
-    turnUsage,
+  const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
+  const messages = appendContextWindowSample(
+    session,
+    completeStreamingMessages(session.messages, terminalPromptMessageId, turnUsage, now),
+    terminalPromptMessageId,
+    contextWindowSample,
     now
   )
   const activities = completeOpenActivities(session.activities)
@@ -283,10 +326,18 @@ export const projectFinishedRun = (
 export const projectFailedRun = (
   session: ChatSession,
   error: string,
-  reportable?: boolean
+  reportable?: boolean,
+  promptMessageId = session.activeRun?.promptMessageId,
+  contextWindowSample?: RunTerminalContextWindowSample
 ): ChatSession => {
-  const now = Date.now()
-  const messages = failStreamingMessages(session.messages, now)
+  const now = Math.max(Date.now(), session.updatedAt + 1)
+  const messages = appendContextWindowSample(
+    session,
+    failStreamingMessages(session.messages, now),
+    promptMessageId,
+    contextWindowSample,
+    now
+  )
   const activities = failOpenActivities(session.activities)
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)
   let conversationGraph: NonNullable<PersistedChatSession['conversationGraph']>
@@ -364,13 +415,20 @@ export const projectInterruptedRun = (
   session: ChatSession,
   recoveryCause: PersistedSessionResumeRecovery['cause'],
   error: string,
-  promptMessageId = session.activeRun?.promptMessageId
+  promptMessageId = session.activeRun?.promptMessageId,
+  contextWindowSample?: RunTerminalContextWindowSample
 ): ChatSession => {
-  const now = Date.now()
-  const messages = failStreamingMessages(session.messages, now).map((message) =>
-    message.id === promptMessageId && message.role === 'user'
-      ? { ...message, interrupted: true as const, updatedAt: now }
-      : message
+  const now = Math.max(Date.now(), session.updatedAt + 1)
+  const messages = appendContextWindowSample(
+    session,
+    failStreamingMessages(session.messages, now).map((message) =>
+      message.id === promptMessageId && message.role === 'user'
+        ? { ...message, interrupted: true as const, updatedAt: now }
+        : message
+    ),
+    promptMessageId,
+    contextWindowSample,
+    now
   )
   const activities = failOpenActivities(session.activities)
   const activityGroups = completeOpenActivityGroups(session.activityGroups, now)

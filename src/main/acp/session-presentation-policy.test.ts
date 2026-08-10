@@ -86,7 +86,7 @@ describe('ACP Session presentation policy', () => {
       metaArg: {
         _meta: {
           claudeCode: {
-            emitRawSDKMessages: [{ type: 'result' }],
+            emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
             options: {
               tools: { type: 'preset', preset: 'claude_code' },
               plugins: [{ type: 'local', path: '/app/claude' }],

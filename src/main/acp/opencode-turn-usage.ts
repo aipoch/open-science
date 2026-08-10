@@ -1,4 +1,4 @@
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
 import type { ResolvedAgentBackend } from '../agent-framework'
 
 export type OpenCodeUsageSnapshot = {
@@ -86,10 +86,15 @@ export const fetchOpenCodeUsageSnapshot = async (
   }
 }
 
-export const sumOpenCodeTurnUsage = (
+export type OpenCodeTurnUsageDiff = Readonly<{
+  turnUsage: AcpTurnTokenUsage
+  lastModelStepUsage: AcpModelStepTokenUsage
+}>
+
+export const diffOpenCodeTurnUsage = (
   before: OpenCodeUsageSnapshot | undefined,
   after: OpenCodeUsageSnapshot | undefined
-): AcpTurnTokenUsage | undefined => {
+): OpenCodeTurnUsageDiff | undefined => {
   if (!before || !after) return undefined
 
   const newMessageIds = [...after.assistantMessageIds].filter(
@@ -127,11 +132,22 @@ export const sumOpenCodeTurnUsage = (
     }
   }
 
+  const lastModelStepUsage = after.usageByMessageId.get(newMessageIds.at(-1)!)
+  if (!lastModelStepUsage) return undefined
+
   return {
-    inputTokens,
-    cacheTokens,
-    ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
-    outputTokens,
-    turnCount: newMessageIds.length
+    turnUsage: {
+      inputTokens,
+      cacheTokens,
+      ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
+      outputTokens,
+      turnCount: newMessageIds.length
+    },
+    lastModelStepUsage: { ...lastModelStepUsage }
   }
 }
+
+export const sumOpenCodeTurnUsage = (
+  before: OpenCodeUsageSnapshot | undefined,
+  after: OpenCodeUsageSnapshot | undefined
+): AcpTurnTokenUsage | undefined => diffOpenCodeTurnUsage(before, after)?.turnUsage

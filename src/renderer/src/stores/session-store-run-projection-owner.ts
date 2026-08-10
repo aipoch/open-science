@@ -44,7 +44,8 @@ import {
   projectFinishedRun,
   projectInterruptedRun,
   projectPermissionCleared,
-  projectPermissionPending
+  projectPermissionPending,
+  type RunTerminalContextWindowSample
 } from './session-store-run-terminal-helpers'
 import type { ChatSession, SessionStoreData } from './session-store-persistence-owner'
 
@@ -65,12 +66,18 @@ export type SessionRunProjectionActions = {
   replaceMessageUploads: (input: ReplaceMessageUploadsInput) => void
   recordArtifactError: (sessionId: string, error: string) => void
   clearArtifactError: (sessionId: string) => void
-  finishRun: (sessionId: string, turnUsage?: AcpTurnTokenUsage, promptMessageId?: string) => void
+  finishRun: (
+    sessionId: string,
+    turnUsage?: AcpTurnTokenUsage,
+    promptMessageId?: string,
+    contextWindowSample?: RunTerminalContextWindowSample
+  ) => void
   interruptRun: (
     sessionId: string,
     cause: PersistedSessionResumeRecovery['cause'],
     error: string,
-    promptMessageId?: string
+    promptMessageId?: string,
+    contextWindowSample?: RunTerminalContextWindowSample
   ) => void
   markResumed: (
     sessionId: string,
@@ -96,7 +103,15 @@ export type SessionRunProjectionActions = {
   ) => { runtimeSegmentId?: string } | undefined
   completeInterruptedTurnResume: (sessionId: string) => void
   clearPendingHistoryReplay: (sessionId: string, replay: PersistedPendingHistoryReplay) => void
-  failRun: (sessionId: string, error: string, opts?: { reportable?: boolean }) => void
+  failRun: (
+    sessionId: string,
+    error: string,
+    opts?: {
+      reportable?: boolean
+      promptMessageId?: string
+      contextWindowSample?: RunTerminalContextWindowSample
+    }
+  ) => void
   setAgentStatus: (sessionId: string, text: string) => void
   beginCompaction: (sessionId: string, options?: { supersedeActiveRun?: boolean }) => void
   finishCompaction: (sessionId: string) => void
@@ -288,18 +303,18 @@ export const createSessionRunProjectionOwner = <
       })
     },
 
-    finishRun: (sessionId, turnUsage, promptMessageId) => {
+    finishRun: (sessionId, turnUsage, promptMessageId, contextWindowSample) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectFinishedRun(session, turnUsage, promptMessageId)
+          projectFinishedRun(session, turnUsage, promptMessageId, contextWindowSample)
         )
       }))
     },
 
-    interruptRun: (sessionId, cause, error, promptMessageId) => {
+    interruptRun: (sessionId, cause, error, promptMessageId, contextWindowSample) => {
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectInterruptedRun(session, cause, error, promptMessageId)
+          projectInterruptedRun(session, cause, error, promptMessageId, contextWindowSample)
         )
       }))
     },
@@ -426,7 +441,13 @@ export const createSessionRunProjectionOwner = <
       if (!message) return
       setSessionState((state) => ({
         sessions: projectSession(state.sessions, sessionId, (session) =>
-          projectFailedRun(session, message, opts?.reportable)
+          projectFailedRun(
+            session,
+            message,
+            opts?.reportable,
+            opts?.promptMessageId,
+            opts?.contextWindowSample
+          )
         )
       }))
     },

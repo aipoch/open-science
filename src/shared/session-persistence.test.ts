@@ -788,6 +788,85 @@ describe('context usage persistence', () => {
     expect(malformed?.contextUsage).toBeUndefined()
     expect(unsafeBreakdown?.contextUsage).toEqual({ used: 100 })
   })
+
+  it('round-trips valid context-window samples and drops malformed or agent-owned samples', () => {
+    const stopReasons = [
+      'end_turn',
+      'max_tokens',
+      'max_turn_requests',
+      'refusal',
+      'cancelled'
+    ] as const
+    const validSamples = [
+      ...stopReasons.map((stopReason, index) => ({
+        id: `event-${index}`,
+        timestamp: index + 1,
+        termination: { kind: 'stop', stopReason },
+        runtimeSegmentId: 'segment-1',
+        contextWindow: { used: 30_000 + index, size: 168_000 },
+        modelStepUsage: {
+          inputTokens: 20_000,
+          cacheTokens: 10_000,
+          cachedReadTokens: 10_000,
+          cachedWriteTokens: 0,
+          outputTokens: 100
+        },
+        source: 'provider-response'
+      })),
+      {
+        id: 'event-error',
+        timestamp: 10,
+        termination: { kind: 'error' },
+        contextWindow: { used: 31_000 },
+        source: 'local-estimate'
+      }
+    ]
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Prompt',
+          status: 'complete',
+          eventIds: [],
+          contextWindowSamples: [
+            ...validSamples,
+            {
+              id: 'bad-reason',
+              timestamp: 11,
+              termination: { kind: 'stop', stopReason: 'unknown' },
+              contextWindow: { used: 1 },
+              source: 'provider-response'
+            },
+            {
+              id: 'bad-context',
+              timestamp: 12,
+              termination: { kind: 'error' },
+              contextWindow: { used: -1 },
+              source: 'local-estimate'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'agent-1',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          contextWindowSamples: validSamples,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].contextWindowSamples).toEqual(validSamples)
+    expect(restored?.messages[1].contextWindowSamples).toBeUndefined()
+  })
 })
 
 describe('sanitizeToolActivity', () => {

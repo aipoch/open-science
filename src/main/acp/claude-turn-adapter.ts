@@ -1,4 +1,5 @@
 import { toAcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage } from '../../shared/acp'
 import type { AcpProviderTurnAdapter, AcpProviderTurnResult } from './provider-turn-adapter'
 
 // Unknown future origins stay eligible so a new user-driven lane does not silently under-report
@@ -11,15 +12,41 @@ const CLAUDE_AUTONOMOUS_RESULT_ORIGINS = new Set([
   'observer-activity'
 ])
 
+const toClaudeModelStepUsage = (
+  message: Record<string, unknown>
+): AcpModelStepTokenUsage | undefined => {
+  if (
+    message.parent_tool_use_id !== null ||
+    typeof message.message !== 'object' ||
+    message.message === null ||
+    Array.isArray(message.message)
+  ) {
+    return undefined
+  }
+  const inner = message.message as Record<string, unknown>
+  if (typeof inner.usage !== 'object' || inner.usage === null || Array.isArray(inner.usage)) {
+    return undefined
+  }
+  const usage = inner.usage as Record<string, unknown>
+  return toAcpTurnTokenUsage({
+    inputTokens: usage.input_tokens,
+    cachedReadTokens: usage.cache_read_input_tokens ?? 0,
+    cachedWriteTokens: usage.cache_creation_input_tokens ?? 0,
+    outputTokens: usage.output_tokens
+  })
+}
+
 // ARD-24 owns Runtime probe selection and lifecycle wiring; this leaf only provides the
 // side-effect-free Claude interpretation module for that serialized executor cutover.
 export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
   begin: ({ providerSessionId }) => {
     let modelTurnCount = 0
+    let lastModelStepUsage: AcpModelStepTokenUsage | undefined
     let closed = false
     const close = (): void => {
       closed = true
       modelTurnCount = 0
+      lastModelStepUsage = undefined
     }
 
     return {
@@ -37,6 +64,10 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
         }
 
         const message = params.message as Record<string, unknown>
+        if (message.type === 'assistant') {
+          lastModelStepUsage = toClaudeModelStepUsage(message) ?? lastModelStepUsage
+          return
+        }
         if (message.type !== 'result') return
         const origin =
           typeof message.origin === 'object' && message.origin !== null
@@ -51,11 +82,13 @@ export const claudeCodeTurnAdapter: AcpProviderTurnAdapter = {
       finalize: ({ response }) => {
         if (closed) return {}
         const finalModelTurnCount = modelTurnCount
+        const finalLastModelStepUsage = lastModelStepUsage
         close()
         const turnUsage = toAcpTurnTokenUsage(response.usage)
         const result: AcpProviderTurnResult = {
           ...(turnUsage ? { turnUsage } : {}),
-          ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {})
+          ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {}),
+          ...(finalLastModelStepUsage ? { lastModelStepUsage: finalLastModelStepUsage } : {})
         }
         return result
       },

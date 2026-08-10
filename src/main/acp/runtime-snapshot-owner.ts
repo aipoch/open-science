@@ -78,6 +78,7 @@ class AcpRuntimeSnapshotOwner {
       recoverable: event.recoverable,
       providerError: event.providerError,
       turnUsage: event.turnUsage,
+      terminalContextWindow: event.terminalContextWindow,
       sessionId: event.sessionId,
       messageId: event.messageId,
       role: event.role,

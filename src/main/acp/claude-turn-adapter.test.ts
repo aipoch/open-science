@@ -13,6 +13,21 @@ describe('Claude Code turn adapter', () => {
     probe.observe?.({
       sessionId: 'provider-session-1',
       message: {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          usage: {
+            input_tokens: 12,
+            cache_read_input_tokens: 30,
+            cache_creation_input_tokens: 2,
+            output_tokens: 4
+          }
+        }
+      }
+    })
+    probe.observe?.({
+      sessionId: 'provider-session-1',
+      message: {
         type: 'result',
         num_turns: 3,
         origin: { kind: 'human' }
@@ -40,7 +55,57 @@ describe('Claude Code turn adapter', () => {
         cachedWriteTokens: 7,
         outputTokens: 14
       },
-      modelTurnCount: 3
+      modelTurnCount: 3,
+      lastModelStepUsage: {
+        inputTokens: 12,
+        cacheTokens: 32,
+        cachedReadTokens: 30,
+        cachedWriteTokens: 2,
+        outputTokens: 4
+      }
+    })
+  })
+
+  it('keeps the latest top-level assistant usage and ignores subagent usage', async () => {
+    const probe = await claudeCodeTurnAdapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    const observeAssistant = (
+      inputTokens: number,
+      cachedReadTokens: number,
+      parentToolUseId: string | null
+    ): void =>
+      probe.observe?.({
+        sessionId: 'provider-session-1',
+        message: {
+          type: 'assistant',
+          parent_tool_use_id: parentToolUseId,
+          message: {
+            usage: {
+              input_tokens: inputTokens,
+              cache_read_input_tokens: cachedReadTokens,
+              cache_creation_input_tokens: 3,
+              output_tokens: 5
+            }
+          }
+        }
+      })
+
+    observeAssistant(10, 20, null)
+    observeAssistant(1_000, 2_000, 'tool-use-1')
+    observeAssistant(14, 40, null)
+
+    await expect(
+      Promise.resolve(probe.finalize({ response: { stopReason: 'end_turn' } as PromptResponse }))
+    ).resolves.toEqual({
+      lastModelStepUsage: {
+        inputTokens: 14,
+        cacheTokens: 43,
+        cachedReadTokens: 40,
+        cachedWriteTokens: 3,
+        outputTokens: 5
+      }
     })
   })
 

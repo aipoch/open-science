@@ -75,7 +75,12 @@ const normalizeFacts = (
   return Object.freeze({
     ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
     ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
-    ...(facts.contextUsedTokens === undefined ? {} : { contextUsedTokens: facts.contextUsedTokens })
+    ...(facts.contextUsedTokens === undefined
+      ? {}
+      : { contextUsedTokens: facts.contextUsedTokens }),
+    ...(facts.lastModelStepUsage
+      ? { lastModelStepUsage: Object.freeze({ ...facts.lastModelStepUsage }) }
+      : {})
   })
 }
 

@@ -5,10 +5,12 @@ import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_SESSION_IMAGE_BYTES,
   sanitizeAcpContextUsage,
+  sanitizeAcpContextWindowSample,
   sanitizeAcpMessageImage,
   sanitizeAcpTurnTokenUsage,
   type AcpPermissionRequest,
   type AcpContextUsage,
+  type AcpContextWindowSample,
   type AcpMessageImage,
   type AcpTurnTokenUsage
 } from './acp'
@@ -196,6 +198,8 @@ export type PersistedChatMessage = {
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
   // Whole-turn totals reported with the completed Agent response; absent for older sessions/providers.
   turnUsage?: AcpTurnTokenUsage
+  // Terminal last-model-step context-window snapshots for each visible execution of this user Message.
+  contextWindowSamples?: AcpContextWindowSample[]
   // Marks the final Agent message for a turn whose provider did not report usable totals.
   turnUsageUnavailable?: true
   createdAt: number
@@ -1773,6 +1777,12 @@ const sanitizeMessage = (
   const turnUsage = role === 'agent' ? sanitizeAcpTurnTokenUsage(message.turnUsage) : undefined
   const turnUsageUnavailable =
     role === 'agent' && !turnUsage && message.turnUsageUnavailable === true
+  const contextWindowSamples =
+    role === 'user' && Array.isArray(message.contextWindowSamples)
+      ? message.contextWindowSamples
+          .map(sanitizeAcpContextWindowSample)
+          .filter((sample): sample is AcpContextWindowSample => !!sample)
+      : []
   const completedAt = asNumber(message.completedAt)
   const failedAt = asNumber(message.failedAt)
 
@@ -1792,6 +1802,7 @@ const sanitizeMessage = (
   }
   if (images) sanitized.images = images
   if (turnUsage) sanitized.turnUsage = turnUsage
+  if (contextWindowSamples.length > 0) sanitized.contextWindowSamples = contextWindowSamples
   if (turnUsageUnavailable) sanitized.turnUsageUnavailable = true
   if (role === 'user' && message.interrupted === true) sanitized.interrupted = true
   if (role === 'agent' && sanitized.status === 'complete') {

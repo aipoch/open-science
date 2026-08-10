@@ -3,11 +3,12 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpRuntimeEvent,
+  type AcpTerminalContextWindow,
   type AcpTurnTokenUsage
 } from '../../shared/acp'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { createLogger, errorLogFields } from '../logger'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import { describePromptError, isProviderPromptError } from './prompt-error'
@@ -28,7 +29,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   interactions: Pick<InteractionOwner, 'captureTerminal' | 'current' | 'release' | 'settle'>
   permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   prepared?: Pick<PreparedPromptHandle, 'close'>
-  context?: ContextUsageTurnHandle
+  context?: ContextWindowTurnHandle
   skill: Pick<TurnSkillHandle, 'close' | 'reloadDecision'>
   model?: string
   emitUserMessage: () => void
@@ -50,6 +51,7 @@ type ObservedPromptStop = Readonly<{
   response: PromptResponse
   turnUsage?: Extract<ProviderPromptOutcome, { kind: 'stopped' }>['facts']['turnUsage']
   modelTurnCount?: number
+  terminalContextWindow?: AcpTerminalContextWindow
 }>
 
 type LogicalTurnUsage = Readonly<{
@@ -193,6 +195,9 @@ export class AcpPromptOutcomeFinalizer {
         title: 'Prompt stopped',
         text: observedStop.response.stopReason,
         turnUsage,
+        ...(observedStop.terminalContextWindow
+          ? { terminalContextWindow: observedStop.terminalContextWindow }
+          : {}),
         raw: observedStop.response
       })
       return true
@@ -203,7 +208,18 @@ export class AcpPromptOutcomeFinalizer {
       if (outcome.kind === 'not-dispatched') {
         skillOutcome = 'cancelled'
         const response: PromptResponse = { stopReason: 'cancelled' }
-        observedStop = { response }
+        const capturedContext = context?.captureTerminal()
+        observedStop = {
+          response,
+          ...(capturedContext
+            ? {
+                terminalContextWindow: {
+                  termination: { kind: 'stop', stopReason: response.stopReason },
+                  ...capturedContext
+                }
+              }
+            : {})
+        }
         if (!interactions.captureTerminal(interaction, 'cancelled')) return response
         handles.emitUserMessage()
         await emitArtifact()
@@ -214,12 +230,22 @@ export class AcpPromptOutcomeFinalizer {
       }
       const { response, facts } = outcome
       skillOutcome = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
+      if (facts.contextUsedTokens !== undefined) handles.recordContextUsed(facts.contextUsedTokens)
+      const capturedContext = context?.captureTerminal(facts.contextUsedTokens !== undefined)
       observedStop = {
         response,
         ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
-        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount })
+        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
+        ...(capturedContext
+          ? {
+              terminalContextWindow: {
+                termination: { kind: 'stop', stopReason: response.stopReason },
+                ...capturedContext,
+                ...(facts.lastModelStepUsage ? { modelStepUsage: facts.lastModelStepUsage } : {})
+              }
+            }
+          : {})
       }
-      if (facts.contextUsedTokens !== undefined) handles.recordContextUsed(facts.contextUsedTokens)
       if (context?.complete()) handles.emitState()
       await emitArtifact()
       safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
@@ -244,6 +270,7 @@ export class AcpPromptOutcomeFinalizer {
         throw error
       }
       if (!interactions.captureTerminal(interaction, 'error')) throw error
+      const capturedContext = context?.captureTerminal()
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
@@ -265,7 +292,15 @@ export class AcpPromptOutcomeFinalizer {
         ...eventIdentity,
         timestamp: terminal.timestamp,
         title: ACP_PROMPT_FAILED_EVENT_TITLE,
-        text
+        text,
+        ...(capturedContext
+          ? {
+              terminalContextWindow: {
+                termination: { kind: 'error' },
+                ...capturedContext
+              }
+            }
+          : {})
       })
       throw error
     } finally {
