@@ -14,6 +14,7 @@ type AcpClientInteractionOwnerOptions = {
     resolveAppSessionId: (providerSessionId: string) => string
     isActiveSession: (appSessionId: string) => boolean
     frameworkForSession: (appSessionId: string) => AgentFrameworkId | undefined
+    reviewerFrameworkForSession: (providerSessionId: string) => AgentFrameworkId | undefined
     promptMessageIdForSession: (appSessionId: string) => string | undefined
   }
   elicitation: Pick<AcpElicitationOwner, 'request'>
@@ -50,15 +51,21 @@ class AcpClientInteractionOwner {
     }
 
     const sessionId = this.options.routing.resolveAppSessionId(params.sessionId)
-    if (!this.options.routing.isActiveSession(sessionId)) {
+    const isActiveSession = this.options.routing.isActiveSession(sessionId)
+    const reviewerFramework = this.options.routing.reviewerFrameworkForSession(params.sessionId)
+    if (!isActiveSession && reviewerFramework === undefined) {
       return Promise.resolve({ action: 'cancel' })
     }
 
-    const intent = classifyElicitation(this.options.routing.frameworkForSession(sessionId), params)
+    const intent = classifyElicitation(
+      reviewerFramework ?? this.options.routing.frameworkForSession(sessionId),
+      params
+    )
     if (intent.kind === 'reject') return Promise.resolve({ action: 'cancel' })
     if (intent.kind === 'authorization') {
       return this.requestCodexMcpAuthorization(params.sessionId, sessionId, intent.toolCallId)
     }
+    if (reviewerFramework !== undefined) return Promise.resolve({ action: 'cancel' })
 
     const promptMessageId = this.options.routing.promptMessageIdForSession(sessionId)
     return this.options.elicitation.request(

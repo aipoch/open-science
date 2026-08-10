@@ -726,6 +726,7 @@ const startPermissionProbeAgent = (
     }
     codexMcpMarker?: boolean
     codexMcpTitle?: string
+    codexMcpApprovalViaElicitation?: boolean
     announceToolCall?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
@@ -817,6 +818,19 @@ const startPermissionProbeAgent = (
 
       // opencode renames MCP tools <server>_<tool>; classification must come from the session's
       // recorded MCP server names, so this exercises the sessionMcpServerNames map end to end.
+      if (options.codexMcpApprovalViaElicitation) {
+        const response = await ctx.client.request(acp.methods.client.elicitation.create, {
+          mode: 'form',
+          sessionId: ctx.params.sessionId,
+          toolCallId: options.toolCallId,
+          message: 'Allow this MCP tool?',
+          requestedSchema: { type: 'object', properties: {} },
+          _meta: { codex_approval_kind: 'mcp_tool_call' }
+        })
+        options.onPermissionResponse?.(response)
+        return { stopReason: 'end_turn' }
+      }
+
       const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
         sessionId: ctx.params.sessionId,
         toolCall: {
@@ -11160,6 +11174,57 @@ describe('ACP runtime session management', () => {
       expect(permissionResponse).toEqual({
         outcome: { outcome: 'selected', optionId: expectedOptionId }
       })
+      runtime.disposeReviewerSession(session)
+    }
+  )
+
+  it.each([
+    { tool: 'read_turn', expectedResponse: { action: 'accept' } },
+    { tool: 'query_execution_log', expectedResponse: { action: 'accept' } },
+    { tool: 'read_artifact', expectedResponse: { action: 'accept' } },
+    { tool: 'submit_findings', expectedResponse: { action: 'accept' } },
+    { tool: 'run_shell', expectedResponse: { action: 'decline' } }
+  ])(
+    'handles Codex reviewer MCP tool $tool requested through elicitation/create',
+    async ({ tool, expectedResponse }) => {
+      const process = new FakeAgentProcess()
+      let elicitationResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: 'codex-reviewer-elicitation-session',
+        toolCallId: `codex-reviewer-elicitation-${tool}`,
+        toolTitle: 'unused by Codex approval elicitation',
+        codexMcpIdentity: {
+          server: 'open-science-reviewer',
+          tool,
+          arguments: { checks: [] }
+        },
+        codexMcpApprovalViaElicitation: true,
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        onPermissionResponse: (response) => {
+          elicitationResponse = response
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: codexFramework
+      })
+
+      const { session } = await runtime.buildReviewerSession({
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            type: 'http',
+            name: 'open-science-reviewer',
+            url: 'http://127.0.0.1:1/mcp',
+            headers: []
+          }
+        ]
+      })
+      await session.prompt([{ type: 'text', text: 'submit the reviewer findings' }])
+
+      expect(elicitationResponse).toEqual(expectedResponse)
       runtime.disposeReviewerSession(session)
     }
   )

@@ -222,6 +222,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       isActiveSession: (sessionId) => sessionRegistry.lookup(sessionId)?.attachment !== undefined,
       frameworkForSession: (sessionId) =>
         sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId,
+      reviewerFrameworkForSession: (sessionId) =>
+        reviewerSessions.contextFor(sessionId)?.frameworkId,
       promptMessageIdForSession: (sessionId) => {
         const interaction = base.sessionInteractions.current(sessionId)
         return interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined

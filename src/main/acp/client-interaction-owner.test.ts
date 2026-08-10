@@ -43,6 +43,8 @@ const codexApprovalRequest = (): CreateElicitationRequest => ({
 const createOwner = (
   options: {
     frameworkId?: AgentFrameworkId
+    activeSession?: boolean
+    reviewerFrameworkId?: AgentFrameworkId
     hasTrustedCodexMcpToolCall?: boolean
     consumeTrustedCodexMcpToolCall?: boolean
   } = {}
@@ -68,8 +70,9 @@ const createOwner = (
   const owner = new AcpClientInteractionOwner({
     routing: {
       resolveAppSessionId: () => 'app-session',
-      isActiveSession: () => true,
+      isActiveSession: () => options.activeSession ?? true,
       frameworkForSession: () => options.frameworkId ?? 'claude-code',
+      reviewerFrameworkForSession: () => options.reviewerFrameworkId,
       promptMessageIdForSession: () => 'prompt-1'
     },
     elicitation: { request: requestElicitation },
@@ -162,6 +165,35 @@ describe('ACP client interaction owner', () => {
       ],
       _meta: { is_mcp_tool_approval: true }
     })
+    expect(requestElicitation).not.toHaveBeenCalled()
+  })
+
+  it('routes a trusted Codex reviewer MCP approval elicitation to authorization', async () => {
+    const { owner, requestElicitation, requestPermission } = createOwner({
+      activeSession: false,
+      reviewerFrameworkId: 'codex',
+      hasTrustedCodexMcpToolCall: true
+    })
+
+    await expect(owner.createElicitation(codexApprovalRequest())).resolves.toEqual({
+      action: 'accept'
+    })
+
+    expect(requestPermission).toHaveBeenCalledOnce()
+    expect(requestElicitation).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for ordinary reviewer elicitation', async () => {
+    const { owner, requestElicitation, requestPermission } = createOwner({
+      activeSession: false,
+      reviewerFrameworkId: 'codex'
+    })
+
+    await expect(owner.createElicitation(elicitationRequest())).resolves.toEqual({
+      action: 'cancel'
+    })
+
+    expect(requestPermission).not.toHaveBeenCalled()
     expect(requestElicitation).not.toHaveBeenCalled()
   })
 
