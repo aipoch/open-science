@@ -514,6 +514,14 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
+- Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
+  approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
+  any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- Permission approval uses the shared bottom resize handle and replaces the ordinary composer while
+  pending. Its embedded content uses the panel's single border rather than nesting another card. The
+  panel can grow upward only by the amount of currently hidden scroll overflow, never beyond
+  `min(70dvh, 44rem)`; content that already fits cannot be stretched into empty space. At the maximum
+  height, remaining content scrolls inside the panel.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.

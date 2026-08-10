@@ -395,10 +395,14 @@ describe('conversation message scroller integration', () => {
   it('keeps permission prompts constrained to the conversation content width', () => {
     const permissionApprovalControlsSource = readFileSync(permissionApprovalControlsPath, 'utf8')
 
-    // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
+    // Common content stays width-constrained; standalone chrome is omitted by embedded callers.
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card'
+      "'flex w-full max-w-full flex-col gap-3 bg-card"
     )
+    expect(permissionApprovalControlsSource).toContain(
+      "'mb-2 rounded-xl border border-border shadow-dialog"
+    )
+    expect(permissionApprovalControlsSource).toContain('!embedded &&')
     // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
       'className="flex min-w-0 items-center gap-2"'

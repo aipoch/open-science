@@ -503,6 +503,78 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(false)
   })
 
+  it('puts permission approval ahead of Ask-User in a content-bounded composer lane', () => {
+    renderPanel({
+      pendingPermissions: [{} as never],
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-after-permission',
+          sessionId: 'session-existing',
+          toolCallId: 'tool-ask-after-permission',
+          message: 'Which scope should the agent use?',
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Scope',
+              kind: 'single-select',
+              options: [{ value: 'focused', label: 'Focused' }]
+            }
+          ]
+        }
+      ]
+    })
+
+    const permissionComposer = container.querySelector(
+      '[data-testid="permission-composer"]'
+    ) as HTMLDivElement
+    const scrollSurface = container.querySelector(
+      '[data-testid="permission-composer-scroll"]'
+    ) as HTMLDivElement
+    const resizeHandle = container.querySelector(
+      '[aria-label="Resize permission panel"]'
+    ) as HTMLButtonElement
+
+    expect(permissionComposer).not.toBeNull()
+    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(resizeHandle).not.toBeNull()
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(getComposerForm().hidden).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="composer-surface-fade"]')
+        ?.classList.contains('-top-18')
+    ).toBe(true)
+
+    permissionComposer.getBoundingClientRect = () => ({ height: 320 }) as DOMRect
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 280 },
+      scrollHeight: { configurable: true, value: 280 }
+    })
+
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect(permissionComposer.style.height).toBe('320px')
+
+    Object.defineProperty(scrollSurface, 'scrollHeight', { configurable: true, value: 620 })
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1000 })
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 300 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: -300 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: -300 }))
+    })
+    expect(permissionComposer.style.height).toBe('660px')
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+  })
+
   it('serializes a pending question ahead of Plan approval in the shared blocking lane', () => {
     const fields = [
       {

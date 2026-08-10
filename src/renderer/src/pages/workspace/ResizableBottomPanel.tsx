@@ -14,6 +14,7 @@ type ResizableBottomPanelProps = Readonly<{
   testId: string
   scrollTestId: string
   variant?: 'floating' | 'integrated'
+  constrainGrowthToOverflow?: boolean
   minimumContentSelector?: string
   minimumContentIndex?: number
 }>
@@ -24,6 +25,7 @@ const ResizableBottomPanel = ({
   testId,
   scrollTestId,
   variant = 'floating',
+  constrainGrowthToOverflow = false,
   minimumContentSelector,
   minimumContentIndex = 0
 }: ResizableBottomPanelProps): React.JSX.Element => {
@@ -32,9 +34,10 @@ const ResizableBottomPanel = ({
   const [height, setHeight] = useState<number>()
 
   const resizeBounds = (): ResizeBounds => {
-    const max = Math.round(
+    const viewportMax = Math.round(
       Math.min(window.innerHeight * PANEL_MAX_VIEWPORT_RATIO, PANEL_MAX_HEIGHT_PX)
     )
+    const surfaceHeight = surfaceRef.current?.getBoundingClientRect().height ?? 0
     const scrollSurface = surfaceRef.current?.querySelector<HTMLElement>(
       `[data-testid="${scrollTestId}"]`
     )
@@ -51,8 +54,18 @@ const ResizableBottomPanel = ({
               PANEL_RESIZE_STEP_PX
           )
         : 0
+    const contentMax =
+      constrainGrowthToOverflow && scrollSurface && surfaceHeight > 0
+        ? Math.ceil(
+            surfaceHeight + Math.max(0, scrollSurface.scrollHeight - scrollSurface.clientHeight)
+          )
+        : viewportMax
+    const max = Math.min(viewportMax, contentMax)
+    const defaultMin = Math.min(viewportMax, Math.max(PANEL_MIN_HEIGHT_PX, measuredMinimum))
+    const min =
+      constrainGrowthToOverflow && surfaceHeight > 0 ? Math.min(defaultMin, max) : defaultMin
     return {
-      min: Math.min(max, Math.max(PANEL_MIN_HEIGHT_PX, measuredMinimum)),
+      min,
       max
     }
   }

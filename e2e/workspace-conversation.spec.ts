@@ -89,15 +89,21 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   await page.getByRole('button', { name: 'Send message' }).click()
 
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('permission-composer')).toBeVisible()
+  await expect(composer).toBeHidden()
   await page.getByRole('button', { name: /^Allow/ }).click()
   await expect(page.getByText('Fixture permission allowed.', { exact: true })).toBeVisible()
+  await expect(composer).toBeVisible()
 
   await composer.fill(`${PERMISSION_PROMPT} deny`)
   await page.getByRole('button', { name: 'Send message' }).click()
 
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('permission-composer')).toBeVisible()
+  await expect(composer).toBeHidden()
   await page.getByRole('button', { name: 'Deny', exact: true }).click()
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
+  await expect(composer).toBeVisible()
 })
 
 test('shows context compaction loading and completion inside the Session transcript', async ({

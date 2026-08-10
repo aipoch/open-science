@@ -133,6 +133,17 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
   </ResizableBottomPanel>
 )
 
+const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize permission panel"
+    testId="permission-composer"
+    scrollTestId="permission-composer-scroll"
+    constrainGrowthToOverflow
+  >
+    {children}
+  </ResizableBottomPanel>
+)
+
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
   if (size < 1024) return `${size} B`
@@ -406,6 +417,7 @@ const ConversationPanel = ({
             state: 'pending'
           }
         : undefined
+  const hasPendingPermission = pendingPermissions.length > 0
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -573,7 +585,7 @@ const ConversationPanel = ({
             data-testid="composer-surface-fade"
             className={cn(
               'pointer-events-none absolute inset-x-0 bg-gradient-to-t from-bg-10 to-bg-10/0',
-              pendingElicitation ? '-top-18 h-18' : '-top-12 h-12'
+              hasPendingPermission || pendingElicitation ? '-top-18 h-18' : '-top-12 h-12'
             )}
           />
 
@@ -625,23 +637,6 @@ const ConversationPanel = ({
                       </div>
                     ) : null}
                   </div>
-                ) : null}
-
-                {/* Permission controls are already filtered to the visible session by the page. */}
-                {!sideChat ? (
-                  <PermissionApprovalControls
-                    requests={pendingPermissions}
-                    onRespond={onRespondToPermission}
-                    notebookLookup={
-                      activeSession
-                        ? {
-                            sessionId: activeSession.id,
-                            workspaceCwd: activeSession.cwd ?? '',
-                            projectName: activeSession.projectId
-                          }
-                        : undefined
-                    }
-                  />
                 ) : null}
 
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
@@ -707,7 +702,7 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (sideChat || pendingElicitation) && 'hidden'
+                      (sideChat || hasPendingPermission || pendingElicitation) && 'hidden'
                     )}
                   />
 
@@ -794,6 +789,23 @@ const ConversationPanel = ({
                         />
                       }
                     />
+                  ) : hasPendingPermission ? (
+                    <ResizablePermissionComposer>
+                      <PermissionApprovalControls
+                        requests={pendingPermissions}
+                        onRespond={onRespondToPermission}
+                        embedded
+                        notebookLookup={
+                          activeSession
+                            ? {
+                                sessionId: activeSession.id,
+                                workspaceCwd: activeSession.cwd ?? '',
+                                projectName: activeSession.projectId
+                              }
+                            : undefined
+                        }
+                      />
+                    </ResizablePermissionComposer>
                   ) : pendingElicitation ? (
                     <ResizableElicitationComposer>
                       <WorkspaceElicitationCard
@@ -826,10 +838,13 @@ const ConversationPanel = ({
                   {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
                       owns the lane and makes the ordinary controls unreachable. */}
                   <form
-                    hidden={Boolean(sideChat || pendingElicitation || pendingPlan)}
+                    hidden={Boolean(
+                      sideChat || hasPendingPermission || pendingElicitation || pendingPlan
+                    )}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      (sideChat || pendingElicitation || pendingPlan) && 'hidden'
+                      (sideChat || hasPendingPermission || pendingElicitation || pendingPlan) &&
+                        'hidden'
                     )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}

@@ -146,6 +146,20 @@ describe('PermissionApprovalControls', () => {
     expect(html).toContain('data-testid="scope-chevron"')
   })
 
+  it('drops standalone card chrome when embedded in the composer interaction lane', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toContain('data-testid="permission-approval-controls"')
+    expect(html).not.toContain('shadow-dialog')
+    expect(html).not.toContain('motion-safe:slide-in-from-bottom-1')
+  })
+
   it('does not show the second queued request', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

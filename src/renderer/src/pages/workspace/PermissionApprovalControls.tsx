@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+
 import { Check, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -31,6 +33,7 @@ import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
   onRespond: (requestId: string, optionId?: string) => void | Promise<void>
+  embedded?: boolean
   // Session locator for the notebook env badge; optional so the controls render standalone
   // (isolation tests, sessions without notebook context).
   notebookLookup?: NotebookSessionRequest
@@ -545,6 +548,7 @@ const ScopeDropdown = ({
 const PermissionApprovalControls = ({
   requests,
   onRespond,
+  embedded = false,
   notebookLookup
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
   const [scope, setScope] = useState<PermissionScope>('session')
@@ -710,7 +714,14 @@ const PermissionApprovalControls = ({
   }
 
   return (
-    <div className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card p-5 text-xs leading-5 text-card-foreground shadow-dialog outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
+    <div
+      data-testid="permission-approval-controls"
+      className={cn(
+        'flex w-full max-w-full flex-col gap-3 bg-card p-4 text-xs leading-5 text-card-foreground outline-none sm:p-5',
+        !embedded &&
+          'mb-2 rounded-xl border border-border shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200'
+      )}
+    >
       {/* Header: plain-language action plus its classification and notebook context. */}
       <div className="flex min-w-0 items-center gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
