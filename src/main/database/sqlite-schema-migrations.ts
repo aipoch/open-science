@@ -2,6 +2,7 @@ import {
   migrationSqlExecutor,
   type MigrationSqlClient as SqliteExecutor
 } from './migration-sql-executor'
+import { DatabaseValidationError, summarizeDatabaseValue } from './database-validation-error'
 
 type SqliteTableInfoRow = { name: string }
 type SqliteTableSqlRow = { sql: string | null }
@@ -54,8 +55,15 @@ const validateExistingValues = async (
   const invalidValue = invalidRows[0]?.value
   if (invalidRows.length === 0) return
 
-  throw new Error(
-    `SQLite schema migration blocked: ${migration.tableName}.${migration.columnName} contains unsupported value ${JSON.stringify(invalidValue)}.`
+  throw new DatabaseValidationError(
+    `SQLite schema migration blocked: ${migration.tableName}.${migration.columnName} contains an unsupported value.`,
+    {
+      kind: 'unsupported-value',
+      table: migration.tableName,
+      column: migration.columnName,
+      expected: migration.allowedValues,
+      actual: summarizeDatabaseValue(invalidValue ?? null)
+    }
   )
 }
 
@@ -99,14 +107,21 @@ const rebuildTable = async (
   const targetColumnSet = new Set(targetColumns)
   const unknownSourceColumns = [...sourceColumns].filter((column) => !targetColumnSet.has(column))
   if (unknownSourceColumns.length > 0) {
-    throw new Error(
-      `SQLite schema migration blocked: ${migration.tableName} contains unknown columns ${unknownSourceColumns.join(', ')}.`
+    throw new DatabaseValidationError(
+      `SQLite schema migration blocked by unknown columns in ${migration.tableName}.`,
+      { kind: 'unknown-columns', table: migration.tableName, actual: unknownSourceColumns }
     )
   }
   const copyColumns = targetColumns.filter((column) => sourceColumns.has(column))
   if (copyColumns.length === 0) {
-    throw new Error(
-      `SQLite schema migration found no compatible columns for ${migration.tableName}.`
+    throw new DatabaseValidationError(
+      `SQLite schema migration found no compatible columns for ${migration.tableName}.`,
+      {
+        kind: 'no-compatible-columns',
+        table: migration.tableName,
+        expected: targetColumns,
+        actual: [...sourceColumns]
+      }
     )
   }
 
@@ -118,8 +133,14 @@ const rebuildTable = async (
   )
   const replacementRowCount = await countRows(client, replacementTableName)
   if (replacementRowCount !== sourceRowCount) {
-    throw new Error(
-      `SQLite schema migration row-count mismatch for ${migration.tableName}: expected ${sourceRowCount}, copied ${replacementRowCount}.`
+    throw new DatabaseValidationError(
+      `SQLite schema migration found a row-count mismatch for ${migration.tableName}.`,
+      {
+        kind: 'row-count-mismatch',
+        table: migration.tableName,
+        expected: sourceRowCount,
+        actual: replacementRowCount
+      }
     )
   }
 
@@ -162,8 +183,15 @@ const applySqliteCheckConstraints = async (
   )
   if (violations.length > 0) {
     const violation = violations[0]!
-    throw new Error(
-      `SQLite schema migration introduced a foreign-key violation in ${violation.table} row ${String(violation.rowid)} referencing ${violation.parent}.`
+    throw new DatabaseValidationError(
+      `SQLite schema migration introduced a foreign-key violation in ${violation.table}.`,
+      {
+        kind: 'foreign-key-violation',
+        table: violation.table,
+        constraint: String(violation.fkid),
+        expected: { parent: violation.parent },
+        actual: { rowid: violation.rowid }
+      }
     )
   }
 }

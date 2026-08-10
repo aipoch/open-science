@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { access, rename, rm } from 'node:fs/promises'
 
 import type { PrismaClient } from '@prisma/client'
 import type { DatabaseStartupErrorCode } from '../../shared/database-startup'
@@ -7,8 +8,10 @@ import {
   RUNTIME_SCHEMA_BASELINE_CONTRACT,
   applyRuntimeSchemaBaseline,
   prepareRuntimeSchemaBaseline,
+  verifyCurrentRuntimeSchema,
   verifyRuntimeSchemaBaseline
 } from './legacy-baseline-adapter'
+import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 
@@ -73,7 +76,12 @@ const BASELINE_CHECKSUM = checksumMigrationPayload(
   runtimeSchemaBaselineMigration.verifiers
 )
 const MIGRATION_MANIFEST = [
-  { ...runtimeSchemaBaselineMigration, checksum: BASELINE_CHECKSUM }
+  {
+    ...runtimeSchemaBaselineMigration,
+    checksum: BASELINE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
 const LEDGER_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "_open_science_migrations" (
@@ -87,6 +95,10 @@ const LEDGER_TABLE_DDL = `CREATE TABLE IF NOT EXISTS "_open_science_migrations" 
 
 type LedgerRow = { id: string; checksum: string }
 type SqliteForeignKeyStateRow = { foreign_keys: bigint | number }
+type SqliteDatabaseListRow = { name: string; file: string }
+type SqliteIntegrityCheckRow = { integrity_check: string }
+type SqliteSchemaObjectRow = { type: string; name: string; tableName: string; sql: string | null }
+type SqliteDifferenceRow = { different: bigint | number }
 type DatabaseMigrationErrorCode = DatabaseStartupErrorCode
 
 class DatabaseMigrationError extends Error {
@@ -114,9 +126,26 @@ type SchemaMigrationProgress = { phase: 'checking' } | { phase: 'migrating'; mig
 
 type DatabaseCompatibility = { sqliteVersion: string }
 
+type DatabaseMigrationBackup = {
+  migrationId: string
+  path: string
+  reused: boolean
+}
+
+type DatabaseMigrationBackupRetirement = {
+  migrationId: string
+  path?: string
+  error?: unknown
+}
+
 type SchemaMigrationOptions = {
+  databasePath?: string
   onProgress?: (progress: SchemaMigrationProgress) => void
   onCompatibilityVerified?: (compatibility: DatabaseCompatibility) => void
+  onBackupReady?: (backup: DatabaseMigrationBackup) => void
+  onBackupRetired?: (backup: DatabaseMigrationBackupRetirement) => void
+  onBackupRetirementFailed?: (backup: DatabaseMigrationBackupRetirement) => void
+  onCompleted?: (result: SchemaMigrationResult) => void
 }
 
 type MigrationManifestEntry = {
@@ -124,6 +153,8 @@ type MigrationManifestEntry = {
   checksum: string
   statements: readonly string[]
   verifiers: MigrationVerifiers
+  backupOnApply: 'required' | 'none'
+  backupRetention: 'retain' | 'delete-after-success'
 }
 
 const runMigrationVerifiers = async (
@@ -175,6 +206,201 @@ const hasApplicationTables = async (client: PrismaClient): Promise<boolean> => {
     LIMIT 1
   `
   return rows.length > 0
+}
+
+const readMainDatabasePath = async (client: PrismaClient): Promise<string | undefined> => {
+  const databases = await migrationSqlExecutor.query<SqliteDatabaseListRow[]>(
+    client,
+    'PRAGMA database_list'
+  )
+  const path = databases.find((database) => database.name === 'main')?.file.trim()
+  return path || undefined
+}
+
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const quoteSqliteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`
+
+const readSnapshotTableNames = (
+  client: PrismaClient,
+  schema: 'main' | '_open_science_backup'
+): Promise<Array<{ name: string }>> =>
+  migrationSqlExecutor.query(
+    client,
+    `SELECT "name" FROM "${schema}"."sqlite_schema"
+     WHERE "type" = 'table'
+       AND ("name" NOT LIKE 'sqlite_%' OR "name" = 'sqlite_sequence')
+     ORDER BY "name"`
+  )
+
+const readSnapshotSchema = (
+  client: PrismaClient,
+  schema: 'main' | '_open_science_backup'
+): Promise<SqliteSchemaObjectRow[]> =>
+  migrationSqlExecutor.query(
+    client,
+    `SELECT "type", "name", "tbl_name" AS "tableName", "sql"
+     FROM "${schema}"."sqlite_schema"
+     WHERE "name" NOT LIKE 'sqlite_%' OR "name" = 'sqlite_sequence'
+     ORDER BY "type", "name"`
+  )
+
+const snapshotTableDiffers = async (client: PrismaClient, tableName: string): Promise<boolean> => {
+  const table = quoteSqliteIdentifier(tableName)
+  const columns = await migrationSqlExecutor.query<Array<{ name: string }>>(
+    client,
+    `PRAGMA "main".table_xinfo(${table})`
+  )
+  if (columns.length === 0) return true
+  const projection = columns.map(({ name }) => quoteSqliteIdentifier(name)).join(', ')
+  const rows = await migrationSqlExecutor.query<SqliteDifferenceRow[]>(
+    client,
+    `WITH "current_rows" AS (
+       SELECT ${projection}, COUNT(*) FROM "main".${table} GROUP BY ${projection}
+     ), "backup_rows" AS (
+       SELECT ${projection}, COUNT(*) FROM "_open_science_backup".${table} GROUP BY ${projection}
+     )
+     SELECT (
+       EXISTS(SELECT * FROM "current_rows" EXCEPT SELECT * FROM "backup_rows")
+       OR EXISTS(SELECT * FROM "backup_rows" EXCEPT SELECT * FROM "current_rows")
+     ) AS "different"`
+  )
+  return Number(rows[0]?.different ?? 1) !== 0
+}
+
+const verifyDatabaseMigrationBackup = async (client: PrismaClient, path: string): Promise<void> => {
+  let attached = false
+  let failure: unknown
+  try {
+    await migrationSqlExecutor.execute(client, 'ATTACH DATABASE ? AS "_open_science_backup"', path)
+    attached = true
+    const [integrity, currentTables, backupTables, currentSchema, backupSchema] = await Promise.all(
+      [
+        migrationSqlExecutor.query<SqliteIntegrityCheckRow[]>(
+          client,
+          'PRAGMA "_open_science_backup".integrity_check'
+        ),
+        readSnapshotTableNames(client, 'main'),
+        readSnapshotTableNames(client, '_open_science_backup'),
+        readSnapshotSchema(client, 'main'),
+        readSnapshotSchema(client, '_open_science_backup')
+      ]
+    )
+    if (integrity.length !== 1 || integrity[0]?.integrity_check !== 'ok') {
+      throw new DatabaseValidationError(
+        'The existing database migration backup failed SQLite integrity_check.',
+        { kind: 'backup-integrity-check-failed', actual: integrity }
+      )
+    }
+    if (JSON.stringify(currentSchema) !== JSON.stringify(backupSchema)) {
+      throw new DatabaseValidationError(
+        'The existing database migration backup does not match the current schema.',
+        { kind: 'backup-schema-mismatch', expected: currentSchema, actual: backupSchema }
+      )
+    }
+    if (
+      currentTables.map(({ name }) => name).join('\n') !==
+      backupTables.map(({ name }) => name).join('\n')
+    ) {
+      throw new DatabaseValidationError(
+        'The existing database migration backup does not contain the current tables.',
+        { kind: 'backup-table-set-mismatch', expected: currentTables, actual: backupTables }
+      )
+    }
+    for (const { name } of currentTables) {
+      if (await snapshotTableDiffers(client, name)) {
+        throw new DatabaseValidationError(
+          `The existing database migration backup does not match the current contents of ${name}.`,
+          { kind: 'backup-content-mismatch', table: name }
+        )
+      }
+    }
+  } catch (error) {
+    failure = error
+  }
+  if (attached) {
+    try {
+      await migrationSqlExecutor.execute(client, 'DETACH DATABASE "_open_science_backup"')
+    } catch (error) {
+      failure ??= error
+    }
+  }
+  if (failure) throw failure
+}
+
+const createDatabaseMigrationBackup = async (
+  client: PrismaClient,
+  databasePath: string,
+  migrationId: string
+): Promise<DatabaseMigrationBackup> => {
+  const path = `${databasePath}.before-${migrationId}.backup`
+  if (await pathExists(path)) {
+    await verifyDatabaseMigrationBackup(client, path)
+    return { migrationId, path, reused: true }
+  }
+
+  const temporaryPath = `${path}.tmp`
+  await rm(temporaryPath, { force: true })
+  try {
+    // SQLite owns the snapshot so WAL contents are included; rename publishes only a complete backup.
+    await migrationSqlExecutor.execute(client, 'VACUUM INTO ?', temporaryPath)
+    await rename(temporaryPath, path)
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+  return { migrationId, path, reused: false }
+}
+
+const retireDatabaseMigrationBackups = async (
+  client: PrismaClient,
+  manifest: readonly MigrationManifestEntry[],
+  options: SchemaMigrationOptions
+): Promise<void> => {
+  const retired = manifest.filter(
+    (migration) => migration.backupRetention === 'delete-after-success'
+  )
+  if (retired.length === 0) return
+  let databasePath: string | undefined
+  try {
+    databasePath = options.databasePath ?? (await readMainDatabasePath(client))
+    if (!databasePath) throw new Error('The database backup retention path is unavailable.')
+  } catch (error) {
+    for (const migration of retired) {
+      try {
+        options.onBackupRetirementFailed?.({ migrationId: migration.id, error })
+      } catch {
+        // A diagnostic sink failure must not block an otherwise valid database.
+      }
+    }
+    return
+  }
+  for (const migration of retired) {
+    const path = `${databasePath}.before-${migration.id}.backup`
+    try {
+      await rm(path)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue
+      try {
+        options.onBackupRetirementFailed?.({ migrationId: migration.id, path, error })
+      } catch {
+        // A diagnostic sink failure must not block an otherwise valid database.
+      }
+      continue
+    }
+    try {
+      options.onBackupRetired?.({ migrationId: migration.id, path })
+    } catch {
+      // A diagnostic sink failure must not invalidate completed backup retirement.
+    }
+  }
 }
 
 const validateLedger = (
@@ -443,22 +669,60 @@ const migrateApplicationDatabaseWithManifest = async (
   const appliedCount = validateLedger(ledger, manifest)
   const latest = manifest.at(-1)!
   const from = ledger.at(-1)?.id ?? null
-  if (appliedCount === manifest.length) {
+  const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
+    try {
+      await verifyCurrentRuntimeSchema(client)
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'validation', latest.id)
+    }
     await reportDatabaseCompatibility(client, options)
-    return { adoptedLegacy: false, applied: [], from, to: latest.id }
+    await retireDatabaseMigrationBackups(client, manifest, options)
+    try {
+      options.onCompleted?.(result)
+    } catch {
+      // A diagnostic sink failure must not invalidate a completed migration.
+    }
+    return result
+  }
+  if (appliedCount === manifest.length) {
+    return complete({ adoptedLegacy: false, applied: [], from, to: latest.id })
+  }
+
+  let hadApplicationTablesAtStart: boolean
+  try {
+    hadApplicationTablesAtStart = await hasApplicationTables(client)
+  } catch (error) {
+    throw classifyDatabaseFailure(error, 'open')
+  }
+
+  const backupBeforeMigration = async (migration: MigrationManifestEntry): Promise<void> => {
+    if (migration.backupOnApply !== 'required') return
+    const migrationId = migration.id
+    if (!hadApplicationTablesAtStart) return
+    let backup: DatabaseMigrationBackup
+    try {
+      const databasePath = options.databasePath ?? (await readMainDatabasePath(client))
+      if (!databasePath) {
+        throw new Error('A database path is required before this migration can create its backup.')
+      }
+      backup = await createDatabaseMigrationBackup(client, databasePath, migrationId)
+    } catch (error) {
+      throw classifyDatabaseFailure(error, 'migration', migrationId)
+    }
+    try {
+      options.onBackupReady?.(backup)
+    } catch {
+      // A diagnostic sink failure must not invalidate a durable database backup.
+    }
   }
 
   const applied: string[] = []
-  let adoptedLegacy = false
+  const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   let nextIndex = appliedCount
   if (nextIndex === 0) {
     const baseline = manifest[0]!
     options.onProgress?.({ phase: 'migrating', migrationId: baseline.id })
-    try {
-      adoptedLegacy = await hasApplicationTables(client)
-    } catch (error) {
-      throw classifyDatabaseFailure(error, 'open')
-    }
+    await backupBeforeMigration(baseline)
     await applyBaselineMigration(client, baseline)
     applied.push(baseline.id)
     nextIndex = 1
@@ -466,12 +730,12 @@ const migrateApplicationDatabaseWithManifest = async (
 
   for (const migration of manifest.slice(nextIndex)) {
     options.onProgress?.({ phase: 'migrating', migrationId: migration.id })
+    await backupBeforeMigration(migration)
     await applyManifestMigration(client, migration)
     applied.push(migration.id)
   }
 
-  await reportDatabaseCompatibility(client, options)
-  return { adoptedLegacy, applied, from, to: latest.id }
+  return complete({ adoptedLegacy, applied, from, to: latest.id })
 }
 
 const migrateApplicationDatabase = (
@@ -491,6 +755,8 @@ export {
 }
 export type {
   DatabaseCompatibility,
+  DatabaseMigrationBackup,
+  DatabaseMigrationBackupRetirement,
   DatabaseMigrationErrorCode,
   MigrationManifestEntry,
   MigrationVerifierDescriptor,

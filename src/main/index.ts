@@ -229,6 +229,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
         { wireNotificationInboxController },
         { registerUnreadTaskIpc },
+        { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { getProjectDbClient },
@@ -253,6 +254,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./notifications/desktop-badge'),
         import('./notifications/notification-inbox-controller'),
         import('./notifications/unread-task-ipc'),
+        import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
         import('./database/database-startup-ipc'),
         import('./projects/prisma-client'),
@@ -279,23 +281,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       installWindowShortcuts(app)
 
       const webMode = parseWebModeOptions(process.argv)
+      const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
       const databaseStartupOwner = createDatabaseStartupOwner({
-        reportBlocked: (error) => {
-          log.error('database startup blocked', {
-            appVersion: app.getVersion(),
-            code: error.code,
-            migrationId: error.migrationId ?? null,
-            retryable: error.retryable,
-            ...diagnosticErrorFields(error.cause ?? error)
-          })
-        },
+        reportBlocked: databaseStartupLogging.reportBlocked,
         verifyDatabase: async (onProgress) => {
-          await getProjectDbClient(resolveStorageRoot(), {
-            onProgress,
-            onCompatibilityVerified: ({ sqliteVersion }) => {
-              log.info(`database runtime verified: sqlite_version=${sqliteVersion}`)
-            }
-          })
+          await getProjectDbClient(
+            resolveStorageRoot(),
+            databaseStartupLogging.migrationOptions(onProgress)
+          )
         }
       })
       const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())

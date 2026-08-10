@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { PrismaClient } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
@@ -19,15 +19,15 @@ import {
 
 const futureTestMigration = (): MigrationManifestEntry => {
   const id = '0002_test_suffix'
-  const statements = [
-    `CREATE TABLE "MigrationSuffixProbe" ("id" TEXT NOT NULL PRIMARY KEY)`
-  ] as const
-  const verifiers = [{ kind: 'table-exists', version: 1, table: 'MigrationSuffixProbe' }] as const
+  const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
+  const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
     id,
     statements,
     verifiers,
-    checksum: checksumMigrationPayload(id, statements, verifiers)
+    checksum: checksumMigrationPayload(id, statements, verifiers),
+    backupOnApply: 'none',
+    backupRetention: 'retain'
   }
 }
 
@@ -204,6 +204,34 @@ describe('application database migrations', () => {
     await expect(verifyCurrentRuntimeSchema(client)).rejects.toThrow(/unexpected tables/)
   })
 
+  it('keeps a recovery snapshot when final verification rejects current schema drift', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-final-verification-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client, { databasePath })
+    await client.$executeRawUnsafe('VACUUM INTO ?', backupPath)
+    await client.$executeRawUnsafe('CREATE TABLE "UnversionedDrift" ("id" TEXT PRIMARY KEY)')
+    const retiredManifest = MIGRATION_MANIFEST.map((migration) => ({
+      ...migration,
+      backupOnApply: 'none' as const,
+      backupRetention: 'delete-after-success' as const
+    }))
+    const retired: unknown[] = []
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, retiredManifest, {
+        databasePath,
+        onBackupRetired: (event) => retired.push(event)
+      })
+    ).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    expect(retired).toEqual([])
+    await expect(access(backupPath)).resolves.toBeUndefined()
+  })
+
   it('applies a pending manifest suffix after the recorded baseline', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-suffix-'))
     client = createProjectDbClient(storageRoot)
@@ -225,18 +253,41 @@ describe('application database migrations', () => {
     ).resolves.toEqual([{ id: '0001_runtime_schema_baseline' }, { id: '0002_test_suffix' }])
   })
 
+  it('does not back up a migration that does not request a backup', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-no-backup-suffix-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupEvents: unknown[] = []
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client, { databasePath })
+
+    await migrateApplicationDatabaseWithManifest(
+      client,
+      [...MIGRATION_MANIFEST, futureTestMigration()],
+      {
+        databasePath,
+        onBackupReady: (event) => backupEvents.push(event)
+      }
+    )
+
+    expect(backupEvents).toEqual([])
+  })
+
   it('rolls back a future migration and its ledger row when verification fails', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-suffix-rollback-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     const futureBase = futureTestMigration()
+    const statements = [
+      `CREATE TABLE "MigrationSuffixProbe" ("id" TEXT NOT NULL PRIMARY KEY)`
+    ] as const
     const verifiers = [
       { kind: 'table-exists', version: 1, table: 'MissingMigrationSuffixProbe' }
     ] as const
     const future = {
       ...futureBase,
+      statements,
       verifiers,
-      checksum: checksumMigrationPayload(futureBase.id, futureBase.statements, verifiers)
+      checksum: checksumMigrationPayload(futureBase.id, statements, verifiers)
     }
 
     await expect(
@@ -320,6 +371,30 @@ describe('application database migrations', () => {
     })
   })
 
+  it('blocks a required legacy backup when the database path is unavailable', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-missing-backup-path-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+
+    await expect(migrateApplicationDatabase(client, { databasePath: '' })).rejects.toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM "sqlite_schema"
+        WHERE "type" = 'table' AND "name" = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
+  })
+
   it('adopts a pre-ledger database without losing existing projects', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-legacy-'))
     client = createProjectDbClient(storageRoot)
@@ -343,6 +418,54 @@ describe('application database migrations', () => {
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
     ).resolves.toMatchObject({ name: 'Preserved', archivedAt: null })
+  })
+
+  it('keeps explicitly retired Review and Finding columns after final verification', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-columns-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'legacy-project', name: 'Preserved' } })
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "summary" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "checks" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "reasoning" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Finding" ADD COLUMN "severity" TEXT')
+    await client.$executeRaw`
+      INSERT INTO "Review" (
+        "id", "projectId", "sessionId", "turnMessageId", "updatedAt",
+        "summary", "checks", "reasoning"
+      ) VALUES (
+        ${'legacy-review'}, ${'legacy-project'}, ${'legacy-session'}, ${'legacy-message'},
+        ${new Date('2026-01-02T03:04:05Z')}, ${'retained summary'}, ${'retained checks'},
+        ${'retained reasoning'}
+      )
+    `
+    await client.$executeRaw`
+      INSERT INTO "Finding" ("id", "reviewId", "severity")
+      VALUES (${'legacy-finding'}, ${'legacy-review'}, ${'retained severity'})
+    `
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    await expect(
+      client.$queryRaw<
+        Array<{ summary: string; checks: string; reasoning: string; severity: string }>
+      >`
+        SELECT "Review"."summary", "Review"."checks", "Review"."reasoning", "Finding"."severity"
+        FROM "Review" JOIN "Finding" ON "Finding"."reviewId" = "Review"."id"
+        WHERE "Review"."id" = 'legacy-review'
+      `
+    ).resolves.toEqual([
+      {
+        summary: 'retained summary',
+        checks: 'retained checks',
+        reasoning: 'retained reasoning',
+        severity: 'retained severity'
+      }
+    ])
   })
 
   it('adopts the pre-ledger permission grant table emitted by v0.9 through v0.10', async () => {
@@ -396,7 +519,17 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0001_runtime_schema_baseline'
+      migrationId: '0001_runtime_schema_baseline',
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'check-constraint-mismatch',
+          table: 'PermissionGrant',
+          constraint: 'PermissionGrant_qualifier_check',
+          expected: expect.any(String),
+          actual: expect.any(String)
+        }
+      }
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -430,6 +563,59 @@ describe('application database migrations', () => {
     ])
   })
 
+  it('describes an invalid legacy value without exposing its raw content', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-invalid-value-'))
+    client = createProjectDbClient(storageRoot)
+    const sensitiveValue = 'Bearer customer-secret-value'
+    await client.$executeRawUnsafe(`CREATE TABLE "FileOriginSession" (
+      "projectId" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "titleSnapshot" TEXT,
+      "state" TEXT NOT NULL DEFAULT 'active',
+      "deletedAt" DATETIME,
+      "deletionOperationId" TEXT,
+      "retainedReviewIdsJson" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL,
+      PRIMARY KEY ("projectId", "sessionId")
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "FileOriginSession" (
+        "projectId", "sessionId", "state", "updatedAt"
+      ) VALUES (${'project-1'}, ${'session-1'}, ${sensitiveValue}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+
+    let failure: unknown
+    try {
+      await migrateApplicationDatabase(client)
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toMatchObject({
+      code: 'database_validation_failed',
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'unsupported-value',
+          table: 'FileOriginSession',
+          column: 'state',
+          expected: ['active', 'deleting', 'deleted'],
+          actual: {
+            type: 'string',
+            length: sensitiveValue.length,
+            sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+          }
+        }
+      }
+    })
+    expect(String((failure as Error & { cause?: Error }).cause?.message)).not.toContain(
+      sensitiveValue
+    )
+    expect(
+      JSON.stringify((failure as Error & { cause?: { data?: unknown } }).cause?.data)
+    ).not.toContain(sensitiveValue)
+  })
+
   it('adopts the pre-ledger permission seed table from the final baseline', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-permission-seed-'))
     client = createProjectDbClient(storageRoot)
@@ -451,6 +637,63 @@ describe('application database migrations', () => {
       client.permissionGrantSeed.findUniqueOrThrow({ where: { id: 'global-customize-v1' } })
     ).resolves.toEqual({ id: 'global-customize-v1', appliedAt })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('creates a restorable snapshot before adopting a legacy database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const backupEvents: unknown[] = []
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+
+    await expect(
+      migrateApplicationDatabase(client, {
+        databasePath,
+        onBackupReady: (event) => {
+          backupEvents.push(event)
+          throw new Error('simulated backup diagnostic failure')
+        }
+      })
+    ).resolves.toMatchObject({ adoptedLegacy: true, applied: ['0001_runtime_schema_baseline'] })
+    expect(backupEvents).toEqual([
+      {
+        migrationId: '0001_runtime_schema_baseline',
+        path: backupPath,
+        reused: false
+      }
+    ])
+    await expect(client.project.count()).resolves.toBe(1)
+
+    const backupClient = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      await expect(
+        backupClient.$queryRaw<Array<{ id: string; name: string }>>`
+          SELECT "id", "name" FROM "Project" WHERE "id" = 'legacy-project'
+        `
+      ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
+      await expect(
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema"
+          WHERE "type" = 'table' AND "name" = '_open_science_migrations'
+        `
+      ).resolves.toEqual([])
+    } finally {
+      await backupClient.$disconnect()
+    }
   })
 
   it('rejects an unknown pre-ledger table without changing it', async () => {
@@ -477,6 +720,389 @@ describe('application database migrations', () => {
         `SELECT "name" FROM "sqlite_schema" WHERE "name" = '_open_science_migrations'`
       )
     ).resolves.toEqual([])
+  })
+
+  it('reuses the original backup when a failed legacy migration is retried', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-retry-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupEvents: Array<{ reused: boolean }> = []
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(
+      'CREATE TABLE "FutureApplicationTable" ("id" TEXT NOT NULL PRIMARY KEY)'
+    )
+    const options = {
+      databasePath,
+      onBackupReady: (event: { reused: boolean }): void => {
+        backupEvents.push(event)
+      }
+    }
+
+    await expect(migrateApplicationDatabase(client, options)).rejects.toMatchObject({
+      code: 'database_validation_failed'
+    })
+    await expect(migrateApplicationDatabase(client, options)).rejects.toMatchObject({
+      code: 'database_validation_failed'
+    })
+    expect(backupEvents).toEqual([
+      expect.objectContaining({ reused: false }),
+      expect.objectContaining({ reused: true })
+    ])
+  })
+
+  it('blocks migration when an existing backup is not a valid SQLite database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-invalid-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(
+      'CREATE TABLE "FutureApplicationTable" ("id" TEXT NOT NULL PRIMARY KEY)'
+    )
+    await writeFile(backupPath, 'not a SQLite database', 'utf8')
+
+    await expect(migrateApplicationDatabase(client, { databasePath })).rejects.toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM "sqlite_schema"
+        WHERE "name" = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
+  })
+
+  it('rejects a backup whose index contents fail SQLite integrity_check', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-corrupt-index-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "FutureApplicationTable" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "leftValue" TEXT NOT NULL,
+      "rightValue" TEXT NOT NULL
+    )`)
+    await client.$executeRawUnsafe(
+      'CREATE INDEX "FutureApplicationTable_left_idx" ON "FutureApplicationTable"("leftValue")'
+    )
+    await client.$executeRawUnsafe(
+      'CREATE INDEX "FutureApplicationTable_right_idx" ON "FutureApplicationTable"("rightValue")'
+    )
+    await client.$executeRaw`
+      INSERT INTO "FutureApplicationTable" ("id", "leftValue", "rightValue")
+      VALUES (${'one'}, ${'alpha'}, ${'zulu'}), (${'two'}, ${'beta'}, ${'yankee'})
+    `
+    await client.$executeRawUnsafe('VACUUM INTO ?', backupPath)
+
+    const backupWriter = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      const roots = await backupWriter.$queryRawUnsafe<Array<{ name: string; rootpage: bigint }>>(`
+        SELECT "name", "rootpage" FROM "sqlite_schema"
+        WHERE "name" IN (
+          'FutureApplicationTable_left_idx',
+          'FutureApplicationTable_right_idx'
+        )
+      `)
+      const leftRoot = roots.find(
+        ({ name }) => name === 'FutureApplicationTable_left_idx'
+      )!.rootpage
+      const rightRoot = roots.find(
+        ({ name }) => name === 'FutureApplicationTable_right_idx'
+      )!.rootpage
+      await backupWriter.$executeRawUnsafe('PRAGMA writable_schema = ON')
+      await backupWriter.$executeRawUnsafe(
+        `UPDATE "sqlite_schema"
+         SET "rootpage" = CASE "name"
+           WHEN 'FutureApplicationTable_left_idx' THEN ?
+           ELSE ?
+         END
+         WHERE "name" IN (
+           'FutureApplicationTable_left_idx',
+           'FutureApplicationTable_right_idx'
+         )`,
+        rightRoot,
+        leftRoot
+      )
+      await backupWriter.$executeRawUnsafe('PRAGMA writable_schema = OFF')
+    } finally {
+      await backupWriter.$disconnect()
+    }
+
+    const backupReader = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      await expect(
+        backupReader.$queryRawUnsafe<Array<{ quick_check: string }>>('PRAGMA quick_check')
+      ).resolves.toEqual([{ quick_check: 'ok' }])
+      const integrity =
+        await backupReader.$queryRawUnsafe<Array<{ integrity_check: string }>>(
+          'PRAGMA integrity_check'
+        )
+      expect(integrity).not.toEqual([{ integrity_check: 'ok' }])
+    } finally {
+      await backupReader.$disconnect()
+    }
+
+    const ready: unknown[] = []
+    let failure: unknown
+    try {
+      await migrateApplicationDatabase(client, {
+        databasePath,
+        onBackupReady: (event) => ready.push(event)
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    expect((failure as Error).cause).toMatchObject({
+      name: 'DatabaseValidationError',
+      data: { kind: 'backup-integrity-check-failed' }
+    })
+    expect(ready).toEqual([])
+  })
+
+  it('compares backup contents with duplicate-row multiplicity', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-duplicate-backup-row-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "FutureApplicationTable" (
+      "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+      "value" TEXT NOT NULL
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "FutureApplicationTable" ("value") VALUES (${'preserved'})
+    `
+    await client.$executeRawUnsafe('VACUUM INTO ?', backupPath)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "sqlite_sequence" ("name", "seq")
+      SELECT "name", "seq" FROM "sqlite_sequence"
+      WHERE "name" = 'FutureApplicationTable'
+      LIMIT 1
+    `)
+
+    const ready: unknown[] = []
+    let failure: unknown
+    try {
+      await migrateApplicationDatabase(client, {
+        databasePath,
+        onBackupReady: (event) => ready.push(event)
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    expect((failure as Error).cause).toMatchObject({
+      name: 'DatabaseValidationError',
+      data: { kind: 'backup-content-mismatch', table: 'sqlite_sequence' }
+    })
+    expect(ready).toEqual([])
+  })
+
+  it('blocks migration when an existing backup belongs to another database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-foreign-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'source-project'}, ${'Source'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+
+    await client.$disconnect()
+    client = undefined
+    await copyFile(databasePath, backupPath)
+    const foreignClient = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      await foreignClient.$executeRaw`
+        UPDATE "Project" SET "id" = ${'foreign-project'}, "name" = ${'Foreign'}
+        WHERE "id" = ${'source-project'}
+      `
+    } finally {
+      await foreignClient.$disconnect()
+    }
+    client = createProjectDbClient(storageRoot)
+
+    let failure: unknown
+    try {
+      await migrateApplicationDatabase(client, { databasePath })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    expect((failure as Error).cause).toMatchObject({
+      name: 'DatabaseValidationError',
+      data: { kind: 'backup-content-mismatch', table: 'Project' }
+    })
+    await expect(
+      client.$queryRaw<Array<{ id: string; name: string }>>`
+        SELECT "id", "name" FROM "Project"
+      `
+    ).resolves.toEqual([{ id: 'source-project', name: 'Source' }])
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM "sqlite_schema"
+        WHERE "name" = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
+  })
+
+  it('leaves legacy data and the ledger untouched when backup creation fails', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-failure-'))
+    const unavailableDatabasePath = join(storageRoot, 'missing', 'open-science.db')
+    const temporaryBackupPath = `${unavailableDatabasePath}.before-0001_runtime_schema_baseline.backup.tmp`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+
+    await expect(
+      migrateApplicationDatabase(client, { databasePath: unavailableDatabasePath })
+    ).rejects.toMatchObject({
+      code: 'database_migration_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+    await expect(
+      client.$queryRaw<Array<{ id: string; name: string }>>`
+        SELECT "id", "name" FROM "Project"
+      `
+    ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM "sqlite_schema"
+        WHERE "name" = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
+    await expect(access(temporaryBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('backs up a legacy database before deleting the snapshot after a successful migration', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+    const retiredManifest = MIGRATION_MANIFEST.map((migration) => ({
+      ...migration,
+      backupOnApply: 'required' as const,
+      backupRetention: 'delete-after-success' as const
+    }))
+    const ready: unknown[] = []
+    const retired: unknown[] = []
+
+    await migrateApplicationDatabaseWithManifest(client, retiredManifest, {
+      databasePath,
+      onBackupReady: (event) => ready.push(event),
+      onBackupRetired: (event) => retired.push(event)
+    })
+
+    expect(ready).toEqual([
+      expect.objectContaining({
+        migrationId: '0001_runtime_schema_baseline',
+        path: backupPath,
+        reused: false
+      })
+    ])
+    expect(retired).toEqual([{ migrationId: '0001_runtime_schema_baseline', path: backupPath }])
+    await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
+    ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
+  })
+
+  it('does not report backup retirement when no backup exists', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-no-retired-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client, { databasePath })
+    const retiredManifest = MIGRATION_MANIFEST.map((migration) => ({
+      ...migration,
+      backupOnApply: 'none' as const,
+      backupRetention: 'delete-after-success' as const
+    }))
+    const retired: unknown[] = []
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, retiredManifest, {
+        databasePath,
+        onBackupRetired: (event) => retired.push(event)
+      })
+    ).resolves.toMatchObject({ applied: [] })
+    expect(retired).toEqual([])
+    await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports backup retirement failure without blocking a valid database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retirement-failure-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client, { databasePath })
+    await mkdir(backupPath)
+    await writeFile(join(backupPath, 'keep'), 'occupied', 'utf8')
+    const retiredManifest = MIGRATION_MANIFEST.map((migration) => ({
+      ...migration,
+      backupOnApply: 'none' as const,
+      backupRetention: 'delete-after-success' as const
+    }))
+    const failures: unknown[] = []
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, retiredManifest, {
+        databasePath,
+        onBackupRetirementFailed: (event) => failures.push(event)
+      })
+    ).resolves.toMatchObject({ applied: [] })
+    expect(failures).toEqual([
+      expect.objectContaining({
+        migrationId: '0001_runtime_schema_baseline',
+        path: backupPath,
+        error: expect.any(Error)
+      })
+    ])
+    await expect(access(backupPath)).resolves.toBeUndefined()
   })
 
   it.each([

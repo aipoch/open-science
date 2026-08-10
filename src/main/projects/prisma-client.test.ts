@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Prisma, type PrismaClient } from '@prisma/client'
+import { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { applyRuntimeSchemaBaseline } from '../database/legacy-baseline-adapter'
@@ -247,11 +247,20 @@ describe('project prisma client (integration)', () => {
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
       code: 'database_validation_failed',
-      cause: expect.objectContaining({
-        message: expect.stringContaining(
-          'FileOriginSession.state contains unsupported value "corrupt"'
-        )
-      })
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'unsupported-value',
+          table: 'FileOriginSession',
+          column: 'state',
+          expected: ['active', 'deleting', 'deleted'],
+          actual: {
+            type: 'string',
+            length: 7,
+            sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+          }
+        }
+      }
     })
     await expect(
       client.$queryRawUnsafe<Array<{ state: string }>>(
@@ -285,7 +294,14 @@ describe('project prisma client (integration)', () => {
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
       code: 'database_validation_failed',
-      cause: expect.objectContaining({ message: expect.stringMatching(/futureMarker/) })
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'unknown-columns',
+          table: 'FileOriginSession',
+          actual: ['futureMarker']
+        }
+      }
     })
     await expect(
       client.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info('FileOriginSession')`)
@@ -612,6 +628,56 @@ describe('project prisma client (integration)', () => {
 
     expect(second).not.toBe(first)
     await expect(second.$queryRawUnsafe('PRAGMA integrity_check')).resolves.toBeDefined()
+  })
+
+  it('backs up legacy data through the shared client on a portable storage path', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const seedClient = createProjectDbClient(storageRoot)
+    try {
+      await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "description" TEXT NOT NULL DEFAULT '',
+        "isExample" BOOLEAN NOT NULL DEFAULT false,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )`)
+      await seedClient.$executeRaw`
+        INSERT INTO "Project" ("id", "name", "updatedAt")
+        VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+      `
+    } finally {
+      await seedClient.$disconnect()
+    }
+
+    disconnect = disconnectProjectDbClient
+    const client = await getProjectDbClient(storageRoot)
+
+    await expect(access(backupPath)).resolves.toBeUndefined()
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
+    ).resolves.toMatchObject({ name: 'Preserved' })
+
+    const backupClient = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      await expect(
+        backupClient.$queryRaw<Array<{ id: string; name: string }>>`
+          SELECT "id", "name" FROM "Project"
+        `
+      ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
+      await expect(
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema"
+          WHERE "type" = 'table' AND "name" = '_open_science_migrations'
+        `
+      ).resolves.toEqual([])
+    } finally {
+      await backupClient.$disconnect()
+    }
   })
 
   it('round-trips artifact lineage versions and enforces their session-scoped ordering keys', async () => {
