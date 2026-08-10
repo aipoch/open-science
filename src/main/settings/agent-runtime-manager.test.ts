@@ -463,11 +463,15 @@ describe('AgentRuntimeManager', () => {
     const agentRoot = join(storageRoot, 'isolated-agent')
     const targetFile = join(agentRoot, 'skills', customSkillName, 'SKILL.md')
 
-    await manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    await expect(
+      manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    ).resolves.toEqual([customSkillName])
     await expect(readFile(targetFile, 'utf8')).resolves.toContain('Use XT records.')
 
     materialized = []
-    await manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    await expect(
+      manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    ).resolves.toEqual([])
     await expect(readFile(targetFile, 'utf8')).rejects.toThrow()
   })
 

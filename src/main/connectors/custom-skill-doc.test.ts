@@ -233,6 +233,8 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
       mkdir(join(source, 'mcp-malformed'), { recursive: true }),
       mkdir(join(target, 'mcp-stale'), { recursive: true }),
       mkdir(join(target, 'mcp-pubmed'), { recursive: true }),
+      mkdir(join(target, 'mcp-MySkill'), { recursive: true }),
+      mkdir(join(target, 'mcp-custom.v2'), { recursive: true }),
       mkdir(join(target, 'user-skill'), { recursive: true })
     ])
     const xtDoc =
@@ -242,6 +244,8 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
       writeFile(join(source, 'mcp-malformed', 'SKILL.md'), '# missing frontmatter'),
       writeFile(join(target, 'mcp-stale', 'SKILL.md'), 'stale'),
       writeFile(join(target, 'mcp-pubmed', 'SKILL.md'), 'bundled'),
+      writeFile(join(target, 'mcp-MySkill', 'SKILL.md'), 'user uppercase'),
+      writeFile(join(target, 'mcp-custom.v2', 'SKILL.md'), 'user punctuation'),
       writeFile(join(target, 'user-skill', 'SKILL.md'), 'user')
     ])
 
@@ -259,12 +263,18 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
       'mcp-malformed',
       'mcp-missing'
     ])
-    expect((await readdir(target)).sort()).toEqual(['mcp-pubmed', 'mcp-xt', 'user-skill'])
+    expect((await readdir(target)).sort()).toEqual([
+      'mcp-MySkill',
+      'mcp-custom.v2',
+      'mcp-pubmed',
+      'mcp-xt',
+      'user-skill'
+    ])
     expect(await readFile(join(target, 'mcp-xt', 'SKILL.md'), 'utf8')).toBe(xtDoc)
     expect(await readFile(join(target, 'mcp-pubmed', 'SKILL.md'), 'utf8')).toBe('bundled')
   })
 
-  it('canonicalizes a stale case-variant without deleting the copied doc', async () => {
+  it('does not delete an unowned case-variant while publishing the canonical doc', async () => {
     const root = await mkdtemp(join(tmpdir(), 'custom-skill-copy-case-'))
     const source = join(root, 'source')
     const target = join(root, 'target')
@@ -282,7 +292,6 @@ describe('syncMaterializedCustomServerSkillDocs', () => {
     await syncMaterializedCustomServerSkillDocs(source, target, ['mcp-xt'])
 
     expect(await readFile(join(target, 'mcp-xt', 'SKILL.md'), 'utf8')).toBe(xtDoc)
-    const entries = await readdir(target)
-    expect(new Set(entries.map((entry) => entry.toLowerCase())).size).toBe(entries.length)
+    expect(await readdir(target)).toContain('mcp-XT')
   })
 })

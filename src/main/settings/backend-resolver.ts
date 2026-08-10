@@ -266,8 +266,10 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const connectorSkillNames = this.connectors.connectorSkillNames(settings.connectors)
-    const connectorInstructions = renderConnectorInstructions(connectorSkillNames)
+    let connectorInstructions =
+      framework.id === 'claude-code'
+        ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
+        : ''
     const executablePath =
       framework.id === 'claude-code'
         ? await this.runtime.resolveClaudeExecutable(settings.claude?.resolvedPath)
@@ -342,7 +344,12 @@ export class AgentBackendResolver {
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
+    const materializedConnectorSkillNames = await this.runtime.materializeAgentSkills(
+      settings,
+      skillsRoot,
+      forcedSkillIds
+    )
+    connectorInstructions = renderConnectorInstructions(materializedConnectorSkillNames)
 
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
