@@ -28,6 +28,7 @@ import {
   UnsafeLegacyUploadResidualError,
   UploadRepository
 } from './repository'
+import { VerifiedLegacyCleanupOwner } from './verified-legacy-cleanup-owner'
 import { stageUploadFixtures } from './repository.test-utils'
 
 let storageRoot: string | undefined
@@ -1156,6 +1157,23 @@ describe('upload repository', () => {
       createdAt: 1,
       updatedAt: 1
     }
+    const cleanupInput = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      uploadFileId: uploadId,
+      versionId,
+      filename
+    }
+    const hardLinkUnavailable = vi.fn(async () => {
+      throw Object.assign(new Error('Hard links are unavailable.'), { code: 'EPERM' })
+    })
+    const fallbackCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      { getClient: () => Promise.resolve(client), linkReadyContent: hardLinkUnavailable },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
 
     await expect(
       repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
@@ -1164,11 +1182,15 @@ describe('upload repository', () => {
     await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
 
     await writeFile(legacyPath, content)
-    await expect(
-      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
-    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'removed'
+    })
+    expect(hardLinkUnavailable).toHaveBeenCalledOnce()
     await expect(readFile(finalPath)).resolves.toEqual(content)
     await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(`${finalPath}.legacy-recovery.copy.tmp`)).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
 
     await expect(
       repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
@@ -1190,6 +1212,29 @@ describe('upload repository', () => {
     ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
     await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(legacyPath)).resolves.toEqual(racedContent)
+
+    const finalParent = dirname(finalPath)
+    const outsideFinalParent = join(root, 'outside-ready-version')
+    await rm(finalParent, { recursive: true, force: true })
+    await mkdir(outsideFinalParent)
+    await symlink(
+      outsideFinalParent,
+      finalParent,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await writeFile(legacyPath, content)
+    await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the ready Version content parent contains a symbolic link or escapes storage'
+    })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    expect(hardLinkUnavailable).toHaveBeenCalledOnce()
+    await expect(readFile(join(outsideFinalParent, 'content'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(stat(outsideFinalParent)).resolves.toMatchObject({})
+    await rm(finalParent)
   })
 
   it('removes a verified legacy copy when reusing an existing ready Upload Version', async () => {

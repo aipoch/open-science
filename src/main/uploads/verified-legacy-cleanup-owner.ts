@@ -1,6 +1,6 @@
-import { createReadStream } from 'node:fs'
-import { link, lstat, mkdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { constants, createReadStream } from 'node:fs'
+import { copyFile, link, lstat, mkdir, realpath, rename, rm, rmdir, stat } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
@@ -15,12 +15,23 @@ import {
 } from './storage-helpers'
 
 const LEGACY_CLEANUP_PRIVATE_SUFFIX = '.legacy-cleanup.private'
+const LEGACY_RECOVERY_COPY_TEMP_SUFFIX = '.legacy-recovery.copy.tmp'
+const HARD_LINK_FALLBACK_ERROR_CODES = new Set([
+  'EACCES',
+  'EINVAL',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'EPERM',
+  'EXDEV'
+])
 const LEGACY_CLEANUP_CANDIDATE = 'candidate'
 
 type VerifiedLegacyCleanupOptions = {
   getClient?: () => Promise<PrismaClient>
   getLegacyFileChecksum?: (path: string) => Promise<string>
   renameLegacyForCleanup?: (source: string, destination: string) => Promise<void>
+  linkReadyContent?: typeof link
+  copyReadyContent?: typeof copyFile
 }
 
 type VerifiedLegacyCleanupDependencies = {
@@ -41,6 +52,14 @@ type RemoveVerifiedLegacyCopyInput = {
 
 type LegacyCleanupResult =
   { status: 'absent' | 'removed' } | { status: 'unsafe-residual'; reason: string }
+type ReadyContentCopyResult =
+  { status: 'published' } | { status: 'unsafe-residual'; reason: string }
+
+const isHardLinkUnavailableError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  HARD_LINK_FALLBACK_ERROR_CODES.has(String((error as { code?: unknown }).code))
 
 type FileIdentity = Awaited<ReturnType<typeof lstat>>
 
@@ -80,6 +99,91 @@ class VerifiedLegacyCleanupOwner {
       if (isMissingFileError(error)) return false
       throw error
     }
+  }
+  private async ensureSafeFinalParent(finalPath: string): Promise<boolean> {
+    const storageRoot = resolve(this.storageRoot)
+    const finalParent = dirname(finalPath)
+    const parentSegments = relative(storageRoot, finalParent).split(sep).filter(Boolean)
+    let currentPath = storageRoot
+
+    for (const segment of parentSegments) {
+      currentPath = join(currentPath, segment)
+      let currentInfo: FileIdentity
+      try {
+        currentInfo = await lstat(currentPath)
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+        try {
+          await mkdir(currentPath)
+        } catch (mkdirError) {
+          if (!isFileExistsError(mkdirError)) throw mkdirError
+        }
+        currentInfo = await lstat(currentPath)
+      }
+      if (!currentInfo.isDirectory() || currentInfo.isSymbolicLink()) return false
+    }
+
+    const canonicalStorageRoot = await realpath(storageRoot)
+    const canonicalFinalParent = await realpath(finalParent)
+    try {
+      assertPathInsideRoot(
+        canonicalStorageRoot,
+        join(canonicalFinalParent, basename(finalPath)),
+        'Ready Upload Version parent escapes storage.'
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async publishReadyContentCopy(
+    expectedLegacyPath: string,
+    finalPath: string,
+    verifiedLegacyInfo: FileIdentity,
+    expectedSize: number,
+    expectedChecksum: string
+  ): Promise<ReadyContentCopyResult> {
+    const temporaryPath = `${finalPath}${LEGACY_RECOVERY_COPY_TEMP_SUFFIX}`
+    assertPathInsideRoot(this.storageRoot, temporaryPath, 'Upload recovery path escapes storage.')
+    let createdTemporary = false
+    try {
+      await (this.options.copyReadyContent ?? copyFile)(
+        expectedLegacyPath,
+        temporaryPath,
+        constants.COPYFILE_EXCL
+      )
+      createdTemporary = true
+    } catch (error) {
+      if (!isFileExistsError(error)) throw error
+    }
+
+    const temporaryInfo = await lstat(temporaryPath)
+    const copiedContentIsValid =
+      temporaryInfo.isFile() &&
+      !temporaryInfo.isSymbolicLink() &&
+      temporaryInfo.size === expectedSize &&
+      (await sha256File(temporaryPath)) === expectedChecksum
+    const reverifiedLegacyInfo = await lstat(expectedLegacyPath)
+    const sourceStayedStable =
+      reverifiedLegacyInfo.isFile() &&
+      !reverifiedLegacyInfo.isSymbolicLink() &&
+      hasSameFileSnapshot(reverifiedLegacyInfo, verifiedLegacyInfo)
+    if (!copiedContentIsValid || !sourceStayedStable) {
+      if (createdTemporary && temporaryInfo.isFile() && !temporaryInfo.isSymbolicLink()) {
+        const currentTemporaryInfo = await lstat(temporaryPath).catch(() => undefined)
+        if (currentTemporaryInfo && hasSameFileIdentity(currentTemporaryInfo, temporaryInfo)) {
+          await rm(temporaryPath, { force: true })
+        }
+      }
+      return {
+        status: 'unsafe-residual',
+        reason: 'the deterministic legacy path changed while copying Version content'
+      }
+    }
+
+    await rename(temporaryPath, finalPath)
+    return { status: 'published' }
   }
 
   // Cleanup is fail-closed: SQLite authority, a verified byte source, the deterministic legacy
@@ -241,15 +345,33 @@ class VerifiedLegacyCleanupOwner {
 
     let recoveredFinalInfo: FileIdentity | undefined
     if (!finalInfo) {
-      await mkdir(dirname(finalPath), { recursive: true })
+      if (!(await this.ensureSafeFinalParent(finalPath))) {
+        return {
+          status: 'unsafe-residual',
+          reason: 'the ready Version content parent contains a symbolic link or escapes storage'
+        }
+      }
       let createdFinal = false
+      let createdHardLink = false
       try {
         // Both paths are below the storage root, so linking publishes the verified inode without
         // exposing a partially copied immutable file.
-        await link(expectedLegacyPath, finalPath)
+        await (this.options.linkReadyContent ?? link)(expectedLegacyPath, finalPath)
         createdFinal = true
+        createdHardLink = true
       } catch (error) {
-        if (!isFileExistsError(error)) throw error
+        if (!isFileExistsError(error)) {
+          if (!isHardLinkUnavailableError(error)) throw error
+          const copyResult = await this.publishReadyContentCopy(
+            expectedLegacyPath,
+            finalPath,
+            verifiedLegacyInfo,
+            Number(version.sizeBytes),
+            version.checksum
+          )
+          if (copyResult.status === 'unsafe-residual') return copyResult
+          createdFinal = true
+        }
       }
 
       const restoredFinalInfo = await lstat(finalPath)
@@ -265,22 +387,25 @@ class VerifiedLegacyCleanupOwner {
         hasSameFileIdentity(reverifiedLegacyInfo, verifiedLegacyInfo) &&
         reverifiedLegacyInfo.mtimeMs === verifiedLegacyInfo.mtimeMs
       const createdLinkHasVerifiedIdentity =
-        !createdFinal || hasSameFileIdentity(restoredFinalInfo, verifiedLegacyInfo)
+        !createdHardLink || hasSameFileIdentity(restoredFinalInfo, verifiedLegacyInfo)
 
       if (
         !restoredContentIsValid ||
         !verifiedSourceStayedStable ||
         !createdLinkHasVerifiedIdentity
       ) {
-        if (createdFinal && hasSameFileIdentity(restoredFinalInfo, verifiedLegacyInfo)) {
-          await rm(finalPath, { force: true })
+        if (createdFinal) {
+          const currentFinalInfo = await lstat(finalPath).catch(() => undefined)
+          if (currentFinalInfo && hasSameFileIdentity(currentFinalInfo, restoredFinalInfo)) {
+            await rm(finalPath, { force: true })
+          }
         }
         return {
           status: 'unsafe-residual',
           reason: 'the deterministic legacy path changed while restoring Version content'
         }
       }
-      if (createdFinal) recoveredFinalInfo = restoredFinalInfo
+      if (createdHardLink) recoveredFinalInfo = restoredFinalInfo
     }
     try {
       // mkdir is the portable no-replace claim; the rename target inside it cannot collide with
