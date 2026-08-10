@@ -201,6 +201,10 @@ describe('ConnectorSettingsModule', () => {
     const [server] = (await service.listConnectors()).customServers
 
     expect(server).toMatchObject({ id, enabled: true, availability: 'unavailable' })
+
+    const [disabled] = (await service.setCustomServerEnabled({ id, enabled: false })).customServers
+    expect(disabled).toMatchObject({ id, enabled: false })
+    expect(disabled.availability).toBeUndefined()
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {

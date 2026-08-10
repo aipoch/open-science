@@ -83,6 +83,13 @@ const specialistNamesUsingConnector = (
     .sort((a, b) => a.localeCompare(b))
 }
 
+const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
+  Boolean(
+    server.oauth &&
+    (!server.oauth.hasTokens || server.availability === 'unauthenticated') &&
+    !server.enabled
+  )
+
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
 }
@@ -520,7 +527,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         ) : null}
                         <span
                           className={`block truncate text-xs ${
-                            server.availability ? 'text-danger-000' : 'text-muted-foreground'
+                            server.availability ? 'text-destructive' : 'text-muted-foreground'
                           }`}
                         >
                           {retryingIds.has(server.id)
@@ -597,18 +604,21 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <SettingsToggle
                         enabled={server.enabled}
                         aria-label={server.name}
-                        disabled={Boolean(
-                          server.oauth &&
-                          (!server.oauth.hasTokens || server.availability === 'unauthenticated') &&
-                          !server.enabled
-                        )}
+                        aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                        className={
+                          requiresSignInBeforeEnable(server)
+                            ? 'cursor-not-allowed opacity-50'
+                            : undefined
+                        }
                         title={
-                          server.oauth &&
-                          (!server.oauth.hasTokens || server.availability === 'unauthenticated')
+                          requiresSignInBeforeEnable(server)
                             ? 'Sign in before enabling this Connector'
                             : undefined
                         }
-                        onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
+                        onToggle={() => {
+                          if (requiresSignInBeforeEnable(server)) return
+                          void setCustomServerEnabled(server.id, !server.enabled)
+                        }}
                       />
                     </li>
                   ))}

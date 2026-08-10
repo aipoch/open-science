@@ -496,11 +496,16 @@ class ConnectorSettingsModule {
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
-        const availability = unavailable
+        const configurationAvailability = unavailable
           ? ('unavailable' as const)
           : unauthenticated
             ? ('unauthenticated' as const)
-            : this.customServerRuntimeProjectionProvider.availability(server.id)
+            : undefined
+        const availability =
+          configurationAvailability ??
+          (server.enabled
+            ? this.customServerRuntimeProjectionProvider.availability(server.id)
+            : undefined)
         return {
           id: server.id,
           slug: customConnectorSlug(server),

@@ -107,6 +107,24 @@ describe('McpClientManager', () => {
     expect(connectCount).toBe(2)
   })
 
+  it('close drops one cached client so a retry reconnects it', async () => {
+    let connectCount = 0
+    const { createClient } = makeTestServer()
+    const manager = new McpClientManager({
+      createClient: async () => {
+        connectCount += 1
+        return createClient()
+      }
+    })
+
+    await manager.listTools(config)
+    await manager.close(config.id)
+    await manager.listTools(config)
+
+    expect(connectCount).toBe(2)
+    await manager.closeAll()
+  })
+
   it('completes an interactive OAuth callback, clears PKCE, and reconnects', async () => {
     const saveOAuthState = vi.fn(async () => undefined)
     const openExternal = vi.fn(async (authorizationUrl: string) => {

@@ -1694,7 +1694,8 @@ const createApplicationModules = async (
         permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),
       beginCustomServerSecurityChange: (serverId) =>
         connectorService.beginCustomServerSecurityChange(serverId),
-      clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId)
+      clearCustomServerFailure: (serverId) => connectorService.clearCustomServerFailure(serverId),
+      resetCustomServerClient: (serverId) => mcpClientManager.close(serverId)
     },
     appearance: { applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined) }
   })

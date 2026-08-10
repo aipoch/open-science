@@ -343,8 +343,12 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
     const waitingToggle = document.body.querySelector<HTMLButtonElement>('[aria-label="OAuth MCP"]')
-    expect(waitingToggle?.disabled).toBe(true)
+    expect(waitingToggle?.disabled).toBe(false)
+    expect(waitingToggle?.getAttribute('aria-disabled')).toBe('true')
+    expect(waitingToggle?.className).toContain('cursor-not-allowed')
     expect(waitingToggle?.getAttribute('data-state')).toBe('unchecked')
+    act(() => waitingToggle?.click())
+    expect(useSettingsStore.getState().setCustomServerEnabled).not.toHaveBeenCalled()
 
     await act(async () => {
       clickButtonByText('Sign in')
@@ -373,6 +377,7 @@ describe('ConnectorsPanel (groups)', () => {
       '[aria-label="OAuth MCP"]'
     )
     expect(connectedToggle?.disabled).toBe(false)
+    expect(connectedToggle?.getAttribute('aria-disabled')).toBeNull()
     expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
   })
 
@@ -401,6 +406,10 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
     expect(document.body.textContent).toContain('Unavailable')
+    const unavailableStatus = Array.from(document.body.querySelectorAll('span')).find(
+      (candidate) => candidate.textContent === 'Unavailable'
+    )
+    expect(unavailableStatus?.className).toContain('text-destructive')
     act(() => clickButtonByText('Retry'))
     expect(retryCustomServer).toHaveBeenCalledWith('offline-mcp')
     expect(document.body.textContent).toContain('Checking…')

@@ -36,7 +36,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
     beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
-    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined)
+    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined),
+    resetCustomServerClient: effects.resetCustomServerClient ?? (async () => undefined)
   },
   appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
 })
@@ -585,6 +586,9 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const workflows = createSettingsWorkflows(
       capability,
       testEffects({
+        resetCustomServerClient: async (id) => {
+          calls.push(`reset:${id}`)
+        },
         clearCustomServerFailure: (id) => calls.push(`clear:${id}`),
         invalidatePermissionProjection: () => calls.push('invalidate'),
         refreshConnectorSkillDocs: async () => {
@@ -596,7 +600,14 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     await workflows.retryCustomServer({ id: 'server-1' })
 
-    expect(calls).toEqual(['clear:server-1', 'invalidate', 'refresh', 'reload', 'snapshot'])
+    expect(calls).toEqual([
+      'reset:server-1',
+      'clear:server-1',
+      'invalidate',
+      'refresh',
+      'reload',
+      'snapshot'
+    ])
   })
 
   it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {
