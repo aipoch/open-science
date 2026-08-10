@@ -526,6 +526,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
   height, remaining content scrolls inside the panel while the title banner and Allow/Deny action bar
   stay pinned to the panel top and bottom. Pressing the resize hit area changes only the visible
   handle, not the full hit-area background.
+- Ask-User elicitation uses the same content-bounded bottom resize behavior. While it owns the
+  composer lane, hide the Notebook, jobs, and Plan status chrome above it so the resize handle is the
+  panel's single top affordance. Restore that status chrome after the elicitation leaves the lane.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.

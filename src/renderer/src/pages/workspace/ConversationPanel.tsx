@@ -130,6 +130,7 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
     ariaLabel="Resize question panel"
     testId="elicitation-composer"
     scrollTestId="elicitation-composer-scroll"
+    constrainGrowthToOverflow
     minimumContentSelector='[data-elicitation-option-row="true"]'
     minimumContentIndex={1}
   >
@@ -647,6 +648,7 @@ const ConversationPanel = ({
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
                 {!sideChat &&
+                (!pendingElicitation || hasPendingPermission) &&
                 (notebookReference ||
                   hasAnyJobs ||
                   (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (

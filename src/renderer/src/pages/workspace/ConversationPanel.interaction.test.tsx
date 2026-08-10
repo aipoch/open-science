@@ -344,7 +344,7 @@ describe('ConversationPanel composer intake', () => {
     window.api = previousApi
   })
 
-  it('hides the ordinary composer while structured input is pending', () => {
+  it('shows structured input in a content-bounded lane without notebook chrome', () => {
     const fields = [
       {
         id: 'question_0',
@@ -389,8 +389,18 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 1
     }
 
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
       activeSession,
+      notebookReference: {
+        sessionId: activeSession.id,
+        projectName: activeSession.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      },
       pendingElicitations: [
         {
           requestId: 'elicitation-1',
@@ -422,6 +432,8 @@ describe('ConversationPanel composer intake', () => {
     expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-card-opaque')).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
 
     const optionRows = container.querySelectorAll<HTMLElement>(
       '[data-elicitation-option-row="true"]'
@@ -449,11 +461,24 @@ describe('ConversationPanel composer intake', () => {
     act(() => {
       resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
     })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
+
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 256 },
+      scrollHeight: { configurable: true, value: 400 }
+    })
+    act(() => {
+      resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
+    })
     expect((elicitationComposer as HTMLElement).style.height).toBe('320px')
 
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
     ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 300 }) as DOMRect
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 250 },
+      scrollHeight: { configurable: true, value: 500 }
+    })
     act(() => {
       resizeHandle.dispatchEvent(
         new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
