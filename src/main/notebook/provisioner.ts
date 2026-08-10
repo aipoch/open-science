@@ -27,6 +27,7 @@ import { chainFetchBundle, createLocalBundleAdapter, resolveBundleDir } from './
 import { createFetchBundleAdapter } from './language-pack-fetch'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, type PackPathBudget } from './bundle-manifest'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
+import { validateAndSeedPackIntoCache } from './pack-content'
 import {
   recoverWindowsMaxPathPackage,
   removeOverBudgetUrlPackages,
@@ -85,8 +86,13 @@ import {
 // both main and renderer); re-export here so IPC-adjacent code can import them from the provisioner.
 export type { ProvisionProgress, ProvisionStatus }
 
-// A resolved bundle on disk: the local @EXPLICIT lock whose tarballs are already in the pkgs cache.
-export type FetchedBundle = { lockPath: string; pathBudget?: PackPathBudget }
+// A resolved bundle on disk. Production adapters retain the verified tarballs in packageSourceDir so
+// Windows can seed the short cache selected from the pack's path budget before offline materialization.
+export type FetchedBundle = {
+  lockPath: string
+  pathBudget?: PackPathBudget
+  packageSourceDir?: string
+}
 
 // One default environment specification (A-internal). `version` is the curated interpreter version
 // (e.g. "3.12" / "4.4") — it identifies the staged offline pack via packId(language, version) (see
@@ -320,6 +326,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       cache.lockKey,
       micromambaCacheLockKey(pkgsCache(this.deps.root), { platform: this.deps.platform })
     ]
+  }
+
+  private async seedBundleCache(bundle: FetchedBundle, cache: MicromambaCache): Promise<void> {
+    if (!bundle.packageSourceDir) return
+    const legacyCache = pkgsCache(this.deps.root)
+    const legacyLockKey = micromambaCacheLockKey(legacyCache, {
+      platform: this.deps.platform
+    })
+    const selectedLockKey = micromambaCacheLockKey(cache.path, {
+      platform: this.deps.platform
+    })
+    if (legacyLockKey === selectedLockKey) return
+    await validateAndSeedPackIntoCache(bundle.packageSourceDir, bundle.lockPath, cache)
   }
 
   private cacheForBundle(
@@ -1206,6 +1225,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     await this.withJournaledPrefixWrite(
       'upgrade',
@@ -1301,6 +1321,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     // Journal the create (child PID + prefix) so a process death mid-materialize is reconciled at next
     // startup: the recorded child is killed if it survived and, if liveness is unconfirmed, the prefix
@@ -1393,6 +1414,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           )
           if (!reseeded) throw error
           const retrySelected = this.cacheForBundle(spec, reseeded)
+          await this.seedBundleCache(reseeded, retrySelected.cache)
           await runCreate(reseeded.lockPath, retrySelected.cache, retrySelected.budget)
         }
       }
