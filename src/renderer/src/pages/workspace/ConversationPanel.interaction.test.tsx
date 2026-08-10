@@ -655,12 +655,19 @@ describe('ConversationPanel composer intake', () => {
     })
   })
 
-  it('shows file type and per-file size behavior before selection', () => {
+  it('moves file type and per-file size guidance into the Attach files tooltip', () => {
     renderPanel()
 
-    expect(container.querySelector('[data-testid="attachment-limits"]')?.textContent).toContain(
-      'Any file type · 10 GB per file. Large files are linked, not embedded.'
+    expect(container.querySelector('[data-testid="menu-attach-files"]')?.textContent).toBe(
+      'Attach files'
     )
+    expect(
+      [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
+        (node) =>
+          node.textContent ===
+          'Any file type · 10 GB per file. Large files are linked, not embedded.'
+      )
+    ).toBe(true)
   })
 
   it('keeps a pending Plan read-only after the Agent interaction ends without a decision', () => {
