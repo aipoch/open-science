@@ -6,6 +6,7 @@ import {
   type RendererParameterCodec,
   type RendererSurfaceProfile
 } from './renderer-contract'
+import { DATABASE_STARTUP_CHANNELS } from './database-startup'
 
 const WEB = 'web'
 const LOCAL = 'local'
@@ -192,6 +193,10 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['jobsList', 'compute:jobs:list'], ['jobsMarkConsumed', 'compute:jobs:mark-consumed'], ['jobsPendingNotification', 'compute:jobs:pending-notification'],
     ['list', 'compute:list'], ['listDir', 'compute:list-dir'], ['probe', 'compute:probe'], ['replayApproval', 'compute:approval-replay'], ['respondApproval', 'compute:approval-respond'],
     ['revealInFolder', 'compute:reveal-in-folder', LOCAL], ['scratchSet', 'compute:scratch:set'], ['sshConfigAliases', 'compute:ssh-config-aliases'],
+  ]),
+  group('database-startup', 'databaseStartup', [
+    ['getState', DATABASE_STARTUP_CHANNELS.getState, ELECTRON], ['retry', DATABASE_STARTUP_CHANNELS.retry, ELECTRON],
+    ['quit', DATABASE_STARTUP_CHANNELS.quit, ELECTRON], ['onStateChanged', DATABASE_STARTUP_CHANNELS.stateChanged, ELECTRON_EVENT],
   ]),
   group('diagnostics', 'diagnostics', [
     ['reportRendererFailure', 'diagnostics:renderer-failure', SEND],

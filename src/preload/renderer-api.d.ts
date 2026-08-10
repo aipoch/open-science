@@ -332,6 +332,7 @@ import type {
   WindowFindRequest,
   WindowFindResult
 } from '../shared/window-controls'
+import type { DatabaseStartupState } from '../shared/database-startup'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -349,6 +350,12 @@ export interface OpenScienceAPI {
   }
   lifecycle: {
     getClientId(): Promise<string>
+  }
+  databaseStartup: {
+    getState(): Promise<DatabaseStartupState>
+    retry(): Promise<DatabaseStartupState>
+    quit(): Promise<void>
+    onStateChanged(listener: AcpListener<DatabaseStartupState>): RemoveListener
   }
   diagnostics?: {
     reportRendererFailure(report: RendererFailureReport): void

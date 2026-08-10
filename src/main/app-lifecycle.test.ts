@@ -147,6 +147,8 @@ const setup = (
       | 'platform'
       | 'createInitialWindow'
       | 'onAppearanceChanged'
+      | 'initialWindow'
+      | 'configureMainWindow'
     >
   > & {
     trayHost?: boolean
@@ -181,6 +183,8 @@ const setup = (
       windows.push(w)
       return asWindow(w)
     },
+    initialWindow: overrides.initialWindow,
+    configureMainWindow: overrides.configureMainWindow,
     createTray: (handlers) => {
       trayHandlers = handlers
       return tray as unknown as import('electron').Tray | undefined
@@ -232,6 +236,20 @@ describe('installAppLifecycle', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)
     expect(trayHandlers).toBeDefined()
+  })
+
+  it('adopts and reconfigures an existing database-startup window', () => {
+    const initialWindow = makeFakeWindow()
+    const configureMainWindow = vi.fn()
+    const { windows, getMainWindow } = setup({
+      initialWindow: asWindow(initialWindow),
+      configureMainWindow
+    })
+
+    expect(windows).toHaveLength(0)
+    expect(getMainWindow()).toBe(asWindow(initialWindow))
+    expect(configureMainWindow).toHaveBeenCalledOnce()
+    expect(configureMainWindow).toHaveBeenCalledWith(initialWindow, expect.any(Object))
   })
 
   it('passes native appearance synchronization to every recreated main window', () => {

@@ -100,6 +100,13 @@ const api: OpenScienceAPI = {
   lifecycle: {
     getClientId: () => electronRendererContracts.invoke('lifecycle.getClientId')
   },
+  databaseStartup: {
+    getState: () => electronRendererContracts.invoke('databaseStartup.getState'),
+    retry: () => electronRendererContracts.invoke('databaseStartup.retry'),
+    quit: () => electronRendererContracts.invoke('databaseStartup.quit'),
+    onStateChanged: (listener) =>
+      electronRendererContracts.subscribe('databaseStartup.onStateChanged', listener)
+  },
   diagnostics: {
     reportRendererFailure: (report) =>
       electronRendererContracts.send('diagnostics.reportRendererFailure', report)

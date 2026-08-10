@@ -34,6 +34,18 @@ export type AppLifecycleDeps = {
     requestQuit: (confirmed?: boolean) => void
     onAppearanceChanged?: (appearance: WindowFindAppearance) => void
   }) => BrowserWindow
+  // Rebinds close and appearance behavior when the startup loading shell becomes the normal window.
+  configureMainWindow?: (
+    window: BrowserWindow,
+    opts: {
+      classifyClose: () => CloseClassification
+      resolveCloseAction: () => Promise<CloseConfirmChoice>
+      requestQuit: (confirmed?: boolean) => void
+      onAppearanceChanged?: (appearance: WindowFindAppearance) => void
+    }
+  ) => void
+  // A database-startup shell that the lifecycle adopts instead of creating a second window.
+  initialWindow?: BrowserWindow
   // Receives the resolved renderer Theme. Optional so headless/tests and older compositions remain
   // decoupled from platform icon behavior.
   onAppearanceChanged?: (appearance: WindowFindAppearance) => void
@@ -147,22 +159,29 @@ export const installAppLifecycle = (
     }
   }
 
-  const openWindow = (): BrowserWindow => {
-    const window = deps.createMainWindow({
-      classifyClose,
-      resolveCloseAction,
-      requestQuit: (confirmed = true) => {
-        quitConfirmed = confirmed
-        deps.quit()
-      },
-      ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
-    })
+  const mainWindowOptions = (): Parameters<AppLifecycleDeps['createMainWindow']>[0] => ({
+    classifyClose,
+    resolveCloseAction,
+    requestQuit: (confirmed = true) => {
+      quitConfirmed = confirmed
+      deps.quit()
+    },
+    ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
+  })
+
+  const bindWindow = (window: BrowserWindow): BrowserWindow => {
+    deps.configureMainWindow?.(window, mainWindowOptions())
 
     // isVisible() is also false for minimized Windows windows. Track explicit hide/show events so
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
     return window
+  }
+
+  const openWindow = (): BrowserWindow => {
+    const window = deps.createMainWindow(mainWindowOptions())
+    return bindWindow(window)
   }
 
   // Surfaces the main window, creating a fresh one when none exists or the last was closed (macOS keeps
@@ -331,7 +350,12 @@ export const installAppLifecycle = (
     if (platform !== 'darwin' && !trayBox.current) deps.quit()
   })
 
-  if (deps.createInitialWindow !== false) mainWindow = openWindow()
+  if (deps.createInitialWindow !== false) {
+    mainWindow =
+      deps.initialWindow && !deps.initialWindow.isDestroyed()
+        ? bindWindow(deps.initialWindow)
+        : openWindow()
+  }
 
   return {
     showMainWindow,

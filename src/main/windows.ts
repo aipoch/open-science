@@ -103,6 +103,12 @@ type MainWindowCloseOptions = {
   onAppearanceChanged?: (appearance: WindowFindAppearance) => void
 }
 
+const mainWindowCloseOptions = new WeakMap<BrowserWindow, MainWindowCloseOptions>()
+
+const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions): void => {
+  mainWindowCloseOptions.set(window, opts)
+}
+
 const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const window = createAppWindow({
     width: 1280,
@@ -114,6 +120,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
     minHeight: 720,
     title: 'Open Science'
   })
+  if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main
   // forwards the chord to a renderer that cannot handle it, preventDefault() has already suppressed the
@@ -160,7 +167,7 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   const onWindowFindAppearanceChanged = (event: IpcMainEvent, appearance: unknown): void => {
     if (event.sender !== window.webContents || !isWindowFindAppearance(appearance)) return
     findOverlay.updateAppearance(appearance)
-    opts?.onAppearanceChanged?.(appearance)
+    mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
@@ -345,7 +352,8 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   // Cmd/Ctrl+W fallback window.close() routes through here unchanged.
   let awaitingChoice = false
   window.on('close', (event) => {
-    const action = opts?.classifyClose?.() ?? 'close'
+    const closeOptions = mainWindowCloseOptions.get(window)
+    const action = closeOptions?.classifyClose() ?? 'close'
     if (action === 'close') return
     event.preventDefault()
     if (action === 'hide') {
@@ -353,16 +361,16 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
       return
     }
     if (action === 'quit') {
-      opts!.requestQuit(false)
+      closeOptions!.requestQuit(false)
       return
     }
     if (awaitingChoice) return
     awaitingChoice = true
-    void opts!
+    void closeOptions!
       .resolveCloseAction()
       .then((choice) => {
         if (choice === 'minimize') window.hide()
-        else if (choice === 'quit') opts!.requestQuit()
+        else if (choice === 'quit') closeOptions!.requestQuit()
       })
       .finally(() => {
         awaitingChoice = false
@@ -382,4 +390,5 @@ const createMainWindow = (opts?: MainWindowCloseOptions): BrowserWindow => {
   return window
 }
 
-export { createMainWindow }
+export { configureMainWindow, createMainWindow }
+export type { MainWindowCloseOptions }

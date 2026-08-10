@@ -3,6 +3,7 @@ import './assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import { startNetworkMonitor } from '@/stores/network-store'
@@ -42,6 +43,8 @@ window.addEventListener('drop', (event) => event.preventDefault())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <DatabaseStartupGate>
+      <App />
+    </DatabaseStartupGate>
   </StrictMode>
 )
