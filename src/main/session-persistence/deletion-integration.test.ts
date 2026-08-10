@@ -14,7 +14,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { ProjectDeletionCoordinator } from '../projects/deletion-coordinator'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { UploadRepository } from '../uploads/repository'
 import { SessionPersistenceCoordinator } from './coordinator'
@@ -35,7 +35,7 @@ describe('managed-file deletion integration', () => {
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-file-deletion-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     sessions = new SessionRepository(storageRoot)
     files = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
     coordinator = new SessionPersistenceCoordinator(

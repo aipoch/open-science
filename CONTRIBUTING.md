@@ -91,6 +91,21 @@ Three runtime process layers and a shared module live under `src/`:
    ownership, consumers, or risks cannot be established.
 5. Open a pull request with a clear description of the change and its motivation.
 
+### Database schema changes
+
+`prisma/schema.prisma` owns tables, columns, defaults, indexes, and foreign keys. SQLite CHECK
+constraints that Prisma cannot express live in `prisma/sqlite-check-constraints.json`. The runtime
+schema module is generated; do not edit it or add feature DDL to startup code.
+
+1. Change the Prisma schema and, only when required, the SQLite CHECK contract.
+2. Run `npm run db:schema:generate` and review the generated target schema.
+3. Add a new immutable entry under `src/main/database/migrations/`; never change a released
+   migration or extend the frozen `0001` legacy repair list.
+4. Run `npm run db:schema:check` and the migration tests before committing.
+
+Prisma CLI is a development and CI tool only. Packaged applications execute the checked-in
+migration manifest and do not ship the Prisma migrate engine.
+
 ### Branch names
 
 Use the format `<type>/<short-description>`, with a lowercase, hyphen-separated

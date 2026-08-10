@@ -25,7 +25,7 @@ import {
 import type { ArtifactProjectReconciliationSnapshot } from '../artifacts/provenance-repository'
 import { FinalizedArtifactBindingConflictError } from '../artifacts/provenance-message-snapshot'
 import type { Logger } from '../logger'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError,
@@ -2297,7 +2297,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('reconciles path-free Upload copies only on the first complete load from multiple clients', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-reconcile-'))
     const client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const content = Buffer.from('sample,value\na,1\n')
     const checksum = '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
     const contentStorageKey =
@@ -2463,7 +2463,7 @@ describe('SessionPersistenceCoordinator', () => {
   it('retains every legacy source when one Upload prevents a complete startup projection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-upload-startup-partial-'))
     const client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const content = Buffer.from('sample,value\na,1\n')
     const retainedPath = join(root, 'uploads', 'default-project', 'session-1', 'retained.csv')
     const missingPath = join(root, 'uploads', 'default-project', 'session-1', 'missing.csv')

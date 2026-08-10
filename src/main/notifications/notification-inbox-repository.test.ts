@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   MAX_NOTIFICATION_INBOX_ITEMS,
   NotificationInboxDbRepository,
@@ -18,7 +18,7 @@ let client: PrismaClient | undefined
 const createRepository = async (): Promise<NotificationInboxDbRepository> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notification-inbox-'))
   client = createProjectDbClient(storageRoot)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
   return new NotificationInboxDbRepository(() => Promise.resolve(client!))
 }
 

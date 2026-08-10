@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from './repository'
 import { driveReviewerToStop } from './orchestrator'
 import type { ReviewerLogEntry } from '../../shared/reviewer'
@@ -473,7 +473,7 @@ afterEach(async () => {
 describe('ReviewRepository — reviewerLog round-trip', () => {
   it('persists a unified-tool reviewerLog and reloads it via getReviewsForSession', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const log: ReviewerLogEntry[] = [
@@ -525,7 +525,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('tolerates legacy/unknown entry kinds in the persisted JSON without throwing', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     // Simulate a legacy log that still uses the old tool_call/tool_result split (or unknown kind).
@@ -562,7 +562,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('returns an empty reviewerLog for reviews created without one', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await repository.createReview({
@@ -581,7 +581,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('persists a reviewerLog via updateReview patch', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const created = await repository.createReview({
@@ -609,7 +609,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('Review no longer has a reasoning field', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await repository.createReview({

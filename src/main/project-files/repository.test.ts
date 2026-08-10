@@ -12,7 +12,7 @@ import {
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createManagedFileIndexRepository, ManagedFileIndexRepository } from './repository'
 
 const PROJECT_ID = 'project-a'
@@ -42,7 +42,7 @@ describe('ManagedFileIndexRepository', () => {
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-files-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     repository = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
   })
 

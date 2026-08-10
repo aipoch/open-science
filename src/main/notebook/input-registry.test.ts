@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
@@ -128,7 +128,7 @@ const createArtifact = async (input: {
 const setup = async (): Promise<NotebookInputRegistry> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-input-registry-'))
   client = createProjectDbClient(storageRoot)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
   return new NotebookInputRegistry({
     inputAuthority: new ImmutableInputAuthority({
       storageRoot,

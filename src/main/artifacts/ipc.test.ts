@@ -30,7 +30,7 @@ import {
   clearMigrationPending,
   waitForDataRootWriters
 } from '../storage/migration-state'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 // Capture every ipcMain.handle registration so registerArtifactIpcHandlers can be verified directly.
 // The mock is set up here (before importing the IPC module) so registering handlers in tests is
@@ -379,7 +379,7 @@ describe('artifact IPC handlers', () => {
   it('keeps pending bytes in place when normal IPC encounters a corrupt provenance proof', async () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     try {
       const prompt = {
         id: 'prompt-1',

@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AcpRuntime } from '../acp/runtime'
 import { ReviewRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -131,7 +131,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
     const runtime = makeStubRuntime(makeFakeReviewerSession(promptSink), openCodePrefix)
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -166,7 +166,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
     const runtime = makeStubRuntime(makeFakeReviewerSession(promptSink), undefined)
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -217,7 +217,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
       })
     } as unknown as AcpRuntime
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({
@@ -264,7 +264,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
       }
     } as unknown as AcpRuntime
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({
@@ -304,7 +304,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
       }
     } as unknown as AcpRuntime
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({
@@ -402,7 +402,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
     } as unknown as AcpRuntime
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -515,7 +515,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
       }
     } as unknown as AcpRuntime
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({

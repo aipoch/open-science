@@ -6,7 +6,7 @@ import { deflateRawSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
@@ -317,7 +317,7 @@ describe('ConversationSkillImporter', () => {
     roots.push(root)
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const skills = new UserSkillRepository(root)
     const [staged] = await stageUploadFixtures(uploads, {
@@ -385,7 +385,7 @@ describe('ConversationSkillImporter', () => {
     ])
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'source-session' }
     })
@@ -445,7 +445,7 @@ describe('ConversationSkillImporter', () => {
     ])
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'private-project', sessionId: 'private-session' }
     })

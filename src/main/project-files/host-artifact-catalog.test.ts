@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ManagedFileIndexRepository } from './repository'
 
 const checksum = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -19,7 +19,7 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'open-science-host-artifacts-'))
     client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     repository = new ManagedFileIndexRepository(() => Promise.resolve(client), root)
     await client.fileOriginSession.createMany({
       data: [

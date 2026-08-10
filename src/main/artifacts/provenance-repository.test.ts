@@ -18,7 +18,7 @@ import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import {
@@ -45,7 +45,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reconstruction-cache-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client)
@@ -112,7 +112,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-orphan-staging-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client)
@@ -149,7 +149,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-live-staging-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client)
@@ -178,7 +178,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-read-reconcile-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client)
@@ -207,7 +207,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-versions-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
@@ -337,7 +337,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-exact-filename-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
@@ -392,7 +392,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-ambiguous-filename-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
@@ -447,7 +447,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-app-generated-artifact-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -492,7 +492,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-version-descriptors-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),
@@ -592,7 +592,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-idempotency-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
@@ -670,7 +670,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-durable-file-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -728,7 +728,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-durable-directory-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const request = {
       projectId: 'project-1',
@@ -793,7 +793,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-routing-order-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -849,7 +849,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-deleting-origin-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -896,7 +896,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-staging-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -1054,7 +1054,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-producer-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
@@ -1746,7 +1746,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-auto-producer-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
@@ -1863,7 +1863,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-bounded-execution-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
@@ -1991,7 +1991,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-producer-mismatch-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const notebookRepository = new NotebookRunRepository(storageRoot)
@@ -2220,7 +2220,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-finalize-ownership-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const prompt = {
       id: 'prompt-1',
@@ -2387,7 +2387,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-finalize-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const prompt = {
       id: 'prompt-1',
@@ -2691,7 +2691,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-marker-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -2811,7 +2811,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-intent-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3070,7 +3070,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-active-review-unavailable-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3163,7 +3163,7 @@ describe('artifact provenance repository', () => {
     disconnect = async () => {
       await Promise.all([client.$disconnect(), secondClient.$disconnect()])
     }
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3219,7 +3219,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-missing-content-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3275,7 +3275,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-row-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const prompt = {
       id: 'prompt-1',
       role: 'user' as const,
@@ -3429,7 +3429,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-pending-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3501,7 +3501,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-incomplete-route-scan-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3580,7 +3580,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-row-quarantine-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3690,7 +3690,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-provenance-delete-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
@@ -3748,7 +3748,7 @@ describe('artifact provenance repository', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-upload-delete-retry-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactProvenanceRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),

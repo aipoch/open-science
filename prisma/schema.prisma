@@ -49,6 +49,13 @@ model PermissionGrant {
   @@index([projectId, sessionId])
 }
 
+// Records one-time application-owned permission seeds so a user-revoked default is not recreated on
+// a later startup. Seed definitions remain application logic; this table only records completion.
+model PermissionGrantSeed {
+  id        String   @id
+  appliedAt DateTime
+}
+
 // Per-project preview panel state (panel open/collapsed, active tab, opened file previews as JSON).
 // Runtime-only tabs (notebook) are not stored; see src/shared/preview-state.ts.
 model ProjectPreviewState {
@@ -92,7 +99,8 @@ model NotificationInboxItem {
 
 // One reviewer pass over a single completed turn. See src/main/reviewer/repository.ts. Checks live in
 // a child table (Finding); the review carries the turn scope (JSON), the task lifecycle, and the outcome.
-// Created at runtime via CREATE TABLE IF NOT EXISTS (see src/main/projects/prisma-client.ts), not migrate.
+// Created through the application-owned migration manifest; canonical runtime SQL is generated from
+// this schema plus prisma/sqlite-check-constraints.json without shipping Prisma Migrate.
 //
 // v2 (issue 12): removed `summary` and `checks` JSON columns; all checks (pass/warn/fail) now live
 // as rows in the Finding table.
@@ -448,8 +456,8 @@ model ComputeJob {
 
 // A registered remote SSH compute host (Compute settings tab). Phase 1 (issue 01) manages the record
 // only — no SSH connection is made. Pure-additive table: it references nothing and nothing references
-// it, so adding it is byte-compatible with any pre-existing DB (see prisma-client.ts runtime DDL and
-// its compatibility tests). Security: only an ssh alias + optional non-secret overrides are stored;
+// it, so its versioned migration is byte-compatible with any pre-existing DB. Security: only an ssh
+// alias + optional non-secret overrides are stored;
 // no credentials or private keys ever land here (design.md §1/§3).
 model ComputeHost {
   id               String    @id @default(cuid())

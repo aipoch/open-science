@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { DEFAULT_GLOBAL_CUSTOMIZE_PERMISSION_KEYS, seedDefaultPermissionGrants } from './defaults'
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from './identity-catalog'
 import { createPermissionGrantRegistry, type PermissionGrantRegistry } from './registry'
@@ -23,7 +23,7 @@ afterEach(async () => {
 const setup = async (): Promise<{ client: PrismaClient; registry: PermissionGrantRegistry }> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-defaults-'))
   client = createProjectDbClient(storageRoot)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
   const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
   return { client, registry }
 }
@@ -51,6 +51,12 @@ describe('default permission grants', () => {
         )
       )
     )
+    await expect(
+      fixture.client.permissionGrantSeed.findUnique({
+        where: { id: 'global-customize-v1' },
+        select: { id: true }
+      })
+    ).resolves.toEqual({ id: 'global-customize-v1' })
   })
 
   it('does not recreate a revoked default on a later startup', async () => {

@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { ReviewerHostServer } from './host-sdk'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
@@ -234,7 +234,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const session = makeSession()
@@ -291,7 +291,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const session = makeSession()
@@ -325,7 +325,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({
@@ -373,7 +373,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const session = makeSession()
@@ -430,7 +430,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const session = makeSession()
@@ -475,7 +475,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const updateEvents: string[] = []
@@ -515,7 +515,7 @@ describe('reviewer orchestrator', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const lifecycles: string[] = []
@@ -805,7 +805,7 @@ describe('reviewer recomputation + scope isolation', () => {
     })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({

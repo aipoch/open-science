@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ComputeJobRepository } from './job-repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 // Verifies ComputeJob schema migration is purely additive (CLAUDE.md requirement):
 // - The table + indexes can be created on a fresh DB.
@@ -31,7 +31,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
@@ -39,7 +39,7 @@ describe('ComputeJob schema migration (integration)', () => {
     expect(await repo.findNonTerminal()).toEqual([])
 
     // Idempotent second run.
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     expect(await repo.findNonTerminal()).toEqual([])
 
     // Create a job with all required fields.
@@ -106,7 +106,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
@@ -176,10 +176,13 @@ describe('ComputeJob schema migration (integration)', () => {
       "updatedAt" DATETIME NOT NULL
     )`)
 
-    // ensureProjectSchema must add ComputeJob without disturbing existing rows.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // migrateApplicationDatabase must add ComputeJob without disturbing existing rows.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
     // Idempotent second run.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     // Existing Project row is intact.
     const projects = await client.project.findMany()
@@ -245,10 +248,13 @@ describe('ComputeJob schema migration (integration)', () => {
        VALUES ('old-job-1','ssh:test','direct_ssh','s1','p1','legacy intent','echo ok','hash123','submitted',CURRENT_TIMESTAMP)`
     )
 
-    // Apply ensureProjectSchema — must add the 4 new columns without error.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // Apply migrateApplicationDatabase — must add the 4 new columns without error.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
     // Idempotent second run.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     // Old row is readable via the repository; new columns default to null/undefined.
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
@@ -269,7 +275,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
@@ -338,7 +344,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
@@ -413,7 +419,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     const mkJob = async (id: string, sessionId: string): Promise<void> => {
@@ -454,7 +460,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     await repo.create({
@@ -490,7 +496,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Create jobs for provider-a in different sessions
@@ -562,7 +568,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Create jobs for session-1 on different providers
@@ -634,7 +640,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Initially no queued jobs
@@ -705,7 +711,7 @@ describe('ComputeJob schema migration (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Create jobs with deliberate timing
@@ -781,7 +787,7 @@ describe('ComputeJob schema migration (integration)', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-owner-delete-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
     const create = (
       id: string,

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
 import { ComputeJobRepository } from './job-repository'
 
@@ -18,7 +18,7 @@ beforeEach(async () => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-lifecycle-'))
   const client = createProjectDbClient(storageRoot)
   disconnect = () => client.$disconnect()
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
 
   repository = new ComputeJobRepository(() => Promise.resolve(client))
   await repository.create({

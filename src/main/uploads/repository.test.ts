@@ -25,7 +25,7 @@ import {
   type PersistedUploadedAttachment
 } from '../../shared/uploads'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError,
@@ -380,7 +380,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, {
       getClient: () => Promise.resolve(client)
     })
@@ -457,7 +457,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, {
       getClient: () => Promise.resolve(client)
     })
@@ -494,7 +494,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(repository, {
       files: [
@@ -571,7 +571,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('already renamed')
     const versionId = 'upload-version-post-rename'
@@ -640,7 +640,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('copied before crash')
     const checksum = createHash('sha256').update(content).digest('hex')
@@ -701,7 +701,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
     await mkdir(dirname(legacyPath), { recursive: true })
@@ -782,7 +782,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = 'sample,value\na,1\n'
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
@@ -847,7 +847,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = 'sample,value\na,1\n'
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
@@ -936,7 +936,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const uploadId = 'conflicting-orphan-upload'
     const absentPath = join(root, 'uploads', 'default-project', 'session-1', 'absent.csv')
@@ -986,7 +986,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const uploadId = 'conflicting-existing-upload'
     const versionId = 'conflicting-existing-version'
@@ -1080,7 +1080,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('sample,value\na,1\n')
     const checksum = createHash('sha256').update(content).digest('hex')
@@ -1354,7 +1354,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('sample,value\na,1\n')
     const checksum = '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
@@ -1737,7 +1737,7 @@ describe('upload repository', () => {
 
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'other-project', sessionId: 'session-1' }
     })
@@ -1786,7 +1786,7 @@ describe('upload repository', () => {
     ])
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.managedFile.create({
       data: {
         source: 'upload',

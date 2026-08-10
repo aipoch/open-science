@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeService } from './compute-service'
@@ -64,7 +64,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-int-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     hostRepo = new ComputeHostRepository(() => Promise.resolve(client))
     jobRepo = new ComputeJobRepository(() => Promise.resolve(client))

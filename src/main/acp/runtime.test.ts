@@ -70,7 +70,7 @@ import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES } from '../uploads/attachment-media'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from '../skills/conversation-import'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -7691,7 +7691,7 @@ describe('ACP runtime session management', () => {
     ])
     const client = createProjectDbClient(root)
     temporaryDisconnections.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'owning-session' }
     })
@@ -18630,7 +18630,7 @@ describe('ACP runtime session management', () => {
     const storageRoot = await createTemporaryRoot()
     const client = createProjectDbClient(storageRoot)
     temporaryDisconnections.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactRepository(storageRoot)
     const durableProvenance = new ArtifactProvenanceRepository({
       storageRoot,
@@ -18725,7 +18725,7 @@ describe('ACP runtime session management', () => {
     const storageRoot = await createTemporaryRoot()
     const client = createProjectDbClient(storageRoot)
     temporaryDisconnections.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactRepository(storageRoot)
     const durableProvenance = new ArtifactProvenanceRepository({
       storageRoot,
@@ -18881,7 +18881,7 @@ describe('ACP runtime session management', () => {
     const storageRoot = await createTemporaryRoot()
     const client = createProjectDbClient(storageRoot)
     temporaryDisconnections.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ArtifactRepository(storageRoot)
     const durableSessionAuthority: { current?: PersistedChatSession } = {}
     const provenance = new ArtifactProvenanceRepository({

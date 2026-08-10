@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ComputeHostRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 // Proves the runtime CREATE TABLE IF NOT EXISTS DDL for ComputeHost is byte-compatible with the
 // generated Prisma client against a real (temp) SQLite database, and that adding the table to an
@@ -31,7 +31,7 @@ describe('compute host prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repository = new ComputeHostRepository(() => Promise.resolve(client))
 
@@ -39,7 +39,7 @@ describe('compute host prisma client (integration)', () => {
     expect(await repository.list()).toEqual([])
 
     // Ensuring again is idempotent (table + unique index already exist).
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     expect(await repository.list()).toEqual([])
 
     // Create reads/writes every column type Prisma expects (TEXT, BOOLEAN, INTEGER, DATETIME, JSON).
@@ -80,7 +80,7 @@ describe('compute host prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     // Insert one row directly, then a raw duplicate must violate the unique index (proving the index
     // exists and is authoritative even if the repository pre-check were bypassed).
@@ -114,11 +114,14 @@ describe('compute host prisma client (integration)', () => {
       `INSERT INTO "Project" ("id","name","updatedAt") VALUES ('p1','Existing',CURRENT_TIMESTAMP)`
     )
 
-    // ensureProjectSchema must create ComputeHost (and its index) without error and without disturbing
+    // migrateApplicationDatabase must create ComputeHost (and its index) without error and without disturbing
     // the existing Project row.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline']
+    })
     // Idempotent second run.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     const projects = await client.project.findMany()
     expect(projects).toHaveLength(1)

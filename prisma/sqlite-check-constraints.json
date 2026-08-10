@@ -1,0 +1,69 @@
+{
+  "constraints": [
+    {
+      "tableName": "PermissionGrant",
+      "name": "PermissionGrant_capabilityKind_check",
+      "expression": "\"capabilityKind\" IN ('customize_mutation', 'mcp_tool', 'execution', 'file_operation', 'skill_operation', 'builtin_tool')"
+    },
+    {
+      "tableName": "PermissionGrant",
+      "name": "PermissionGrant_capabilityKey_check",
+      "expression": "length(trim(\"capabilityKey\")) > 0"
+    },
+    {
+      "tableName": "PermissionGrant",
+      "name": "PermissionGrant_qualifier_check",
+      "expression": "((\"qualifierMode\" IN ('none', 'any') AND \"qualifierValue\" IS NULL) OR (\"qualifierMode\" IN ('category', 'exact') AND \"qualifierValue\" IS NOT NULL AND length(trim(\"qualifierValue\")) > 0))"
+    },
+    {
+      "tableName": "PermissionGrant",
+      "name": "PermissionGrant_scope_check",
+      "expression": "((\"scopeKind\" = 'global' AND \"projectId\" IS NULL AND \"sessionId\" IS NULL) OR (\"scopeKind\" = 'project' AND \"projectId\" IS NOT NULL AND \"sessionId\" IS NULL) OR (\"scopeKind\" = 'session' AND \"projectId\" IS NOT NULL AND \"sessionId\" IS NOT NULL))"
+    },
+    {
+      "tableName": "PermissionGrant",
+      "name": "PermissionGrant_revision_check",
+      "expression": "\"revision\" >= 1"
+    },
+    {
+      "tableName": "FileOriginSession",
+      "name": "FileOriginSession_state_check",
+      "expression": "\"state\" IN ('active', 'deleting', 'deleted')"
+    },
+    {
+      "tableName": "UploadVersion",
+      "name": "UploadVersion_state_check",
+      "expression": "\"state\" IN ('staging', 'ready')"
+    },
+    {
+      "tableName": "ArtifactMessageSnapshot",
+      "name": "ArtifactMessageSnapshot_state_check",
+      "expression": "\"state\" IN ('staging', 'ready')"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_state_check",
+      "expression": "\"state\" IN ('staging', 'pending', 'finalized')"
+    },
+    {
+      "tableName": "ArtifactVersion",
+      "name": "ArtifactVersion_filename_check",
+      "expression": "length(\"filename\") > 0"
+    },
+    {
+      "tableName": "ArtifactVersionInput",
+      "name": "ArtifactVersionInput_sourceKind_check",
+      "expression": "\"sourceKind\" IN ('artifact-version', 'upload-version')"
+    },
+    {
+      "tableName": "ArtifactVersionInput",
+      "name": "ArtifactVersionInput_sourceIdentity_check",
+      "expression": "((\"sourceKind\" = 'artifact-version' AND \"sourceArtifactVersionId\" IS NOT NULL AND \"sourceUploadVersionId\" IS NULL AND \"inputFileVersionId\" = \"sourceArtifactVersionId\") OR (\"sourceKind\" = 'upload-version' AND \"sourceArtifactVersionId\" IS NULL AND \"sourceUploadVersionId\" IS NOT NULL AND \"inputFileVersionId\" = \"sourceUploadVersionId\"))"
+    },
+    {
+      "tableName": "ReviewScopeSnapshot",
+      "name": "ReviewScopeSnapshot_state_check",
+      "expression": "\"state\" IN ('staging', 'ready')"
+    }
+  ]
+}

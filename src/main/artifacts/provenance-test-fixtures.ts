@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { CreateArtifactVersionRequest } from '../../shared/artifact-provenance'
 import { NotebookRunRepository } from '../notebook/repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPngInlineSource } from './artifact-test-fixtures'
 import {
   ArtifactProvenanceRepository,
@@ -48,7 +48,7 @@ export const createProvenanceTestFixture = async (): Promise<{
   const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-contract-'))
   const client = createProjectDbClient(storageRoot)
   try {
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
   } catch (error) {
     await client.$disconnect().catch(() => undefined)
     await rm(storageRoot, { recursive: true, force: true })

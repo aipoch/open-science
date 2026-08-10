@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { applyRuntimeSchemaBaseline } from '../database/legacy-baseline-adapter'
 import { ProjectRepository } from './repository'
 import {
   createProjectDbClient,
   disconnectProjectDbClient,
-  ensureProjectSchema,
+  migrateApplicationDatabase,
   getProjectDbClient
 } from './prisma-client'
 import { ReviewRepository } from '../reviewer/repository'
@@ -36,7 +37,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     for (const model of Prisma.dmmf.datamodel.models) {
       const tableName = model.dbName ?? model.name
@@ -70,7 +71,7 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', '2026-08-06T00:00:00.000Z')`
     )
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
@@ -85,7 +86,7 @@ describe('project prisma client (integration)', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-grant-schema-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       'PRAGMA table_info("PermissionGrant")'
@@ -126,7 +127,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       'PRAGMA table_info("UnreadTaskSession")'
@@ -149,7 +150,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: {
         projectId: 'project-1',
@@ -201,7 +202,7 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "ArtifactLineage" ("id", "projectId", "sessionId", "normalizedFilename", "filename", "updatedAt") VALUES ('artifact-1', 'project-1', 'session-1', 'result.png', 'result.png', CURRENT_TIMESTAMP)`
     )
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.fileOriginSession.findUniqueOrThrow({
@@ -244,9 +245,14 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "updatedAt") VALUES ('project-1', 'session-1', 'corrupt', CURRENT_TIMESTAMP)`
     )
 
-    await expect(ensureProjectSchema(client)).rejects.toThrow(
-      'FileOriginSession.state contains unsupported value "corrupt"'
-    )
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      cause: expect.objectContaining({
+        message: expect.stringContaining(
+          'FileOriginSession.state contains unsupported value "corrupt"'
+        )
+      })
+    })
     await expect(
       client.$queryRawUnsafe<Array<{ state: string }>>(
         `SELECT state FROM "FileOriginSession" WHERE "projectId" = 'project-1' AND "sessionId" = 'session-1'`
@@ -277,7 +283,10 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "futureMarker", "updatedAt") VALUES ('project-1', 'session-1', 'active', 'keep-me', CURRENT_TIMESTAMP)`
     )
 
-    await expect(ensureProjectSchema(client)).rejects.toThrow(/futureMarker/)
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      cause: expect.objectContaining({ message: expect.stringMatching(/futureMarker/) })
+    })
     await expect(
       client.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info('FileOriginSession')`)
     ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'futureMarker' })]))
@@ -294,7 +303,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -437,6 +446,11 @@ describe('project prisma client (integration)', () => {
       )
     ).rejects.toThrow()
     await expect(
+      client.$executeRawUnsafe(
+        `UPDATE "ArtifactVersionInput" SET "inputFileVersionId" = 'different-upload-version' WHERE "id" = 'input-1'`
+      )
+    ).rejects.toThrow()
+    await expect(
       client.reviewScopeSnapshot.update({
         where: { id: 'review-snapshot-1' },
         data: { state: 'unsupported' }
@@ -450,7 +464,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     await client.$executeRawUnsafe('DROP TABLE "ArtifactVersionInput"')
     await client.$executeRawUnsafe(`CREATE TABLE "ArtifactVersionInput" (
@@ -475,8 +489,9 @@ describe('project prisma client (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     await expect(
       client.$executeRawUnsafe(`INSERT INTO "ArtifactVersionInput" (
@@ -497,7 +512,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -549,8 +564,9 @@ describe('project prisma client (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: 'artifact-version-1' } })
@@ -581,7 +597,9 @@ describe('project prisma client (integration)', () => {
       $queryRawUnsafe: vi.fn(async () => [])
     } as unknown as PrismaClient
 
-    await expect(ensureProjectSchema(client)).rejects.toBe(migrationFailure)
+    await expect(applyRuntimeSchemaBaseline(client, { pendingCheckConstraints: [] })).rejects.toBe(
+      migrationFailure
+    )
   })
 
   it('releases and recreates the shared client for exclusive migration validation', async () => {
@@ -602,7 +620,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const provenanceTables = await client.$queryRawUnsafe<Array<{ name: string }>>(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('FileOriginSession', 'ArtifactLineage', 'ArtifactVersion', 'ArtifactVersionInput', 'ArtifactMessageSnapshot', 'UploadFile', 'UploadVersion', 'ReviewFindingDisposition', 'ReviewScopeSnapshot') ORDER BY name`
@@ -702,7 +720,7 @@ describe('project prisma client (integration)', () => {
       })
     ).rejects.toThrow()
 
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   })
 
   it('ensures the schema (no seed) and round-trips CRUD', async () => {
@@ -711,7 +729,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
@@ -719,7 +737,7 @@ describe('project prisma client (integration)', () => {
     expect(await repository.list()).toEqual([])
 
     // Ensuring again is idempotent (table already exists, still no seed).
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     expect(await repository.list()).toEqual([])
 
     const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
@@ -768,7 +786,7 @@ describe('project prisma client (integration)', () => {
     disconnect = () => client.$disconnect()
 
     // Fresh install: FINDING_TABLE_DDL already contains reflagCount; client can read/write it.
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const reviewRepo = new ReviewRepository(() => Promise.resolve(client))
 
@@ -792,8 +810,8 @@ describe('project prisma client (integration)', () => {
     const [updated] = await reviewRepo.getReviewsForSession('s1')
     expect(updated.checks[0]!.reflagCount).toBe(1)
 
-    // Migration guard is idempotent — calling ensureProjectSchema a second time must not throw.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // Migration guard is idempotent — calling migrateApplicationDatabase a second time must not throw.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   })
 
   // Simulates an old DB that has the Finding table without reflagCount; the migration guard must add
@@ -840,11 +858,13 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "Finding" ("id","reviewId","claim","evidence") VALUES ('f1','r1','old claim','old evidence')`
     )
 
-    // Run ensureProjectSchema — the migration guard must add reflagCount without error.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // Run migrateApplicationDatabase — the migration guard must add reflagCount without error.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: ['0001_runtime_schema_baseline']
+    })
 
     // Running it again is idempotent (guard catches duplicate-column error).
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     // The old row reads back with reflagCount = 0 (the column default).
     const reviewRepo = new ReviewRepository(() => Promise.resolve(client))

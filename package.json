@@ -33,6 +33,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "gen:web-api-map": "node scripts/generate-web-api-map.mjs",
     "check:web-api-map": "node scripts/generate-web-api-map.mjs --check",
+    "db:schema:generate": "node scripts/generate-database-schema.mjs",
+    "db:schema:check": "node scripts/generate-database-schema.mjs --check",
     "check:cli-package": "npm pack ./packages/open-science --dry-run --json --cache ./node_modules/.cache/npm-pack",
     "check:claude-acp-patch": "node scripts/check-claude-acp-patch.mjs",
     "build:web": "npm run gen:web-api-map && vite build --config vite.web.config.ts",
