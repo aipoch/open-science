@@ -529,7 +529,28 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it('puts permission approval ahead of Ask-User in a content-bounded composer lane', () => {
+    const activeSession: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Permission request',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
+      activeSession,
+      notebookReference: {
+        sessionId: activeSession.id,
+        projectName: activeSession.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      },
       pendingPermissions: [{ requestId: 'permission-1' } as never],
       pendingElicitations: [
         {
@@ -565,6 +586,8 @@ describe('ConversationPanel composer intake', () => {
     expect(resizeHandle.classList.contains('active:bg-bg-200')).toBe(false)
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
     expect(getComposerForm().hidden).toBe(true)
     expect(
       container
@@ -1562,11 +1585,26 @@ describe('ConversationPanel + menu', () => {
         lifecycle: 'awaiting_approval'
       }
     }
-    renderPanel({ activeSession: session, canEditDraft: false })
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
+    renderPanel({
+      activeSession: session,
+      canEditDraft: false,
+      notebookReference: {
+        sessionId: session.id,
+        projectName: session.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      }
+    })
 
     const pendingEditor = container.querySelector('[role="textbox"]')
     expect(pendingEditor?.closest('form')?.classList.contains('hidden')).toBe(true)
     expect(container.textContent).toContain('Plan ready for review')
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
     const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
       article.textContent?.includes('Plan ready for review')
     )
@@ -1590,6 +1628,8 @@ describe('ConversationPanel + menu', () => {
     expect(
       container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
     ).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
 
     renderPanel({
       activeSession: {

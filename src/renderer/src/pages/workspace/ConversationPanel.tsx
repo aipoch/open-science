@@ -648,7 +648,9 @@ const ConversationPanel = ({
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
                 {!sideChat &&
-                (!pendingElicitation || hasPendingPermission) &&
+                !hasPendingPermission &&
+                !pendingElicitation &&
+                !pendingPlan &&
                 (notebookReference ||
                   hasAnyJobs ||
                   (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
