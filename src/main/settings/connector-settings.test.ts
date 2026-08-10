@@ -169,7 +169,7 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
   })
 
-  it('advertises custom Connector Skills only from the successful materialization projection', async () => {
+  it('advertises only safe custom Connector Skills from the successful materialization projection', async () => {
     await service.addCustomServer({
       name: 'custom-catalog',
       transport: 'stdio',
@@ -178,9 +178,33 @@ describe('ConnectorSettingsModule', () => {
 
     expect(await service.provisionedConnectorSkillNames()).not.toContain('mcp-custom-catalog')
 
-    service.setMaterializedCustomSkillNamesProvider(() => ['mcp-custom-catalog'])
+    service.setMaterializedCustomSkillNamesProvider(() => [
+      'mcp-custom-catalog',
+      'mcp-custom-catalog',
+      'mcp-second',
+      'mcp-pubmed',
+      'mcp-../../escape',
+      'mcp-UPPER'
+    ])
 
     expect(await service.provisionedConnectorSkillNames()).toContain('mcp-custom-catalog')
+    expect(
+      service.connectorSkillNames({
+        enabledIds: [],
+        autoAllowIds: [],
+        disabledConnectorIds: [...ALL_CONNECTOR_IDS]
+      })
+    ).toEqual(['mcp-custom-catalog', 'mcp-second'])
+    expect(
+      service.connectorSkillCatalogEntries({
+        enabledIds: [],
+        autoAllowIds: [],
+        disabledConnectorIds: [...ALL_CONNECTOR_IDS]
+      })
+    ).toEqual([
+      { directory: 'mcp-custom-catalog', name: 'mcp-custom-catalog', source: 'connector' },
+      { directory: 'mcp-second', name: 'mcp-second', source: 'connector' }
+    ])
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {

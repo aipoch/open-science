@@ -98,7 +98,8 @@ describe('AgentRuntimeManager', () => {
     } as unknown as SkillCatalogModule
     const connectors = {
       getConnectors: vi.fn().mockResolvedValue(undefined),
-      enabledConnectorIds: vi.fn().mockReturnValue([])
+      enabledConnectorIds: vi.fn().mockReturnValue([]),
+      materializedCustomSkillNames: vi.fn().mockReturnValue([])
     } as unknown as ConnectorSettingsModule
 
     return new AgentRuntimeManager({
@@ -441,6 +442,33 @@ describe('AgentRuntimeManager', () => {
     expect(syncComputeSkillDocument).toHaveBeenCalledWith(
       join(getAppClaudeConfigDir(storageRoot), 'skills')
     )
+  })
+
+  it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
+    const customSkillName = 'mcp-xt'
+    const sourceDir = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    await mkdir(sourceDir, { recursive: true })
+    await writeFile(
+      join(sourceDir, 'SKILL.md'),
+      '---\nname: mcp-xt\ndescription: Use XT records.\nsource: connector\n---\n\n# XT\n',
+      'utf8'
+    )
+    let materialized = [customSkillName]
+    const connectors = {
+      getConnectors: vi.fn().mockResolvedValue(undefined),
+      enabledConnectorIds: vi.fn().mockReturnValue([]),
+      materializedCustomSkillNames: vi.fn(() => materialized)
+    } as unknown as ConnectorSettingsModule
+    manager = createManager({ connectors })
+    const agentRoot = join(storageRoot, 'isolated-agent')
+    const targetFile = join(agentRoot, 'skills', customSkillName, 'SKILL.md')
+
+    await manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    await expect(readFile(targetFile, 'utf8')).resolves.toContain('Use XT records.')
+
+    materialized = []
+    await manager.materializeAgentSkills(await repository.getSettings(), agentRoot, new Set())
+    await expect(readFile(targetFile, 'utf8')).rejects.toThrow()
   })
 
   it.each([

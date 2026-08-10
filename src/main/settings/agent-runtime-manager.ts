@@ -26,8 +26,12 @@ import {
   type AgentFrameworkId
 } from '../agent-framework'
 import type { AgentConfigFile } from '../agent-framework/types'
-import { syncConnectorSkillDocs } from '../connectors/provision'
+import {
+  syncConnectorSkillDocs,
+  syncMaterializedCustomServerSkillDocs
+} from '../connectors/provision'
 import { ComputeHostRepository } from '../compute/repository'
+import { createLogger } from '../logger'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from '../compute/skill-doc'
 import { writeAgentConfigFiles } from './agent-config-files'
@@ -84,6 +88,7 @@ import type { ConnectorSettingsModule } from './connector-settings'
 import type { StoredCodexInfo, StoredSettings } from './types'
 
 const execFileAsync = promisify(execFile)
+const log = createLogger('agent-runtime-manager')
 const CLAUDE_PROBE_TIMEOUT_MS = 20_000
 const CODEX_INSTALL_TARGET: InstallTarget = {
   npmPackage: '@agentclientprotocol/codex-acp',
@@ -611,6 +616,14 @@ export class AgentRuntimeManager {
       join(configRoot, 'skills'),
       this.connectors.enabledConnectorIds(connectors)
     )
+    const customSkillSync = await syncMaterializedCustomServerSkillDocs(
+      join(getAppClaudeConfigDir(this.storageRoot), 'skills'),
+      join(configRoot, 'skills'),
+      this.connectors.materializedCustomSkillNames()
+    )
+    for (const failure of customSkillSync.failures) {
+      log.warn('Failed to materialize custom Connector Skill doc', failure)
+    }
     await this.syncComputeSkillDocument(join(configRoot, 'skills'))
   }
 

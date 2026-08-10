@@ -1,10 +1,15 @@
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ALL_CONNECTOR_IDS } from './registry'
 import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
-import { customConnectorSlug } from '../../shared/custom-connector'
+import {
+  customConnectorSkillName,
+  customConnectorSlug,
+  customConnectorSlugFromSkillName
+} from '../../shared/custom-connector'
+import { parseFrontmatter } from '../skills/frontmatter'
 
 // Whether an `mcp-<x>` directory's suffix names a bundled connector — CASE-INSENSITIVELY. This
 // matters for cleanup ownership: an older version could have left a case-variant dir like
@@ -67,6 +72,11 @@ export type CustomServerSkillSyncResult = {
   failures: Array<{ server: StoredCustomMcpServer; error: unknown }>
 }
 
+export type MaterializedCustomSkillDocSyncResult = {
+  materializedSkillNames: string[]
+  failures: Array<{ skillName: string; error: unknown }>
+}
+
 const isSafeCustomServerSlug = (slug: string): boolean =>
   /^[a-z0-9-]+$/.test(slug) && !ALL_CONNECTOR_IDS.includes(slug)
 
@@ -113,4 +123,88 @@ export async function syncCustomServerSkillDocs(
     }
   }
   return { materializedSlugs, failures }
+}
+
+// Copies only successfully generated custom Connector docs from the canonical app-owned Claude
+// Skill root into an isolated ACP runtime root. The projection-provided names are the authorization
+// boundary: stale custom dirs are removed, while bundled Connector dirs remain owned by
+// syncConnectorSkillDocs. Reading and writing the exact SKILL.md avoids copying arbitrary trees.
+export async function syncMaterializedCustomServerSkillDocs(
+  sourceSkillsDir: string,
+  targetSkillsDir: string,
+  skillNames: readonly string[]
+): Promise<MaterializedCustomSkillDocSyncResult> {
+  await mkdir(targetSkillsDir, { recursive: true })
+  const requested = [
+    ...new Set(
+      skillNames.filter((skillName) => {
+        const slug = customConnectorSlugFromSkillName(skillName)
+        return slug !== undefined && !namesBundledConnector(slug)
+      })
+    )
+  ]
+  const materializedSkillNames: string[] = []
+  const failures: MaterializedCustomSkillDocSyncResult['failures'] = []
+
+  for (const skillName of requested) {
+    const sourceFile = join(sourceSkillsDir, skillName, 'SKILL.md')
+    const targetDir = join(targetSkillsDir, skillName)
+    try {
+      const sourceMetadata = await lstat(sourceFile)
+      if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()) {
+        throw new Error('canonical custom Connector Skill doc is not a regular file')
+      }
+      const contents = await readFile(sourceFile, 'utf8')
+      const { fields } = parseFrontmatter(contents)
+      if (
+        fields.name !== skillName ||
+        fields.source !== 'connector' ||
+        !fields.description?.trim()
+      ) {
+        throw new Error('canonical custom Connector Skill doc has invalid frontmatter')
+      }
+
+      // Never write through a target symlink or a non-directory left by external modification.
+      const targetMetadata = await lstat(targetDir).catch(() => undefined)
+      if (targetMetadata && (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink())) {
+        await rm(targetDir, { recursive: true, force: true })
+      }
+      await mkdir(targetDir, { recursive: true })
+      const targetFile = join(targetDir, 'SKILL.md')
+      const targetFileMetadata = await lstat(targetFile).catch(() => undefined)
+      if (
+        targetFileMetadata &&
+        (!targetFileMetadata.isFile() || targetFileMetadata.isSymbolicLink())
+      ) {
+        await rm(targetFile, { recursive: true, force: true })
+      }
+      await writeFile(targetFile, contents, 'utf8')
+      materializedSkillNames.push(skillName)
+    } catch (error) {
+      failures.push({ skillName, error })
+      await rm(targetDir, { recursive: true, force: true })
+    }
+  }
+
+  const materialized = new Set(materializedSkillNames)
+  for (const entry of await readdir(targetSkillsDir).catch(() => [] as string[])) {
+    const match = /^mcp-(.+)$/.exec(entry)
+    if (!match || namesBundledConnector(match[1])) continue
+    const canonicalSkillName = customConnectorSkillName(match[1].toLowerCase())
+    if (!materialized.has(canonicalSkillName)) {
+      await rm(join(targetSkillsDir, entry), { recursive: true, force: true })
+      continue
+    }
+    if (entry !== canonicalSkillName) {
+      const [canonical, variant] = await Promise.all([
+        stat(join(targetSkillsDir, canonicalSkillName)).catch(() => null),
+        stat(join(targetSkillsDir, entry)).catch(() => null)
+      ])
+      const distinct =
+        canonical && variant && (canonical.dev !== variant.dev || canonical.ino !== variant.ino)
+      if (distinct) await rm(join(targetSkillsDir, entry), { recursive: true, force: true })
+    }
+  }
+
+  return { materializedSkillNames, failures }
 }

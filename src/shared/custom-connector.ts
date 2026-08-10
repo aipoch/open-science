@@ -11,6 +11,14 @@ export const toCustomConnectorSlug = (name: string): string =>
 export const isCustomConnectorSlug = (value: string): boolean =>
   value.length <= CUSTOM_CONNECTOR_SLUG_MAX_LENGTH && CUSTOM_CONNECTOR_SLUG_PATTERN.test(value)
 
+export const customConnectorSkillName = (slug: string): string => `mcp-${slug}`
+
+export const customConnectorSlugFromSkillName = (name: string): string | undefined => {
+  if (!name.startsWith('mcp-')) return undefined
+  const slug = name.slice('mcp-'.length)
+  return isCustomConnectorSlug(slug) ? slug : undefined
+}
+
 export const customConnectorSlug = (server: { name: string; slug?: string }): string =>
   server.slug && isCustomConnectorSlug(server.slug)
     ? server.slug

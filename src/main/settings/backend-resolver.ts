@@ -79,10 +79,7 @@ export type AgentBackendProviderPort = Pick<
   'resolveRuntimeTarget' | 'resolveRuntimeModelCatalog' | 'resolveRuntimeReasoningEffortProfile'
 >
 
-export type AgentBackendConnectorPort = Pick<
-  ConnectorSettingsModule,
-  'enabledConnectorIds' | 'provisionedConnectorSkillNames'
->
+export type AgentBackendConnectorPort = Pick<ConnectorSettingsModule, 'connectorSkillNames'>
 
 export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
   readSettings: () => Promise<StoredSettings>
@@ -269,10 +266,7 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const connectorSkillNames =
-      framework.id === 'claude-code'
-        ? await this.connectors.provisionedConnectorSkillNames()
-        : this.connectors.enabledConnectorIds(settings.connectors).map((id) => `mcp-${id}`)
+    const connectorSkillNames = this.connectors.connectorSkillNames(settings.connectors)
     const connectorInstructions = renderConnectorInstructions(connectorSkillNames)
     const executablePath =
       framework.id === 'claude-code'
