@@ -57,6 +57,7 @@ type AcpSessionResumeAdoptableFailureReason =
   | 'unresumable-error-kind'
   | 'legacy-unresumable-details'
   | 'legacy-codex-session-unavailable'
+  | 'legacy-opencode-session-unavailable'
 
 type AcpSessionResumeAuthoritativeFailureReason =
   | 'unrecognized-error'
@@ -255,14 +256,24 @@ class AcpSessionResumePolicy {
     }
 
     if (
-      context?.currentFrameworkId === 'codex' &&
-      context.providerSessionIdPersisted === false &&
-      (context.currentModelRoute === 'codex-responses' ||
-        context.currentModelRoute === 'codex-responses-compatibility') &&
+      context?.providerSessionIdPersisted === false &&
       typeof message.value === 'string' &&
       /^unknown error\.?$/i.test(message.value.trim())
     ) {
-      return adoptableFailure('legacy-codex-session-unavailable')
+      if (
+        context.currentFrameworkId === 'codex' &&
+        (context.currentModelRoute === 'codex-responses' ||
+          context.currentModelRoute === 'codex-responses-compatibility')
+      ) {
+        return adoptableFailure('legacy-codex-session-unavailable')
+      }
+      if (
+        context.currentFrameworkId === 'opencode' &&
+        (context.currentModelRoute === 'opencode-anthropic' ||
+          context.currentModelRoute === 'opencode-openai')
+      ) {
+        return adoptableFailure('legacy-opencode-session-unavailable')
+      }
     }
 
     if (code.value !== -32603) {

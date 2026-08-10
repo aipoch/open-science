@@ -244,10 +244,29 @@ describe('ACP Session resume policy', () => {
       })
     }
   )
+  it.each(['opencode-anthropic', 'opencode-openai'] as const)(
+    'classifies a legacy %s Unknown error as adoptable',
+    (currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          {
+            currentFrameworkId: 'opencode',
+            currentModelRoute,
+            providerSessionIdPersisted: false
+          }
+        )
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-opencode-session-unavailable'
+      })
+    }
+  )
 
   it.each([
     ['Claude Code', 'claude-code', undefined],
-    ['OpenCode', 'opencode', 'opencode-openai'],
     ['Codex Bridge', 'codex', 'codex-bridge']
   ] as const)(
     'keeps an Unknown error authoritative for legacy %s Sessions',
@@ -275,6 +294,24 @@ describe('ACP Session resume policy', () => {
         {
           currentFrameworkId: 'codex',
           currentModelRoute: 'codex-responses',
+          providerSessionIdPersisted: true
+        }
+      )
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'non-internal-error'
+    })
+  })
+
+  it('keeps an Unknown error authoritative for a persisted OpenCode identity', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        { code: -32603, message: 'Unknown error' },
+        {
+          currentFrameworkId: 'opencode',
+          currentModelRoute: 'opencode-openai',
           providerSessionIdPersisted: true
         }
       )

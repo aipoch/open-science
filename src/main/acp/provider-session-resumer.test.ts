@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import { claudeCodeFramework, codexFramework } from '../agent-framework'
+import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
 import {
@@ -36,6 +36,13 @@ const codexResponsesBackend: AcpBackendGenerationView = {
   framework: codexFramework,
   backendId: 'codex:builtin-codex-subscription',
   modelRoute: 'codex-responses'
+}
+
+const opencodeBackend: AcpBackendGenerationView = {
+  ...backend,
+  framework: opencodeFramework,
+  backendId: 'opencode:provider-a',
+  modelRoute: 'opencode-openai'
 }
 
 type HarnessOptions = {
@@ -497,6 +504,25 @@ describe('AcpProviderSessionResumer', () => {
         sessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
         previousFrameworkId: 'codex',
         previousBackendId: codexResponsesBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledOnce()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a legacy OpenCode Session after its adapter returns Unknown error', async () => {
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      resumeError: { code: -32603, message: 'Unknown error' }
+    })
+
+    await expect(
+      harness.resume({
+        sessionId: 'ses_03fed93d1ffe1uw7XFraUNPhun',
+        previousFrameworkId: 'opencode',
+        previousBackendId: opencodeBackend.backendId
       })
     ).resolves.toMatchObject({ contextReset: true })
 
