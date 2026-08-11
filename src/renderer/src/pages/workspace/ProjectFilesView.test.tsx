@@ -4227,6 +4227,17 @@ describe('ProjectFilesView — granted local folders', () => {
     })
   }
 
+  // Radix's submenu trigger opens on pointermove only when pointerType is 'mouse' (whenMouse
+  // guard); jsdom has no PointerEvent, so forge one from a MouseEvent.
+  const hoverElement = async (element: Element | null | undefined): Promise<void> => {
+    await act(async () => {
+      const event = new MouseEvent('pointermove', { bubbles: true })
+      Object.defineProperty(event, 'pointerType', { value: 'mouse' })
+      element?.dispatchEvent(event)
+      await flushEffects()
+    })
+  }
+
   it('renders granted roots with an access badge and an enabled Add folder item', async () => {
     await renderFilesView()
     await openFilterMenu()
@@ -4246,9 +4257,15 @@ describe('ProjectFilesView — granted local folders', () => {
     await renderFilesView()
     await openFilterMenu()
 
-    await clickElement(document.body.querySelector('[data-testid="granted-root-manage-root-1"]'))
-
-    expect(document.body.textContent).toContain('Allow writes')
+    // The row itself is the trigger: hovering it opens the manage submenu.
+    const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    await hoverElement(row)
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Allow writes')
+      },
+      { timeout: 1000 }
+    )
     expect(document.body.textContent).toContain('Remove access')
 
     await clickElement(
@@ -4259,8 +4276,14 @@ describe('ProjectFilesView — granted local folders', () => {
 
     // The toggle flips to "Make read-only" once the root is rw.
     await openFilterMenu()
-    await clickElement(document.body.querySelector('[data-testid="granted-root-manage-root-1"]'))
-    expect(document.body.textContent).toContain('Make read-only')
+    const rowAgain = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    await hoverElement(rowAgain)
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Make read-only')
+      },
+      { timeout: 1000 }
+    )
 
     await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
@@ -4272,9 +4295,7 @@ describe('ProjectFilesView — granted local folders', () => {
     await openFilterMenu()
 
     const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
-    act(() => {
-      row?.dispatchEvent(new Event('pointerover', { bubbles: true }))
-    })
+    await hoverElement(row)
 
     // The submenu opens after the hover-intent delay, without touching the manage button.
     await vi.waitFor(

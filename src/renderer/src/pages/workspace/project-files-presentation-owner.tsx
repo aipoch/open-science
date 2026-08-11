@@ -8,13 +8,12 @@ import {
   Lock,
   LockOpen,
   Monitor,
-  MoreHorizontal,
   Paperclip,
   Plus,
   Server,
   Trash2
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -418,71 +417,59 @@ const FilterMenuItem = ({
 const GrantedRootMenuRow = ({
   root,
   isSelected,
-  onSelect
+  onSelect,
+  onCloseMenu
 }: {
   root: GrantedLocalRoot
   isSelected: boolean
   onSelect: (root: GrantedLocalRoot) => void
+  onCloseMenu: () => void
 }): React.JSX.Element => {
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
-  // The submenu is controlled so hovering anywhere on the row opens it, not just the manage
-  // button. A short intent delay keeps the submenu from flickering open when the pointer is
-  // only passing through on its way to another row.
-  const [subOpen, setSubOpen] = useState(false)
-  const hoverIntentRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(hoverIntentRef.current), [])
 
+  // The whole row is the submenu trigger: hovering it opens the manage submenu (Radix hover
+  // intent), while clicking still selects the folder. Clicking a sub-trigger would normally open
+  // the submenu instead, so the click is default-prevented and the menu closed manually.
   return (
-    <DropdownMenuSub open={subOpen} onOpenChange={setSubOpen}>
-      <DropdownMenuItem
-        role="menuitemradio"
-        aria-checked={isSelected}
-        className="gap-2"
-        data-testid={`granted-root-${root.id}`}
-        onSelect={() => onSelect(root)}
-        onPointerEnter={() => {
-          clearTimeout(hoverIntentRef.current)
-          hoverIntentRef.current = setTimeout(() => setSubOpen(true), 150)
-        }}
-        onPointerLeave={() => clearTimeout(hoverIntentRef.current)}
-      >
-        <Folder
-          className="mt-0.5 size-4 shrink-0 self-start text-text-300"
-          strokeWidth={1.8}
-          aria-hidden="true"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate">{root.name}</span>
-          <span title={root.path} className="block truncate font-mono text-[11px] text-text-300">
-            {root.path}
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger asChild>
+        <div
+          role="menuitemradio"
+          aria-checked={isSelected}
+          className="gap-2"
+          data-testid={`granted-root-${root.id}`}
+          onClick={(event) => {
+            event.preventDefault()
+            onSelect(root)
+            onCloseMenu()
+          }}
+        >
+          <Folder
+            className="mt-0.5 size-4 shrink-0 self-start text-text-300"
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{root.name}</span>
+            <span title={root.path} className="block truncate font-mono text-[11px] text-text-300">
+              {root.path}
+            </span>
           </span>
-        </span>
-        {/* Trailing cluster: badge / check / manage affordance sit 2px apart. */}
-        <span className="flex shrink-0 items-center gap-0.5">
-          <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
-          {isSelected ? (
-            <Check
-              className="size-4 shrink-0 text-primary"
-              strokeWidth={2}
-              aria-hidden="true"
-              data-testid={`granted-root-check-${root.id}`}
-            />
-          ) : null}
-          <DropdownMenuSubTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Manage ${root.name}`}
-              data-testid={`granted-root-manage-${root.id}`}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              className="flex size-7 shrink-0 items-center justify-center rounded-md text-text-100 hover:bg-bg-300 hover:text-text-000"
-            >
-              <MoreHorizontal className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
-          </DropdownMenuSubTrigger>
-        </span>
-      </DropdownMenuItem>
+          {/* Trailing cluster: badge and check sit 2px apart. */}
+          <span className="flex shrink-0 items-center gap-0.5">
+            <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
+            {isSelected ? (
+              <Check
+                className="size-4 shrink-0 text-primary"
+                strokeWidth={2}
+                aria-hidden="true"
+                data-testid={`granted-root-check-${root.id}`}
+              />
+            ) : null}
+          </span>
+        </div>
+      </DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="z-[70] w-[220px]">
         <DropdownMenuLabel
           title={root.path}
@@ -589,8 +576,10 @@ const ProjectFilesFilterMenu = ({
     if (showAllSessions && canLoadMoreOptions) onLoadMoreOptions()
   }, [canLoadMoreOptions, onLoadMoreOptions, showAllSessions])
 
+  const [menuOpen, setMenuOpen] = useState(false)
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           type="button"
@@ -701,6 +690,7 @@ const ProjectFilesFilterMenu = ({
               root={root}
               isSelected={root.id === selectedLocalRootId}
               onSelect={onSelectGrantedRoot}
+              onCloseMenu={() => setMenuOpen(false)}
             />
           ))}
           <DropdownMenuItem
