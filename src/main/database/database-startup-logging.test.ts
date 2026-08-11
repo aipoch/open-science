@@ -66,6 +66,10 @@ describe('database startup logging', () => {
       phase: 'migrating',
       migrationId: '0001_runtime_schema_baseline'
     })
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'migrating',
+      migrationId: '0002_project_agent_context'
+    })
     expect(records).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ level: 'info', message: 'database migration checking' }),
@@ -81,9 +85,19 @@ describe('database startup logging', () => {
         }),
         expect.objectContaining({
           level: 'info',
+          message: 'database migration started',
+          data: { migrationId: '0002_project_agent_context' }
+        }),
+        expect.objectContaining({
+          level: 'info',
+          message: 'database pre-migration backup ready',
+          data: expect.objectContaining({ migrationId: '0002_project_agent_context' })
+        }),
+        expect.objectContaining({
+          level: 'info',
           message: 'database migration completed',
           data: expect.objectContaining({
-            applied: ['0001_runtime_schema_baseline'],
+            applied: ['0001_runtime_schema_baseline', '0002_project_agent_context'],
             adoptedLegacy: true
           })
         })

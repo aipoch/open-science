@@ -36,6 +36,7 @@ import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
@@ -66,8 +67,6 @@ type HomeSessionUpdate = {
   activity: HomeSessionActivity
   activityTimestamp: number
 }
-
-type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
 
 type HomePageProps = {
   canDeleteProjects: boolean
@@ -112,7 +111,6 @@ const HomePage = ({
 }: HomePageProps): React.JSX.Element => {
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
-  const createProject = useProjectStore((state) => state.createProject)
   const updateProject = useProjectStore((state) => state.updateProject)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
@@ -132,11 +130,12 @@ const HomePage = ({
   const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
   const environmentRepairPanel = getEnvironmentRepairPanel(requiredEnvironmentFailures)
 
-  const [formState, setFormState] = useState<ProjectFormState | null>(null)
-  const [nameDraft, setNameDraft] = useState('')
-  const [descriptionDraft, setDescriptionDraft] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [formError, setFormError] = useState<string | undefined>(undefined)
+  const {
+    openCreateDialog,
+    openEditDialog,
+    dialogProps: projectFormDialogProps
+  } = useProjectFormDialog()
+
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>(undefined)
   const [isDeletingProject, setIsDeletingProject] = useState(false)
   const [deleteProjectError, setDeleteProjectError] = useState<string | undefined>(undefined)
@@ -322,30 +321,13 @@ const HomePage = ({
     [persistedSessions, projectToDelete]
   )
 
-  const openCreateDialog = (): void => {
-    setFormState({ mode: 'create' })
-    setNameDraft('')
-    setDescriptionDraft('')
-    setFormError(undefined)
-  }
-
   useEffect(() => {
     if (!pendingProjectCreation) return
     queueMicrotask(() => {
-      setFormState({ mode: 'create' })
-      setNameDraft('')
-      setDescriptionDraft('')
-      setFormError(undefined)
+      openCreateDialog()
       consumeProjectCreation()
     })
-  }, [consumeProjectCreation, pendingProjectCreation])
-
-  const openEditDialog = (project: Project): void => {
-    setFormState({ mode: 'edit', projectId: project.id })
-    setNameDraft(project.name)
-    setDescriptionDraft(project.description)
-    setFormError(undefined)
-  }
+  }, [consumeProjectCreation, openCreateDialog, pendingProjectCreation])
 
   const openDeleteDialog = (project: Project): void => {
     if (!canDeleteProjects) return
@@ -435,47 +417,6 @@ const HomePage = ({
       })
   }
 
-  const closeFormDialog = (): void => {
-    if (isSubmitting) return
-
-    setFormState(null)
-  }
-
-  // Creates or renames a project. On create, navigate into the new (empty) workspace. Failures keep the
-  // dialog open with an inline message instead of an unhandled rejection.
-  const confirmForm = (event: React.FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-
-    const name = nameDraft.trim()
-
-    if (!formState || !name || isSubmitting) return
-
-    const description = descriptionDraft.trim()
-    const isCreate = formState.mode === 'create'
-
-    setIsSubmitting(true)
-    setFormError(undefined)
-
-    const request = isCreate
-      ? createProject({ name, description })
-      : updateProject({ id: formState.projectId, name, description })
-
-    void request
-      .then((project) => {
-        if (!project) return
-
-        setFormState(null)
-
-        if (isCreate) openProject(project.id, 'user')
-      })
-      .catch((error: unknown) => {
-        setFormError(error instanceof Error ? error.message : 'Could not save project.')
-      })
-      .finally(() => {
-        setIsSubmitting(false)
-      })
-  }
-
   // Main coordinates durable project/session/index cleanup; renderer state changes only after it succeeds.
   const confirmDeleteProject = (): void => {
     if (!canDeleteProjects || !projectToDelete || isDeletingProject) return
@@ -505,13 +446,6 @@ const HomePage = ({
         setIsDeletingProject(false)
       })
   }
-
-  const formTitle = formState?.mode === 'edit' ? 'Project Settings' : 'New project'
-  const formDescription =
-    formState?.mode === 'edit'
-      ? 'Update this project’s name and description.'
-      : 'Group related sessions under a project. You can rename it later.'
-  const formSubmitLabel = formState?.mode === 'edit' ? 'Save' : 'Create project'
 
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
@@ -920,20 +854,7 @@ const HomePage = ({
         </div>
       </div>
 
-      <ProjectFormDialog
-        open={formState !== null}
-        title={formTitle}
-        description={formDescription}
-        submitLabel={formSubmitLabel}
-        nameDraft={nameDraft}
-        descriptionDraft={descriptionDraft}
-        isSubmitting={isSubmitting}
-        error={formError}
-        onNameChange={setNameDraft}
-        onDescriptionChange={setDescriptionDraft}
-        onCancel={closeFormDialog}
-        onConfirm={confirmForm}
-      />
+      <ProjectFormDialog {...projectFormDialogProps} />
 
       <DeleteProjectDialog
         project={projectToDelete}

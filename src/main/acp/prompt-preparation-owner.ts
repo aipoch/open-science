@@ -61,6 +61,7 @@ type AcpPromptPreparationInput = Readonly<{
   backend: AcpBackendGenerationView
   tooling: AcpSessionToolingAvailability
   specialistPrefix?: string
+  sessionSetupPromptPrefix?: string
   projectId: string
   fallbackPromptMessageId?: string
   bridgeSkillsAvailable: boolean
@@ -158,6 +159,7 @@ class AcpPromptPreparationOwner {
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
         specialistPrefix: input.specialistPrefix,
+        sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
           ...(skillPreparation.specialistSkillGuidance
             ? [skillPreparation.specialistSkillGuidance]

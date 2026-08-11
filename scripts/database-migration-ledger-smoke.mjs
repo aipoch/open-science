@@ -7,13 +7,27 @@ import { PrismaClient } from '@prisma/client'
 
 const BASELINE_ID = '0001_runtime_schema_baseline'
 const BASELINE_CHECKSUM = 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525'
+const EXPECTED_MIGRATION_LEDGER = [
+  { id: BASELINE_ID, checksum: BASELINE_CHECKSUM },
+  {
+    id: '0002_project_agent_context',
+    checksum: 'f3b29cf4543d1739a0cd211ddea172dcfd18aa9d7c8f94d520913ab88cb977c6'
+  }
+]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'
 const SQLITE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 
-const assertBaselineMigrationLedger = (rows) => {
-  const baseline = rows[0]
-  if (baseline?.id !== BASELINE_ID || baseline.checksum !== BASELINE_CHECKSUM) {
-    throw new Error('Packaged application did not record the expected database migration baseline.')
+const assertApplicationMigrationLedger = (rows) => {
+  if (
+    rows.length !== EXPECTED_MIGRATION_LEDGER.length ||
+    EXPECTED_MIGRATION_LEDGER.some(
+      (expected, index) =>
+        rows[index]?.id !== expected.id || rows[index]?.checksum !== expected.checksum
+    )
+  ) {
+    throw new Error(
+      'Packaged application did not record the expected application database migration ledger.'
+    )
   }
 }
 
@@ -36,7 +50,7 @@ const readDatabaseMigrationLedger = async (configRoot) => {
 const verifyDatabaseMigrationLedger = async (configRoot) => {
   const rows = await readDatabaseMigrationLedger(configRoot)
   if (!rows) throw new Error('Packaged application did not create the database migration ledger.')
-  assertBaselineMigrationLedger(rows)
+  assertApplicationMigrationLedger(rows)
 }
 
 const seedLegacyDatabase = async (configRoot) => {
@@ -65,9 +79,13 @@ const verifyLegacyProjectPreserved = async (configRoot) => {
   const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
   try {
     const rows = await client.$queryRawUnsafe(
-      `SELECT "name", "archivedAt" FROM "Project" WHERE "id" = '${LEGACY_PROJECT_ID}'`
+      `SELECT "name", "agentContext", "archivedAt" FROM "Project" WHERE "id" = '${LEGACY_PROJECT_ID}'`
     )
-    if (rows.length !== 1 || rows[0]?.name !== 'Preserved package smoke project') {
+    if (
+      rows.length !== 1 ||
+      rows[0]?.name !== 'Preserved package smoke project' ||
+      rows[0]?.agentContext !== ''
+    ) {
       throw new Error('Packaged application did not preserve the legacy database fixture.')
     }
   } finally {
@@ -111,7 +129,7 @@ const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, che
 }
 
 export {
-  assertBaselineMigrationLedger,
+  assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
   readDatabaseMigrationLedger,
   seedLegacyDatabase,

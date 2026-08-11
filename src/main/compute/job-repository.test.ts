@@ -179,7 +179,7 @@ describe('ComputeJob schema migration (integration)', () => {
     // migrateApplicationDatabase must add ComputeJob without disturbing existing rows.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     // Idempotent second run.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -251,7 +251,7 @@ describe('ComputeJob schema migration (integration)', () => {
     // Apply migrateApplicationDatabase — must add the 4 new columns without error.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     // Idempotent second run.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })

@@ -56,6 +56,7 @@ type HarnessOptions = {
   initialBackend?: AcpBackendGenerationView
   invalidateDuringResume?: boolean
   observerError?: Error
+  projectAgentContext?: string
   resumeError?: unknown
   supportsResume?: boolean
 }
@@ -77,8 +78,10 @@ type ResumerHarness = {
   provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
   release: ReturnType<typeof vi.fn>
+  backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  sessionSetupAppends: string[][]
   setTimer: ReturnType<typeof vi.fn>
   successorSession: ActiveSession
 }
@@ -87,7 +90,20 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   const order: string[] = []
   let timerCallback: (() => void) | undefined
   let identityClaimedAtAdoption = false
-  let currentBackend = options.initialBackend ?? backend
+  const sessionSetupAppends: string[][] = []
+  // Capture wraps whichever backend the harness runs with (default or injected via initialBackend).
+  const baseBackend = options.initialBackend ?? backend
+  const capturingBackend: AcpBackendGenerationView = {
+    ...baseBackend,
+    framework: {
+      ...baseBackend.framework,
+      buildSessionSetup: (input) => {
+        sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
+        return baseBackend.framework.buildSessionSetup(input)
+      }
+    }
+  }
+  let currentBackend = capturingBackend
   const providerSession = {
     sessionId: 'provider-session',
     dispose: vi.fn(() => order.push('session dispose'))
@@ -241,6 +257,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
     clearLivePermissionProfile,
+    resolveProjectAgentContext: options.projectAgentContext
+      ? vi.fn(async () => options.projectAgentContext)
+      : undefined,
     updateCwd: () => order.push('cwd callback'),
     pushEvent: () => {
       order.push('event callback')
@@ -269,6 +288,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     adopt,
     assertCurrentConnection,
     attachSession,
+    backend: capturingBackend,
     commit,
     clearLivePermissionProfile,
     configure,
@@ -284,6 +304,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     release,
     request,
     resume,
+    sessionSetupAppends,
     setTimer,
     successorSession
   }
@@ -318,7 +339,7 @@ describe('AcpProviderSessionResumer', () => {
       backendId: 'claude-code'
     })
     expect(harness.configurePermissionProfile).toHaveBeenCalledWith({
-      backend,
+      backend: harness.backend,
       connection: harness.connection,
       session: harness.providerSession,
       permissionProfile: 'full'
@@ -628,6 +649,26 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).toHaveBeenCalledOnce()
     expect(harness.order).not.toContain('capability provision')
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+  })
+
+  it('appends the project Agent Context when resuming a compatible provider session', async () => {
+    const harness = createHarness({
+      initialBackend: {
+        ...opencodeBackend,
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'Baked instructions.' }
+      },
+      projectAgentContext: 'Always cite DOIs.'
+    })
+
+    await harness.resume({
+      previousFrameworkId: 'opencode',
+      previousBackendId: opencodeBackend.backendId
+    })
+
+    expect(harness.sessionSetupAppends.at(-1)).toContain('Always cite DOIs.')
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
+    ).toContain('Always cite DOIs.')
   })
 
   it('replays configuration against a live effort change before publication', async () => {

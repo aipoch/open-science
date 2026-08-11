@@ -29,6 +29,22 @@ describe('project application command contracts', () => {
       projectApplicationCommandContracts.update.args.parse([{ id: 'project-1', pinned: true }])
     ).toEqual([{ id: 'project-1', pinned: true }])
     expect(
+      projectApplicationCommandContracts.create.args.parse([
+        { name: 'Project', agentContext: 'Always cite DOIs.' }
+      ])
+    ).toEqual([{ name: 'Project', agentContext: 'Always cite DOIs.' }])
+    expect(
+      projectApplicationCommandContracts.update.args.parse([
+        { id: 'project-1', agentContext: 'Always cite DOIs.' }
+      ])
+    ).toEqual([{ id: 'project-1', agentContext: 'Always cite DOIs.' }])
+    expect(
+      projectApplicationCommandContracts.get.result.parse({
+        ...project,
+        agentContext: 'Always cite DOIs.'
+      })
+    ).toEqual({ ...project, agentContext: 'Always cite DOIs.' })
+    expect(
       projectApplicationCommandContracts.updateArchive.args.parse([
         { id: 'project-1', archived: true, expectedArchivedAt: null }
       ])
@@ -48,6 +64,16 @@ describe('project application command contracts', () => {
     ).toThrow()
     expect(() =>
       projectApplicationCommandContracts.list.result.parse([{ ...project, createdAt: 'today' }])
+    ).toThrow()
+  })
+
+  it('rejects an agent context beyond the 16000 character limit', () => {
+    const oversized = 'x'.repeat(16001)
+
+    expect(() =>
+      projectApplicationCommandContracts.create.args.parse([
+        { name: 'Project', agentContext: oversized }
+      ])
     ).toThrow()
   })
 })

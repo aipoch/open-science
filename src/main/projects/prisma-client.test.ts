@@ -82,6 +82,33 @@ describe('project prisma client (integration)', () => {
     })
   })
 
+  it('adds the Agent Context column to an existing Project table with an empty default', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-agent-context-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', '2026-08-06T00:00:00.000Z')`
+    )
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
+    })
+
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
+    ).resolves.toMatchObject({ agentContext: '' })
+  })
+
   it('creates the Permission Grant authority table with constrained scopes and owner cascade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-grant-schema-'))
     const client = createProjectDbClient(storageRoot)
@@ -505,7 +532,9 @@ describe('project prisma client (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
@@ -580,7 +609,9 @@ describe('project prisma client (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
     await migrateApplicationDatabase(client)
 
@@ -926,7 +957,7 @@ describe('project prisma client (integration)', () => {
 
     // Run migrateApplicationDatabase — the migration guard must add reflagCount without error.
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
 
     // Running it again is idempotent (guard catches duplicate-column error).

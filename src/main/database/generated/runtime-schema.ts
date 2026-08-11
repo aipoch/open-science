@@ -5,6 +5,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "description" TEXT NOT NULL DEFAULT '',
+    "agentContext" TEXT NOT NULL DEFAULT '',
     "isExample" BOOLEAN NOT NULL DEFAULT false,
     "pinned" BOOLEAN NOT NULL DEFAULT false,
     "archivedAt" DATETIME,

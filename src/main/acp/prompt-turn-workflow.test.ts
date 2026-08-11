@@ -153,6 +153,7 @@ const createHarness = (
   })
   aggregate.setSpecialistId('specialist-1')
   aggregate.setSpecialistPrefix('[Analyst]')
+  aggregate.setSessionSetupPromptPrefix('Project Agent Context.')
   const lookup = vi.fn(() => ({
     appSessionId: 'app-1',
     generation: 1,
@@ -412,6 +413,12 @@ describe('AcpPromptTurnWorkflow', () => {
       kind: 'stopped',
       response: { stopReason: 'end_turn' }
     })
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        specialistPrefix: '[Analyst]',
+        sessionSetupPromptPrefix: 'Project Agent Context.'
+      })
+    )
 
     const onPublished = vi.fn()
     await handles.emitArtifact(onPublished)

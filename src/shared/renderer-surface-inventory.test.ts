@@ -127,6 +127,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 const WEB_UNAVAILABLE_CHANNELS = [
   'file:save-blob',
   'file:save-managed',
+  'file:save-project-artifacts',
   'file:save-session-artifacts',
   'sessions:export-conversation',
   'settings:import-agent-home-skills',
@@ -229,12 +230,12 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(338)
+    expect(electronPaths).toHaveLength(339)
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
     )
-    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(243)
+    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(244)
     expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(33)
     expectSameSet(
       electronPaths.filter((path) => !generatedPaths.has(path)),

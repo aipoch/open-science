@@ -40,6 +40,7 @@ vi.mock('electron', () => ({
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
   saveSessionArtifacts: (request: unknown) => unknown
+  saveProjectArtifacts: (request: unknown) => unknown
   getRuntimeVersions: () => { electron: string; chrome: string; node: string }
   diagnostics: {
     reportRendererFailure: (report: unknown) => void
@@ -401,6 +402,7 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.unregisterInterpreter',
       'saveBlobFile',
       'saveManagedFile',
+      'saveProjectArtifacts',
       'saveSessionArtifacts',
       'sessions.deleteSession',
       'sessions.exportConversation',
@@ -656,7 +658,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 23-group, 151-callable T1d complement', () => {
+  it('pins the exact 23-group, 152-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -683,7 +685,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(151)
+    expect(coreContracts).toHaveLength(152)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -695,16 +697,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 111, events: 29, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 112, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 111 request methods through their cataloged Electron channels', async () => {
+  it('routes all 112 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(111)
+    expect(requestContracts).toHaveLength(112)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -955,6 +957,13 @@ const sampleSessionArtifactSelection = {
   sessionId: 's-1',
   files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
 }
+const sampleProjectArtifactSelection = {
+  projectId: 'p-1',
+  projectName: 'Research',
+  files: [
+    { source: 'artifact', sessionId: 's-1', path: 'artifact://report', suggestedName: 'report.csv' }
+  ]
+}
 
 const cases: ForwardingCase[] = [
   {
@@ -1020,6 +1029,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.saveSessionArtifacts(sampleSessionArtifactSelection),
     channel: 'file:save-session-artifacts',
     args: [sampleSessionArtifactSelection]
+  },
+  {
+    name: 'saveProjectArtifacts → file:save-project-artifacts',
+    invoke: (a) => a.saveProjectArtifacts(sampleProjectArtifactSelection),
+    channel: 'file:save-project-artifacts',
+    args: [sampleProjectArtifactSelection]
   },
   {
     name: 'lifecycle.getClientId → lifecycle:client-id (no args)',

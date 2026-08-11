@@ -12,6 +12,10 @@ export const projectSchema = z
     id: z.string(),
     name: z.string(),
     description: z.string(),
+    // Optional on the wire for compatibility with older persisted payloads; absence means no
+    // Agent Context. The DB column is NOT NULL DEFAULT ''. Capped because it is injected verbatim
+    // into every agent session's system prompt.
+    agentContext: z.string().max(16000).optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
     pinned: z.boolean().optional(),
@@ -26,7 +30,8 @@ export const projectSchema = z
 export const createProjectRequestSchema = z
   .object({
     name: z.string(),
-    description: z.string().optional()
+    description: z.string().optional(),
+    agentContext: z.string().max(16000).optional()
   })
   .strict()
 
@@ -35,6 +40,7 @@ export const updateProjectRequestSchema = z
     id: z.string(),
     name: z.string().optional(),
     description: z.string().optional(),
+    agentContext: z.string().max(16000).optional(),
     pinned: z.boolean().optional()
   })
   .strict()

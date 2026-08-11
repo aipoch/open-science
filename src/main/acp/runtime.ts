@@ -226,6 +226,9 @@ type AcpRuntimeOptions = {
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
+  // projectName carries the Project id. Returns undefined when absent or on lookup failure.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
 }
 
 type AcpRuntimeArtifactOptions = {

@@ -325,6 +325,7 @@ class AcpPromptTurnWorkflow {
         backend,
         tooling: env.tooling(),
         specialistPrefix: snapshot?.specialistPrefix,
+        sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
         projectId: this.options.resolveProjectName(sessionId),
         fallbackPromptMessageId: artifacts.promptMessageIdFor(sessionId),
         bridgeSkillsAvailable: env.bridgeSkillsAvailable(),

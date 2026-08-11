@@ -5,28 +5,36 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
-  assertBaselineMigrationLedger,
+  assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
   seedLegacyDatabase,
+  verifyLegacyProjectPreserved,
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
 import { PrismaClient } from '@prisma/client'
 
 describe('packaged database migration ledger smoke', () => {
-  it('pins the platform-neutral baseline identity and checksum', () => {
+  it('pins every packaged application migration identity and checksum', () => {
     expect(() =>
-      assertBaselineMigrationLedger([
+      assertApplicationMigrationLedger([
+        {
+          id: '0001_runtime_schema_baseline',
+          checksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525'
+        },
+        {
+          id: '0002_project_agent_context',
+          checksum: 'f3b29cf4543d1739a0cd211ddea172dcfd18aa9d7c8f94d520913ab88cb977c6'
+        }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      assertApplicationMigrationLedger([
         {
           id: '0001_runtime_schema_baseline',
           checksum: 'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525'
         }
       ])
-    ).not.toThrow()
-    expect(() =>
-      assertBaselineMigrationLedger([
-        { id: '0001_runtime_schema_baseline', checksum: '0'.repeat(64) }
-      ])
-    ).toThrow(/expected database migration baseline/)
+    ).toThrow(/expected application database migration ledger/)
   })
 
   it('records the packaged SQLite compatibility floor and certified matrix', async () => {
@@ -79,6 +87,31 @@ describe('packaged database migration ledger smoke', () => {
       } finally {
         await client.$disconnect()
       }
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('rejects a legacy fixture without the migrated Agent Context default', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-agent-context-'))
+    try {
+      await seedLegacyDatabase(root)
+      const databasePath = join(root, 'open-science.db').replaceAll('\\', '/')
+      const client = new PrismaClient({ datasources: { db: { url: `file:${databasePath}` } } })
+      try {
+        await client.$executeRawUnsafe(
+          `ALTER TABLE "Project" ADD COLUMN "agentContext" TEXT NOT NULL DEFAULT ''`
+        )
+        await client.$executeRawUnsafe(
+          `UPDATE "Project" SET "agentContext" = 'unexpected' WHERE "id" = 'package-smoke-legacy-project'`
+        )
+      } finally {
+        await client.$disconnect()
+      }
+
+      await expect(verifyLegacyProjectPreserved(root)).rejects.toThrow(
+        /preserve the legacy database fixture/
+      )
     } finally {
       await rm(root, { force: true, recursive: true })
     }

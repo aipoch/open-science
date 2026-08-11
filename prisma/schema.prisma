@@ -23,6 +23,7 @@ model Project {
   id          String   @id @default(cuid())
   name        String
   description String   @default("")
+  agentContext String  @default("")
   isExample   Boolean  @default(false)
   pinned      Boolean  @default(false)
   archivedAt  DateTime?

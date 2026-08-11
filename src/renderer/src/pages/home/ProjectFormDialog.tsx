@@ -21,10 +21,12 @@ type ProjectFormDialogProps = {
   submitLabel: string
   nameDraft: string
   descriptionDraft: string
+  agentContextDraft: string
   isSubmitting: boolean
   error: string | undefined
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
+  onAgentContextChange: (value: string) => void
   onCancel: () => void
   onConfirm: (event: React.FormEvent<HTMLFormElement>) => void
 }
@@ -32,7 +34,8 @@ type ProjectFormDialogProps = {
 const dialogInputClassName =
   'h-9 rounded-lg border-border bg-card px-3 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25'
 
-// Shared name + description form for creating and editing a project. Both are stored in the project DB.
+// Shared name + description + agent context form for creating and editing a project. All are
+// stored in the project DB.
 const ProjectFormDialog = ({
   open,
   title,
@@ -40,10 +43,12 @@ const ProjectFormDialog = ({
   submitLabel,
   nameDraft,
   descriptionDraft,
+  agentContextDraft,
   isSubmitting,
   error,
   onNameChange,
   onDescriptionChange,
+  onAgentContextChange,
   onCancel,
   onConfirm
 }: ProjectFormDialogProps): React.JSX.Element => {
@@ -122,6 +127,32 @@ const ProjectFormDialog = ({
                   onChange={(event) => onDescriptionChange(event.target.value)}
                   placeholder="Describe what this project is about…"
                   rows={3}
+                  className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  className="text-xs font-medium text-muted-foreground"
+                  htmlFor="project-form-agent-context"
+                >
+                  Agent Context
+                </label>
+                <p
+                  id="project-form-agent-context-help"
+                  className="text-xs leading-relaxed text-muted-foreground"
+                >
+                  Injected into the system prompt of every agent session in this project, including
+                  resumed ones. Sent to the model provider with every session — do not include
+                  secrets.
+                </p>
+                <textarea
+                  id="project-form-agent-context"
+                  aria-describedby="project-form-agent-context-help"
+                  value={agentContextDraft}
+                  onChange={(event) => onAgentContextChange(event.target.value)}
+                  placeholder="e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes."
+                  rows={4}
+                  maxLength={16000}
                   className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
                 />
               </div>

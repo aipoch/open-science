@@ -227,6 +227,10 @@ type WorkspacePanelLayout = {
   sidebar: AnimatedResizablePanel & {
     state: ResizablePanelState
     defaultSize: string
+    toggle: () => void
+    // Shared between the sidebar header toggle (expanded) and the floating fallback (collapsed);
+    // exactly one of them is mounted at a time, so React hands the ref over automatically.
+    toggleRef: React.RefObject<HTMLButtonElement | null>
     toggleButton: React.ReactNode
   }
   preview: AnimatedResizablePanel & {
@@ -252,6 +256,10 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
   const previewToggleRef = useRef<HTMLButtonElement | null>(null)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  // Latest sidebar width in pixels and a render-phase-independent mirror of the collapse state,
+  // so the floating fallback can be positioned no matter which toggle instance holds the ref.
+  const sidebarPixelWidthRef = useRef<number | null>(null)
+  const sidebarStateRef = useRef(sidebarState)
 
   const openMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(true), [])
   const closeMobileSidebar = useCallback((): void => setIsMobileSidebarOpen(false), [])
@@ -264,6 +272,10 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
     []
   )
   const syncSidebarTogglePosition = useCallback((panelWidth: number): void => {
+    sidebarPixelWidthRef.current = panelWidth
+    // While expanded the toggle sits inline in the sidebar header; only the collapsed floating
+    // fallback needs explicit positioning.
+    if (sidebarStateRef.current !== 'collapsed') return
     const toggle = sidebarToggleRef.current
     if (toggle) toggle.style.left = `${Math.max(0, panelWidth - SIDEBAR_TOGGLE_RIGHT_INSET)}px`
   }, [])
@@ -288,6 +300,40 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
     onPanelStateChange: previewPort.syncState,
     collapseFocusTargetRef: previewToggleRef
   })
+
+  useEffect(() => {
+    sidebarStateRef.current = sidebarState
+  }, [sidebarState])
+
+  // Drag-to-collapse emits its final zero-width resize while the header toggle still holds the
+  // ref, so the freshly mounted floating fallback reapplies the tracked width on collapse.
+  useLayoutEffect(() => {
+    if (sidebarState !== 'collapsed') return
+    const panelWidth = sidebarPixelWidthRef.current
+    if (panelWidth === null) return
+    const toggle = sidebarToggleRef.current
+    if (toggle) toggle.style.left = `${Math.max(0, panelWidth - SIDEBAR_TOGGLE_RIGHT_INSET)}px`
+  }, [sidebarState])
+
+  // Each toggle handoff (header instance ↔ floating fallback) unmounts the previously focused
+  // button, dropping focus to <body>. Restore it on the surviving instance unless focus
+  // legitimately lives elsewhere (e.g. the composer when the shortcut collapses the panel).
+  const previousSidebarStateRef = useRef(sidebarState)
+  useEffect(() => {
+    const previousSidebarState = previousSidebarStateRef.current
+    previousSidebarStateRef.current = sidebarState
+    if (previousSidebarState === sidebarState) return
+
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement !== document.body &&
+      document.contains(activeElement)
+    ) {
+      return
+    }
+    sidebarToggleRef.current?.focus()
+  }, [sidebarState])
 
   useEffect(() => {
     if (!isMobile || !isMobileSidebarOpen) return
@@ -335,6 +381,8 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
       ...sidebar,
       state: sidebarState,
       defaultSize: SIDEBAR_PANEL_DEFAULT_SIZE_CSS,
+      toggle: toggleSidebar,
+      toggleRef: sidebarToggleRef,
       toggleButton: (
         <button
           ref={sidebarToggleRef}
@@ -394,7 +442,13 @@ type WorkspacePanelLayoutProps = {
   hasPreviewItems: boolean
   restoredPlanResponder?: RestoredPlanResponder
   preview: PreviewPanelLayoutPort
-  desktopSidebar: React.ReactNode
+  renderDesktopSidebar: (options: {
+    sidebarToggle: {
+      state: ResizablePanelState
+      onToggle: () => void
+    }
+    sidebarToggleRef: React.RefObject<HTMLButtonElement | null>
+  }) => React.ReactNode
   renderMobileSidebar: (options: { isOpen: boolean; close: () => void }) => React.ReactNode
   renderConversation: (options: {
     isPreviewPanelCollapsed: boolean
@@ -408,7 +462,7 @@ const WorkspacePanelLayout = ({
   hasPreviewItems,
   restoredPlanResponder,
   preview: previewPort,
-  desktopSidebar,
+  renderDesktopSidebar,
   renderMobileSidebar,
   renderConversation
 }: WorkspacePanelLayoutProps): React.JSX.Element => {
@@ -447,7 +501,10 @@ const WorkspacePanelLayout = ({
                   sidebar.onResize(panelSize, previousPanelSize)
                 }
               >
-                {desktopSidebar}
+                {renderDesktopSidebar({
+                  sidebarToggle: { state: sidebar.state, onToggle: sidebar.toggle },
+                  sidebarToggleRef: sidebar.toggleRef
+                })}
               </ResizablePanel>
 
               <ResizableHandle
@@ -491,7 +548,7 @@ const WorkspacePanelLayout = ({
           ) : null}
         </ResizablePanelGroup>
         {!isMobile && hasPreviewItems ? preview.toggleButton : null}
-        {!isMobile ? sidebar.toggleButton : null}
+        {!isMobile && sidebar.state === 'collapsed' ? sidebar.toggleButton : null}
       </div>
 
       {isMobile ? (

@@ -3,7 +3,12 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import { claudeCodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codexFramework,
+  opencodeFramework,
+  type AgentFramework
+} from '../agent-framework'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionCreator } from './provider-session-creator'
@@ -22,9 +27,11 @@ const permissionProfile: SessionPermissionProfileState = {
 }
 
 type CreatorHarness = {
+  buildSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
   creator: AcpProviderSessionCreator
   order: string[]
+  provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
   release: ReturnType<typeof vi.fn>
   session: ActiveSession
@@ -42,6 +49,12 @@ const createHarness = (options: {
   emitState?: () => void
   order?: string[]
   descriptorCapabilities?: SessionCapabilityName[]
+  framework?: AgentFramework
+  nativeMcpEnabled?: boolean
+  bridgeMcpAliasesEnabled?: boolean
+  backendId?: string
+  projectAgentContext?: string
+  specialistIdentity?: { append: string; prefix: string }
 }): CreatorHarness => {
   const order = options.order ?? []
   const sessionSetupAppends: string[][] = []
@@ -49,14 +62,15 @@ const createHarness = (options: {
     sessionId: 'provider-session',
     dispose: vi.fn()
   } as unknown as ActiveSession
+  const buildSession = vi.fn(() => ({
+    start: vi.fn(async () => {
+      order.push('session/new')
+      return session
+    })
+  }))
   const connection = {
     agent: {
-      buildSession: vi.fn(() => ({
-        start: vi.fn(async () => {
-          order.push('session/new')
-          return session
-        })
-      }))
+      buildSession
     }
   } as unknown as ClientConnection
   const registry = new AcpSessionRegistry()
@@ -64,23 +78,44 @@ const createHarness = (options: {
     order.push('registry publish')
     return AcpSessionRegistry.prototype.publish.call(registry, ...args)
   })
+  const baseFramework = options.framework ?? claudeCodeFramework
   const backend: AcpBackendGenerationView = {
     framework: {
-      ...claudeCodeFramework,
+      ...baseFramework,
       buildSessionSetup: (input) => {
         order.push('presentation preflight')
         sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
-        return claudeCodeFramework.buildSessionSetup(input)
+        return baseFramework.buildSessionSetup(input)
       }
     },
-    backendId: 'claude-code',
+    backendId: options.backendId ?? baseFramework.id,
     session: { modelRequired: false },
     prompt: { systemPromptAppends: [] },
     context: { supportsImageInput: false },
-    adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+    adapter: {
+      nativeMcpEnabled: options.nativeMcpEnabled ?? true,
+      bridgeMcpAliasesEnabled: options.bridgeMcpAliasesEnabled ?? false
+    }
   }
   const commit = vi.fn(() => order.push('capability commit'))
   const release = vi.fn()
+  const provision = vi.fn(async () => {
+    order.push('capability provision')
+    return {
+      mcpServers: [],
+      descriptor: {
+        role: 'primary' as const,
+        delegation: 'denied' as const,
+        transport: 'none' as const,
+        capabilities: options.descriptorCapabilities ?? [],
+        canonicalMcpServerNames: [],
+        modelFacingMcpServerNames: [],
+        controlRpcMethods: []
+      },
+      commit,
+      release
+    }
+  })
   const creator = new AcpProviderSessionCreator({
     defaultCwd: '/default',
     defaultProjectName: 'default-project',
@@ -101,26 +136,14 @@ const createHarness = (options: {
         blockStartup: false
       })
     },
-    capabilities: {
-      provision: vi.fn(async () => {
-        order.push('capability provision')
-        return {
-          mcpServers: [],
-          descriptor: {
-            role: 'primary' as const,
-            delegation: 'denied' as const,
-            transport: 'none' as const,
-            capabilities: options.descriptorCapabilities ?? [],
-            canonicalMcpServerNames: [],
-            modelFacingMcpServerNames: [],
-            controlRpcMethods: []
-          },
-          commit,
-          release
-        }
-      })
-    },
+    capabilities: { provision },
     capabilityPolicy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    resolveProjectAgentContext: options.projectAgentContext
+      ? vi.fn(async () => options.projectAgentContext)
+      : undefined,
+    resolveSpecialistIdentity: options.specialistIdentity
+      ? vi.fn(async () => options.specialistIdentity)
+      : undefined,
     configurator: {
       configure:
         options.configure ??
@@ -144,7 +167,17 @@ const createHarness = (options: {
     },
     diagnosticContext: () => ({})
   })
-  return { commit, creator, order, registry, release, session, sessionSetupAppends }
+  return {
+    buildSession,
+    commit,
+    creator,
+    order,
+    provision,
+    registry,
+    release,
+    session,
+    sessionSetupAppends
+  }
 }
 
 describe('AcpProviderSessionCreator', () => {
@@ -220,5 +253,68 @@ describe('AcpProviderSessionCreator', () => {
 
     expect(harness.sessionSetupAppends.flat()).not.toContain(SKILL_IMPORT_SYSTEM_PROMPT_APPEND)
     expect(enabledHarness.sessionSetupAppends.flat()).toContain(SKILL_IMPORT_SYSTEM_PROMPT_APPEND)
+  })
+
+  it('appends the project Agent Context after the specialist append', async () => {
+    const harness = createHarness({
+      projectAgentContext: 'Always cite DOIs.',
+      specialistIdentity: {
+        append: 'specialist identity append',
+        prefix: 'specialist turn prefix'
+      }
+    })
+
+    await harness.creator.create({ projectName: 'project-1', specialistId: 'specialist-1' })
+
+    expect(harness.sessionSetupAppends.at(-1)?.slice(-2)).toEqual([
+      'specialist identity append',
+      'Always cite DOIs.'
+    ])
+  })
+
+  it.each([
+    ['claude-code', claudeCodeFramework, true, false, 'claude-code'],
+    ['opencode', opencodeFramework, true, false, 'opencode:provider-a'],
+    ['codex-response', codexFramework, true, false, 'codex:provider-a'],
+    ['codex-bridge', codexFramework, false, true, 'codex:provider-a']
+  ] as const)(
+    'delivers project Agent Context through the %s launcher boundary',
+    async (route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled, backendId) => {
+      const harness = createHarness({
+        framework,
+        nativeMcpEnabled,
+        bridgeMcpAliasesEnabled,
+        backendId,
+        projectAgentContext: 'Always cite DOIs.'
+      })
+
+      await harness.creator.create({ projectName: 'project-1' })
+
+      expect(harness.provision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          framework: expect.objectContaining({ id: framework.id }),
+          nativeMcpEnabled,
+          bridgeMcpAliasesEnabled
+        })
+      )
+      if (route === 'claude-code') {
+        expect(JSON.stringify(harness.buildSession.mock.calls[0]?.[0]?._meta)).toContain(
+          'Always cite DOIs.'
+        )
+      } else {
+        expect(
+          harness.registry.lookup('provider-session')?.aggregate.snapshot().sessionSetupPromptPrefix
+        ).toContain('Always cite DOIs.')
+      }
+    }
+  )
+
+  it('creates the session without an Agent Context append when no resolver is configured', async () => {
+    const harness = createHarness({})
+
+    await harness.creator.create({ projectName: 'project-1' })
+
+    expect(harness.sessionSetupAppends.length).toBeGreaterThan(0)
+    expect(harness.sessionSetupAppends.flat()).not.toContain('Always cite DOIs.')
   })
 })

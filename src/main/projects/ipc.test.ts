@@ -93,6 +93,32 @@ describe('createProjectHandlers', () => {
     expect(order).toEqual(['recover', 'get', 'recover', 'create', 'recover', 'update'])
   })
 
+  it('forwards the Agent Context field through create and update unchanged', async () => {
+    const repository = {
+      list: vi.fn(),
+      get: vi.fn(),
+      create: vi.fn(async () => project),
+      update: vi.fn(async () => project)
+    }
+    const deletionCoordinator = {
+      deleteProject: vi.fn(),
+      recoverPendingDeletions: vi.fn().mockResolvedValue(undefined)
+    }
+    const handlers = createProjectHandlers(repository, deletionCoordinator)
+
+    await handlers.create({ name: 'Research', agentContext: 'Always cite DOIs.' })
+    await handlers.update({ id: 'project-1', agentContext: 'Prefer Python.' })
+
+    expect(repository.create).toHaveBeenCalledWith({
+      name: 'Research',
+      agentContext: 'Always cite DOIs.'
+    })
+    expect(repository.update).toHaveBeenCalledWith({
+      id: 'project-1',
+      agentContext: 'Prefer Python.'
+    })
+  })
+
   it('leaves only preview state on the capability-specific Electron adapter', async () => {
     const previewRepository = {
       get: vi.fn().mockResolvedValue(null),

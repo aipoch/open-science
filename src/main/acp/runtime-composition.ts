@@ -24,6 +24,8 @@ import {
 } from '../notifications/task-notifications'
 import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import {
@@ -31,7 +33,7 @@ import {
   buildSpecialistIdentityPrefix
 } from '../specialist/identity'
 import type { ProfileService } from '../specialist/service'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -42,6 +44,25 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const log = createLogger('acp')
+
+// Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
+// projectName carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_NAME fallback
+// namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
+// without an append.
+const createProjectAgentContextResolver = (repository: {
+  get: (id: string) => Promise<{ agentContext?: string } | null>
+}): ((projectName: string) => Promise<string | undefined>) => {
+  return async (projectName) => {
+    try {
+      const project = await repository.get(projectName)
+      const context = project?.agentContext?.trim()
+      return context ? context : undefined
+    } catch (error) {
+      log.warn('project Agent Context lookup failed', errorLogFields(error))
+      return undefined
+    }
+  }
+}
 
 type AcpRuntimeArtifacts = {
   repository: ArtifactRepository
@@ -126,6 +147,8 @@ const createAcpRuntime = ({
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
+  // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
+  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
   const callbacks: AcpRuntimeCallbacks = {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
@@ -343,7 +366,8 @@ const createAcpRuntime = ({
                 return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
               }
             }
-          : undefined
+          : undefined,
+        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository)
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
       return new AcpRuntime(
@@ -371,5 +395,5 @@ const createAcpRuntime = ({
   )
 }
 
-export { createAcpRuntime }
+export { createAcpRuntime, createProjectAgentContextResolver }
 export type { AcpRuntimeCompositionOptions }

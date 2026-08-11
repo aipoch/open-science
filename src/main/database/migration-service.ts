@@ -14,6 +14,7 @@ import {
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 
 type MigrationVerifierDescriptor =
   | {
@@ -25,6 +26,12 @@ type MigrationVerifierDescriptor =
       kind: 'table-exists'
       version: 1
       table: string
+    }
+  | {
+      kind: 'column-exists'
+      version: 1
+      table: string
+      column: string
     }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
@@ -45,6 +52,8 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
         .join('')}`
     case 'table-exists':
       return `table-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}`
+    case 'column-exists':
+      return `column-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}${lengthPrefixedChecksumText(verifier.column)}`
   }
 }
 
@@ -75,10 +84,21 @@ const BASELINE_CHECKSUM = checksumMigrationPayload(
   runtimeSchemaBaselineMigration.statements,
   runtimeSchemaBaselineMigration.verifiers
 )
+const PROJECT_AGENT_CONTEXT_CHECKSUM = checksumMigrationPayload(
+  projectAgentContextMigration.id,
+  projectAgentContextMigration.statements,
+  projectAgentContextMigration.verifiers
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
     checksum: BASELINE_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectAgentContextMigration,
+    checksum: PROJECT_AGENT_CONTEXT_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -179,6 +199,19 @@ const runMigrationVerifiers = async (
         `
         if (rows.length !== 1) {
           throw new Error(`Migration verification found missing table ${verifier.table}.`)
+        }
+        break
+      }
+      case 'column-exists': {
+        const quotedTable = `"${verifier.table.replaceAll('"', '""')}"`
+        const columns = await migrationSqlExecutor.query<Array<{ name: string }>>(
+          client,
+          `PRAGMA table_info(${quotedTable})`
+        )
+        if (!columns.some((column) => column.name === verifier.column)) {
+          throw new Error(
+            `Migration verification found missing column ${verifier.table}.${verifier.column}.`
+          )
         }
         break
       }
@@ -746,6 +779,7 @@ const migrateApplicationDatabase = (
 
 export {
   BASELINE_CHECKSUM,
+  PROJECT_AGENT_CONTEXT_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

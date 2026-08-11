@@ -91,6 +91,8 @@ const api: OpenScienceAPI = {
   saveManagedFile: (request) => electronRendererContracts.invoke('saveManagedFile', request),
   saveSessionArtifacts: (request) =>
     electronRendererContracts.invoke('saveSessionArtifacts', request),
+  saveProjectArtifacts: (request) =>
+    electronRendererContracts.invoke('saveProjectArtifacts', request),
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,

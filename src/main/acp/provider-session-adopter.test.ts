@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { claudeCodeFramework } from '../agent-framework'
+import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
@@ -54,7 +54,9 @@ const createHarness = (
     emitState?: () => void
     foreignIdentityCollision?: (sessionIds: readonly string[]) => Error | undefined
     handoffAppend?: string
+    initialBackend?: AcpBackendGenerationView
     capabilityPolicy?: SessionCapabilityPolicy
+    projectAgentContext?: string
     specialistIdentity?: { append: string; prefix: string }
     specialistSkills?: EffectiveSpecialistSkills
   } = {}
@@ -78,19 +80,23 @@ const createHarness = (
       })
     }
   } as unknown as ClientConnection
-  let backend: AcpBackendGenerationView = {
-    framework: {
-      ...claudeCodeFramework,
-      buildSessionSetup: (input) => {
-        sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
-        return claudeCodeFramework.buildSessionSetup(input)
-      }
-    },
+  const baseBackend: AcpBackendGenerationView = options.initialBackend ?? {
+    framework: claudeCodeFramework,
     backendId: 'claude-code',
     session: { modelRequired: false },
     prompt: { systemPromptAppends: [] },
     context: { supportsImageInput: false },
     adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+  }
+  let backend: AcpBackendGenerationView = {
+    ...baseBackend,
+    framework: {
+      ...baseBackend.framework,
+      buildSessionSetup: (input) => {
+        sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
+        return baseBackend.framework.buildSessionSetup(input)
+      }
+    }
   }
   const registry = new AcpSessionRegistry({
     foreignIdentityCollision: options.foreignIdentityCollision
@@ -145,6 +151,9 @@ const createHarness = (
       : undefined,
     resolveSpecialistSkills: options.specialistSkills
       ? vi.fn(async () => options.specialistSkills as EffectiveSpecialistSkills)
+      : undefined,
+    resolveProjectAgentContext: options.projectAgentContext
+      ? vi.fn(async () => options.projectAgentContext)
       : undefined,
     peekClaudeReplay: () => options.handoffAppend,
     commitClaudeReplay,
@@ -327,6 +336,37 @@ describe('AcpProviderSessionAdopter', () => {
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot().appliedModel).toBe(
       'current-model-fact'
     )
+  })
+
+  it('appends the project Agent Context after the specialist and handoff appends', async () => {
+    const harness = createHarness({
+      initialBackend: {
+        framework: opencodeFramework,
+        backendId: 'opencode:provider-a',
+        modelRoute: 'opencode-openai',
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'Baked instructions.' },
+        context: { supportsImageInput: false },
+        adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+      },
+      handoffAppend: 'staged handoff continuity',
+      specialistIdentity: {
+        append: 'specialist identity append',
+        prefix: 'specialist turn prefix'
+      },
+      projectAgentContext: 'Always cite DOIs.'
+    })
+
+    await harness.adopt('specialist-1')
+
+    expect(harness.sessionSetupAppends.at(-1)?.slice(-3)).toEqual([
+      'specialist identity append',
+      'staged handoff continuity',
+      'Always cite DOIs.'
+    ])
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
+    ).toContain('Always cite DOIs.')
   })
 
   it('does not roll back publication when the state observer fails', async () => {

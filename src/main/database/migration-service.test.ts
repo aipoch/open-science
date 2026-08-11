@@ -10,6 +10,7 @@ import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
+  PROJECT_AGENT_CONTEXT_CHECKSUM,
   checksumMigrationPayload,
   classifyDatabaseFailure,
   migrateApplicationDatabase,
@@ -136,6 +137,9 @@ describe('application database migrations', () => {
     expect(BASELINE_CHECKSUM).toBe(
       'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525'
     )
+    expect(PROJECT_AGENT_CONTEXT_CHECKSUM).toBe(
+      'f3b29cf4543d1739a0cd211ddea172dcfd18aa9d7c8f94d520913ab88cb977c6'
+    )
     const verifier = [{ kind: 'table-exists', version: 1, table: 'probe' }] as const
     expect(checksumMigrationPayload('0001_test', ['one\r\ntwo'], verifier)).toBe(
       checksumMigrationPayload('0001_test', ['one\ntwo'], verifier)
@@ -166,9 +170,9 @@ describe('application database migrations', () => {
       })
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0001_runtime_schema_baseline'],
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context'],
       from: null,
-      to: '0001_runtime_schema_baseline'
+      to: '0002_project_agent_context'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -181,8 +185,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0001_runtime_schema_baseline',
-      to: '0001_runtime_schema_baseline'
+      from: '0002_project_agent_context',
+      to: '0002_project_agent_context'
     })
   })
 
@@ -226,7 +230,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0001_runtime_schema_baseline'
+      migrationId: '0002_project_agent_context'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -243,14 +247,18 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['0002_test_suffix'],
-      from: '0001_runtime_schema_baseline',
+      from: '0002_project_agent_context',
       to: '0002_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations" ORDER BY "id"
       `
-    ).resolves.toEqual([{ id: '0001_runtime_schema_baseline' }, { id: '0002_test_suffix' }])
+    ).resolves.toEqual([
+      { id: '0001_runtime_schema_baseline' },
+      { id: '0002_project_agent_context' },
+      { id: '0002_test_suffix' }
+    ])
   })
 
   it('does not back up a migration that does not request a backup', async () => {
@@ -270,6 +278,55 @@ describe('application database migrations', () => {
     )
 
     expect(backupEvents).toEqual([])
+  })
+
+  it('retains a recovery snapshot before adding Agent Context to a ledger database', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-agent-context-backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const backupEvents: unknown[] = []
+    client = createProjectDbClient(storageRoot)
+    for (const statement of MIGRATION_MANIFEST[0]!.statements) {
+      await client.$executeRawUnsafe(statement)
+    }
+    await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "checksum" TEXT NOT NULL,
+      "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "_open_science_migrations" ("id", "checksum")
+      VALUES (${'0001_runtime_schema_baseline'}, ${MIGRATION_MANIFEST[0]!.checksum})
+    `
+    await client.$executeRaw`
+      INSERT INTO "Project" ("id", "name", "updatedAt")
+      VALUES (${'project-1'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+    `
+
+    await expect(
+      migrateApplicationDatabase(client, {
+        databasePath,
+        onBackupReady: (event) => backupEvents.push(event)
+      })
+    ).resolves.toEqual({
+      adoptedLegacy: false,
+      applied: ['0002_project_agent_context'],
+      from: '0001_runtime_schema_baseline',
+      to: '0002_project_agent_context'
+    })
+    expect(backupEvents).toEqual([
+      {
+        migrationId: '0002_project_agent_context',
+        path: backupPath,
+        reused: false
+      }
+    ])
+    await expect(access(backupPath)).resolves.toBeUndefined()
+    await expect(
+      client.$queryRaw<Array<{ agentContext: string; name: string }>>`
+        SELECT "agentContext", "name" FROM "Project" WHERE "id" = 'project-1'
+      `
+    ).resolves.toEqual([{ agentContext: '', name: 'Preserved' }])
   })
 
   it('rolls back a future migration and its ledger row when verification fails', async () => {
@@ -306,7 +363,32 @@ describe('application database migrations', () => {
       client.$queryRaw<Array<{ id: string }>>`
         SELECT "id" FROM "_open_science_migrations" ORDER BY "id"
       `
-    ).resolves.toEqual([{ id: '0001_runtime_schema_baseline' }])
+    ).resolves.toEqual([
+      { id: '0001_runtime_schema_baseline' },
+      { id: '0002_project_agent_context' }
+    ])
+  })
+
+  it('rejects a migration when its required column is missing', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-column-verifier-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    const futureBase = futureTestMigration()
+    const verifiers = [
+      { kind: 'column-exists', version: 1, table: 'Project', column: 'missingColumn' }
+    ] as const
+    const future = {
+      ...futureBase,
+      verifiers,
+      checksum: checksumMigrationPayload(futureBase.id, futureBase.statements, verifiers)
+    }
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
+    ).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0002_test_suffix'
+    })
   })
 
   it('adopts a pre-ledger database and then applies the full manifest suffix', async () => {
@@ -330,7 +412,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline', '0002_test_suffix'],
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context', '0002_test_suffix'],
       to: '0002_test_suffix'
     })
     await expect(
@@ -345,7 +427,7 @@ describe('application database migrations', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Preserved' } })
     await client.$executeRaw`
       INSERT INTO "_open_science_migrations" ("id", "checksum")
-      VALUES (${'0002_future_schema'}, ${'f'.repeat(64)})
+      VALUES (${'0003_future_schema'}, ${'f'.repeat(64)})
     `
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
@@ -413,7 +495,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -443,11 +525,12 @@ describe('application database migrations', () => {
       INSERT INTO "Finding" ("id", "reviewId", "severity")
       VALUES (${'legacy-finding'}, ${'legacy-review'}, ${'retained severity'})
     `
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
     await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
     await expect(
@@ -495,7 +578,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     await expect(
       client.permissionGrant.findUniqueOrThrow({ where: { id: 'legacy-grant' } })
@@ -546,7 +629,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
     await expect(
@@ -631,7 +714,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       adoptedLegacy: true,
-      applied: ['0001_runtime_schema_baseline']
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
     })
     await expect(
       client.permissionGrantSeed.findUniqueOrThrow({ where: { id: 'global-customize-v1' } })
@@ -643,6 +726,7 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -666,14 +750,23 @@ describe('application database migrations', () => {
           throw new Error('simulated backup diagnostic failure')
         }
       })
-    ).resolves.toMatchObject({ adoptedLegacy: true, applied: ['0001_runtime_schema_baseline'] })
+    ).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: ['0001_runtime_schema_baseline', '0002_project_agent_context']
+    })
     expect(backupEvents).toEqual([
       {
         migrationId: '0001_runtime_schema_baseline',
         path: backupPath,
         reused: false
+      },
+      {
+        migrationId: '0002_project_agent_context',
+        path: agentContextBackupPath,
+        reused: false
       }
     ])
+    await expect(access(agentContextBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
@@ -1010,6 +1103,7 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -1042,10 +1136,19 @@ describe('application database migrations', () => {
         migrationId: '0001_runtime_schema_baseline',
         path: backupPath,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0002_project_agent_context',
+        path: agentContextBackupPath,
+        reused: false
       })
     ])
-    expect(retired).toEqual([{ migrationId: '0001_runtime_schema_baseline', path: backupPath }])
+    expect(retired).toEqual([
+      { migrationId: '0001_runtime_schema_baseline', path: backupPath },
+      { migrationId: '0002_project_agent_context', path: agentContextBackupPath }
+    ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
     ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])

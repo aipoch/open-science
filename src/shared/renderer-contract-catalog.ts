@@ -249,6 +249,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('platform-file-save', '', [
     ['getRuntimeVersions', null, NATIVE], ['saveBlobFile', 'file:save-blob', MAPPED_NATIVE], ['saveManagedFile', 'file:save-managed', DELEGATED_NATIVE],
     ['saveSessionArtifacts', 'file:save-session-artifacts', MAPPED_ELECTRON],
+    ['saveProjectArtifacts', 'file:save-project-artifacts', MAPPED_ELECTRON],
   ]),
   group('preview', 'preview', [
     ['delete', 'preview:delete'], ['load', 'preview:load'], ['save', 'preview:save'],

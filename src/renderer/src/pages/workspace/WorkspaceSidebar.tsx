@@ -1,12 +1,14 @@
 import {
   Archive,
   BookOpen,
+  ChevronDown,
   ChevronLeft,
   Download,
   FileText,
   FileType2,
   Files,
   MoreVertical,
+  PanelLeft,
   Pencil,
   Pin,
   PinOff,
@@ -58,6 +60,22 @@ type WorkspaceSidebarProps = {
   onArchiveSession?: (session: ChatSession) => void
   onDeleteSession: (session: ChatSession) => void
   onOpenSettings: () => void
+  onOpenProjectSettings: () => void
+  onNewProject: () => void
+  // Either absent renders the menu item disabled (the page disables it only for an authoritatively
+  // complete empty project or while a download is already running; an unknown or incomplete index
+  // stays clickable so the click path can repair the index).
+  canDownloadProjectArtifacts?: boolean
+  onDownloadProjectArtifacts?: () => void
+  // Desktop only: rendered in the header row right after the project menu. Hidden while the
+  // sidebar is collapsed — the panel layout mounts its floating fallback then, keeping a single
+  // workspace-sidebar-toggle instance mounted at a time.
+  sidebarToggle?: {
+    state: 'open' | 'collapsed'
+    onToggle: () => void
+  }
+  // The layout shares one ref between this header instance and the floating collapsed fallback.
+  sidebarToggleButtonRef?: React.Ref<HTMLButtonElement>
   mobileMode?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
@@ -201,6 +219,12 @@ const WorkspaceSidebarView = ({
   onArchiveSession,
   onDeleteSession,
   onOpenSettings,
+  onOpenProjectSettings,
+  onNewProject,
+  canDownloadProjectArtifacts = false,
+  onDownloadProjectArtifacts,
+  sidebarToggle,
+  sidebarToggleButtonRef,
   mobileMode = false,
   isMobileOpen = false,
   onMobileClose,
@@ -231,26 +255,89 @@ const WorkspaceSidebarView = ({
     >
       <div className="m-2 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card">
         <div className="px-3 pt-3">
-          <div className={cn('flex items-start', mobileMode ? 'gap-2' : 'pr-9')}>
-            <div className="min-w-0 flex-1">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={onGoHome}
+              aria-label="All projects"
+              title="All projects"
+              className={cn(
+                'grid h-7 w-5 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-bg-300 hover:text-text-000',
+                sidebarInteractiveTransitionClassName
+              )}
+            >
+              <ChevronLeft className="size-4" strokeWidth={2} aria-hidden="true" />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  title={projectName}
+                  className={cn(
+                    'flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-lg py-1 pl-1 pr-2 text-left font-serif text-[15px] font-bold tracking-[-0.02em] text-text-000 hover:bg-bg-300 data-[state=open]:bg-bg-300',
+                    sidebarInteractiveTransitionClassName
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{projectName}</span>
+                  <ChevronDown
+                    className="size-3.5 shrink-0 text-text-100"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                </button>
+              </DropdownMenuTrigger>
+              {/* Project action menu: mirrors the session row menu chrome below. */}
+              <DropdownMenuContent
+                aria-label="Project actions"
+                className="min-w-[11rem]"
+                side="bottom"
+                align="start"
+                sideOffset={6}
+              >
+                <DropdownMenuItem className="gap-2" onSelect={() => onOpenProjectSettings()}>
+                  <span className={sessionMenuIconClassName}>
+                    <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </span>
+                  Project settings
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2"
+                  disabled={!canDownloadProjectArtifacts || !onDownloadProjectArtifacts}
+                  onSelect={() => onDownloadProjectArtifacts?.()}
+                >
+                  <span className={sessionMenuIconClassName}>
+                    <Download className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </span>
+                  Download artifacts…
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="gap-2" onSelect={() => onNewProject()}>
+                  <span className={sessionMenuIconClassName}>
+                    <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+                  </span>
+                  New project
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {!mobileMode && sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
               <button
+                ref={sidebarToggleButtonRef}
                 type="button"
-                onClick={onGoHome}
+                data-testid="workspace-sidebar-toggle"
                 className={cn(
-                  'flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-bg-300 hover:text-text-000',
+                  'grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg text-action-panel-toggle hover:bg-bg-300',
                   sidebarInteractiveTransitionClassName
                 )}
+                aria-label="Collapse sidebar panel"
+                aria-expanded={true}
+                aria-controls="left-panel"
+                aria-keyshortcuts={isMac ? 'Meta+B' : 'Control+B'}
+                title="Collapse sidebar panel"
+                onClick={sidebarToggle.onToggle}
               >
-                <ChevronLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span>All projects</span>
+                <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
               </button>
-              <div
-                className="mt-1.5 truncate px-1.5 font-serif text-[16px] font-bold tracking-[-0.02em] text-text-000"
-                title={projectName}
-              >
-                {projectName}
-              </div>
-            </div>
+            ) : null}
             {mobileMode ? (
               <button
                 type="button"

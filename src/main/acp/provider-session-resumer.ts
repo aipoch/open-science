@@ -63,6 +63,10 @@ type AcpProviderSessionResumerDependencies = Readonly<{
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
   clearLivePermissionProfile: (sessionId: string) => void
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // undefined when the project has no Agent Context or the lookup fails; failures never block
+  // session resume.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
   updateCwd: (cwd: string) => void
   pushEvent: (event: ResumeEvent) => void
   emitState: () => void
@@ -238,6 +242,7 @@ export class AcpProviderSessionResumer {
       const specialistId =
         request.specialistId ??
         this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot().specialistId
+      const projectContextAppend = await this.resolveProjectAgentContext(projectName)
       const setup = this.presentation.buildSessionSetup({
         framework: backend.framework,
         tooling: {
@@ -246,6 +251,7 @@ export class AcpProviderSessionResumer {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         backendSystemPromptAppends: backend.prompt.systemPromptAppends,
+        extraSystemPromptAppends: projectContextAppend ? [projectContextAppend] : [],
         sessionOptions: backend.session.options,
         specialistSkills: await this.resolveSpecialistSkills(specialistId)
       })
@@ -325,6 +331,7 @@ export class AcpProviderSessionResumer {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
+        aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
         if (request.specialistId) aggregate.setSpecialistId(request.specialistId)
         capability.commit(request.sessionId)
         capability = undefined
@@ -372,6 +379,18 @@ export class AcpProviderSessionResumer {
       permissionProfile: request.permissionProfile,
       specialistId: request.specialistId
     })
+  }
+
+  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+    if (!this.deps.resolveProjectAgentContext) return undefined
+    try {
+      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const trimmed = context?.trim()
+      return trimmed ? trimmed : undefined
+    } catch (error) {
+      log.warn('project Agent Context resolution failed', errorLogFields(error))
+      return undefined
+    }
   }
 
   private async resolveSpecialistSkills(

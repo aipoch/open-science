@@ -103,10 +103,12 @@ describe('home dialogs shared chrome', () => {
       submitLabel: 'Create',
       nameDraft: '',
       descriptionDraft: '',
+      agentContextDraft: '',
       isSubmitting: false,
       error: undefined,
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
+      onAgentContextChange: vi.fn(),
       onCancel,
       onConfirm: vi.fn()
     })
@@ -118,6 +120,52 @@ describe('home dialogs shared chrome', () => {
     const descriptionField = collectElements(tree).find((element) => element.type === 'textarea')
     expect(descriptionField?.props['aria-describedby']).toBe('project-form-description-help')
     expect(descriptionField?.props.placeholder).toBe('Describe what this project is about…')
+    const agentContextField = collectElements(tree).find(
+      (element) => element.props.id === 'project-form-agent-context'
+    )
+    expect(agentContextField?.props['aria-describedby']).toBe('project-form-agent-context-help')
+    expect(getTextContent(tree)).toContain('Agent Context')
+    expect(getTextContent(tree)).toContain(
+      'Injected into the system prompt of every agent session in this project, including resumed ones.'
+    )
+  })
+
+  it('wires the Agent Context textarea value and change callback', async () => {
+    const { ProjectFormDialog } = await import('./ProjectFormDialog')
+    const onAgentContextChange = vi.fn()
+
+    const tree = ProjectFormDialog({
+      open: true,
+      title: 'Project Settings',
+      description: 'Update this project.',
+      submitLabel: 'Save',
+      nameDraft: 'Research',
+      descriptionDraft: '',
+      agentContextDraft: 'Always cite DOIs.',
+      isSubmitting: false,
+      error: undefined,
+      onNameChange: vi.fn(),
+      onDescriptionChange: vi.fn(),
+      onAgentContextChange,
+      onCancel: vi.fn(),
+      onConfirm: vi.fn()
+    })
+
+    const field = collectElements(tree).find(
+      (element) => element.props.id === 'project-form-agent-context'
+    )
+    expect(field?.props.value).toBe('Always cite DOIs.')
+    expect(field?.props.maxLength).toBe(16000)
+    expect(getTextContent(tree)).toContain(
+      'Sent to the model provider with every session — do not include secrets.'
+    )
+    expect(field?.props.placeholder).toBe(
+      'e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes.'
+    )
+    ;(field?.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: 'Prefer R.' }
+    })
+    expect(onAgentContextChange).toHaveBeenCalledWith('Prefer R.')
   })
 
   it('renders the delete project confirmation with settings dialog chrome and primary cancel affordances', async () => {

@@ -16,6 +16,8 @@ const toProject = (row: PrismaProject): Project => ({
   id: row.id,
   name: row.name,
   description: row.description,
+  // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
+  ...(row.agentContext ? { agentContext: row.agentContext } : {}),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
@@ -57,7 +59,11 @@ class ProjectRepository {
 
     const client = await this.getClient()
     const row = await client.project.create({
-      data: { name, description: request.description?.trim() ?? '' }
+      data: {
+        name,
+        description: request.description?.trim() ?? '',
+        agentContext: request.agentContext?.trim() ?? ''
+      }
     })
 
     return toProject(row)
@@ -66,7 +72,8 @@ class ProjectRepository {
   // Updates editable fields, ignoring undefined values so callers can patch only what changed.
   // Pin-only changes preserve updatedAt because pinning controls placement, not research activity.
   async update(request: UpdateProjectRequest): Promise<Project> {
-    const data: { name?: string; description?: string; pinned?: boolean } = {}
+    const data: { name?: string; description?: string; agentContext?: string; pinned?: boolean } =
+      {}
 
     if (request.name !== undefined) {
       const name = request.name.trim()
@@ -82,12 +89,17 @@ class ProjectRepository {
       data.description = request.description.trim()
     }
 
+    if (request.agentContext !== undefined) {
+      data.agentContext = request.agentContext.trim()
+    }
+
     const client = await this.getClient()
 
     if (
       request.pinned !== undefined &&
       request.name === undefined &&
-      request.description === undefined
+      request.description === undefined &&
+      request.agentContext === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
       // column in SQL avoids both a fake activity bump and a read/write race that could restore an

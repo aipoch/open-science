@@ -82,6 +82,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     configurator: base.sessionConfigurator,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
+    resolveProjectAgentContext: options.resolveProjectAgentContext,
     registerSessionSpecialist: options.notebook?.registerSessionSpecialist,
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),
@@ -97,6 +98,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     configurator: base.sessionConfigurator,
     resolveSpecialistIdentity: options.resolveSpecialistIdentity,
     resolveSpecialistSkills: options.resolveSpecialistSkills,
+    resolveProjectAgentContext: options.resolveProjectAgentContext,
     peekClaudeReplay: (sessionId) => base.handoffContinuity.peekClaudeReplay(sessionId),
     commitClaudeReplay: (sessionId) => base.handoffContinuity.commitClaudeReplay(sessionId),
     updateCwd,
@@ -163,6 +165,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     clearLivePermissionProfile: (sessionId) =>
       session.permissionContext.clearLivePermissionProfile(sessionId),
     resolveSpecialistSkills: options.resolveSpecialistSkills,
+    resolveProjectAgentContext: options.resolveProjectAgentContext,
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,

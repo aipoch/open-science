@@ -50,6 +50,10 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // undefined when the project has no Agent Context or the lookup fails; failures never block
+  // session adoption.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
   commitClaudeReplay: (sessionId: string) => void
   updateCwd: (cwd: string) => void
@@ -89,6 +93,7 @@ export class AcpProviderSessionAdopter {
         this.resolveSpecialistSkills(specialistId)
       ])
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
+      const projectContextAppend = await this.resolveProjectAgentContext(request.projectName)
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
         tooling: {
@@ -97,9 +102,11 @@ export class AcpProviderSessionAdopter {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [specialistIdentity?.append, handoffAppend].filter(
-          (append): append is string => Boolean(append)
-        ),
+        extraSystemPromptAppends: [
+          specialistIdentity?.append,
+          handoffAppend,
+          projectContextAppend
+        ].filter((append): append is string => Boolean(append)),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,
         specialistSkills
@@ -153,6 +160,7 @@ export class AcpProviderSessionAdopter {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
+        aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
         this.deps.updateCwd(request.cwd)
         if (specialistIdentity) {
           aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
@@ -204,6 +212,18 @@ export class AcpProviderSessionAdopter {
       throw startupError
     } finally {
       identity.release()
+    }
+  }
+
+  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+    if (!this.deps.resolveProjectAgentContext) return undefined
+    try {
+      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const trimmed = context?.trim()
+      return trimmed ? trimmed : undefined
+    } catch (error) {
+      log.warn('project Agent Context resolution failed', diagnosticErrorFields(error))
+      return undefined
     }
   }
 

@@ -40,12 +40,15 @@ import {
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
+import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
 import { DownloadSessionArtifactsDialog } from './DownloadSessionArtifactsDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
+import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { getVisiblePermissionRequests } from './session-permissions'
+import { ProjectFormDialog } from '../home/ProjectFormDialog'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
@@ -132,6 +135,68 @@ const WorkspacePage = ({
     (state) => state.upsertAndActivateItem
   )
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
+  const projectFormDialog = useProjectFormDialog()
+  // Drives the sidebar project menu's Download artifacts… disabled state. An incomplete index
+  // leaves the item clickable (the count may be partial) so the click path can repair the index
+  // before collecting (listAllProjectFiles); only an authoritatively complete empty project
+  // disables the item (see ProjectFilesOverview.isIndexComplete in shared/project-files).
+  // Keyed by project so a project switch renders the menu item disabled without a synchronous
+  // setState reset inside the effect (react-hooks/set-state-in-effect).
+  const [projectFileCount, setProjectFileCount] = useState<{
+    projectId: string
+    total: number
+    complete: boolean
+  } | null>(null)
+  // A count recorded for another project is not authoritative for the active one; treat it as
+  // unknown and keep the menu item clickable.
+  const activeProjectFileCount =
+    projectFileCount && projectFileCount.projectId === activeProjectId ? projectFileCount : null
+  const canCollectProjectArtifacts =
+    activeProjectFileCount === null ||
+    !activeProjectFileCount.complete ||
+    activeProjectFileCount.total > 0
+  useEffect(() => {
+    const projectFilesApi = window.api?.projectFiles
+    if (!activeProjectId || !projectFilesApi) {
+      return
+    }
+
+    let cancelled = false
+    // Out-of-order responses must not rewind the count: only the latest request may write it
+    // (same pattern as overviewRequestRef in use-project-files-index).
+    let requestVersion = 0
+    const refresh = async (): Promise<void> => {
+      const request = ++requestVersion
+      try {
+        const overview = await projectFilesApi.getOverview({ projectId: activeProjectId })
+        if (!cancelled && request === requestVersion) {
+          setProjectFileCount({
+            projectId: activeProjectId,
+            total: overview.totalCount,
+            complete: overview.isIndexComplete
+          })
+        }
+      } catch {
+        // An unavailable index is not authoritative; leave the menu item in its previous state.
+      }
+    }
+    void refresh()
+
+    const removeChangedListener = projectFilesApi.onChanged((event) => {
+      if (event.projectId === activeProjectId) void refresh()
+    })
+
+    return () => {
+      cancelled = true
+      removeChangedListener()
+    }
+  }, [activeProjectId])
+
+  // The menu item opens the checklist dialog, which owns the collect-then-save orchestration;
+  // this state mirrors "download in flight" (reported by the dialog) so the menu item stays
+  // disabled as the first defense.
+  const [isDownloadingProjectArtifacts, setIsDownloadingProjectArtifacts] = useState(false)
+  const [isProjectDownloadOpen, setIsProjectDownloadOpen] = useState(false)
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
   const {
@@ -781,7 +846,7 @@ const WorkspacePage = ({
           toggle: togglePreviewPanel,
           syncState: syncPreviewPanelState
         }}
-        desktopSidebar={
+        renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
           <WorkspaceSidebar
             projectName={activeProject?.name ?? 'Project'}
             sessions={sessions}
@@ -810,8 +875,20 @@ const WorkspacePage = ({
             onArchiveSession={sessionController.actions.archive}
             onDeleteSession={sessionController.actions.openDelete}
             onOpenSettings={openSettings}
+            onOpenProjectSettings={() => {
+              if (activeProject) projectFormDialog.openEditDialog(activeProject)
+            }}
+            onNewProject={projectFormDialog.openCreateDialog}
+            canDownloadProjectArtifacts={
+              typeof window.api?.saveProjectArtifacts === 'function' &&
+              !isDownloadingProjectArtifacts &&
+              canCollectProjectArtifacts
+            }
+            onDownloadProjectArtifacts={() => setIsProjectDownloadOpen(true)}
+            sidebarToggle={sidebarToggle}
+            sidebarToggleButtonRef={sidebarToggleRef}
           />
-        }
+        )}
         renderMobileSidebar={({ isOpen, close }) => (
           <WorkspaceSidebar
             projectName={activeProject?.name ?? 'Project'}
@@ -874,6 +951,23 @@ const WorkspacePage = ({
             onOpenSettings={() => {
               close()
               openSettings()
+            }}
+            onOpenProjectSettings={() => {
+              close()
+              if (activeProject) projectFormDialog.openEditDialog(activeProject)
+            }}
+            onNewProject={() => {
+              close()
+              projectFormDialog.openCreateDialog()
+            }}
+            canDownloadProjectArtifacts={
+              typeof window.api?.saveProjectArtifacts === 'function' &&
+              !isDownloadingProjectArtifacts &&
+              canCollectProjectArtifacts
+            }
+            onDownloadProjectArtifacts={() => {
+              close()
+              setIsProjectDownloadOpen(true)
             }}
             mobileMode
             isMobileOpen={isOpen}
@@ -995,6 +1089,12 @@ const WorkspacePage = ({
         onClose={sessionController.actions.closeDownloadArtifacts}
       />
 
+      <DownloadProjectArtifactsDialog
+        project={isProjectDownloadOpen ? activeProject : undefined}
+        onClose={() => setIsProjectDownloadOpen(false)}
+        onDownloadingChange={setIsDownloadingProjectArtifacts}
+      />
+
       <FilePreviewDialog
         item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
         onClose={closeFileDialog}
@@ -1011,6 +1111,8 @@ const WorkspacePage = ({
         sessionId={sessionController.view.dialogs.jobList.sessionId}
         onClose={sessionController.actions.closeJobList}
       />
+
+      <ProjectFormDialog {...projectFormDialog.dialogProps} />
     </main>
   )
 }

@@ -23,6 +23,7 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-managed',
   'sessions:export-conversation',
   'file:save-session-artifacts',
+  'file:save-project-artifacts',
   'uploads:stage-local-file',
   'window:close',
   'settings:list-agent-home-skills',
