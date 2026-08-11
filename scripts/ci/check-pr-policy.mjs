@@ -30,6 +30,7 @@ const databaseSchemaPaths = new Set([
   'prisma/sqlite-check-constraints.json'
 ])
 const migrationDirectory = 'src/main/database/migrations/'
+const migrationLedgerSmokePath = 'scripts/database-migration-ledger-smoke.mjs'
 const migrationServicePath = 'src/main/database/migration-service.ts'
 const migrationPathPattern =
   /^src\/main\/database\/migrations\/(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.ts$/
@@ -209,6 +210,16 @@ export function checkDatabaseMigrationPolicy({
     violations.push({
       kind: 'database-migration',
       subject: `database schema contracts changed without a new migration under ${migrationDirectory}`
+    })
+  }
+
+  if (
+    addedPaths.length > 0 &&
+    !changes.some(({ path, status }) => path === migrationLedgerSmokePath && status !== 'deleted')
+  ) {
+    violations.push({
+      kind: 'database-migration',
+      subject: `new database migrations must update ${migrationLedgerSmokePath}`
     })
   }
 
