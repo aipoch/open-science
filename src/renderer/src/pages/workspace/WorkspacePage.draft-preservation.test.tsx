@@ -651,6 +651,51 @@ describe('WorkspacePage draft preservation', () => {
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for new conversation'))
   })
 
+  it.each([
+    ['Cmd+N on macOS', 'darwin', { metaKey: true }],
+    ['Ctrl+N on Windows', 'win32', { ctrlKey: true }]
+  ])('opens a new conversation with %s', async (_label, platform, modifiers) => {
+    window.api = { ...window.api, platform } as never
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a'
+          ? { ...session, messages: [userMessage('prompt', 'existing conversation')] }
+          : session
+      )
+    }))
+    await renderPage()
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'n',
+      bubbles: true,
+      cancelable: true,
+      ...modifiers
+    })
+    await act(async () => window.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('keeps the draft when the current conversation has no messages', async () => {
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('unsent draft'))
+    })
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'n',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => window.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+    expect(conversationProps.draftDoc).toEqual(textDoc('unsent draft'))
+  })
+
   it('preserves a skill chip as a structured node when switching away and back', async () => {
     await renderPage()
 

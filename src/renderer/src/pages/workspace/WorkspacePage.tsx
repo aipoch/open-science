@@ -68,6 +68,8 @@ type WorkspacePageProps = {
 
 // New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
 const newConversationDraftKeyFor = (projectId: string): string => `new:${projectId}`
+const OPEN_DIALOG_SELECTOR =
+  '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
 // Renders the workspace shell and bridges the chat surface to the session store.
 const WorkspacePage = ({
@@ -721,7 +723,7 @@ const WorkspacePage = ({
   }, [activeSessionId])
 
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
-  const openNewConversation = (): void => {
+  const openNewConversation = useCallback((): void => {
     if (!isSessionPersistenceReady) return
 
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
@@ -732,7 +734,38 @@ const WorkspacePage = ({
     useNavigationStore.getState().recordUserNavigation()
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
-  }
+  }, [
+    clearSelection,
+    defaultPermissionProfile,
+    isSessionPersistenceReady,
+    sessionController.actions,
+    setAttachmentError
+  ])
+
+  useEffect(() => {
+    const openNewConversationFromShortcut = (event: KeyboardEvent): void => {
+      const isMac = window.api?.platform === 'darwin'
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.repeat ||
+        event.key.toLowerCase() !== 'n' ||
+        event.altKey ||
+        event.shiftKey ||
+        !(isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) ||
+        document.querySelector(OPEN_DIALOG_SELECTOR) !== null
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      if (!activeSession || activeSession.messages.length === 0) return
+      openNewConversation()
+    }
+
+    window.addEventListener('keydown', openNewConversationFromShortcut)
+    return () => window.removeEventListener('keydown', openNewConversationFromShortcut)
+  }, [activeSession, openNewConversation])
 
   // Synchronizes the hidden chat session id with the selected session list item.
   const openSession = (sessionId: string): void => {
