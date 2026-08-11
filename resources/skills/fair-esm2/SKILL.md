@@ -32,10 +32,10 @@ ESM-2 code and weights are MIT (Meta AI, github.com/facebookresearch/esm).
 
 ## Prerequisites
 
-| Requirement | Minimum | Recommended |
-| ----------- | ------- | ----------- |
-| Python      | 3.8+    | 3.11        |
-| CUDA        | 11.7+   | 12.x        |
+| Requirement | Minimum                 | Recommended        |
+| ----------- | ----------------------- | ------------------ |
+| Python      | 3.8+                    | 3.11               |
+| CUDA        | 11.7+                   | 12.x               |
 | GPU VRAM    | 8 GB (8M), 16 GB (650M) | 24 GB+ (650M / 3B) |
 
 ## How to run
@@ -76,17 +76,16 @@ contacts = out["contacts"][0]         # (L, L)
 
 ## Models
 
-| Name                       | Layers | Dim  | Params | Use                        |
-| -------------------------- | ------ | ---- | ------ | -------------------------- |
-| `esm2_t6_8M_UR50D`         | 6      | 320  | 8 M    | Fast smoke / tiny embeddings |
-| `esm2_t33_650M_UR50D`      | 33     | 1280 | 650 M  | Default embedding model    |
-| `esm2_t36_3B_UR50D`        | 36     | 2560 | 3 B    | Best embeddings, 24 GB+    |
+| Name                  | Layers | Dim  | Params | Use                          |
+| --------------------- | ------ | ---- | ------ | ---------------------------- |
+| `esm2_t6_8M_UR50D`    | 6      | 320  | 8 M    | Fast smoke / tiny embeddings |
+| `esm2_t33_650M_UR50D` | 33     | 1280 | 650 M  | Default embedding model      |
+| `esm2_t36_3B_UR50D`   | 36     | 2560 | 3 B    | Best embeddings, 24 GB+      |
 
 ## Output format
 
 `out["representations"][layer]` is `(B, L+2, D)`; slice `[ :, 1:-1, : ]` to
 drop BOS/EOS. `out["contacts"]` (when `return_contacts=True`) is `(B, L, L)`.
-
 
 ## Remote compute
 
@@ -126,13 +125,12 @@ details.
 Inside `embed_esm2.py`, set `TORCH_HOME` to the provider's torch-hub cache
 mount (path is in `compute_details`) so `esm.pretrained.*` resolves locally.
 
-
 ## Troubleshooting
 
-| Symptom                                       | Cause                              | Fix                                   |
-| --------------------------------------------- | ---------------------------------- | ------------------------------------- |
+| Symptom                                             | Cause                                        | Fix                                                      |
+| --------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------- |
 | `ModuleNotFoundError: No module named 'esm.models'` | You want Biohub's `esm` fork, not `fair-esm` | See `esmfold2` skill; this skill uses `esm.pretrained.*` |
-| Slow first call                               | Downloading weights via torch.hub  | Set `TORCH_HOME` to a cached location |
+| Slow first call                                     | Downloading weights via torch.hub            | Set `TORCH_HOME` to a cached location                    |
 
 ---
 

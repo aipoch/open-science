@@ -152,7 +152,7 @@ const s = await handle.status()
 | `running`   | remote process confirmed alive (pid recorded)                          |
 | `success`   | exit code 0                                                            |
 | `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`)  |
-| `timeout`   | exceeded `timeoutSeconds`                                             |
+| `timeout`   | exceeded `timeoutSeconds`                                              |
 | `error`     | never reached the remote host (`host_unreachable` / `dispatch_failed`) |
 
 ## Workflow: the analysis turn

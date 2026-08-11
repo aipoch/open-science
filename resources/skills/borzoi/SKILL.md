@@ -54,7 +54,6 @@ centred on the variant and compare per-track output.
 `(B, T, L)` tensor — `T` tracks × `L` 32-bp bins. Track metadata (assay,
 biosample) is in `borzoi_pytorch.pytorch_borzoi_model.TRACKS_DF` (or `model.tracks_df` when using the `AnnotatedBorzoi` subclass) — the base `Borzoi` model has no `targets` attribute.
 
-
 ## Remote compute
 
 Needs ≥24 GB VRAM and either pre-cached HF weights or egress to
@@ -88,13 +87,12 @@ details.
 If the provider exposes a weight-cache mount, point `HF_HOME` at it inside
 `borzoi_run.py` (path is in `compute_details`).
 
-
 ## Troubleshooting
 
-| Symptom                        | Cause                    | Fix                                  |
-| ------------------------------ | ------------------------ | ------------------------------------ |
-| `module has no __version__`    | Package exposes no attr  | Use `importlib.metadata.version("borzoi-pytorch")` |
-| Shape mismatch on input        | Wrong window length      | Pad/crop to 524288 bp (fixed; not exposed as a model attribute) |
+| Symptom                     | Cause                   | Fix                                                             |
+| --------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `module has no __version__` | Package exposes no attr | Use `importlib.metadata.version("borzoi-pytorch")`              |
+| Shape mismatch on input     | Wrong window length     | Pad/crop to 524288 bp (fixed; not exposed as a model attribute) |
 
 ---
 
