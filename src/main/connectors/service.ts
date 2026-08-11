@@ -374,9 +374,12 @@ export class ConnectorService {
       return result
     } catch (error) {
       const availability = classifyCustomMcpFailure(error)
-      // A structured tool error proves the MCP server is reachable. Do not poison the whole
-      // connector: it may expose its own login/authentication tool for recovering this session.
-      if (!(error instanceof McpToolCallError)) {
+      // A structured tool error proves the MCP server is reachable. Keep connector-managed login
+      // tools callable, but publish stale host-managed OAuth so Settings can offer sign-in recovery.
+      if (
+        !(error instanceof McpToolCallError) ||
+        (custom.oauth && availability === 'unauthenticated')
+      ) {
         this.recordCustomServerFailure(custom.id, failureEpoch, availability)
       }
       throw new ConnectorGateError(customMcpFailureCategory(availability))
