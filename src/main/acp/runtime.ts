@@ -344,6 +344,15 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
+const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
+const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
+
+type PlanContinuationClaimRetry = {
+  commandId: string
+  failedAttempts: number
+  timer?: ReturnType<typeof setTimeout>
+}
+
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
 // logger (or a hostile payload) must never mask the original error being handled/re-thrown.
 const safeLogError = (message: string, data?: unknown): void => {
@@ -385,6 +394,7 @@ class AcpRuntime {
     { projectId: string; requestId: string; cancellationRequested?: boolean }
   >
   private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
+  private readonly planContinuationClaimRetries = new Map<string, PlanContinuationClaimRetry>()
   private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
@@ -857,7 +867,12 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    return this.connectionClose.disconnect(emitClosedStatus)
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.disconnect(emitClosedStatus)
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
@@ -865,6 +880,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
+    this.clearAllPlanContinuationClaimRetries()
     this.connectionClose.shutdown()
   }
 
@@ -874,7 +890,12 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    return this.connectionClose.shutdownForQuit()
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.shutdownForQuit()
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
@@ -888,7 +909,12 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    return this.connectionClose.shutdownForUpdateGate()
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.shutdownForUpdateGate()
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Retires this framework generation without interrupting active turns or background workflows. The
@@ -1140,8 +1166,13 @@ class AcpRuntime {
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
+    this.clearPlanContinuationClaimRetry(request.sessionId)
     this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
-    return this.sessionDeletion.delete(request.sessionId)
+    try {
+      return await this.sessionDeletion.delete(request.sessionId)
+    } finally {
+      this.clearPlanContinuationClaimRetry(request.sessionId)
+    }
   }
 
   // Resolves or cancels one pending permission request from the renderer.
@@ -1571,22 +1602,77 @@ class AcpRuntime {
     }
   }
 
-  private scheduleQueuedPlanContinuation(projectId: string, sessionId: string): void {
-    queueMicrotask(() => {
-      void this.queueDurablePlanContinuation(projectId, sessionId).catch((error) => {
-        this.pushEvent({
-          kind: 'error',
-          level: 'error',
-          sessionId,
-          title: 'Could not prepare the Plan continuation',
-          text: errorMessage(error)
-        })
-        this.emitState()
+  private clearPlanContinuationClaimRetry(sessionId: string, commandId?: string): void {
+    const retry = this.planContinuationClaimRetries.get(sessionId)
+    if (!retry || (commandId && retry.commandId !== commandId)) return
+    if (retry.timer) clearTimeout(retry.timer)
+    this.planContinuationClaimRetries.delete(sessionId)
+  }
+
+  private clearAllPlanContinuationClaimRetries(): void {
+    for (const sessionId of this.planContinuationClaimRetries.keys()) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    }
+  }
+
+  private retryPlanContinuationClaim(
+    projectId: string,
+    sessionId: string,
+    commandId: string
+  ): void {
+    const current = this.planContinuationClaimRetries.get(sessionId)
+    if (current && current.commandId !== commandId) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    }
+    const failedAttempts = current?.commandId === commandId ? current.failedAttempts + 1 : 1
+    const retry: PlanContinuationClaimRetry = { commandId, failedAttempts }
+    this.planContinuationClaimRetries.set(sessionId, retry)
+    if (failedAttempts >= PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS) {
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        title: 'Could not claim the Plan continuation',
+        text: 'The Plan continuation remained safely queued after concurrent Session updates.'
       })
+      this.emitState()
+      return
+    }
+    const delay = PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS * 2 ** (failedAttempts - 1)
+    retry.timer = setTimeout(() => {
+      const pending = this.planContinuationClaimRetries.get(sessionId)
+      if (pending !== retry) return
+      retry.timer = undefined
+      this.scheduleQueuedPlanContinuation(projectId, sessionId, commandId)
+    }, delay)
+  }
+
+  private scheduleQueuedPlanContinuation(
+    projectId: string,
+    sessionId: string,
+    expectedCommandId?: string
+  ): void {
+    queueMicrotask(() => {
+      void this.queueDurablePlanContinuation(projectId, sessionId, expectedCommandId).catch(
+        (error) => {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not prepare the Plan continuation',
+            text: errorMessage(error)
+          })
+          this.emitState()
+        }
+      )
     })
   }
 
-  private async queueDurablePlanContinuation(projectId: string, sessionId: string): Promise<void> {
+  private async queueDurablePlanContinuation(
+    projectId: string,
+    sessionId: string,
+    expectedCommandId?: string
+  ): Promise<void> {
     const owner = this.planContinuationOwner
     const sessions = this.options.plan?.sessions
     if (
@@ -1601,6 +1687,19 @@ class AcpRuntime {
     const observed = await sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = observed.plan
     const command = plan?.continuation
+    const claimRetry = this.planContinuationClaimRetries.get(sessionId)
+    if (expectedCommandId && command?.commandId !== expectedCommandId) {
+      this.clearPlanContinuationClaimRetry(sessionId, expectedCommandId)
+      return
+    }
+    if (claimRetry && claimRetry.commandId !== command?.commandId) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    } else if (
+      claimRetry?.timer ||
+      claimRetry?.failedAttempts === PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS
+    ) {
+      return
+    }
     if (
       !plan ||
       command?.state !== 'queued' ||
@@ -1610,6 +1709,7 @@ class AcpRuntime {
         (plan.approval !== 'pending' ||
           plan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
     ) {
+      if (command) this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
       return
     }
 
@@ -1688,10 +1788,13 @@ class AcpRuntime {
             latest.plan?.continuation?.commandId === command.commandId &&
             latest.plan.continuation.state === 'queued'
           ) {
-            setTimeout(() => this.scheduleQueuedPlanContinuation(projectId, sessionId), 0)
+            this.retryPlanContinuationClaim(projectId, sessionId, command.commandId)
+          } else {
+            this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
           }
           return undefined
         }
+        this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
         let dispatchReady = false
         try {
           const claimed = await sessions.readSessionRuntimeContext(projectId, sessionId)

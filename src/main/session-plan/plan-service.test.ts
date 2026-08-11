@@ -1457,7 +1457,7 @@ describe('PlanService', () => {
   })
 
   it('settles an interrupted hidden command when an explicit message rebinds the approved Plan', async () => {
-    const { service, context, setContext } = setup()
+    const { service, context, dependencies, setContext } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1493,10 +1493,13 @@ describe('PlanService', () => {
       requiresExplicitContinuation: false
     })
     expect(context().plan?.continuation).toBeUndefined()
+    expect(vi.mocked(dependencies.patchRuntimeContext).mock.lastCall?.[0].plan).not.toHaveProperty(
+      'continuation'
+    )
   })
 
   it('settles an interrupted command when a live interaction reaffirms the approved Plan', async () => {
-    const { service, context, setContext } = setup()
+    const { service, context, dependencies, setContext } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1537,6 +1540,9 @@ describe('PlanService', () => {
       }
     })
     expect(context().plan?.continuation).toBeUndefined()
+    expect(vi.mocked(dependencies.patchRuntimeContext).mock.lastCall?.[0].plan).not.toHaveProperty(
+      'continuation'
+    )
   })
 
   it('rejects continuation before approval and after completion', async () => {
@@ -1588,7 +1594,7 @@ describe('PlanService', () => {
   })
 
   it('clears the hidden continuation command when the approved Plan reaches a terminal outcome', async () => {
-    const { service, context, setContext } = setup()
+    const { service, context, dependencies, setContext } = setup()
     const generated = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1630,6 +1636,9 @@ describe('PlanService', () => {
 
     expect(completed.projection.lifecycle).toBe('completed')
     expect(context().plan?.continuation).toBeUndefined()
+    expect(vi.mocked(dependencies.patchRuntimeContext).mock.lastCall?.[0].plan).not.toHaveProperty(
+      'continuation'
+    )
   })
 
   it('drops unreadable restored Plan authority instead of exposing it as executable', async () => {

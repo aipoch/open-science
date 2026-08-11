@@ -164,6 +164,7 @@ const createRuntimeHarness = (options: {
       get: vi.fn(() => undefined),
       delete: vi.fn(() => false)
     },
+    planContinuationClaimRetries: new Map(),
     artifactTurns: {
       promptMessageIdFor: () => 'interaction-1'
     },

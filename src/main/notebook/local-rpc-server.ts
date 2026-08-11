@@ -231,6 +231,9 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
 // Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
 // it must comfortably exceed long notebook executions that remain inside one active turn.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
+// Let ordinary RPCs that are already producing a result drain before forcing the transport closed.
+// This remains comfortably inside the application module's one-second disposal budget.
+const LOCAL_RPC_CLOSE_GRACE_MS = 100
 const CONTROL_RPC_METHODS = new Set([
   'capabilitiesCall',
   'artifactsCall',
@@ -443,6 +446,7 @@ class NotebookLocalRpcServer {
 
     const connection = localRpcServerLogFields(server)
     let beginClose!: () => void
+    let forceCloseTimer: ReturnType<typeof setTimeout> | undefined
     const operation = new Promise<void>((resolve, reject) => {
       beginClose = () => {
         for (const active of lifecycle.activeRequests) {
@@ -454,9 +458,21 @@ class NotebookLocalRpcServer {
             active.disconnect.abort()
           }
         }
+        forceCloseTimer = setTimeout(() => {
+          for (const active of lifecycle.activeRequests) {
+            active.disconnect.abort()
+            active.request.destroy()
+            active.response.destroy()
+          }
+          // A socket with incomplete HTTP headers has not emitted `request` and therefore is absent
+          // from activeRequests. Force-close the server's remaining connections so malformed or
+          // stalled clients cannot hold shutdown open past the grace window.
+          server.closeAllConnections()
+        }, LOCAL_RPC_CLOSE_GRACE_MS)
         log.info('notebook RPC server stopping', connection)
         try {
           server.close((error) => {
+            if (forceCloseTimer) clearTimeout(forceCloseTimer)
             if (error) reject(error)
             else {
               log.info('notebook RPC server stopped', {
@@ -468,11 +484,13 @@ class NotebookLocalRpcServer {
           })
           server.closeIdleConnections()
         } catch (error) {
+          if (forceCloseTimer) clearTimeout(forceCloseTimer)
           reject(error)
         }
       }
     })
     const ownedClose = operation.finally(() => {
+      if (forceCloseTimer) clearTimeout(forceCloseTimer)
       if (this.closePromise === ownedClose) this.closePromise = undefined
     })
     this.closePromise = ownedClose

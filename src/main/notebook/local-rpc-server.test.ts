@@ -1,6 +1,7 @@
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
+import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -543,6 +544,126 @@ describe('notebook local RPC server', () => {
       await server.close()
     }
   })
+
+  it.each(['tcp', 'pipe'] as const)(
+    'force-closes an unresolved non-Plan RPC after the graceful drain window over %s',
+    async (transport) => {
+      const root = await createStorageRoot()
+      const callStarted = createDeferred<void>()
+      const pendingCall = createDeferred<unknown>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const server = new NotebookLocalRpcServer(service, {
+        transport,
+        connectorService: {
+          call: async () => {
+            callStarted.resolve()
+            return pendingCall.promise
+          }
+        }
+      })
+      const connection = await server.issueControlConnection('session-1', 'project-1')
+      let request: Promise<Response> | undefined
+      let close: Promise<void> | undefined
+
+      try {
+        request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'mcpCall',
+              params: { server: 'test', method: 'wait', args: {} }
+            })
+          },
+          'Notebook control capability RPC'
+        )
+        const requestOutcome = request.then(
+          (response) => ({ status: 'resolved' as const, response }),
+          (error: unknown) => ({ status: 'rejected' as const, error })
+        )
+        await callStarted.promise
+        close = server.close()
+        const closeSettled = vi.fn()
+        void close.then(closeSettled)
+
+        await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+          timeout: 250,
+          interval: 10
+        })
+        await expect(requestOutcome).resolves.toMatchObject({
+          status: 'rejected',
+          error: { cause: expect.any(Error) }
+        })
+      } finally {
+        pendingCall.resolve(undefined)
+        await Promise.allSettled([request ?? Promise.resolve(), close ?? Promise.resolve()])
+        connection.release()
+        await server.close()
+      }
+    }
+  )
+
+  it.each(['tcp', 'pipe'] as const)(
+    'force-closes a partial-header socket after the graceful drain window over %s',
+    async (transport) => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const server = new NotebookLocalRpcServer(service, { transport })
+      const connection = await server.ensureStarted()
+      const underlying = (server as unknown as { server?: Server }).server
+      if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+      const accepted = once(underlying, 'connection')
+      let socket: Socket | undefined
+      let close: Promise<void> | undefined
+
+      try {
+        if (transport === 'pipe') {
+          if (!connection.socketPath) throw new Error('Expected a local RPC socket path.')
+          socket = createConnection(connection.socketPath)
+        } else {
+          const endpoint = new URL(connection.endpoint)
+          socket = createConnection({
+            host: endpoint.hostname,
+            port: Number(endpoint.port)
+          })
+        }
+        const socketClosed = new Promise<void>((resolve) => {
+          socket?.once('error', () => undefined)
+          socket?.once('close', () => resolve())
+        })
+        await Promise.all([once(socket, 'connect'), accepted])
+        socket.write('POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n')
+
+        close = server.close()
+        const closeSettled = vi.fn()
+        void close.then(closeSettled)
+
+        await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+          timeout: 250,
+          interval: 10
+        })
+        await expect(socketClosed).resolves.toBeUndefined()
+      } finally {
+        socket?.destroy()
+        await close?.catch(() => undefined)
+        await server.close()
+      }
+    }
+  )
 
   it('preserves structured Plan error codes across the session-bound RPC transport', async () => {
     const root = await createStorageRoot()

@@ -128,6 +128,12 @@ const runtimeStatusFor = (
 ): SessionPlanRuntimeContext['stepStatuses'][string] | undefined =>
   Object.hasOwn(plan.stepStatuses, title) ? plan.stepStatuses[title] : undefined
 
+const withoutContinuation = (plan: SessionPlanRuntimeContext): SessionPlanRuntimeContext => {
+  const settled = { ...plan }
+  Reflect.deleteProperty(settled, 'continuation')
+  return settled
+}
+
 const parseDocument = (content: string): PlanDocumentV1 => {
   try {
     return parsePlanDocumentV1(JSON.parse(content))
@@ -341,7 +347,7 @@ class PlanService {
         input.interactionIsLive &&
         plan.continuation?.state === 'interrupted'
       ) {
-        const rebound = { ...plan, continuation: undefined }
+        const rebound = withoutContinuation(plan)
         const next = await this.patch(input, rebound, 'running')
         this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
         this.dependencies.onApprovalSettled?.({
@@ -601,7 +607,7 @@ class PlanService {
       }
     }
     const settled = isPlanTerminalOutcome(document, updated.stepStatuses)
-      ? { ...updated, continuation: undefined }
+      ? withoutContinuation(updated)
       : updated
     const next = await this.patch(input, settled, 'running')
     return { projection: this.project(document, settled, next.revision, true), changed: true }
@@ -641,7 +647,7 @@ class PlanService {
       )
     }
     if (plan.continuation?.state === 'interrupted') {
-      const rebound = { ...plan, continuation: undefined }
+      const rebound = withoutContinuation(plan)
       const next = await this.patch(input, rebound, 'running')
       return this.project(document, rebound, next.revision, true)
     }

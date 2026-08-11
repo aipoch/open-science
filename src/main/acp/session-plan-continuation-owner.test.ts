@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type {
-  SessionPlanRuntimeContext,
-  SessionRuntimeContext
+import {
+  sanitizeSessionRuntimeContext,
+  type SessionPlanRuntimeContext,
+  type SessionRuntimeContext
 } from '../../shared/session-persistence'
 import {
   SessionPlanContinuationOwner,
@@ -43,11 +44,13 @@ const createSessions = (
     if (command.expectedRevision !== context.revision) {
       throw Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
     }
-    context = {
+    const next = sanitizeSessionRuntimeContext({
       ...context,
       ...command.patch,
       revision: context.revision + 1
-    }
+    })
+    if (!next) throw new Error('Session runtime context patch is not JSON-safe.')
+    context = next
     return structuredClone(context)
   })
   return {
@@ -132,7 +135,8 @@ describe('Session Plan continuation owner', () => {
 
     await expect(owner.clear('project-1', 'session-1', 'continuation-1')).resolves.toBe(true)
 
-    expect(fixture.context().plan).toEqual({ ...createPlan(), continuation: undefined })
+    expect(fixture.context().plan).not.toHaveProperty('continuation')
+    expect(fixture.patch.mock.calls[0]?.[0].patch.plan).not.toHaveProperty('continuation')
     expect(fixture.patch.mock.calls[0]?.[0]).not.toHaveProperty('sessionStatus')
   })
 

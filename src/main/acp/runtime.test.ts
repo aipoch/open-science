@@ -3174,10 +3174,12 @@ describe('ACP runtime session management', () => {
     options: Readonly<{
       stopReason?: PromptResponse['stopReason']
       kind?: 'approved-plan' | 'rejected-plan' | 'review-feedback'
+      claimRevisionConflicts?: number
     }> = {}
   ): Readonly<{
     runtime: AcpRuntime
     fakeAgent: ReturnType<typeof startFakeAgent>
+    events: AcpRuntimeEvent[]
     promptAttempts: Array<string | undefined>
     readSessionRuntimeContext: ReturnType<typeof vi.fn>
     patchSessionRuntimeContext: ReturnType<typeof vi.fn>
@@ -3198,6 +3200,8 @@ describe('ACP runtime session management', () => {
       ...(options.stopReason ? { onPrompt: () => ({ stopReason: options.stopReason! }) } : {})
     })
     const promptAttempts: Array<string | undefined> = []
+    const events: AcpRuntimeEvent[] = []
+    let remainingClaimRevisionConflicts = options.claimRevisionConflicts ?? 0
     let runtimeContext: SessionRuntimeContext = {
       version: 1,
       revision: 5,
@@ -3269,6 +3273,10 @@ describe('ACP runtime session management', () => {
         command: Parameters<SessionPersistenceCoordinator['patchSessionRuntimeContext']>[0]
       ) => {
         expect(command.expectedRevision).toBe(runtimeContext.revision)
+        if (remainingClaimRevisionConflicts > 0) {
+          remainingClaimRevisionConflicts -= 1
+          throw Object.assign(new Error('revision conflict'), { code: 'revision-conflict' })
+        }
         runtimeContext = {
           ...runtimeContext,
           ...command.patch,
@@ -3290,6 +3298,7 @@ describe('ACP runtime session management', () => {
       spawnAgent: () => asAgentProcess(process),
       framework: opencodeFramework,
       callbacks: {
+        onEvent: (event) => events.push(event),
         onPromptStarted: (_sessionId, _turnToken, promptAttemptId) =>
           promptAttempts.push(promptAttemptId)
       },
@@ -3307,6 +3316,7 @@ describe('ACP runtime session management', () => {
     return {
       runtime,
       fakeAgent,
+      events,
       promptAttempts,
       readSessionRuntimeContext,
       patchSessionRuntimeContext,
@@ -3329,6 +3339,49 @@ describe('ACP runtime session management', () => {
     expect(fixture.fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
     expect(fixture.promptAttempts).toEqual([undefined])
     await vi.waitFor(() => expect(fixture.runtimeContext().plan?.continuation).toBeUndefined())
+  })
+
+  it('stops retrying a queued Plan claim after the bounded revision-conflict budget', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', { claimRevisionConflicts: 10 })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.patchSessionRuntimeContext).toHaveBeenCalledTimes(3))
+    await new Promise((resolve) => setTimeout(resolve, 125))
+
+    expect(fixture.patchSessionRuntimeContext).toHaveBeenCalledTimes(3)
+    expect(fixture.fakeAgent.prompts).toHaveLength(0)
+    expect(fixture.runtimeContext().plan?.continuation?.state).toBe('queued')
+    expect(
+      fixture.events.filter((event) => event.title === 'Could not claim the Plan continuation')
+    ).toHaveLength(1)
+  })
+
+  it('dispatches a queued Plan once after transient claim revision conflicts', async () => {
+    const fixture = createDurablePlanResumeHarness('queued', { claimRevisionConflicts: 2 })
+
+    await fixture.runtime.resumeSession({
+      sessionId: 'restored-plan-session',
+      providerSessionId: 'restored-plan-session',
+      cwd: '/workspace',
+      projectName: 'project-1',
+      previousFrameworkId: opencodeFramework.id
+    })
+
+    await vi.waitFor(() => expect(fixture.fakeAgent.prompts).toHaveLength(1))
+    await vi.waitFor(() => expect(fixture.runtimeContext().plan?.continuation).toBeUndefined())
+
+    expect(fixture.promptAttempts).toEqual([undefined])
+    expect(fixture.patchSessionRuntimeContext).toHaveBeenCalledTimes(4)
+    expect(
+      fixture.events.filter((event) => event.title === 'Could not claim the Plan continuation')
+    ).toHaveLength(0)
   })
 
   it('dispatches one hidden rejected-Plan continuation after Session resume and clears it', async () => {

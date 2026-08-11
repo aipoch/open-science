@@ -75,12 +75,15 @@ class SessionPlanContinuationOwner {
     >,
     continuation: SessionPlanContinuation | undefined
   ): Promise<boolean> {
+    const nextPlan = { ...plan }
+    if (continuation) nextPlan.continuation = continuation
+    else Reflect.deleteProperty(nextPlan, 'continuation')
     try {
       await this.sessions.patchSessionRuntimeContext({
         projectId,
         sessionId,
         expectedRevision,
-        patch: { plan: { ...plan, continuation } }
+        patch: { plan: nextPlan }
       })
       return true
     } catch (error) {
