@@ -61,7 +61,8 @@ const gate = process.env.RUN_KERNEL ? describe : describe.skip
 const LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
 const startLoop = (
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  controlInvocationId?: string
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
@@ -84,7 +85,7 @@ const startLoop = (
     new Promise((resolve) => {
       const reqId = randomUUID()
       waiters.set(reqId, resolve)
-      child.stdin.write(framePythonRequest(reqId, code))
+      child.stdin.write(framePythonRequest(reqId, code, controlInvocationId))
     })
   return { child, send }
 }
@@ -183,19 +184,22 @@ const agentsCallFetch = (
   endpoint: string,
   token: string,
   sessionId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  controlInvocationId?: string
 ): string => {
   const payload = JSON.stringify({
     method: 'agentsCall',
-    params: { session_id: sessionId, ...params }
+    params: {
+      session_id: sessionId,
+      ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
+      ...params
+    }
   })
   return `const res = await fetch(${JSON.stringify(endpoint)}, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + ${JSON.stringify(token)} }, body: ${JSON.stringify(payload)} }); const body = await res.json(); return JSON.stringify({ ok: res.ok, body })`
 }
 
 gate('host.agents repl privileged integration', () => {
   let rpcServer: NotebookLocalRpcServer
-  let endpoint: string
-  let token: string
   let profileStorage: string
   let runtimeStorage: string
   let agentsService: AgentsService
@@ -238,9 +242,6 @@ gate('host.agents repl privileged integration', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.ensureStarted()
-    endpoint = connection.endpoint
-    token = connection.token
   })
 
   afterAll(async () => {
@@ -253,17 +254,38 @@ gate('host.agents repl privileged integration', () => {
   // trusted-session identity and in-memory binding state never bleed across assertions.
   const withLoop = async <T>(
     sessionId: string | undefined,
-    run: (send: (code: string) => Promise<KernelLoopResponse>) => Promise<T>
+    run: (
+      send: (code: string) => Promise<KernelLoopResponse>,
+      connection: { endpoint: string; token: string },
+      controlInvocationId: string
+    ) => Promise<T>
   ): Promise<T> => {
-    const { child, send } = startLoop({
-      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: token,
-      ...(sessionId ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: sessionId } : {})
+    const boundSessionId = sessionId ?? `agents-privileged-${randomUUID()}`
+    const connection = await rpcServer.issueControlConnection(
+      boundSessionId,
+      'default-project',
+      `root-frame-${boundSessionId}`
+    )
+    const controlInvocationId = randomUUID()
+    const endInvocation = connection.beginControlInvocation({
+      turnId: `turn-${controlInvocationId}`,
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
     })
+    const { child, send } = startLoop(
+      {
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: boundSessionId
+      },
+      controlInvocationId
+    )
     try {
-      return await run(send)
+      return await run(send, connection, controlInvocationId)
     } finally {
       child.kill()
+      endInvocation()
+      connection.release()
     }
   }
 
@@ -341,21 +363,30 @@ gate('host.agents repl privileged integration', () => {
       controlInvocationGeneration: 1,
       toolInvocationId: 'delegate-tool-1'
     })
-    const { child, send } = startLoop({
-      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
-      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'delegate-switch-session'
-    })
+    const { child, send } = startLoop(
+      {
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'delegate-switch-session'
+      },
+      'delegate-tool-1'
+    )
 
     try {
       const response = await send(
-        agentsCallFetch(connection.endpoint, connection.token, 'forged-session', {
-          op: 'switch',
-          name: 'DELEGATE_SWITCH_TARGET',
-          caller_role: 'main',
-          role: 'main',
-          is_main: true
-        })
+        agentsCallFetch(
+          connection.endpoint,
+          connection.token,
+          'forged-session',
+          {
+            op: 'switch',
+            name: 'DELEGATE_SWITCH_TARGET',
+            caller_role: 'main',
+            role: 'main',
+            is_main: true
+          },
+          'delegate-tool-1'
+        )
       )
       expect(response.error).toBeNull()
       const parsed = JSON.parse(response.result ?? '{}')
@@ -426,7 +457,7 @@ gate('host.agents repl privileged integration', () => {
   // the structured-decline wire envelope / no-retry dispatch over a custom decline gateway.
 
   it('switch cannot forge a different calling session: reserved identity keys are dropped, only the trusted session is bound', async () => {
-    await withLoop('session-real', async (send) => {
+    await withLoop('session-real', async (send, connection, controlInvocationId) => {
       const created = JSON.parse(
         (await send("return JSON.stringify(await host.agents.create({ name: 'GUARD_TARGET' }))"))
           .result ?? '{}'
@@ -435,14 +466,20 @@ gate('host.agents repl privileged integration', () => {
       // reconfigure flag) alongside the trusted session. The dispatcher strips every reserved key;
       // the switch binds ONLY the trusted calling session.
       const r = await send(
-        agentsCallFetch(endpoint, token, 'session-real', {
-          op: 'switch',
-          name: 'GUARD_TARGET',
-          sessionId: 'forged-camel',
-          specialist_id: 'forged-specialist',
-          target_specialist_id: 'forged-target',
-          reconfigure: true
-        })
+        agentsCallFetch(
+          connection.endpoint,
+          connection.token,
+          'session-real',
+          {
+            op: 'switch',
+            name: 'GUARD_TARGET',
+            sessionId: 'forged-camel',
+            specialist_id: 'forged-specialist',
+            target_specialist_id: 'forged-target',
+            reconfigure: true
+          },
+          controlInvocationId
+        )
       )
       const parsed = JSON.parse(r.result ?? '{}')
       expect(parsed.ok).toBe(true)
@@ -552,20 +589,36 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-decline',
+      'default-project',
+      'root-frame-session-decline'
+    )
+    const controlInvocationId = 'decline-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'decline-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline'
+        },
+        controlInvocationId
+      )
       try {
         await send("return JSON.stringify(await host.agents.create({ name: 'DECLINE_TARGET' }))")
         const r = await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-decline', {
-            op: 'switch',
-            name: 'DECLINE_TARGET'
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-decline',
+            { op: 'switch', name: 'DECLINE_TARGET' },
+            controlInvocationId
+          )
         )
         const parsed = JSON.parse(r.result ?? '{}')
         // Decline is a STRUCTURED non-error result (HTTP 200), not a thrown error.
@@ -578,6 +631,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -612,13 +667,26 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-del-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-decline-del',
+      'default-project',
+      'root-frame-session-decline-del'
+    )
+    const controlInvocationId = 'decline-delete-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'decline-delete-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline-del'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline-del'
+        },
+        controlInvocationId
+      )
       try {
         const created = JSON.parse(
           (await send("return JSON.stringify(await host.agents.create({ name: 'DECLINE_DEL' }))"))
@@ -626,11 +694,17 @@ gate('host.agents repl privileged integration', () => {
         )
         const beforeInvalidated = composed.invalidateCount()
         const r = await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-decline-del', {
-            op: 'delete',
-            name: 'DECLINE_DEL',
-            revision: created.revision
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-decline-del',
+            {
+              op: 'delete',
+              name: 'DECLINE_DEL',
+              revision: created.revision
+            },
+            controlInvocationId
+          )
         )
         const parsed = JSON.parse(r.result ?? '{}')
         expect(parsed.ok).toBe(true)
@@ -648,6 +722,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -700,7 +776,11 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'no-approval-upd-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-no-approval-upd',
+      'default-project',
+      'root-frame-session-no-approval-upd'
+    )
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
@@ -728,6 +808,7 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -761,20 +842,36 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'no-retry-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-no-retry',
+      'default-project',
+      'root-frame-session-no-retry'
+    )
+    const controlInvocationId = 'no-retry-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'no-retry-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-no-retry'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-no-retry'
+        },
+        controlInvocationId
+      )
       try {
         await send("return JSON.stringify(await host.agents.create({ name: 'NO_RETRY_T' }))")
         await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-no-retry', {
-            op: 'switch',
-            name: 'NO_RETRY_T'
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-no-retry',
+            { op: 'switch', name: 'NO_RETRY_T' },
+            controlInvocationId
+          )
         )
         // Exactly one decision, never retried.
         expect(decide).toHaveBeenCalledTimes(1)
@@ -782,6 +879,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })

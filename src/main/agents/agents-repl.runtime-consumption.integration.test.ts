@@ -259,19 +259,19 @@ gate('host.agents repl runtime whitelist consumption', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'CONN_SET', connectorNames: ['cust-1'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'CONN_SET', connectorNames: ['my-server'] }))"
           )
         ).result ?? '{}'
       )
-      // Read-back preserves the exact stable connector id.
-      expect(created.selectedCapabilities.connectorIds).toEqual(['cust-1'])
-      // The Connector gate consumes the post-write config: the provisioned `mcp-cust-1` connector
+      // Read-back resolves the immutable connector name to its public stable id.
+      expect(created.selectedCapabilities.connectorIds).toEqual(['my-server'])
+      // The Connector gate consumes the post-write config: the provisioned `mcp-my-server` connector
       // skill is allowed, any other connector is filtered out.
       const allowed = filterSpecialistConnectorSkills(
-        ['mcp-cust-1', 'mcp-other'],
+        ['mcp-my-server', 'mcp-other'],
         asProfile(created)
       )
-      expect(allowed).toEqual(['mcp-cust-1'])
+      expect(allowed).toEqual(['mcp-my-server'])
     })
   })
 
