@@ -410,6 +410,7 @@ const MIGRATION_MANIFEST = [
           ...process.env,
           BASE_SHA: target,
           EVENT_NAME: 'pull_request',
+          GITHUB_STEP_SUMMARY: '',
           HEAD_SHA: head,
           POLICY_SCOPE: 'commits'
         }
