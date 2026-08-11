@@ -289,7 +289,7 @@ const WorkspaceSidebarView = ({
               {/* Project action menu: mirrors the session row menu chrome below. */}
               <DropdownMenuContent
                 aria-label="Project actions"
-                className="min-w-[11rem]"
+                className={cn('min-w-[11rem]', mobileMode && 'z-[80]')}
                 side="bottom"
                 align="start"
                 sideOffset={6}
@@ -508,7 +508,7 @@ const WorkspaceSidebarView = ({
                           {/* Session action menu: uses shadcn default light-surface tokens. */}
                           <DropdownMenuContent
                             aria-label="Session actions"
-                            className="min-w-[9rem]"
+                            className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
                             side="right"
                             align="start"
                             sideOffset={6}
