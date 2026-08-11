@@ -25,6 +25,7 @@ import {
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -781,6 +782,665 @@ describe('session store', () => {
       archivedAt: 10,
       messages: [{ id: 'message-1' }]
     })
+  })
+
+  it('merges a stale-timestamp child completion by durable identities without clearing root transient state', () => {
+    const rootMessage = {
+      id: 'root-message',
+      role: 'user' as const,
+      content: 'delegate',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Streaming root',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [rootMessage],
+      filesRevision: 1,
+      createdAt: 1,
+      updatedAt: 20,
+      runtimeContext: { version: 1, revision: 1, delegatedWork: { records: [] } },
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [rootMessage],
+        frameworkId: 'codex',
+        createdAt: 1,
+        updatedAt: 1
+      })
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true,
+        conversationGraph: session.conversationGraph
+          ? {
+              ...session.conversationGraph,
+              branches: session.conversationGraph.branches.map((branch) => ({
+                ...branch,
+                headMessageId: 'root-streaming-answer',
+                updatedAt: 21
+              })),
+              messages: [
+                ...session.conversationGraph.messages,
+                {
+                  id: 'root-streaming-answer',
+                  role: 'agent' as const,
+                  content: 'still streaming',
+                  status: 'streaming' as const,
+                  eventIds: [],
+                  agentFrameId: session.conversationGraph.rootFrameId,
+                  introducedOnBranchId: session.conversationGraph.branches[0].id,
+                  parentMessageId: 'root-message',
+                  createdAt: 21,
+                  updatedAt: 21
+                }
+              ],
+              activities: [
+                {
+                  id: 'root-live-tool',
+                  kind: 'tool' as const,
+                  title: 'live',
+                  status: 'in_progress' as const,
+                  sortIndex: 1,
+                  eventIds: [],
+                  createdAt: 21,
+                  updatedAt: 21,
+                  agentFrameId: session.conversationGraph.rootFrameId,
+                  messageBranchId: session.conversationGraph.branches[0].id,
+                  promptMessageId: 'root-message',
+                  runtimeSegmentId: session.conversationGraph.runtimeSegments[0].id
+                }
+              ]
+            }
+          : undefined
+      }))
+    }))
+    const childGraph = structuredClone(base.conversationGraph!)
+    childGraph.frames.push({
+      id: 'child-frame',
+      parentFrameId: childGraph.rootFrameId,
+      originMessageId: 'root-message',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 8
+    })
+    childGraph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 2,
+      updatedAt: 8
+    })
+    childGraph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-message',
+          toolInvocationId: 'delegate-call'
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['version-1'],
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 8,
+        updatedAt: 8
+      }
+    )
+
+    useSessionStore.getState().upsertPersistedSession({
+      ...base,
+      updatedAt: 10,
+      runtimeContext: {
+        version: 1,
+        revision: 2,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  status: 'completed',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 2,
+                  endedAt: 8,
+                  terminalMessageId: 'child-answer'
+                }
+              ]
+            }
+          ]
+        }
+      },
+      conversationGraph: childGraph,
+      artifacts: [
+        {
+          id: 'version-1',
+          artifactId: 'artifact-1',
+          versionId: 'version-1',
+          kind: 'managed-file',
+          path: 'result.md'
+        }
+      ],
+      filesRevision: 2
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true,
+      runtimeContext: { revision: 2 },
+      filesRevision: 2,
+      artifacts: [{ id: 'version-1' }]
+    })
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'root-streaming-answer', status: 'streaming' }),
+        expect.objectContaining({ id: 'child-answer', artifactIds: ['version-1'] })
+      ])
+    )
+    expect(useSessionStore.getState().sessions[0].conversationGraph?.activities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'root-live-tool' })])
+    )
+  })
+
+  it('merges equal-timestamp higher runtime and files revisions without replacing another owner plan', () => {
+    const rootMessage = {
+      id: 'root-message',
+      role: 'user' as const,
+      content: 'keep local root',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const rootGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [rootMessage],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const persistedPlan = {
+      artifactId: 'plan',
+      artifactVersionId: 'plan-v1',
+      artifactChecksum: 'a'.repeat(64),
+      approval: 'pending' as const,
+      stepStatuses: {}
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'session-1',
+        projectId: 'project-1',
+        title: 'local',
+        cwd: '/workspace',
+        status: 'running',
+        messages: [rootMessage],
+        runtimeContext: { version: 1, revision: 1, plan: persistedPlan },
+        conversationGraph: rootGraph,
+        artifacts: [{ id: 'old-version', kind: 'managed-file', path: 'old.md' }],
+        filesRevision: 1,
+        createdAt: 1,
+        updatedAt: 20
+      }
+    ])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((entry) => ({ ...entry, agentPromptInFlight: true }))
+    }))
+    const childGraph = structuredClone(rootGraph)
+    childGraph.frames.push({
+      id: 'child-frame',
+      parentFrameId: childGraph.rootFrameId,
+      originMessageId: 'root-message',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 3
+    })
+    childGraph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 2,
+      updatedAt: 3
+    })
+    childGraph.messages.push({
+      id: 'child-answer',
+      role: 'agent',
+      content: 'child result',
+      status: 'complete',
+      eventIds: [],
+      artifactIds: ['child-version'],
+      agentFrameId: 'child-frame',
+      introducedOnBranchId: 'child-branch',
+      createdAt: 3,
+      updatedAt: 3
+    })
+
+    useSessionStore.getState().upsertPersistedSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'durable child',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [rootMessage],
+      runtimeContext: {
+        version: 1,
+        revision: 2,
+        delegatedWork: {
+          records: [{ agentFrameId: 'child-frame', attempts: [] }]
+        }
+      },
+      conversationGraph: childGraph,
+      artifacts: [{ id: 'child-version', kind: 'managed-file', path: 'child.md' }],
+      filesRevision: 2,
+      createdAt: 1,
+      updatedAt: 20
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'local',
+      status: 'running',
+      agentPromptInFlight: true,
+      runtimeContext: { revision: 2, plan: persistedPlan, delegatedWork: { records: [{}] } },
+      filesRevision: 2,
+      artifacts: [{ id: 'old-version' }, { id: 'child-version' }]
+    })
+    expect(
+      useSessionStore.getState().sessions[0].conversationGraph?.messages.map(({ id }) => id)
+    ).toEqual(expect.arrayContaining(['root-message', 'child-answer']))
+  })
+
+  it('merges new durable identities at equal timestamp and revisions while local identity conflicts win', () => {
+    const localMessage = {
+      id: 'root-message',
+      role: 'user' as const,
+      content: 'newer local bytes',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 5
+    }
+    const localGraph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [localMessage],
+      createdAt: 1,
+      updatedAt: 5
+    })
+    const base: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'local',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [localMessage],
+      runtimeContext: { version: 1, revision: 4, delegatedWork: { records: [] } },
+      conversationGraph: localGraph,
+      artifacts: [{ id: 'local-version', kind: 'managed-file', path: 'local.md' }],
+      filesRevision: 4,
+      createdAt: 1,
+      updatedAt: 20
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    const durableGraph = structuredClone(localGraph)
+    durableGraph.messages[0].content = 'stale durable bytes'
+    durableGraph.frames.push({
+      id: 'child-frame',
+      parentFrameId: durableGraph.rootFrameId,
+      originMessageId: 'root-message',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 6
+    })
+    durableGraph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: undefined,
+      createdAt: 6,
+      updatedAt: 6
+    })
+
+    useSessionStore.getState().upsertPersistedSession({
+      ...base,
+      messages: [{ ...localMessage, content: 'stale durable bytes' }],
+      conversationGraph: durableGraph,
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        delegatedWork: {
+          records: [{ agentFrameId: 'child-frame', attempts: [] }]
+        }
+      },
+      artifacts: [{ id: 'child-version', kind: 'managed-file', path: 'child.md' }]
+    })
+
+    const merged = useSessionStore.getState().sessions[0]
+    expect(merged.conversationGraph?.messages[0].content).toBe('newer local bytes')
+    expect(merged.conversationGraph?.frames.map(({ id }) => id)).toContain('child-frame')
+    expect(
+      merged.runtimeContext?.delegatedWork?.records.map(({ agentFrameId }) => agentFrameId)
+    ).toEqual(['child-frame'])
+    expect(merged.artifacts?.map(({ id }) => id)).toEqual(['local-version', 'child-version'])
+  })
+
+  it('converges a newer child snapshot without dropping current-only root streaming state', () => {
+    const rootMessage = {
+      id: 'root-message',
+      role: 'user' as const,
+      content: 'root prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const durableBase: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'root',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [rootMessage],
+      runtimeContext: { version: 1, revision: 1, delegatedWork: { records: [] } },
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [rootMessage],
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      filesRevision: 1,
+      createdAt: 1,
+      updatedAt: 10
+    }
+    useSessionStore.getState().hydrateSessions([durableBase])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((entry) => {
+        const graph = structuredClone(entry.conversationGraph!)
+        graph.messages.push({
+          id: 'root-streaming',
+          role: 'agent',
+          content: 'local token',
+          status: 'streaming',
+          streamId: 'root-run',
+          responseToMessageId: 'root-message',
+          eventIds: [],
+          agentFrameId: graph.rootFrameId,
+          introducedOnBranchId: graph.branches[0].id,
+          parentMessageId: 'root-message',
+          createdAt: 11,
+          updatedAt: 11
+        })
+        graph.branches[0].headMessageId = 'root-streaming'
+        graph.branches[0].updatedAt = 11
+        graph.activities.push({
+          id: 'root-live-tool',
+          kind: 'tool',
+          title: 'streaming tool',
+          status: 'in_progress',
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 11,
+          updatedAt: 11,
+          agentFrameId: graph.rootFrameId,
+          messageBranchId: graph.branches[0].id,
+          promptMessageId: 'root-message',
+          runtimeSegmentId: graph.runtimeSegments[0].id
+        })
+        return {
+          ...entry,
+          messages: [
+            ...entry.messages,
+            {
+              id: 'root-streaming',
+              role: 'agent',
+              content: 'local token',
+              status: 'streaming',
+              streamId: 'root-run',
+              responseToMessageId: 'root-message',
+              eventIds: [],
+              createdAt: 11,
+              updatedAt: 11
+            }
+          ],
+          conversationGraph: graph,
+          agentPromptInFlight: true,
+          awaitingFirstAgentOutput: true
+        }
+      })
+    }))
+    const childGraph = structuredClone(durableBase.conversationGraph!)
+    childGraph.frames.push({
+      id: 'child-frame',
+      parentFrameId: childGraph.rootFrameId,
+      originMessageId: 'root-message',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 2,
+      completedAt: 12
+    })
+    childGraph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 2,
+      updatedAt: 12
+    })
+    childGraph.messages.push({
+      id: 'child-answer',
+      role: 'agent',
+      content: 'child complete',
+      status: 'complete',
+      eventIds: [],
+      artifactIds: ['child-version'],
+      agentFrameId: 'child-frame',
+      introducedOnBranchId: 'child-branch',
+      createdAt: 12,
+      updatedAt: 12
+    })
+
+    useSessionStore.getState().upsertPersistedSession({
+      ...durableBase,
+      status: 'idle',
+      updatedAt: 20,
+      runtimeContext: {
+        version: 1,
+        revision: 2,
+        delegatedWork: {
+          records: [{ agentFrameId: 'child-frame', attempts: [] }]
+        }
+      },
+      conversationGraph: childGraph,
+      filesRevision: 2,
+      artifacts: [{ id: 'child-version', kind: 'managed-file', path: 'child.md' }]
+    })
+
+    let converged = useSessionStore.getState().sessions[0]
+    expect(converged).toMatchObject({
+      status: 'idle',
+      updatedAt: 20,
+      runtimeContext: { revision: 2 },
+      filesRevision: 2,
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true
+    })
+    expect(converged.conversationGraph?.messages.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(['root-streaming', 'child-answer'])
+    )
+    expect(converged.messages.map(({ id }) => id)).toContain('root-streaming')
+    expect(converged.conversationGraph?.activities.map(({ id }) => id)).toContain('root-live-tool')
+    useSessionStore.getState().upsertToolActivity({
+      sessionId: 'session-1',
+      toolCallId: 'root-live-tool',
+      eventId: 'root-live-tool-complete',
+      promptMessageId: 'root-message',
+      status: 'completed'
+    })
+    useSessionStore.getState().finishRun('session-1', undefined, 'root-message')
+    converged = useSessionStore.getState().sessions[0]
+    expect(converged.conversationGraphSyncBlocked).toBeUndefined()
+    expect(
+      converged.conversationGraph?.branches.find(
+        ({ agentFrameId }) => agentFrameId === converged.conversationGraph?.rootFrameId
+      )?.headMessageId
+    ).toBe('root-streaming')
+    expect(
+      converged.conversationGraph?.messages.find(({ id }) => id === 'root-streaming')?.status
+    ).toBe('complete')
+    expect(
+      converged.conversationGraph?.activities.find(({ id }) => id === 'root-live-tool')?.status
+    ).toBe('completed')
+    expect(toPersistedSession(converged).conversationGraph?.messages.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(['root-streaming', 'child-answer'])
+    )
+  })
+
+  it('hydrates durable reliable-message commands without dropping same-revision renderer owners', () => {
+    const rootMessage = {
+      id: 'root-message',
+      role: 'user' as const,
+      content: 'root prompt',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base: PersistedChatSession = {
+      id: 'session-message-owner',
+      projectId: 'project-message-owner',
+      title: 'message owner',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [rootMessage],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-message-owner',
+        messages: [rootMessage],
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      runtimeContext: { version: 1, revision: 3, delegatedWork: { records: [] } },
+      filesRevision: 1,
+      createdAt: 1,
+      updatedAt: 3
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    const graph = base.conversationGraph!
+    const command = {
+      messageId: 'durable-message-1',
+      requestId: 'durable-request-1',
+      sourcePrincipal: graph.rootFrameId,
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: graph.rootFrameId,
+      targetFrameId: 'child-frame',
+      targetAttemptId: 'child-attempt',
+      rootOriginMessageId: rootMessage.id,
+      callerRootMessageId: rootMessage.id,
+      rootBranchId: graph.branches[0].id,
+      rootBranchRevision: `${graph.branches[0].id}:${graph.branches[0].createdAt}`,
+      direction: 'to_child' as const,
+      disposition: 'message' as const,
+      text: 'durable directive',
+      kind: 'info' as const,
+      laneSequence: 1,
+      queuedAt: 2,
+      receipt: { status: 'queued' as const }
+    }
+
+    useSessionStore.getState().upsertPersistedSession({
+      ...base,
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        delegatedWork: { records: [], messageCommands: [command] }
+      }
+    })
+
+    expect(
+      useSessionStore.getState().sessions[0].runtimeContext?.delegatedWork?.messageCommands
+    ).toEqual([command])
+  })
+
+  it('accepts a newer durable root Branch head before saving the next streamed chunk', () => {
+    const prompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Delegate the analysis',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const base: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Root stream save echo',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [prompt],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [prompt],
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: base.id,
+      streamId: 'root-stream',
+      eventId: 'first-chunk',
+      promptMessageId: prompt.id,
+      content: 'De'
+    })
+
+    const durable = toPersistedSession(useSessionStore.getState().sessions[0])
+    durable.updatedAt += 10
+    useSessionStore.getState().upsertPersistedSession(durable)
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: base.id,
+      streamId: 'root-stream',
+      eventId: 'second-chunk',
+      promptMessageId: prompt.id,
+      content: 'legation complete'
+    })
+
+    const current = useSessionStore.getState().sessions[0]
+    expect(() => toPersistedSession(current)).not.toThrow()
+    expect(
+      current.conversationGraph?.branches.find(
+        ({ id }) => id === current.conversationGraph?.frames[0].activeBranchId
+      )?.headMessageId
+    ).toBe(current.messages.at(-1)?.id)
   })
 
   it('restores branch-bound Plan history after saving and hydrating a Session', () => {
@@ -3689,6 +4349,7 @@ describe('session store public contract', () => {
       'src/renderer/src/hooks/useLifecycleSync.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
+      'src/renderer/src/lib/acp/runtime-event-presentation.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/useWorkspaceElicitation.ts',
       'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
@@ -3698,6 +4359,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
       'src/renderer/src/lib/active-session-display.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
       'src/renderer/src/lib/deep-link.ts',
@@ -3710,11 +4372,14 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/ConversationPanel.tsx',
       'src/renderer/src/pages/workspace/DeleteSessionDialog.tsx',
       'src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx',
+      'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/RenameSessionDialog.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
       'src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx',
       'src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx',
+      'src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageItem.tsx',
       'src/renderer/src/pages/workspace/WorkspaceMessageScroller.tsx',
       'src/renderer/src/pages/workspace/WorkspacePage.tsx',
@@ -3734,6 +4399,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',

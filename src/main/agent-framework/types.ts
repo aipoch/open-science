@@ -223,6 +223,10 @@ export interface AgentFramework {
   // Config-dir-materialized skills (Claude). Absent ⇒ the app hides the skills UI + force-load path.
   readonly supportsSkills: boolean
 
+  // Release gate for the app-owned Delegated Work Module. A framework stays false until its own
+  // certification ticket passes every shared journey and closes native delegation bypasses.
+  readonly supportsDelegatedWork: boolean
+
   // Whether the framework accepts stdio MCP servers via ACP session mcpServers. opencode advertises
   // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
   // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.

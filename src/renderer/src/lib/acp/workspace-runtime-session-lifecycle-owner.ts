@@ -32,6 +32,8 @@ type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'canc
 type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
+const workspaceSession = (sessionId: string): ChatSession | undefined =>
+  useSessionStore.getState().sessions.find((session) => session.id === sessionId)
 const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefined => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -86,6 +88,39 @@ const replaceWorkspaceProviderIdentity = (
   }))
 }
 
+const ensureWorkspaceSessionReady = async (
+  runtime: WorkspaceMessageRuntime,
+  sessionId: string
+): Promise<void> => {
+  if (runtime.state.sessionIds.includes(sessionId)) return
+  const session = workspaceSession(sessionId)
+  if (!session) throw new Error(`Session not found: ${sessionId}`)
+  const cwd = session.cwd || runtime.state.cwd
+  if (!cwd) throw new Error('Choose a workspace folder before resuming this Session.')
+  const resumed = await runtime.resumeSession(
+    session.id,
+    cwd,
+    session.projectId,
+    session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
+    session.agentFrameworkId,
+    session.agentBackendId,
+    session.specialistId,
+    session.providerSessionId,
+    session.providerContinuityToken
+  )
+  useSessionStore.getState().markResumed(
+    session.id,
+    resumed
+      ? {
+          agentFrameworkId: resumed.frameworkId,
+          agentBackendId: resumed.backendId,
+          providerSessionId: resumed.providerSessionId,
+          providerContinuityToken: resumed.providerContinuityToken
+        }
+      : undefined
+  )
+}
+
 const continueInterruptedWorkspaceTurn = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string,
@@ -101,9 +136,7 @@ const continueInterruptedWorkspaceTurn = async (
     .prepareInterruptedTurnContinuation(sessionId, promptMessageId, update, contextReset)
   if (!prepared) return false
 
-  const session = useSessionStore
-    .getState()
-    .sessions.find((candidate) => candidate.id === sessionId)
+  const session = workspaceSession(sessionId)
   if (!session?.projectId) throw new Error('Interrupted Session project is unavailable.')
   if (contextReset && !prepared.runtimeSegmentId) {
     throw new Error('Interrupted Session Runtime Segment could not be created.')
@@ -146,7 +179,7 @@ const resumeInterruptedWorkspaceSession = async (
   drainRuntimeEvents?: RuntimeEventDrain,
   options?: ResumeInterruptedWorkspaceSessionOptions
 ): Promise<void> => {
-  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  const session = workspaceSession(sessionId)
 
   if (!session) return
 
@@ -261,7 +294,7 @@ const compactWorkspaceSession = async (
     return false
   }
 
-  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  const session = workspaceSession(sessionId)
   if (
     !session ||
     session.status !== 'idle' ||
@@ -305,7 +338,7 @@ const recoverContextOverflowWorkspaceSession = async (
   historyReplayDescriptor?: HistoryReplayDescriptor,
   planContinuation?: SendWorkspaceMessageIntent['planContinuation']
 ): Promise<boolean> => {
-  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  const session = workspaceSession(sessionId)
 
   if (!session) return false
 
@@ -320,8 +353,7 @@ const recoverContextOverflowWorkspaceSession = async (
   // Flip to the neutral compacting state up front so the UI never shows the raw overflow error while the
   // reset round-trip is in flight (idempotent with the event-path beginCompaction).
   useSessionStore.getState().beginCompaction(sessionId, { supersedeActiveRun: true })
-  const isCompactionStillActive = (): boolean =>
-    useSessionStore.getState().sessions.find((item) => item.id === sessionId)?.compacting === true
+  const isCompactionStillActive = (): boolean => workspaceSession(sessionId)?.compacting === true
   const finishCancelledRecovery = (): boolean => {
     if (cancelledSessionIds?.delete(sessionId) !== true) return false
     useSessionStore.getState().finishCompaction(sessionId)
@@ -395,9 +427,7 @@ const recoverContextOverflowWorkspaceSession = async (
   // Captured provenance proves that the interrupted turn was explicitly authorized. Durable status
   // updates may have advanced the revision since admission, so refresh only the matching approved
   // Artifact Version and strip the one-shot pending decision before retrying.
-  const activePlan = useSessionStore
-    .getState()
-    .sessions.find((item) => item.id === sessionId)?.activePlanProjection
+  const activePlan = workspaceSession(sessionId)?.activePlanProjection
   const retryPlanContinuation =
     planContinuation &&
     activePlan?.artifactVersionId === planContinuation.artifactVersionId &&
@@ -439,9 +469,7 @@ const cancelWorkspaceRun = async (
   sessionId: string,
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
-  const session = useSessionStore
-    .getState()
-    .sessions.find((candidate) => candidate.id === sessionId)
+  const session = workspaceSession(sessionId)
   // Pending Sessions have no ACP identity yet. Settle their local run immediately; every startup
   // await revalidates activeRun before it may create, bind, or prompt a runtime Session.
   if (session?.isPending) {
@@ -515,7 +543,7 @@ const deleteWorkspaceSession = async (
   sessionId: string,
   persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
 ): Promise<boolean> => {
-  const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
+  const session = workspaceSession(sessionId)
   if (!session?.projectId) return false
 
   const snapshot = await runtime.deleteSession(sessionId)
@@ -590,6 +618,9 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     compact(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<boolean> {
       return compactWorkspaceSession(runtime, sessionId)
     },
+    ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
+      return ensureWorkspaceSessionReady(runtime, sessionId)
+    },
     resume(
       runtime: WorkspaceMessageRuntime,
       sessionId: string,
@@ -618,6 +649,7 @@ export {
   compactWorkspaceSession,
   createWorkspaceRuntimeSessionLifecycleOwner,
   deleteWorkspaceSession,
+  ensureWorkspaceSessionReady,
   processContextOverflowRecovery,
   recoverContextOverflowWorkspaceSession,
   resumeInterruptedWorkspaceSession

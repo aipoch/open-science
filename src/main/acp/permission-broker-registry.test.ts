@@ -142,6 +142,51 @@ const controlledEmptyGrantRegistry = (): {
 }
 
 describe('ACP permission broker with durable grants', () => {
+  it('uses the durable parent Session as the grant owner for delegated provider requests', async () => {
+    const registry = {
+      resolve: vi.fn().mockResolvedValue(undefined),
+      remember: vi.fn().mockResolvedValue(undefined),
+      list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
+      revoke: vi.fn(),
+      extendUndo: vi.fn(),
+      restore: vi.fn(),
+      prune: vi.fn(),
+      finalizeOwnerDeletion: vi.fn(),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    } as unknown as PermissionGrantRegistry
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+
+    const providerResponse = broker.requestPermission(shellRequest('delegated-provider-session'), {
+      profile: 'ask',
+      projectId: 'parent-project',
+      permissionGrantSessionId: 'parent-session'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(registry.resolve).toHaveBeenCalledWith(expect.anything(), {
+      projectId: 'parent-project',
+      sessionId: 'parent-session'
+    })
+    expect(emitted[0].sessionId).toBe('delegated-provider-session')
+    const sessionOption = emitted[0].options.find((option) => option.scope === 'session')
+
+    await expect(
+      broker.respond({ requestId: emitted[0].requestId, optionId: sessionOption?.optionId })
+    ).resolves.toBe(true)
+    await expect(providerResponse).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(registry.remember).toHaveBeenCalledWith({
+      capability: expect.anything(),
+      scope: {
+        kind: 'session',
+        projectId: 'parent-project',
+        sessionId: 'parent-session'
+      }
+    })
+  })
   it.each([
     ['session', { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }],
     ['project', { kind: 'project', projectId: 'project-1' }],

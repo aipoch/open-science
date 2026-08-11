@@ -22,7 +22,11 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
 
     const record = value as Record<string, unknown>
     const keys = Object.keys(record)
-    if (keys.some((key) => !['source', 'surface', 'errorCategory', 'fingerprint'].includes(key))) {
+    if (
+      keys.some(
+        (key) => !['source', 'surface', 'errorCategory', 'context', 'fingerprint'].includes(key)
+      )
+    ) {
       return undefined
     }
     if (!keys.includes('source') || !keys.includes('surface') || !keys.includes('errorCategory')) {
@@ -33,6 +37,7 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
       source: record.source,
       surface: record.surface,
       errorCategory: record.errorCategory,
+      ...(keys.includes('context') ? { context: record.context } : {}),
       ...(keys.includes('fingerprint') ? { fingerprint: record.fingerprint } : {})
     }
     return isRendererFailureReport(candidate) ? candidate : undefined
@@ -117,6 +122,7 @@ export const createRendererFailureReporter = (
         report.source,
         report.surface,
         report.errorCategory,
+        report.context ?? 'none',
         report.fingerprint ?? 'none'
       ].join(':')
       if (window.fingerprints.has(fingerprint)) {

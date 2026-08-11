@@ -378,8 +378,13 @@ const ProvenanceMessagesTimeline = ({
                 }
 
                 // Artifact provenance builds its immutable transcript from persisted messages and
-                // activities only, so no live coordinator lifecycle rows are supplied here.
-                if (conversationItem.type === 'handoff') return null
+                // activities only, so no coordinator lifecycle or durable Subagent command rows
+                // are supplied here.
+                if (
+                  conversationItem.type === 'handoff' ||
+                  conversationItem.type === 'subagent-message'
+                )
+                  return null
 
                 if (conversationItem.type === 'plan-activity') {
                   return (

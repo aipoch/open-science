@@ -160,6 +160,9 @@ type AcpApplicationCommandDependencies = Readonly<{
       operation: () => Promise<Result>
     ): Promise<Result>
   }>
+  respondDelegatedQuestion?: (
+    input: NonNullable<ElicitationResponse['delegatedQuestion']> & Readonly<{ requestId: string }>
+  ) => Promise<void>
 }>
 
 const registerAcpCommands = (
@@ -222,7 +225,19 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to structured questions.')
         }
-        return dependencies.runtime.respondToElicitation(invocation.args[0])
+        const response = invocation.args[0]
+        if (response.delegatedQuestion) {
+          if (!dependencies.respondDelegatedQuestion) {
+            throw new Error('Delegated question response owner is unavailable.')
+          }
+          return dependencies
+            .respondDelegatedQuestion({
+              ...response.delegatedQuestion,
+              requestId: response.requestId
+            })
+            .then(() => dependencies.runtime.getSnapshot())
+        }
+        return dependencies.runtime.respondToElicitation(response)
       },
       'acp:set-permission-profile': (invocation) =>
         dependencies.runtime.setPermissionProfile(invocation.args[0]),

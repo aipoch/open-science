@@ -41,6 +41,7 @@ const groupConversationItems = (
     // Keep their timeline position and prevent them from merging into adjacent ordinary tools.
     if (
       item.type === 'message' ||
+      item.type === 'subagent-message' ||
       item.type === 'handoff' ||
       item.type === 'plan-activity' ||
       item.type === 'compaction-activity' ||

@@ -139,6 +139,8 @@ const api: OpenScienceAPI = {
     revokePermissionGrant: (request) =>
       electronRendererContracts.invoke('acp.revokePermissionGrant', request),
     onState: (listener) => electronRendererContracts.subscribe('acp.onState', listener),
+    onAgentRuntimeUpdate: (listener) =>
+      electronRendererContracts.subscribe('acp.onAgentRuntimeUpdate', listener),
     onEvent: (listener) => electronRendererContracts.subscribe('acp.onEvent', listener),
     onPermissionRequest: (listener) =>
       electronRendererContracts.subscribe('acp.onPermissionRequest', listener)
@@ -167,6 +169,8 @@ const api: OpenScienceAPI = {
   sessions: {
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => electronRendererContracts.invoke('sessions.loadAll'),
+    // Loads one durable Session without scanning unrelated Project/Session files.
+    loadOne: (request) => electronRendererContracts.invoke('sessions.loadOne', request),
     // Persists a single sanitized session file.
     saveSession: (session, options) =>
       electronRendererContracts.invoke('sessions.saveSession', session, options),
@@ -214,6 +218,9 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setAgentFramework', request),
     setReasoningEffort: (request) =>
       electronRendererContracts.invoke('settings.setReasoningEffort', request),
+    setSubagentModel: (request) =>
+      electronRendererContracts.invoke('settings.setSubagentModel', request),
+    onChanged: (listener) => electronRendererContracts.subscribe('settings.onChanged', listener),
     setNotificationsEnabled: (request) =>
       electronRendererContracts.invoke('settings.setNotificationsEnabled', request),
     setConversationSkillImportEnabled: (request) =>

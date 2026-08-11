@@ -33,6 +33,27 @@ type PermissionResponseAttemptOwner = {
   cleanLive: (requests: AcpPermissionRequest[]) => void
 }
 
+const pendingWorkspacePermissions = (
+  sessions: ChatSession[],
+  liveRequests: AcpPermissionRequest[]
+): AcpPermissionRequest[] => {
+  const liveRequestIds = new Set(liveRequests.map((request) => request.requestId))
+  const restoredRequests: AcpPermissionRequest[] = []
+  for (const session of sessions) {
+    const permission = session.runtimeContext?.permission
+    const request = permission?.request
+    if (
+      (session.status === 'waiting-permission' || session.status === 'error') &&
+      permission?.state === 'pending' &&
+      request?.sessionId === session.id &&
+      !liveRequestIds.has(request.requestId)
+    ) {
+      restoredRequests.push(request)
+    }
+  }
+  return restoredRequests.length > 0 ? [...liveRequests, ...restoredRequests] : liveRequests
+}
+
 const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner => {
   const attempts = new Map<string, PermissionResponseAttempt>()
   const observedLifecycleEvents = new Map<string, ObservedPermissionLifecycleEvents>()
@@ -184,4 +205,4 @@ const createPermissionResponseAttemptOwner = (): PermissionResponseAttemptOwner 
   }
 }
 
-export { createPermissionResponseAttemptOwner }
+export { createPermissionResponseAttemptOwner, pendingWorkspacePermissions }

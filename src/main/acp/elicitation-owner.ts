@@ -15,6 +15,7 @@ import {
   type ElicitationProjection,
   type ElicitationResponse,
   type ElicitationValue,
+  type AgentTurnProvenanceContext,
   type PendingElicitationRequest
 } from '../../shared/elicitation'
 
@@ -42,6 +43,7 @@ type AcpElicitationOwnerOptions = {
 
 type DurableChoiceContext = {
   promptMessageId?: string
+  provenanceContext?: AgentTurnProvenanceContext
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -394,6 +396,9 @@ export class AcpElicitationOwner {
             requestId,
             ...(durableChoiceContext.promptMessageId
               ? { promptMessageId: durableChoiceContext.promptMessageId }
+              : {}),
+            ...(durableChoiceContext.provenanceContext
+              ? { provenanceContext: durableChoiceContext.provenanceContext }
               : {})
           }
         : undefined)

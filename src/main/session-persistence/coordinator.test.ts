@@ -2062,6 +2062,7 @@ describe('SessionPersistenceCoordinator', () => {
       'operation phase',
       'operation phase',
       'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(
@@ -2070,6 +2071,7 @@ describe('SessionPersistenceCoordinator', () => {
         .filter(Boolean)
     ).toEqual([
       'load-authority',
+      'recover-delegation',
       'reconcile-unread-sessions',
       'reconcile-derived-state',
       'reconcile-derived-state'
@@ -2127,6 +2129,72 @@ describe('SessionPersistenceCoordinator', () => {
     )
     expect(JSON.stringify(log.error.mock.calls)).not.toContain('Session authority unavailable')
     expect(JSON.stringify(log.error.mock.calls)).not.toContain('/private/sessions')
+  })
+
+  it('keeps healthy Sessions readable when one delegated recovery is structurally invalid', async () => {
+    const damaged = materializeSessionConversationGraph(
+      createSession({
+        id: 'damaged-session',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'missing-child-frame',
+                attempts: [
+                  {
+                    id: 'attempt-1',
+                    status: 'running',
+                    resolvedAgent: { kind: 'main' },
+                    runtimeSegmentIds: [],
+                    startedAt: 1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      })
+    )
+    const healthy = createSession({ id: 'healthy-session', title: 'Healthy Session' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [damaged, healthy], manifest: { version: 1 as const } },
+        isComplete: true
+      })
+    })
+    const fileIndex = createFileIndex()
+    const log = createTestLogger()
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      log
+    )
+
+    const loaded = await coordinator.loadAll()
+
+    expect(loaded.sessions.map(({ id }) => id)).toEqual(['damaged-session', 'healthy-session'])
+    expect(loaded.diagnostics).toMatchObject({
+      isComplete: false,
+      failure: 'startup-reconciliation-failed'
+    })
+    expect(fileIndex.reconcileActiveSessions).not.toHaveBeenCalled()
+    expect(fileIndex.syncSession).not.toHaveBeenCalled()
+    expect(log.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'delegation-recovery',
+        phase: 'recover-session',
+        status: 'degraded',
+        retryable: true
+      })
+    )
   })
 
   it('keeps hydration available and records unread Session reconciliation degradation', async () => {

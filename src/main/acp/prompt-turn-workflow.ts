@@ -83,9 +83,10 @@ type AcpPromptTurnEnvironment = Readonly<{
 type AcpPromptTurnArtifacts = Readonly<{
   open: (
     sessionId: string,
+    executionId: string,
     provenance: AcpPromptRequest['provenanceContext']
   ) => Promise<ArtifactTurnHandle | undefined>
-  promptMessageIdFor: (sessionId: string) => string | undefined
+  promptMessageIdFor: (artifact: ArtifactTurnHandle | undefined) => string | undefined
   publish: (
     sessionId: string,
     artifact: ArtifactTurnHandle | undefined,
@@ -303,7 +304,7 @@ class AcpPromptTurnWorkflow {
       })
     }
     const execute = async (): Promise<ProviderPromptOutcome> => {
-      artifact = await artifacts.open(sessionId, request.provenanceContext)
+      artifact = await artifacts.open(sessionId, turnToken, request.provenanceContext)
       if ((await this.checkpoint(interaction)) === 'cancelled') {
         return Object.freeze({ kind: 'not-dispatched' })
       }
@@ -329,7 +330,7 @@ class AcpPromptTurnWorkflow {
         specialistPrefix: snapshot?.specialistPrefix,
         sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
         projectId: this.options.resolveProjectName(sessionId),
-        fallbackPromptMessageId: artifacts.promptMessageIdFor(sessionId),
+        fallbackPromptMessageId: artifacts.promptMessageIdFor(artifact),
         bridgeSkillsAvailable: env.bridgeSkillsAvailable(),
         skillImportEnabled: env.skillImportEnabled(),
         skillImportTurnToken: turnToken,

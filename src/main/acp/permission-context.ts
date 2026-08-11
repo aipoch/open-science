@@ -116,6 +116,7 @@ type AcpPermissionContextOptions = {
   }
   conversationGrants?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
   onOpenCodeWaitTimeout?: (details: {
@@ -377,7 +378,10 @@ class AcpPermissionContext {
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: aggregateSnapshot?.cwd,
           mcpServerNames,
-          projectId: routing.resolveProjectId(appSessionId),
+          projectId:
+            this.options.permissionGrantContext?.projectId ??
+            routing.resolveProjectId(appSessionId),
+          permissionGrantSessionId: this.options.permissionGrantContext?.sessionId,
           promptMessageId: promptInteraction?.promptMessageId
         }
       )

@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 
@@ -37,6 +38,9 @@ import type { ProfileService } from '../specialist/service'
 import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { NotebookRpcConnection } from '../notebook/mcp-server'
+import type { ResolvedAgentBackend } from '../agent-framework'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { projectRegistrySessionGrants } from './permission-broker'
 import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './runtime'
@@ -91,6 +95,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   // fail closed (no root resolves).
   grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'>
   permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   initializationBarrier?: Promise<unknown>
   taskNotifications?: TaskNotificationService
   notificationInbox?: Pick<
@@ -119,6 +124,12 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'loadSessionForContinuation'
     | 'sessionProjectId'
   >
+  delegatedWork?: RootDelegatedWorkControl
+  fixedBackend?: ResolvedAgentBackend
+  runtimeCallbacks?: AcpRuntimeCallbacks
+  delegatedNotebookConnection?: NotebookRpcConnection
+  delegatedArtifactCurrentRunFile?: string
+  spawnAgent?: () => ChildProcessWithoutNullStreams
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
 }
 
@@ -135,6 +146,7 @@ const createAcpRuntime = ({
   settingsService,
   grantedRootsRepository,
   permissionGrantRegistry,
+  permissionGrantContext,
   initializationBarrier,
   taskNotifications,
   notificationInbox,
@@ -148,6 +160,12 @@ const createAcpRuntime = ({
   beforeSessionDelete,
   profileService,
   sessionPersistenceCoordinator,
+  delegatedWork,
+  fixedBackend,
+  runtimeCallbacks,
+  delegatedNotebookConnection,
+  delegatedArtifactCurrentRunFile,
+  spawnAgent,
   sideChatRelays
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
@@ -155,7 +173,7 @@ const createAcpRuntime = ({
   const defaultCwd = homedir()
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
-  const callbacks: AcpRuntimeCallbacks = {
+  const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
       broadcastToRenderers('acp:event', event)
@@ -188,13 +206,16 @@ const createAcpRuntime = ({
 
   return new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
-      const selection = settingsService.captureActiveAgentBackendSelection()
+      const selection = fixedBackend
+        ? undefined
+        : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
         resolveBackend: async (context) =>
-          settingsService.resolveAgentBackend(await selection, context),
+          fixedBackend ?? settingsService.resolveAgentBackend(await selection!, context),
+        ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
@@ -203,19 +224,28 @@ const createAcpRuntime = ({
             settingsService.codexSkillDescriptorsForIds(ids, codexHome),
           catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome)
         },
-        artifacts: {
-          configRoot,
-          dataRoot,
-          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-          mcpEntryPath,
-          repository,
-          runRegistry,
-          provenance: provenanceRepository,
-          getRpcConnection: () => notebookRpcServer.ensureStarted(),
-          issueRpcCapability: (binding) => notebookRpcServer.issueArtifactRunCapability(binding),
-          revokeRpcCapability: (token) => notebookRpcServer.revokeArtifactRunCapability(token)
-        },
-        uploads: { repository: uploadRepository },
+        ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
+          ? {
+              artifacts: {
+                configRoot,
+                dataRoot,
+                projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+                mcpEntryPath,
+                repository,
+                runRegistry,
+                provenance: provenanceRepository,
+                getRpcConnection: () => notebookRpcServer.ensureStarted(),
+                issueRpcCapability: (binding) =>
+                  notebookRpcServer.issueArtifactRunCapability(binding),
+                revokeRpcCapability: (token) =>
+                  notebookRpcServer.revokeArtifactRunCapability(token),
+                ...(delegatedArtifactCurrentRunFile
+                  ? { currentRunFile: delegatedArtifactCurrentRunFile }
+                  : {})
+              }
+            }
+          : {}),
+        ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
         grantedRoots: grantedRootsRepository
           ? {
               // Read fresh per resolution so a just-removed root stops resolving immediately.
@@ -227,30 +257,45 @@ const createAcpRuntime = ({
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,
           getRpcConnection: ({ sessionId, projectId }) =>
-            notebookRpcServer.issueSessionConnection(sessionId, projectId),
-          registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-          releaseSessionCapabilities: (sessionId) =>
-            notebookRpcServer.releaseSessionCapabilities(sessionId),
-          registerSessionSpecialist: (sessionId, specialistId) =>
-            notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
-          setArtifactProvenanceContext: (sessionId, context) =>
-            notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
-          registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request),
-          peekHandoffContext: peekNotebookHandoffContext
+            delegatedNotebookConnection
+              ? Promise.resolve(delegatedNotebookConnection)
+              : notebookRpcServer.issueSessionConnection(
+                  sessionId,
+                  projectId,
+                  `root-frame-${sessionId}`
+                ),
+          ...(delegatedNotebookConnection
+            ? {}
+            : {
+                registerSessionAlias: (aliasSessionId, sessionId) =>
+                  notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+                releaseSessionCapabilities: (sessionId) =>
+                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                registerSessionSpecialist: (sessionId, specialistId) =>
+                  notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
+                setArtifactProvenanceContext: (sessionId, context) =>
+                  notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
+                registerTurnInputs: (request) =>
+                  notebookRpcServer.registerNotebookTurnInputs(request),
+                peekHandoffContext: peekNotebookHandoffContext
+              })
         },
-        skillImport: {
-          mcpEntryPath,
-          isEnabled: () => settingsService.getConversationSkillImportEnabled(),
-          getRpcConnection: ({ sessionId }) =>
-            notebookRpcServer.issueSkillImportConnection(sessionId),
-          registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-          releaseSessionCapabilities: (sessionId) =>
-            notebookRpcServer.releaseSessionCapabilities(sessionId),
-          authorizeReferencedUploads: authorizeSkillImportReferencedUploads
-        },
-        ...(sessionPersistenceCoordinator
+        ...(delegatedNotebookConnection
+          ? {}
+          : {
+              skillImport: {
+                mcpEntryPath,
+                isEnabled: () => settingsService.getConversationSkillImportEnabled(),
+                getRpcConnection: ({ sessionId }: { sessionId: string }) =>
+                  notebookRpcServer.issueSkillImportConnection(sessionId),
+                registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
+                  notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+                releaseSessionCapabilities: (sessionId: string) =>
+                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                authorizeReferencedUploads: authorizeSkillImportReferencedUploads
+              }
+            }),
+        ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
           ? {
               permissionWait: {
                 sessions: sessionPersistenceCoordinator,
@@ -337,6 +382,7 @@ const createAcpRuntime = ({
         sideChatRelays,
         permissionGrantStore,
         permissionGrantRegistry,
+        permissionGrantContext,
         resolveSpecialistIdentity: profileService
           ? async (specialistId: string, frameworkId: string) => {
               let profile
@@ -404,7 +450,8 @@ const createAcpRuntime = ({
     },
     permissionGrantRegistry
       ? () => projectRegistrySessionGrants(permissionGrantRegistry.listCached())
-      : undefined
+      : undefined,
+    delegatedWork
   )
 }
 

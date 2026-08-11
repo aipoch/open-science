@@ -9,7 +9,9 @@ import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
+import type { DelegatedQuestionAnswer } from './session-persistence'
 import type {
+  AgentTurnProvenanceContext,
   ElicitationProjection,
   ElicitationResponse as BaseElicitationResponse,
   PendingElicitationRequest
@@ -22,6 +24,7 @@ export {
 } from './elicitation'
 export type {
   AgentUserChoiceQuestion,
+  AgentTurnProvenanceContext,
   ElicitationAnswer,
   ElicitationField,
   ElicitationProjection,
@@ -46,6 +49,13 @@ export type AcpMessageImage = {
 }
 
 export type ElicitationResponse = BaseElicitationResponse & {
+  delegatedQuestion?: Readonly<{
+    projectId: string
+    sessionId: string
+    action: 'draft' | 'confirm'
+    answers: readonly DelegatedQuestionAnswer[]
+    questionIndex?: number
+  }>
   // Added only when a restored provider session had to adopt fresh context. The bounded transcript
   // and media use the same replay path as ordinary post-reset prompts.
   historyReplay?: {
@@ -508,6 +518,29 @@ export type AcpRuntimeEvent = {
   raw?: unknown
 }
 
+// Durable app-owned identity for one live Agent Runtime Segment. Provider Session and prompt ids are
+// deliberately excluded from the nested event below so consumers have exactly one routing owner.
+export type AcpAgentRuntimeScope = Readonly<{
+  projectId: string
+  sessionId: string
+  agentFrameId: string
+  attemptId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+}>
+
+export type AcpAgentRuntimeEvent = Readonly<
+  Omit<AcpRuntimeEvent, 'sessionId' | 'promptMessageId'> & {
+    sessionId?: never
+    promptMessageId?: never
+  }
+>
+
+export type AcpAgentRuntimeUpdate = Readonly<{
+  scope: AcpAgentRuntimeScope
+  event: AcpAgentRuntimeEvent
+}>
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -571,6 +604,14 @@ export type AcpPermissionRequest = {
   commandPrefix?: string[]
   rawInput?: unknown
   options: AcpPermissionOption[]
+  // App-owned delegated execution attribution. Provider payloads cannot set this projection;
+  // the delegated-work owner binds it from the trusted Frame/Attempt execution handle.
+  delegated?: Readonly<{
+    frameId: string
+    attemptId: string
+    childTitle: string
+    riskScope: string
+  }>
 }
 
 // An Open Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
@@ -604,6 +645,10 @@ export type AcpStateSnapshot = {
   // Latest context-window usage for each logical app session's current agent-context generation.
   // Missing means unknown or invalidated; framework switches and reconnects clear the old generation.
   contextUsageBySession: Record<string, AcpContextUsage>
+  // Monotonic process-local signal that durable delegated-work records changed. The renderer uses
+  // it only to refresh the authoritative Session projection; the records remain persistence-owned.
+  delegatedWorkRevision?: number
+  delegatedWorkUnavailableBySession?: Record<string, string>
   // Sessions whose attached framework exposes a native compaction control turn. Missing is accepted
   // from an older main process during a rolling dev reload.
   nativeContextCompactionSessionIds?: string[]
@@ -716,15 +761,7 @@ export type AcpPromptRequest = {
   // Immutable conversation-graph binding for Artifact Provenance. Older callers may omit it; the
   // runtime supplies a root-frame/root-branch compatibility binding during the Session JSON v2
   // rollout.
-  provenanceContext?: {
-    promptMessageId: string
-    rootFrameId?: string
-    agentFrameId?: string
-    messageBranchId?: string
-    messageBranchAncestry?: string[]
-    messageAncestry?: string[]
-    runtimeSegmentId?: string
-  }
+  provenanceContext?: AgentTurnProvenanceContext
   attachments?: UploadedAttachment[]
   // Skills the user explicitly picked in the composer; the runtime force-loads and nudges them.
   forcedSkillIds?: string[]
@@ -749,6 +786,7 @@ export type AcpPromptRequest = {
 
 export type AcpCancelPromptRequest = {
   sessionId: string
+  scope?: 'turn' | 'subagents'
 }
 
 export type AcpDeleteSessionRequest = {

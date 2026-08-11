@@ -5,9 +5,12 @@ import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 import {
   SESSION_FILE_VERSION,
   createSessionFile,
+  ConversationGraphMaterializationError,
+  materializeSessionConversationGraph,
   sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
+  sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
   type PersistedChatSession,
   type PersistedSideChat,
@@ -133,6 +136,36 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
   stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 4 } },
   stepStates: { 'Analyze data': { status: 'completed' } },
   counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+})
+
+describe('conversation graph materialization diagnostics', () => {
+  it('identifies message synchronization failures without exposing the raw graph error', () => {
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    session.conversationGraph!.activeFrameId = 'missing-private-frame-id'
+
+    expect(() => materializeSessionConversationGraph(session)).toThrowError(
+      expect.objectContaining<Partial<ConversationGraphMaterializationError>>({
+        name: 'ConversationGraphMaterializationError',
+        phase: 'messages',
+        message: 'Conversation graph materialization failed.'
+      })
+    )
+  })
 })
 
 describe('branch Plan history persistence', () => {
@@ -1072,6 +1105,252 @@ describe('sanitizeActivityGroup', () => {
 })
 
 describe('normalizeSessionFile with activities', () => {
+  it('normalizes delegated caller identity as one value and fails closed on legacy half-state', () => {
+    const baseMessage = {
+      id: 'child-prompt',
+      role: 'user',
+      content: 'work',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const paired = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          ...baseMessage,
+          delegatedCallerMessageId: 'root-prompt',
+          delegatedToolInvocationId: 'delegate-call'
+        }
+      ]
+    })
+    const half = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [{ ...baseMessage, delegatedCallerMessageId: 'root-prompt' }]
+    })
+
+    expect(paired?.messages[0]).toMatchObject({
+      delegatedCallerSource: {
+        rootMessageId: 'root-prompt',
+        toolInvocationId: 'delegate-call'
+      }
+    })
+    expect(paired?.messages[0]).not.toHaveProperty('delegatedCallerMessageId')
+    expect(half?.messages[0]).not.toHaveProperty('delegatedCallerSource')
+  })
+
+  it('quarantines the removed pendingMessages prototype instead of migrating it', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  status: 'running',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 1
+                }
+              ],
+              pendingMessages: [
+                {
+                  id: 'pending-1',
+                  sourceFrameId: 'root-frame',
+                  targetFrameId: 'child-frame',
+                  text: 'continue',
+                  kind: 'info',
+                  callerMessageId: 'root-prompt',
+                  createdAt: 2
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork).toMatchObject({
+      records: [],
+      recordsQuarantine: [
+        expect.objectContaining({
+          agentFrameId: 'child-frame',
+          pendingMessages: [expect.objectContaining({ id: 'pending-1' })]
+        })
+      ]
+    })
+  })
+
+  it('quarantines corrupt delegated-work records without discarding sibling runtime owners', () => {
+    const corruptRecords = [{ agentFrameId: 'child-frame', attempts: 'not-an-array' }]
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        runtimeContext: {
+          version: 1,
+          revision: 7,
+          plan: createRuntimePlan(),
+          delegatedWork: {
+            records: corruptRecords,
+            messageCommands: []
+          },
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 2
+          },
+          sideChat: {
+            version: 1,
+            id: 'side-chat-1',
+            lifecycle: 'open',
+            frameworkId: 'codex',
+            historyPreamble: 'Preserved context',
+            entries: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext).toMatchObject({
+      revision: 7,
+      plan: createRuntimePlan(),
+      permission: { originatingPromptMessageId: 'message-1' },
+      sideChat: { id: 'side-chat-1' },
+      delegatedWork: {
+        records: [],
+        recordsQuarantine: corruptRecords,
+        messageCommands: []
+      }
+    })
+  })
+
+  it('retains existing records quarantine when a later records generation is also corrupt', () => {
+    const previous = [{ agentFrameId: 'previous-child', attempts: 'previous-corruption' }]
+    const current = [{ agentFrameId: 'current-child', attempts: 'current-corruption' }]
+
+    const sanitized = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 8,
+      delegatedWork: {
+        records: current,
+        recordsQuarantine: previous,
+        messageCommands: []
+      }
+    })
+
+    expect(sanitized?.delegatedWork).toEqual({
+      records: [],
+      recordsQuarantine: {
+        previous,
+        current
+      },
+      messageCommands: []
+    })
+  })
+
+  it('reads legacy terminal Attempts without inventing an initiating Turn association', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'legacy-child',
+              attempts: [
+                {
+                  id: 'legacy-attempt',
+                  status: 'cancelled',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 1,
+                  endedAt: 2,
+                  cancellationReason: 'runtime_interrupted'
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork?.records[0].attempts[0]).toEqual({
+      id: 'legacy-attempt',
+      status: 'cancelled',
+      resolvedAgent: { kind: 'main' },
+      runtimeSegmentIds: [],
+      startedAt: 1,
+      endedAt: 2,
+      cancellationReason: 'runtime_interrupted'
+    })
+  })
+
+  it('round-trips a resolved Subagent model snapshot without backfilling legacy Attempts', () => {
+    const baseAttempt = {
+      id: 'attempt-with-model',
+      status: 'cancelled',
+      resolvedAgent: { kind: 'main' },
+      runtimeSegmentIds: [],
+      startedAt: 1,
+      endedAt: 2,
+      cancellationReason: 'runtime_interrupted'
+    }
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  ...baseAttempt,
+                  executionModel: {
+                    frameworkId: 'opencode',
+                    providerId: 'provider-b',
+                    backendId: 'opencode:provider-b',
+                    modelRoute: 'opencode-openai',
+                    model: 'model-b',
+                    reasoningEffort: 'high'
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork?.records[0].attempts[0].executionModel).toEqual({
+      frameworkId: 'opencode',
+      providerId: 'provider-b',
+      backendId: 'opencode:provider-b',
+      modelRoute: 'opencode-openai',
+      model: 'model-b',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('preserves a valid archive timestamp across a file round-trip', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),
@@ -2194,6 +2473,207 @@ describe('normalizeSessionFile with activities', () => {
     expect(legacy?.enabledComputeHosts).toBeUndefined()
     expect(mixedValid?.enabledComputeHosts).toEqual(['ssh:valid'])
     expect(allInvalid?.enabledComputeHosts).toBeUndefined()
+  })
+
+  it.each([
+    ['invalid route', { direction: 'to_parent', disposition: 'continued' }],
+    ['missing running target', { omitTargetAttemptId: true }],
+    ['receipt shape', { receipt: { status: 'accepted', acceptedAt: 2, evidence: 'unknown' } }]
+  ])(
+    'quarantines only the reliable-message owner for an exhaustive %s violation',
+    (_label, patch) => {
+      const commandPatch: Record<string, unknown> = { ...patch }
+      delete commandPatch.omitTargetAttemptId
+      const command: Record<string, unknown> = {
+        messageId: 'message-1',
+        requestId: 'request-1',
+        sourcePrincipal: 'root-frame',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: 'root-frame',
+        targetFrameId: 'child-frame',
+        targetAttemptId: 'attempt-1',
+        rootOriginMessageId: 'root-prompt',
+        callerRootMessageId: 'root-prompt',
+        rootBranchId: 'root-branch',
+        rootBranchRevision: 'root-prompt',
+        direction: 'to_child',
+        disposition: 'message',
+        text: 'evidence',
+        kind: 'info',
+        laneSequence: 1,
+        queuedAt: 1,
+        receipt: { status: 'queued' },
+        ...commandPatch
+      }
+      if ('omitTargetAttemptId' in patch) delete command.targetAttemptId
+      const sanitized = sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 7,
+        plan: createRuntimePlan(),
+        delegatedWork: { records: [], messageCommands: [command] }
+      })
+
+      expect(sanitized?.plan).toEqual(createRuntimePlan())
+      expect(sanitized?.delegatedWork).toEqual({
+        records: [],
+        messageCommandsQuarantine: [command]
+      })
+    }
+  )
+
+  it('treats missing delegated questions as empty and quarantines only a corrupt question owner', () => {
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 1,
+        delegatedWork: { records: [] }
+      })?.delegatedWork
+    ).toEqual({ records: [] })
+
+    const corrupt = [{ requestId: 'question-1', status: 'pending' }]
+    const sanitized = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 2,
+      plan: createRuntimePlan(),
+      delegatedWork: { records: [], questionRequests: corrupt }
+    })
+    expect(sanitized?.plan).toEqual(createRuntimePlan())
+    expect(sanitized?.delegatedWork).toEqual({
+      records: [],
+      questionRequestsQuarantine: corrupt
+    })
+
+    const validQuestion = {
+      requestId: 'question-valid',
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: 'child-1',
+      sourceAttemptId: 'attempt-1',
+      sourceRuntimeSegmentId: 'runtime-1',
+      sourceMessageBranchId: 'child-branch',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Researcher',
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      sequence: 1,
+      askedAt: 1,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    const isolated = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 3,
+      delegatedWork: {
+        records: [],
+        messageCommandsQuarantine: [{ unrelated: 'corruption' }],
+        questionRequests: [validQuestion]
+      }
+    })
+    expect(isolated?.delegatedWork).toEqual({
+      records: [],
+      messageCommandsQuarantine: [{ unrelated: 'corruption' }],
+      questionRequests: [validQuestion]
+    })
+  })
+
+  it('accepts equal or missing question sequences and narrowly recovers a wholly valid quarantine', () => {
+    const question = (
+      requestId: string,
+      askedAt: number,
+      sequence?: number
+    ): Record<string, unknown> => ({
+      requestId,
+      canonicalDigest: requestId.charAt(requestId.length - 1).repeat(64),
+      sourceFrameId: `child-${requestId}`,
+      sourceAttemptId: `attempt-${requestId}`,
+      sourceRuntimeSegmentId: `runtime-${requestId}`,
+      sourceMessageBranchId: `branch-${requestId}`,
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: requestId,
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      ...(sequence === undefined ? {} : { sequence }),
+      askedAt,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    })
+    const fallbackOrdered = [
+      question('question-a', 2, 1),
+      question('question-b', 3, 1),
+      question('question-c', 1)
+    ]
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 4,
+        delegatedWork: { records: [], questionRequests: fallbackOrdered }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequests: fallbackOrdered })
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 5,
+        delegatedWork: { records: [], questionRequestsQuarantine: fallbackOrdered }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequests: fallbackOrdered })
+
+    const corrupt = [...fallbackOrdered, { requestId: 'question-invalid', status: 'pending' }]
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 6,
+        delegatedWork: { records: [], questionRequestsQuarantine: corrupt }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequestsQuarantine: corrupt })
+  })
+
+  it('keeps a contradictory active and quarantined question owner fail-closed', () => {
+    const quarantinedQuestion = {
+      requestId: 'quarantined-question',
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: 'child-quarantined',
+      sourceAttemptId: 'attempt-quarantined',
+      sourceRuntimeSegmentId: 'runtime-quarantined',
+      sourceMessageBranchId: 'branch-quarantined',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Quarantined child',
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      sequence: 1,
+      askedAt: 1,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    const quarantine = [quarantinedQuestion]
+    const active = [
+      {
+        ...quarantinedQuestion,
+        requestId: 'active-question',
+        canonicalDigest: 'b'.repeat(64),
+        sourceFrameId: 'child-active',
+        sourceName: 'Active child',
+        sequence: 2
+      }
+    ]
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 7,
+        delegatedWork: {
+          records: [],
+          questionRequests: active,
+          questionRequestsQuarantine: quarantine
+        }
+      })?.delegatedWork
+    ).toEqual({
+      records: [],
+      questionRequestsQuarantine: { active, quarantine }
+    })
   })
 
   it('persists errorReportable only when a model-provider error marked it false', () => {

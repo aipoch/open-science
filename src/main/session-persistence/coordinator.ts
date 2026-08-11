@@ -13,6 +13,27 @@ import type {
   SessionLoadFailure,
   SessionLoadWarning
 } from '../../shared/session-persistence'
+import type {
+  AttachDelegatedMessageArtifactsInput,
+  AttemptAgentEventInput,
+  ChildRecord,
+  CompleteChildTurnInput,
+  CreateChildrenInput,
+  CreatedChild,
+  CreatedNamedChild,
+  DelegatedWorkRecordCommands,
+  AdmitMessageCommandInput,
+  SettleMessageInput,
+  StartMessageDispatchInput,
+  SessionKey,
+  StartContinuationAttemptInput,
+  StartAttemptRuntimeInput,
+  StartPendingMessageTurnInput,
+  TransitionAttemptInput,
+  AdmitQuestionInput,
+  UpdateQuestionDraftInput,
+  ConfirmQuestionInput
+} from '../delegation/session-records'
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import type { ProjectSessionDeletionState } from './repository'
@@ -44,6 +65,10 @@ import {
   type SessionPermissionGrantReconciliation,
   type SessionUploadPersistence
 } from './reconciliation-owner'
+import {
+  recoverInterruptedDelegatedWorkSession,
+  SessionDelegatedWorkPersistenceOwner
+} from './delegated-work-owner'
 
 type SessionMutationRepository = {
   loadAllWithDiagnostics(options?: { mode?: 'repair' | 'read-only' }): Promise<{
@@ -123,7 +148,7 @@ const emitRecoverableDiagnostic = (
 
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
 // the consistency boundary that prevents a late save from racing or reviving a durable deletion.
-class SessionPersistenceCoordinator {
+class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
@@ -131,7 +156,9 @@ class SessionPersistenceCoordinator {
   private readonly sideChatOwner: SessionSideChatPersistenceOwner
   private readonly deletionOwner: SessionPersistenceDeletionOwner
   private readonly reconciliationOwner: SessionPersistenceReconciliationOwner
+  private readonly delegatedWorkOwner: SessionDelegatedWorkPersistenceOwner
   private destructiveStartupWindowOpen = true
+  private delegatedStartupRecoveryComplete = false
   private sessionDeletionHandlers: SessionDeletionHandlers | undefined
 
   constructor(
@@ -196,6 +223,14 @@ class SessionPersistenceCoordinator {
       uploads,
       artifactStorage,
       permissionGrants
+    })
+    this.delegatedWorkOwner = new SessionDelegatedWorkPersistenceOwner({
+      repository,
+      runExclusive: (work) => this.enqueue(work),
+      assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
+      markStartupRecoveryComplete: () => {
+        this.delegatedStartupRecoveryComplete = true
+      }
     })
   }
 
@@ -304,8 +339,8 @@ class SessionPersistenceCoordinator {
         warnings: scan.warnings ?? [],
         failure: scan.failure
       }
-      const result = scan.result
-      const sessions = scan.result.sessions
+      let result = scan.result
+      let sessions = scan.result.sessions
 
       if (!scan.isComplete) {
         // Without the full active-session set, syncing could let a readable duplicate steal a row from
@@ -317,6 +352,54 @@ class SessionPersistenceCoordinator {
           warningCount: scan.warnings?.length ?? 0
         })
         return result
+      }
+
+      if (!this.delegatedStartupRecoveryComplete) {
+        operation.phase('recover-delegation')
+        let recoveryFailure: unknown
+        let recoveryFailureCount = 0
+        for (let index = 0; index < sessions.length; index += 1) {
+          try {
+            const recovery = recoverInterruptedDelegatedWorkSession(sessions[index])
+            if (recovery.interrupted.length === 0) continue
+            await this.repository.saveSession(recovery.session)
+            sessions = sessions.map((candidate, candidateIndex) =>
+              candidateIndex === index ? recovery.session : candidate
+            )
+            result = { ...result, sessions }
+          } catch (error) {
+            recoveryFailure ??= error
+            recoveryFailureCount += 1
+            const sessionRecovery = startDiagnosticOperation(this.log, {
+              operation: 'delegation-recovery',
+              fields: { mode: 'startup' }
+            })
+            sessionRecovery.phase('recover-session')
+            sessionRecovery.fail(error, { status: 'degraded', retryable: true })
+          }
+        }
+        if (recoveryFailureCount > 0) {
+          this.stateOwner.replaceMetadata(sessions, false)
+          this.fileIndex.markReconciliationIncomplete()
+          result = {
+            ...result,
+            sessions,
+            diagnostics: {
+              isComplete: false,
+              warnings: scan.warnings ?? [],
+              failure: 'startup-reconciliation-failed'
+            }
+          }
+          operation.fail(recoveryFailure, {
+            status: 'degraded',
+            hydrationAvailable: true,
+            sessionCount: sessions.length,
+            warningCount: scan.warnings?.length ?? 0,
+            recoveryFailureCount
+          })
+          return result
+        }
+        this.delegatedStartupRecoveryComplete = true
       }
 
       let degradedReconciliationCount = 0
@@ -427,6 +510,106 @@ class SessionPersistenceCoordinator {
     command: PatchSessionRuntimeContextCommand
   ): Promise<SessionRuntimeContext> {
     return this.enqueue(() => this.stateOwner.patchRuntimeContext(command))
+  }
+
+  createChildren(
+    key: SessionKey,
+    input: CreateChildrenInput
+  ): Promise<readonly CreatedNamedChild[]> {
+    return this.delegatedWorkOwner.createChildren(key, input)
+  }
+
+  startContinuationAttempt(
+    key: SessionKey,
+    input: StartContinuationAttemptInput
+  ): Promise<CreatedChild> {
+    return this.delegatedWorkOwner.startContinuationAttempt(key, input)
+  }
+
+  admitQuestion(key: SessionKey, input: AdmitQuestionInput): Promise<'admitted' | 'idempotent'> {
+    return this.delegatedWorkOwner.admitQuestion(key, input)
+  }
+
+  updateQuestionDraft(key: SessionKey, input: UpdateQuestionDraftInput): Promise<void> {
+    return this.delegatedWorkOwner.updateQuestionDraft(key, input)
+  }
+
+  confirmQuestion(key: SessionKey, input: ConfirmQuestionInput): Promise<CreatedChild> {
+    return this.delegatedWorkOwner.confirmQuestion(key, input)
+  }
+
+  cancelQuestions(
+    key: SessionKey,
+    input: Readonly<{ expectedRevision: number; frameId: string; endedAt: number; reason: string }>
+  ): Promise<void> {
+    return this.delegatedWorkOwner.cancelQuestions(key, input)
+  }
+
+  startAttemptRuntime(key: SessionKey, input: StartAttemptRuntimeInput): Promise<void> {
+    return this.delegatedWorkOwner.startAttemptRuntime(key, input)
+  }
+
+  applyAgentEvent(key: SessionKey, input: AttemptAgentEventInput): Promise<void> {
+    return this.delegatedWorkOwner.applyAgentEvent(key, input)
+  }
+
+  transitionAttempt(key: SessionKey, input: TransitionAttemptInput): Promise<void> {
+    return this.delegatedWorkOwner.transitionAttempt(key, input)
+  }
+
+  submitStructuredOutput(
+    key: SessionKey,
+    input: import('../delegation/session-records').SubmitStructuredOutputInput
+  ): Promise<'accepted' | 'idempotent'> {
+    return this.delegatedWorkOwner.submitStructuredOutput(key, input)
+  }
+
+  admitMessageCommand(
+    key: SessionKey,
+    input: AdmitMessageCommandInput
+  ): Promise<'admitted' | 'idempotent'> {
+    return this.delegatedWorkOwner.admitMessageCommand(key, input)
+  }
+
+  startMessageDispatch(
+    key: SessionKey,
+    input: StartMessageDispatchInput
+  ): Promise<'started' | 'terminal' | 'blocked'> {
+    return this.delegatedWorkOwner.startMessageDispatch(key, input)
+  }
+
+  settleMessage(key: SessionKey, input: SettleMessageInput): Promise<'settled' | 'terminal'> {
+    return this.delegatedWorkOwner.settleMessage(key, input)
+  }
+
+  acknowledgeUncertainMessage(
+    key: SessionKey,
+    input: Readonly<{ expectedRevision: number; messageId: string }>
+  ): Promise<'acknowledged' | 'terminal'> {
+    return this.delegatedWorkOwner.acknowledgeUncertainMessage(key, input)
+  }
+
+  startPendingMessageTurn(key: SessionKey, input: StartPendingMessageTurnInput): Promise<void> {
+    return this.delegatedWorkOwner.startPendingMessageTurn(key, input)
+  }
+
+  completeChildTurn(key: SessionKey, input: CompleteChildTurnInput): Promise<void> {
+    return this.delegatedWorkOwner.completeChildTurn(key, input)
+  }
+
+  attachDelegatedMessageArtifacts(
+    key: SessionKey,
+    input: AttachDelegatedMessageArtifactsInput
+  ): Promise<void> {
+    return this.delegatedWorkOwner.attachDelegatedMessageArtifacts(key, input)
+  }
+
+  readChildren(key: SessionKey, parentFrameId: string): Promise<readonly ChildRecord[]> {
+    return this.delegatedWorkOwner.readChildren(key, parentFrameId)
+  }
+
+  recoverInterruptedDelegatedWork(): Promise<readonly { frameId: string; attemptId: string }[]> {
+    return this.delegatedWorkOwner.recoverInterruptedDelegatedWork()
   }
 
   appendUserMessageToInteraction(

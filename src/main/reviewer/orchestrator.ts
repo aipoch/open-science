@@ -9,7 +9,7 @@
 
 import { withReviewerRuntimeActivity, type ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
-import type { ReviewWithChecks } from '../../shared/reviewer'
+import type { DelegatedReviewEvidenceScope, ReviewWithChecks } from '../../shared/reviewer'
 import type { ReviewRepository } from './repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ArtifactVersionContentResolver } from './host-sdk'
@@ -42,6 +42,9 @@ export type RunReviewOptions = {
   // review). The scope is resolved from this turn; the row is still grouped under turnMessageId.
   // Defaults to turnMessageId.
   scopeTurnMessageId?: string
+  // Exact child provenance for a delegated turn. Delegated review is evidence-only and may not
+  // enter the correction loop.
+  evidenceScope?: DelegatedReviewEvidenceScope
   // Called once the running Review row has been created and pushed — i.e. the review is confirmed to
   // have started. A failure before this point (scope resolution, the DB insert) throws without calling
   // it, so the caller can report started:false and leave the turn retriable.
@@ -119,6 +122,7 @@ const runReviewWithSession = async (
     sessionId,
     turnMessageId,
     scopeTurnMessageId,
+    evidenceScope,
     projectId,
     getSession,
     reviewRepository,
@@ -148,6 +152,7 @@ const runReviewWithSession = async (
     sessionId,
     scopeTurnMessageId: scopeTurnMessageId ?? turnMessageId,
     turnMessageId,
+    evidenceScope,
     projectId,
     reviewRepository,
     runSessionMutation,
@@ -226,6 +231,16 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
   } = options
 
   log.info('runReview started', { sessionId, turnMessageId })
+
+  if (
+    options.evidenceScope &&
+    (turnMessageId !== options.evidenceScope.terminalMessageId ||
+      (options.scopeTurnMessageId !== undefined &&
+        options.scopeTurnMessageId !== options.evidenceScope.terminalMessageId) ||
+      mainSessionId !== undefined)
+  ) {
+    throw new Error('Delegated Review authority is limited to its exact terminal evidence scope.')
+  }
 
   const session = await getSession(sessionId)
   if (!session) {

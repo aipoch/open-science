@@ -227,7 +227,7 @@ export const classifyDataRoot = async (
   }
 
   // Look one level into the existing target to classify it (design §21.5). Classify by USER data
-  // only (MIGRATED_DIRS = artifacts/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
+  // only (MIGRATED_DIRS = artifacts/delegation/notebooks/uploads/workspaces) — `runtime/` is rebuildable,
   // NOT user data, so it is ignored entirely: it counts neither as "our data" (→ adopt) nor as
   // foreign content (→ invalid). Without this, a leftover runtime/ (e.g. after a prior move that
   // excludes runtime) would make a data-less folder look adoptable and silently switch to an empty

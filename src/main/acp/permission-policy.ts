@@ -21,6 +21,9 @@ import {
 type PermissionPolicyContext = {
   profile: PermissionProfileId
   projectId?: string
+  // Delegated runtimes have a provider-local Session id, while durable grants belong to the parent
+  // app Session. Keep that owner identity separate from the request routing identity.
+  permissionGrantSessionId?: string
   frameworkId?: AgentFrameworkId
   shellDialect?: CommandShellDialect
   autoReviewStrategy?: PermissionAutoReviewStrategy

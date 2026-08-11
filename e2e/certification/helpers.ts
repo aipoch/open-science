@@ -55,11 +55,32 @@ const sendPrompt = async (
 }
 
 const openRecentSession = async (page: Page, prompt: string): Promise<void> => {
+  const promptPrefix = prompt.slice(0, 36)
   const session = page
     .getByRole('region', { name: 'Recent sessions' })
-    .getByRole('button', { name: prompt })
+    .getByRole('button', { name: new RegExp(promptPrefix, 'u') })
   await expect(session).toBeVisible({ timeout: 60_000 })
   await session.click()
 }
 
-export { createProject, openRecentSession, sendPrompt }
+const openProjectSession = async (
+  page: Page,
+  projectName: string,
+  prompt: string
+): Promise<void> => {
+  const project = page
+    .getByRole('region', { name: 'Projects' })
+    .getByRole('button', { name: projectName, exact: true })
+  await expect(project).toBeVisible({ timeout: 60_000 })
+  await project.click()
+  const promptPrefix = prompt.slice(0, 36)
+  const heading = page.getByRole('heading', { name: new RegExp(promptPrefix, 'u') })
+  if (await heading.isVisible()) return
+  const session = page
+    .getByRole('navigation', { name: 'Sessions' })
+    .getByRole('button', { name: new RegExp(promptPrefix, 'u') })
+  await expect(session).toBeVisible({ timeout: 60_000 })
+  await session.click()
+}
+
+export { createProject, openProjectSession, openRecentSession, sendPrompt }

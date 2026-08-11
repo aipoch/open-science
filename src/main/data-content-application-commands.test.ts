@@ -136,6 +136,7 @@ const createDependencies = () => {
   }
   const sessions = {
     loadAll: vi.fn(),
+    loadOne: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
     deleteSession: vi.fn(),
     saveManifest: vi.fn(),
@@ -207,6 +208,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionDelete',
   'sessionExportConversation',
   'sessionLoadAll',
+  'sessionLoadOne',
   'sessionSaveManifest',
   'sessionSave',
   'uploadStageLocalFile',
@@ -235,7 +237,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 46 current data and content invoke channels', () => {
+  it('owns exactly the 49 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -272,6 +274,7 @@ describe('Data and content application commands', () => {
         'sessions:delete-session',
         'sessions:export-conversation',
         'sessions:load-all',
+        'sessions:load-one',
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:save-session',
@@ -642,7 +645,9 @@ describe('Data and content application commands', () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
     const loadResult = { sessions: [], manifest: { version: 1 as const } }
+    const loadedSession = deps.session
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
+    deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const updateRequest = { id: 'project-1', name: 'Updated project' }
     const deleteProjectRequest = { id: 'project-1' }
@@ -662,6 +667,12 @@ describe('Data and content application commands', () => {
     await expect(
       router.dispatcher.invoke(dataContentApplicationCommands.sessionLoadAll, invocation([]))
     ).resolves.toBe(loadResult)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionLoadOne,
+        invocation([deleteSessionRequest] as const)
+      )
+    ).resolves.toBe(loadedSession)
     await router.dispatcher.invoke(
       dataContentApplicationCommands.sessionSaveManifest,
       invocation([manifestRequest] as const)
@@ -674,9 +685,10 @@ describe('Data and content application commands', () => {
     expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
     expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
     expect(deps.sessions.loadAll).toHaveBeenCalledOnce()
+    expect(deps.sessions.loadOne).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(3)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(4)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'

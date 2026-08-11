@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import type { AcpRuntimeEvent } from '../shared/acp'
+import type { AcpAgentRuntimeUpdate, AcpRuntimeEvent } from '../shared/acp'
+import { AGENT_RUNTIME_UPDATE_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
 import type { SideChatRuntimeEvent } from '../shared/side-chat'
 import {
   ApplicationEventHub,
@@ -11,10 +12,28 @@ import {
 describe('ApplicationEventHub', () => {
   it('binds known channels to their payload types', () => {
     expectTypeOf<ApplicationEventMap['acp:event']>().toEqualTypeOf<AcpRuntimeEvent>()
+    expectTypeOf<
+      ApplicationEventMap['acp:agent-runtime-update']
+    >().toEqualTypeOf<AcpAgentRuntimeUpdate>()
+    expectTypeOf<AcpAgentRuntimeUpdate['event']['sessionId']>().toEqualTypeOf<undefined>()
+    expectTypeOf<AcpAgentRuntimeUpdate['event']['promptMessageId']>().toEqualTypeOf<undefined>()
     expectTypeOf<ApplicationEventMap['side-chat:event']>().toEqualTypeOf<SideChatRuntimeEvent>()
     expectTypeOf<ApplicationEvent<'specialist:catalog-changed'>>().toEqualTypeOf<
       Readonly<{ channel: 'specialist:catalog-changed'; payload: undefined }>
     >()
+  })
+
+  it('publishes an Agent Runtime Segment update without changing its scoped owner', () => {
+    const hub = new ApplicationEventHub()
+    const listener = vi.fn()
+    hub.subscribe(listener)
+
+    hub.publish('acp:agent-runtime-update', AGENT_RUNTIME_UPDATE_FIXTURE)
+
+    expect(listener).toHaveBeenCalledWith({
+      channel: 'acp:agent-runtime-update',
+      payload: AGENT_RUNTIME_UPDATE_FIXTURE
+    })
   })
 
   it('publishes one immutable event to subscribers in registration order', () => {

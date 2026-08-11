@@ -1,4 +1,9 @@
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../shared/acp'
+import type {
+  AcpAgentRuntimeUpdate,
+  AcpPermissionRequest,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../shared/acp'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
 import type { DownloadProgress } from '../shared/download-progress'
@@ -20,7 +25,8 @@ import type {
 import type {
   ClaudeInstallEvent,
   ConnectorApprovalRequest,
-  ConversationSkillImportApprovalRequest
+  ConversationSkillImportApprovalRequest,
+  SettingsSnapshot
 } from '../shared/settings'
 import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '../shared/specialist'
 import type { MigrationProgress } from '../shared/storage'
@@ -33,6 +39,7 @@ import type { UpdateStatus } from '../shared/update'
 export type ApplicationEventMap = {
   'acp:state': AcpStateSnapshot
   'acp:event': AcpRuntimeEvent
+  'acp:agent-runtime-update': AcpAgentRuntimeUpdate
   'acp:permission-request': AcpPermissionRequest
   'side-chat:event': SideChatRuntimeEvent
   'side-chat:relay-delivered': SideChatRelayDeliveredEvent
@@ -58,6 +65,7 @@ export type ApplicationEventMap = {
   'specialist:handoff-lifecycle': CompletionGateLifecycleEvent
   'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
+  'settings:changed': SettingsSnapshot
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent
   'reviewer:suppress-next-auto-review': ReviewSuppressionEvent

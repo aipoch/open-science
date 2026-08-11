@@ -23,6 +23,7 @@ import {
   createArtifactVersionRequest,
   createProvenanceTestFixture
 } from './provenance-test-fixtures'
+import { createRootNotebookLane } from '../notebook/lane-identity'
 
 type Fixture = Awaited<ReturnType<typeof createProvenanceTestFixture>>
 
@@ -321,14 +322,17 @@ describe('artifact provenance durable lifecycle contract', () => {
     const value = await fixture()
     const session = durableSession(value.storageRoot)
     const request = versionRequest(session)
+    const lane = createRootNotebookLane('project-1', 'session-1', request.rootFrameId)
     await value.notebookRepository.loadOrCreate({
       projectName: 'project-1',
       sessionId: 'session-1',
-      workspaceCwd: join(value.storageRoot, 'workspace')
+      workspaceCwd: join(value.storageRoot, 'workspace'),
+      lane
     })
     await value.notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane,
       run: {
         runId: 'producer-run-1',
         cellId: 'cell-1',

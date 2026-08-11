@@ -45,6 +45,7 @@ const catalog: AgentsCatalogSource = {
 
 const completionContext = {
   sessionId: 'trusted-session',
+  callerRole: 'main' as const,
   turnId: 'tool-1',
   controlInvocationGeneration: 1,
   toolInvocationId: 'tool-1'
@@ -384,6 +385,7 @@ describe('completion gate tracer bullet', () => {
     const harness = createHarness({ status: 'approved' })
     const trusted = {
       sessionId: 'trusted-session',
+      callerRole: 'main' as const,
       turnId: 'trusted-turn',
       controlInvocationGeneration: 1,
       toolInvocationId: 'trusted-tool'
@@ -689,7 +691,7 @@ describe('completion gate tracer bullet', () => {
         switch: (name: string | null) =>
           harness.agents.dispatch(
             { op: 'switch', params: { name } },
-            { sessionId: 'trusted-session' }
+            { sessionId: 'trusted-session', callerRole: 'main' }
           )
       }
     }
@@ -906,7 +908,11 @@ describe('completion gate tracer bullet', () => {
       token: 'completion-gate-token',
       agentsService: harness.agents
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     const releaseInvocation = connection.beginControlInvocation(completionContext)
     const loop = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
@@ -1014,7 +1020,11 @@ describe('completion gate tracer bullet', () => {
       token: 'opencode-handoff-token',
       agentsService: agents
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     const releaseInvocation = connection.beginControlInvocation(completionContext)
     const loop = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,

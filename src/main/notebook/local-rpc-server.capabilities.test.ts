@@ -43,7 +43,11 @@ describe('capabilitiesCall RPC', () => {
       hostFrames: {} as never,
       hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     const { response, payload } = await callCapabilities(connection, connection.token, {
       sessionId: 'forged-session',
@@ -71,7 +75,11 @@ describe('capabilitiesCall RPC', () => {
       transport: 'tcp',
       connectorService: {} as never
     })
-    const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: {
@@ -94,7 +102,11 @@ describe('capabilitiesCall RPC', () => {
       transport: 'tcp',
       hostFrames: {} as never
     })
-    const connection = await server.issueSessionConnection('trusted-session', 'trusted-project')
+    const connection = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: { result: { frames: false } }
@@ -106,7 +118,11 @@ describe('capabilitiesCall RPC', () => {
       transport: 'tcp',
       hostLlm: { isAvailable: async () => false, call: async () => ({}) as never }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: { result: { llm: false } }
@@ -118,7 +134,11 @@ describe('capabilitiesCall RPC', () => {
       transport: 'tcp',
       hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
     })
-    const connection = await server.issueSessionConnection('trusted-session', 'trusted-project')
+    const connection = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: { result: { llm: false } }
@@ -130,7 +150,11 @@ describe('capabilitiesCall RPC', () => {
       transport: 'tcp'
     })
     const bootstrap = await server.ensureStarted()
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     const bootstrapAttempt = await callCapabilities(control, bootstrap.token)
     expect(bootstrapAttempt.response.status).toBe(401)

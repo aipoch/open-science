@@ -426,6 +426,26 @@ const syncWorkspaceContextUsage = (
   for (const sessionId of sessionIds) setContextUsage(sessionId, contextUsageBySession[sessionId])
 }
 
+const refreshDelegatedWorkSessions = async (
+  sessionIds: readonly string[],
+  isCancelled: () => boolean = () => false
+): Promise<void> => {
+  const liveSessionIds = new Set(sessionIds)
+  const requests = useSessionStore
+    .getState()
+    .sessions.filter((session) => liveSessionIds.has(session.id))
+    .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
+  const sessions = await Promise.all(
+    requests.map((request) => window.api.sessions.loadOne(request))
+  )
+  if (isCancelled()) return
+  for (const session of sessions) {
+    if (session?.runtimeContext?.delegatedWork) {
+      useSessionStore.getState().upsertPersistedSession(session)
+    }
+  }
+}
+
 const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
   const snapshot = await window.api.acp.getState()
   const accepted = await ingestWorkspaceRuntimeSnapshot(snapshot, false)
@@ -439,6 +459,7 @@ export {
   markRunningSessionsDisconnectedOnDrop,
   processVisibleWorkspaceRuntimeEvents,
   processWorkspaceRuntimeEvents,
+  refreshDelegatedWorkSessions,
   resetWorkspaceRuntimeEventOwnerForTests,
   subscribeWorkspacePermissionLifecycle,
   syncWorkspaceAgentFirstOutputState,

@@ -15,6 +15,34 @@ import { CODEX_VERSION } from '../settings/managed-codex'
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it('disables every Codex native multi-agent implementation in every spawned profile', () => {
+    const framework = createCodexFramework()
+    const configurations = [
+      framework.prepareModelConfig(
+        {
+          type: 'official',
+          vendorId: 'openai',
+          apiEndpoints: ['responses'],
+          baseUrl: 'https://api.openai.com/v1',
+          model: 'gpt-5.4',
+          key: 'secret'
+        },
+        { storageRoot: '/data/official', executablePath: '/runtime/codex-acp' }
+      ),
+      framework.prepareModelConfig(
+        { type: 'codex-isolated', model: 'gpt-5.4' },
+        { storageRoot: '/data/subscription', executablePath: '/runtime/codex-acp' }
+      )
+    ]
+
+    expect(configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}').features)).toEqual(
+      [
+        { multi_agent: false, multi_agent_v2: false },
+        { multi_agent: false, multi_agent_v2: false }
+      ]
+    )
+  })
+
   it.each([
     ['darwin', 'posix'],
     ['win32', 'powershell']
@@ -476,7 +504,8 @@ describe('codexFramework', () => {
     expect(config).toEqual({
       env: {
         HOME: join('/data', 'codex-subscription'),
-        CODEX_HOME: join('/data', 'codex-subscription')
+        CODEX_HOME: join('/data', 'codex-subscription'),
+        CODEX_CONFIG: JSON.stringify({ features: { multi_agent: false, multi_agent_v2: false } })
       }
     })
   })
@@ -491,7 +520,8 @@ describe('codexFramework', () => {
     expect(config).toEqual({
       env: {
         HOME: join('/data', 'codex-subscription'),
-        CODEX_HOME: join('/data', 'codex-subscription')
+        CODEX_HOME: join('/data', 'codex-subscription'),
+        CODEX_CONFIG: JSON.stringify({ features: { multi_agent: false, multi_agent_v2: false } })
       }
     })
   })
@@ -525,7 +555,7 @@ describe('codexFramework', () => {
     )
 
     expect(config.env?.CODEX_HOME).toBe(join('/data', 'codex-subscription'))
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toEqual({ model: 'gpt-5.6-terra' })
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({ model: 'gpt-5.6-terra' })
   })
 
   it('seeds reasoning effort alongside the model for an isolated Codex subscription', () => {
@@ -543,7 +573,7 @@ describe('codexFramework', () => {
       }
     )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toEqual({
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model: 'gpt-5.6-terra',
       model_reasoning_effort: 'high'
     })
@@ -562,7 +592,7 @@ describe('codexFramework', () => {
       }
     )
 
-    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toEqual({
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
       model_reasoning_effort: 'high'
     })
   })

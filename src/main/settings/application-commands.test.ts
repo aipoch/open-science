@@ -51,6 +51,7 @@ const expectedChannels = [
   'settings:set-notifications-enabled',
   'settings:set-package-mirror',
   'settings:set-project-files-filter',
+  'settings:set-subagent-model',
   'settings:validate-provider'
 ] as const
 
@@ -167,6 +168,7 @@ describe('Settings core application commands', () => {
     await invoke('previewSkillZip', [{ dataBase64: 'AA==' }])
     await invoke('refreshProviderModels', [{ providerId: 'provider-1' }])
     await invoke('scanRepoSkills', [{ repo: 'org/repo' }])
+    await invoke('setSubagentModel', [{ configuration: { mode: 'inherit' } }])
     await invoke('validateProvider', [{ providerId: 'provider-1' }])
 
     expect(serviceMethod('getConnectorDetail')).toHaveBeenCalledWith('connector-1')
@@ -183,6 +185,7 @@ describe('Settings core application commands', () => {
       providerId: 'provider-1'
     })
     expect(serviceMethod('scanRepoSkills')).toHaveBeenCalledWith({ repo: 'org/repo' })
+    expect(serviceMethod('setSubagentModel')).toHaveBeenCalledWith({ mode: 'inherit' })
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })
 

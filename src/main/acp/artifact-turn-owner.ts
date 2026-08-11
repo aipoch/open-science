@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, rm, rmdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 import type { ArtifactFile } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
-import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import type { ArtifactRunContext } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
@@ -23,9 +22,11 @@ type ArtifactTurnProvenanceContext = {
   messageAncestry?: string[]
   runtimeSegmentId?: string
   promptMessageId?: string
+  originMessageId?: string
 }
 
-type OpenArtifactTurnRequest = {
+type OpenExecutionArtifactTurnRequest = {
+  executionId: string
   appSessionId: string
   artifactStorageSessionId: string
   projectId: string
@@ -50,12 +51,32 @@ type ArtifactTurnPublication = {
 }
 
 type ArtifactTurnSnapshot = {
+  executionId?: string
   appSessionId: string
   runId: string
+  agentFrameId?: string
+  messageBranchId?: string
+  runtimeSegmentId?: string
+  promptMessageId?: string
   phase: 'open' | 'sealing' | 'finalized' | 'disposed'
   outstandingWrites: number
   terminalResult?: { kind: 'empty' } | { kind: 'publication'; artifactCount: number }
 }
+
+type NotebookArtifactSourceScope = Required<
+  Pick<ArtifactRunContext, 'notebookSessionId' | 'notebookDataDir' | 'notebookSessionRoot'>
+>
+
+type NotebookArtifactSourceScopeRequest = Readonly<{
+  projectId: string
+  appSessionId: string
+  rootFrameId: string
+  agentFrameId: string
+}>
+
+type NotebookArtifactSourceScopeProvider = (
+  request: NotebookArtifactSourceScopeRequest
+) => NotebookArtifactSourceScope
 
 type ArtifactTurnProvenance = {
   listRunVersions: (request: {
@@ -93,6 +114,7 @@ type ArtifactTurnOwnerOptions = {
   revokeRpcCapability?: (token: string) => Promise<void> | void
   provenance?: ArtifactTurnProvenance
   writeHandoffFile?: (filePath: string, content: string) => Promise<void>
+  notebookArtifactSourceScope?: NotebookArtifactSourceScopeProvider
   notebook?: {
     setArtifactProvenanceContext?: (
       sessionId: string,
@@ -103,6 +125,7 @@ type ArtifactTurnOwnerOptions = {
             messageBranchId: string
             runtimeSegmentId: string
             promptMessageId: string
+            originMessageId?: string
           }
         | undefined
     ) => void
@@ -110,6 +133,8 @@ type ArtifactTurnOwnerOptions = {
 }
 
 type ArtifactTurn = {
+  executionId: string
+  updatesSessionNotebookContext: boolean
   appSessionId: string
   artifactStorageSessionId: string
   projectId: string
@@ -122,19 +147,24 @@ type ArtifactTurn = {
   messageAncestry: string[]
   runtimeSegmentId: string
   promptMessageId: string
+  originMessageId?: string
   agentName: string
   rpcCapabilityToken?: string
+  notebookArtifactSourceScope?: NotebookArtifactSourceScope
   phase: 'open' | 'sealing' | 'finalized' | 'disposed'
   inFlightAppWrites: Set<Promise<ArtifactFile>>
   writeDrainPromise?: Promise<void>
   finalizationPromise?: Promise<ArtifactTurnPublication | undefined>
   disposalPromise?: Promise<void>
+  disposalStarted: boolean
   terminalResult?: { kind: 'empty' } | { kind: 'publication'; artifactCount: number }
 }
 
 class ArtifactTurnOwner {
-  private readonly activeTurnsBySession = new Map<string, ArtifactTurn>()
-  private readonly sessionHandoffQueues = new Map<string, Promise<void>>()
+  private readonly activeTurnsByExecution = new Map<string, ArtifactTurn>()
+  private readonly activeHandlesByExecution = new Map<string, ArtifactTurnHandle>()
+  private readonly activeTurnsByHandoffFile = new Map<string, ArtifactTurn>()
+  private readonly handoffQueues = new Map<string, Promise<void>>()
   private readonly turnsByHandle = new WeakMap<ArtifactTurnHandle, ArtifactTurn>()
   private readonly runtimeInstanceId: string
   private readonly now: () => number
@@ -145,13 +175,35 @@ class ArtifactTurnOwner {
     this.now = options.now ?? Date.now
   }
 
-  async open(request: OpenArtifactTurnRequest): Promise<ArtifactTurnHandle> {
-    const turn = this.createTurn(request)
+  async openExecution(request: OpenExecutionArtifactTurnRequest): Promise<ArtifactTurnHandle> {
+    return this.openScopedExecution(request, false)
+  }
+
+  // Root providers receive one stable MCP transport configuration when their ACP Session starts.
+  // This method preserves that compatibility handoff location without restoring Session lookup as
+  // write authority: every lifecycle operation still requires the returned execution handle.
+  async openRootExecution(request: OpenExecutionArtifactTurnRequest): Promise<ArtifactTurnHandle> {
+    return this.openScopedExecution(request, true)
+  }
+
+  private async openScopedExecution(
+    request: OpenExecutionArtifactTurnRequest,
+    rootTransport: boolean
+  ): Promise<ArtifactTurnHandle> {
+    if (!request.executionId.trim()) throw new Error('Artifact execution id is required.')
+    if (this.activeTurnsByExecution.has(request.executionId)) {
+      throw new Error(`Artifact execution is already active: ${request.executionId}`)
+    }
+    return this.activate(this.createTurn(request, rootTransport))
+  }
+
+  private async activate(turn: ArtifactTurn): Promise<ArtifactTurnHandle> {
     const runContext = this.createRunContext(turn)
-    return this.withSessionHandoffLock(turn.appSessionId, async () => {
+    return this.withHandoffLock(turn.currentRunFile, async () => {
       let handoffWritten = false
 
       turn.rpcCapabilityToken = this.options.issueRpcCapability?.({
+        executionId: turn.executionId,
         projectId: turn.projectId,
         appSessionId: turn.appSessionId,
         artifactStorageSessionId: turn.artifactStorageSessionId,
@@ -164,7 +216,9 @@ class ArtifactTurnOwner {
         runtimeSegmentId: turn.runtimeSegmentId,
         promptMessageId: turn.promptMessageId,
         agentName: turn.agentName,
-        ...(this.options.notebook ? { notebookSessionId: turn.appSessionId } : {}),
+        ...(turn.notebookArtifactSourceScope
+          ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
+          : {}),
         allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
       })
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
@@ -173,13 +227,16 @@ class ArtifactTurnOwner {
         await mkdir(dirname(turn.currentRunFile), { recursive: true })
         await this.writeHandoffFile(turn.currentRunFile, runContext)
         handoffWritten = true
-        this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
-          rootFrameId: turn.rootFrameId,
-          agentFrameId: turn.agentFrameId,
-          messageBranchId: turn.messageBranchId,
-          runtimeSegmentId: turn.runtimeSegmentId,
-          promptMessageId: turn.promptMessageId
-        })
+        if (turn.updatesSessionNotebookContext) {
+          this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, {
+            rootFrameId: turn.rootFrameId,
+            agentFrameId: turn.agentFrameId,
+            messageBranchId: turn.messageBranchId,
+            runtimeSegmentId: turn.runtimeSegmentId,
+            promptMessageId: turn.promptMessageId,
+            ...(turn.originMessageId ? { originMessageId: turn.originMessageId } : {})
+          })
+        }
       } catch (error) {
         if (turn.rpcCapabilityToken) {
           try {
@@ -194,33 +251,57 @@ class ArtifactTurnOwner {
           } catch {
             // The original activation failure remains the caller-visible error.
           }
-          try {
-            this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
-          } catch {
-            // The original activation failure remains the caller-visible error.
+          if (turn.updatesSessionNotebookContext) {
+            try {
+              this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
+            } catch {
+              // The original activation failure remains the caller-visible error.
+            }
           }
         }
         throw error
       }
 
-      this.activeTurnsBySession.set(turn.appSessionId, turn)
+      this.activeTurnsByExecution.set(turn.executionId, turn)
+      this.activeTurnsByHandoffFile.set(turn.currentRunFile, turn)
       const handle: ArtifactTurnHandle = { [artifactTurnHandleKey]: Symbol(turn.runId) }
       this.turnsByHandle.set(handle, turn)
+      this.activeHandlesByExecution.set(turn.executionId, handle)
       return handle
     })
   }
 
   activeRunIds(): string[] {
-    return Array.from(this.activeTurnsBySession.values(), (turn) => turn.runId)
+    return Array.from(this.activeTurnsByExecution.values(), (turn) => turn.runId)
   }
 
-  promptMessageIdFor(sessionId: string): string | undefined {
-    return this.activeTurnsBySession.get(sessionId)?.promptMessageId
+  handleForExecution(executionId: string): ArtifactTurnHandle {
+    const handle = this.activeHandlesByExecution.get(executionId)
+    if (!handle) throw new Error(`No active Artifact turn for execution: ${executionId}`)
+    return handle
+  }
+
+  handoffFile(handle: ArtifactTurnHandle): string {
+    return this.resolve(handle).currentRunFile
+  }
+
+  async publishHandoff(handle: ArtifactTurnHandle, targetFile: string): Promise<void> {
+    const turn = this.resolve(handle)
+    if (turn.phase !== 'open') throw new Error('Artifact turn is not open.')
+    await this.withHandoffLock(targetFile, async () => {
+      await mkdir(dirname(targetFile), { recursive: true })
+      await this.writeHandoffFile(targetFile, this.createRunContext(turn))
+    })
   }
 
   snapshot(handle: ArtifactTurnHandle): ArtifactTurnSnapshot {
     const turn = this.resolve(handle)
     return {
+      executionId: turn.executionId,
+      agentFrameId: turn.agentFrameId,
+      messageBranchId: turn.messageBranchId,
+      runtimeSegmentId: turn.runtimeSegmentId,
+      promptMessageId: turn.promptMessageId,
       appSessionId: turn.appSessionId,
       runId: turn.runId,
       phase: turn.phase,
@@ -229,12 +310,15 @@ class ArtifactTurnOwner {
     }
   }
 
-  writeForActiveTurn(sessionId: string, input: ArtifactTurnWriteInput): Promise<ArtifactFile> {
-    const turn = sessionId ? this.activeTurnsBySession.get(sessionId) : undefined
-    if (!turn || turn.phase !== 'open') {
-      return Promise.reject(new Error('No active assistant turn to attach a generated file to.'))
+  write(handle: ArtifactTurnHandle, input: ArtifactTurnWriteInput): Promise<ArtifactFile> {
+    const turn = this.resolve(handle)
+    if (turn.phase !== 'open') {
+      return Promise.reject(new Error('Artifact turn is not open for writes.'))
     }
+    return this.writeTurn(turn, input)
+  }
 
+  private writeTurn(turn: ArtifactTurn, input: ArtifactTurnWriteInput): Promise<ArtifactFile> {
     const write = this.options.provenance
       ? this.options.provenance.writeAppGeneratedVersion({
           projectId: turn.projectId,
@@ -274,7 +358,7 @@ class ArtifactTurnOwner {
 
   finalize(handle: ArtifactTurnHandle): Promise<ArtifactTurnPublication | undefined> {
     const turn = this.resolve(handle)
-    if (turn.disposalPromise && !turn.finalizationPromise) {
+    if (turn.disposalStarted && !turn.finalizationPromise) {
       return Promise.reject(new Error('Artifact turn is already disposing or disposed.'))
     }
     if (!turn.finalizationPromise) {
@@ -293,11 +377,21 @@ class ArtifactTurnOwner {
 
   dispose(handle: ArtifactTurnHandle): Promise<void> {
     const turn = this.resolve(handle)
-    turn.disposalPromise ??= this.disposeAfterFinalization(turn)
+    if (!turn.disposalPromise) {
+      turn.disposalStarted = true
+      const disposal = this.disposeAfterFinalization(turn)
+      turn.disposalPromise = disposal
+      void disposal.catch(() => {
+        if (turn.disposalPromise === disposal) turn.disposalPromise = undefined
+      })
+    }
     return turn.disposalPromise
   }
 
-  private createTurn(request: OpenArtifactTurnRequest): ArtifactTurn {
+  private createTurn(
+    request: OpenExecutionArtifactTurnRequest,
+    rootTransport: boolean
+  ): ArtifactTurn {
     this.sequence += 1
     const runId = `artifact-run-${this.now()}-${this.sequence}`
     const rootFrameId =
@@ -318,16 +412,21 @@ class ArtifactTurnOwner {
       promptMessageId
     ]
 
-    return {
+    const sessionCurrentRunFile = getArtifactCurrentRunFilePath(
+      this.options.dataRoot,
+      request.projectId,
+      request.artifactStorageSessionId
+    )
+    const turn: ArtifactTurn = {
+      executionId: request.executionId,
+      updatesSessionNotebookContext: rootTransport,
       appSessionId: request.appSessionId,
       artifactStorageSessionId: request.artifactStorageSessionId,
       projectId: request.projectId,
       runId,
-      currentRunFile: getArtifactCurrentRunFilePath(
-        this.options.dataRoot,
-        request.projectId,
-        request.artifactStorageSessionId
-      ),
+      currentRunFile: rootTransport
+        ? sessionCurrentRunFile
+        : join(dirname(dirname(sessionCurrentRunFile)), '.execution-handoffs', `${runId}.json`),
       rootFrameId,
       agentFrameId: request.provenanceContext?.agentFrameId ?? rootFrameId,
       messageBranchId,
@@ -336,16 +435,29 @@ class ArtifactTurnOwner {
       runtimeSegmentId:
         request.provenanceContext?.runtimeSegmentId ?? `runtime-segment-${this.runtimeInstanceId}`,
       promptMessageId,
+      ...(request.provenanceContext?.originMessageId
+        ? { originMessageId: request.provenanceContext.originMessageId }
+        : {}),
       agentName: request.agentName,
       phase: 'open',
-      inFlightAppWrites: new Set()
+      inFlightAppWrites: new Set(),
+      disposalStarted: false
     }
+    const notebookArtifactSourceScope = this.options.notebookArtifactSourceScope?.({
+      projectId: turn.projectId,
+      appSessionId: turn.appSessionId,
+      rootFrameId: turn.rootFrameId,
+      agentFrameId: turn.agentFrameId
+    })
+    return notebookArtifactSourceScope ? { ...turn, notebookArtifactSourceScope } : turn
   }
 
   private createRunContext(turn: ArtifactTurn): ArtifactRunContext {
-    const base = {
+    return {
       artifactRunId: turn.runId,
+      executionId: turn.executionId,
       appSessionId: turn.appSessionId,
+      artifactStorageSessionId: turn.artifactStorageSessionId,
       rootFrameId: turn.rootFrameId,
       agentFrameId: turn.agentFrameId,
       messageBranchId: turn.messageBranchId,
@@ -353,24 +465,9 @@ class ArtifactTurnOwner {
       messageAncestry: turn.messageAncestry,
       runtimeSegmentId: turn.runtimeSegmentId,
       promptMessageId: turn.promptMessageId,
-      agentName: turn.agentName
+      agentName: turn.agentName,
+      ...turn.notebookArtifactSourceScope
     }
-    return this.options.notebook
-      ? {
-          ...base,
-          notebookSessionId: turn.appSessionId,
-          notebookDataDir: getNotebookDataRoot(
-            this.options.dataRoot,
-            turn.projectId,
-            turn.appSessionId
-          ),
-          notebookSessionRoot: getNotebookSessionRoot(
-            this.options.dataRoot,
-            turn.projectId,
-            turn.appSessionId
-          )
-        }
-      : base
   }
 
   private closeWrites(turn: ArtifactTurn): Promise<void> {
@@ -382,14 +479,18 @@ class ArtifactTurnOwner {
           this.options.revokeRpcCapability?.(turn.rpcCapabilityToken as string)
         )
       : Promise.resolve()
-    turn.writeDrainPromise = (async () => {
+    const writeDrain = (async () => {
       const [rpcResult] = await Promise.allSettled([
         rpcDrain,
         Promise.allSettled([...turn.inFlightAppWrites])
       ])
       if (rpcResult.status === 'rejected') throw rpcResult.reason
     })()
-    return turn.writeDrainPromise
+    turn.writeDrainPromise = writeDrain
+    void writeDrain.catch(() => {
+      if (turn.writeDrainPromise === writeDrain) turn.writeDrainPromise = undefined
+    })
+    return writeDrain
   }
 
   private async finalizeTurn(turn: ArtifactTurn): Promise<ArtifactTurnPublication | undefined> {
@@ -481,26 +582,46 @@ class ArtifactTurnOwner {
       cleanupErrors.push(error)
     }
 
-    await this.withSessionHandoffLock(turn.appSessionId, async () => {
-      const activeTurn = this.activeTurnsBySession.get(turn.appSessionId)
-      const ownsActiveTurn = activeTurn === turn
-      const ownsDistinctHandoff = activeTurn?.currentRunFile !== turn.currentRunFile
+    await this.withHandoffLock(turn.currentRunFile, async () => {
+      const ownsExecutionTurn = this.activeTurnsByExecution.get(turn.executionId) === turn
+      const ownsHandoff = this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn
       try {
-        if (ownsActiveTurn || ownsDistinctHandoff) {
-          await this.writeHandoffFile(turn.currentRunFile, {})
+        if (ownsExecutionTurn && ownsHandoff) {
+          if (turn.updatesSessionNotebookContext) {
+            await this.writeHandoffFile(turn.currentRunFile, {})
+          } else {
+            await rm(turn.currentRunFile, { force: true })
+            await rmdir(dirname(turn.currentRunFile)).catch((error: unknown) => {
+              if (
+                typeof error === 'object' &&
+                error !== null &&
+                'code' in error &&
+                ((error as { code?: unknown }).code === 'ENOENT' ||
+                  (error as { code?: unknown }).code === 'ENOTEMPTY')
+              ) {
+                return
+              }
+              throw error
+            })
+          }
         }
       } catch (error) {
         cleanupErrors.push(error)
       }
       try {
-        if (ownsActiveTurn) {
+        if (ownsHandoff && turn.updatesSessionNotebookContext) {
           this.options.notebook?.setArtifactProvenanceContext?.(turn.appSessionId, undefined)
         }
       } catch (error) {
         cleanupErrors.push(error)
-      } finally {
-        if (this.activeTurnsBySession.get(turn.appSessionId) === turn) {
-          this.activeTurnsBySession.delete(turn.appSessionId)
+      }
+      if (cleanupErrors.length === 0) {
+        if (this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn) {
+          this.activeTurnsByHandoffFile.delete(turn.currentRunFile)
+        }
+        if (this.activeTurnsByExecution.get(turn.executionId) === turn) {
+          this.activeTurnsByExecution.delete(turn.executionId)
+          this.activeHandlesByExecution.delete(turn.executionId)
         }
         turn.phase = 'disposed'
       }
@@ -515,17 +636,17 @@ class ArtifactTurnOwner {
       : writeFile(filePath, content, 'utf8')
   }
 
-  private withSessionHandoffLock<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.sessionHandoffQueues.get(sessionId) ?? Promise.resolve()
+  private withHandoffLock<T>(handoffFile: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.handoffQueues.get(handoffFile) ?? Promise.resolve()
     const current = previous.then(operation)
     const tail = current.then(
       () => undefined,
       () => undefined
     )
-    this.sessionHandoffQueues.set(sessionId, tail)
+    this.handoffQueues.set(handoffFile, tail)
     void tail.then(() => {
-      if (this.sessionHandoffQueues.get(sessionId) === tail) {
-        this.sessionHandoffQueues.delete(sessionId)
+      if (this.handoffQueues.get(handoffFile) === tail) {
+        this.handoffQueues.delete(handoffFile)
       }
     })
     return current
@@ -542,8 +663,9 @@ export { ArtifactTurnOwner }
 export type {
   ArtifactTurnHandle,
   ArtifactTurnOwnerOptions,
+  NotebookArtifactSourceScopeProvider,
   ArtifactTurnPublication,
   ArtifactTurnSnapshot,
   ArtifactTurnWriteInput,
-  OpenArtifactTurnRequest
+  OpenExecutionArtifactTurnRequest
 }

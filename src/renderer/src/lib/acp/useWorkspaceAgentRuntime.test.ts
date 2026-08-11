@@ -5048,6 +5048,7 @@ describe('recovering from a request-size overflow', () => {
       'recordPromptPlanAuthority',
       'processRuntimeEvents',
       'compact',
+      'ensureReady',
       'resume',
       'cancel',
       'delete'

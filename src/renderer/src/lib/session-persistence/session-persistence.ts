@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../../shared/artifacts'
-import type {
-  DeleteSessionRequest,
-  LoadAllSessionsResult,
-  PersistedChatSession,
-  SaveSessionOptions,
-  SessionConflictRebaseField,
-  SaveSessionManifestRequest
+import type { RendererFailureContext } from '../../../../shared/diagnostics'
+import {
+  ConversationGraphMaterializationError,
+  type DeleteSessionRequest,
+  type LoadAllSessionsResult,
+  type PersistedChatSession,
+  type SaveSessionOptions,
+  type SessionConflictRebaseField,
+  type SaveSessionManifestRequest
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
@@ -16,6 +18,7 @@ import {
   useSessionStore
 } from '../../stores/session-store'
 import type { ChatSession, SessionHydrationSelection } from '../../stores/session-store'
+import { projectRendererFailure } from '../../renderer-diagnostics'
 
 type SessionPersistenceApi = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -198,7 +201,7 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
           })
         }
       } catch (error) {
-        reportPersistenceError(error)
+        reportPersistenceError(error, 'artifact-reconcile')
       }
     }
   }
@@ -253,9 +256,60 @@ const pruneRemovedSessionWriteTargets = (
   }
 }
 
-// Retains full diagnostics in the console while the hook exposes renderer-safe recovery state.
-const reportPersistenceError = (error: unknown): void => {
+const reportedPersistenceFailures = new WeakSet<object>()
+
+// Retains full diagnostics in the local console while the main-process log receives only a bounded,
+// allowlisted phase, error category, and stack fingerprint. Never bridge raw messages or paths.
+const reportPersistenceError = (
+  error: unknown,
+  context: RendererFailureContext = 'session-persistence-unknown'
+): void => {
   console.warn('Session persistence failed', error)
+  if (error !== null && (typeof error === 'object' || typeof error === 'function')) {
+    if (reportedPersistenceFailures.has(error)) return
+    reportedPersistenceFailures.add(error)
+  }
+  try {
+    window.api.diagnostics?.reportRendererFailure(
+      projectRendererFailure('handled-error', error, 'unknown', context)
+    )
+  } catch {
+    // Diagnostics are best-effort and must never replace the persistence failure being handled.
+  }
+}
+
+const reportSessionSerializationError = (error: unknown): void => {
+  let context: RendererFailureContext = 'session-serialize'
+  if (error instanceof ConversationGraphMaterializationError) {
+    context = `session-serialize-${error.phase}`
+    if (error.phase === 'messages' && error.cause instanceof Error) {
+      if (error.cause.message === 'Active Agent Frame not found.') {
+        context = 'session-serialize-messages-active-frame'
+      } else if (error.cause.message === 'Active Message Branch not found.') {
+        context = 'session-serialize-messages-active-branch'
+      } else if (
+        /^Message .+ belongs to another conversation Branch\.$/.test(error.cause.message)
+      ) {
+        context = 'session-serialize-messages-off-branch'
+      } else {
+        context = 'session-serialize-messages-invalid-graph'
+      }
+    }
+  }
+  reportPersistenceError(error, context)
+}
+
+const observePersistencePhase = <Result>(
+  context: RendererFailureContext,
+  operation: () => Result
+): Result => {
+  try {
+    return operation()
+  } catch (error) {
+    if (context === 'session-serialize') reportSessionSerializationError(error)
+    else reportPersistenceError(error, context)
+    throw error
+  }
 }
 
 const SAFE_SESSION_LOAD_ERROR =
@@ -365,21 +419,39 @@ const createStoreSaver = (
           failureContext: { conflictRebaseFields },
           run: isForced
             ? async () => {
-                const durableSession = await persistence.saveSession(
-                  toPersistedSession(session),
-                  saveOptions
+                const persisted = observePersistencePhase('session-serialize', () =>
+                  toPersistedSession(session)
                 )
-                applyDurableSession(durableSession, saveOptions)
+                let durableSession: PersistedChatSession
+                try {
+                  durableSession = await persistence.saveSession(persisted, saveOptions)
+                } catch (error) {
+                  reportPersistenceError(error, 'session-save')
+                  throw error
+                }
+                observePersistencePhase('session-apply-durable', () =>
+                  applyDurableSession(durableSession, saveOptions)
+                )
               }
             : () =>
                 persistence.saveLatestSession(
                   target,
                   async (coalescedOptions) => {
-                    const persisted = toPersistedSession(session)
-                    const durableSession = await (coalescedOptions
-                      ? api.saveSession(persisted, coalescedOptions)
-                      : api.saveSession(persisted))
-                    applyDurableSession(durableSession, coalescedOptions)
+                    const persisted = observePersistencePhase('session-serialize', () =>
+                      toPersistedSession(session)
+                    )
+                    let durableSession: PersistedChatSession
+                    try {
+                      durableSession = await (coalescedOptions
+                        ? api.saveSession(persisted, coalescedOptions)
+                        : api.saveSession(persisted))
+                    } catch (error) {
+                      reportPersistenceError(error, 'session-save')
+                      throw error
+                    }
+                    observePersistencePhase('session-apply-durable', () =>
+                      applyDurableSession(durableSession, coalescedOptions)
+                    )
                     return durableSession
                   },
                   saveOptions
@@ -401,11 +473,17 @@ const createStoreSaver = (
         tasks.push({
           target: 'manifest',
           failureContext: {},
-          run: () =>
-            persistence.saveManifest({
-              lastSessionId: state.selectedSessionId,
-              lastProjectId: selectedSession?.projectId
-            })
+          run: async () => {
+            try {
+              await persistence.saveManifest({
+                lastSessionId: state.selectedSessionId,
+                lastProjectId: selectedSession?.projectId
+              })
+            } catch (error) {
+              reportPersistenceError(error, 'session-manifest-save')
+              throw error
+            }
+          }
         })
       }
     }
@@ -554,7 +632,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
           setLoadWarning(warningMessages.filter(Boolean).join(' '))
         }
       } catch (error) {
-        reportPersistenceError(error)
+        reportPersistenceError(error, 'session-load')
         if (isMounted) {
           setHasCompleteSessionCatalog(false)
           setCanDeleteSessionsAndProjects(false)

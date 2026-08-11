@@ -3,6 +3,13 @@ import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -21,6 +28,14 @@ import {
   resolveRunKernelKind
 } from './notebook-cell-utils'
 import { loadSessionNotebookRuns } from './session-notebook-data'
+import {
+  createNotebookFrameFilterOptions,
+  filterNotebookRunsForSessionBranch,
+  notebookFrameFilterForExport,
+  notebookFrameLabels,
+  projectNotebookRunsForFrame,
+  type NotebookFrameFilterValue
+} from './session-notebook-projection'
 
 type SessionNotebookStatus = 'loading' | 'error' | 'ready'
 
@@ -95,9 +110,10 @@ type SessionNotebookContentProps = {
   runs: NotebookRunRecord[]
   status: SessionNotebookStatus
   error?: string
+  frameLabels?: Readonly<Record<string, string>>
   onClose: () => void
-  onExport: (kernel: NotebookKernelKind) => Promise<void>
-  onExportAll: () => Promise<string | undefined>
+  onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
+  onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
 }
 
 // Pure presentational body of the dialog: header summary, empty/loading/error/populated states,
@@ -109,6 +125,7 @@ const SessionNotebookContent = ({
   runs,
   status,
   error,
+  frameLabels = {},
   onClose,
   onExport,
   onExportAll
@@ -118,8 +135,16 @@ const SessionNotebookContent = ({
   const [exportingAll, setExportingAll] = useState(false)
   const [exportError, setExportError] = useState<string>()
   const [exportSuccess, setExportSuccess] = useState<string>()
+  const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
   const shortId = sessionId.slice(0, 8)
-  const agents = runs.some((run) => run.source === 'agent') ? 1 : 0
+  const frameOptions = createNotebookFrameFilterOptions(runs, frameLabels)
+  const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
+    ? frameFilter
+    : frameOptions[0]?.value
+  const projectedRuns = effectiveFrameFilter
+    ? projectNotebookRunsForFrame(runs, effectiveFrameFilter)
+    : []
+  const agents = frameOptions.length
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
   // that share the run history but never became a notebook cell.
   const cells = runs.filter((run) => {
@@ -135,14 +160,16 @@ const SessionNotebookContent = ({
 
   // Per-kernel tabs, in fixed order, keeping only kinds that actually have a run — same has-runs
   // filtering as NotebookPreview, switchable rather than stacked so the dialog matches the preview.
-  const kindsWithRuns = new Set(runs.map((run) => resolveRunKernelKind(run)))
+  const kindsWithRuns = new Set(projectedRuns.map((run) => resolveRunKernelKind(run)))
   const visibleKinds = KERNEL_KIND_ORDER.filter((kind) => kindsWithRuns.has(kind))
   const effectiveActiveKind = visibleKinds.includes(activeKind)
     ? activeKind
     : (KERNEL_KIND_ORDER.find((kind) => kindsWithRuns.has(kind)) ?? visibleKinds[0] ?? 'python')
-  const visibleRuns = runs.filter((run) => resolveRunKernelKind(run) === effectiveActiveKind)
+  const visibleRuns = projectedRuns.filter(
+    (run) => resolveRunKernelKind(run) === effectiveActiveKind
+  )
   const busy = exporting || exportingAll
-  const exportDisabled = status !== 'ready' || runs.length === 0 || busy
+  const exportDisabled = status !== 'ready' || projectedRuns.length === 0 || busy
 
   // The main button's "current tab" = the kernel whose .ipynb will be saved. repl/bash tabs fold
   // into the most recent data kernel so the file still has a real kernelspec; sessions that never
@@ -151,14 +178,15 @@ const SessionNotebookContent = ({
     kindsWithRuns.has(kernel as NotebookKernelKind)
   )
   const mixedDataKernels = dataKernelsWithRuns.length >= 2
-  const resolvedDataKernel = resolveDataKernelForTab(runs, effectiveActiveKind)
+  const resolvedDataKernel = resolveDataKernelForTab(projectedRuns, effectiveActiveKind)
 
   const handleExport = async (): Promise<void> => {
+    if (!effectiveFrameFilter) return
     setExporting(true)
     setExportError(undefined)
     setExportSuccess(undefined)
     try {
-      await onExport(effectiveActiveKind)
+      await onExport(effectiveActiveKind, notebookFrameFilterForExport(effectiveFrameFilter))
     } catch (exportFailure) {
       // A canceled Save As resolves rather than throws, so reaching here is a real failure —
       // keep a diagnostic trail in addition to the footer banner.
@@ -170,11 +198,12 @@ const SessionNotebookContent = ({
   }
 
   const handleExportAll = async (): Promise<void> => {
+    if (!effectiveFrameFilter) return
     setExportingAll(true)
     setExportError(undefined)
     setExportSuccess(undefined)
     try {
-      const message = await onExportAll()
+      const message = await onExportAll(notebookFrameFilterForExport(effectiveFrameFilter))
       if (message) setExportSuccess(message)
     } catch (exportFailure) {
       console.error('Failed to export notebooks by kernel:', exportFailure)
@@ -223,8 +252,43 @@ const SessionNotebookContent = ({
           <p className="px-5 py-16 text-center text-sm text-muted-foreground">
             No execution records for this session.
           </p>
+        ) : frameOptions.length === 0 ? (
+          <p className="px-5 py-16 text-center text-sm text-muted-foreground">
+            No Main Agent or Subagent execution records for this session.
+          </p>
         ) : (
           <>
+            <div className="flex max-w-full items-center gap-2 overflow-hidden border-b border-border bg-muted px-3 py-2">
+              <label
+                htmlFor={`notebook-frame-filter-${sessionId}`}
+                className="shrink-0 text-xs text-muted-foreground"
+              >
+                Agent
+              </label>
+              <Select
+                value={effectiveFrameFilter ?? ''}
+                onValueChange={(value) => {
+                  setFrameFilter(value as NotebookFrameFilterValue)
+                  setExportSuccess(undefined)
+                }}
+              >
+                <SelectTrigger
+                  id={`notebook-frame-filter-${sessionId}`}
+                  aria-label="Filter notebook runs by Agent"
+                  title={frameOptions.find(({ value }) => value === effectiveFrameFilter)?.label}
+                  className="min-w-0 max-w-full flex-1 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {frameOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label} · {pluralize(option.count, 'run')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div
               role="tablist"
               data-testid="session-kernel-switcher"
@@ -242,7 +306,7 @@ const SessionNotebookContent = ({
                     setExportSuccess(undefined)
                   }}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+                    'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                     effectiveActiveKind === kind
                       ? 'bg-card text-foreground'
                       : 'text-muted-foreground hover:bg-card/70 hover:text-foreground'
@@ -250,7 +314,7 @@ const SessionNotebookContent = ({
                 >
                   <span>{kernelKindLabel(kind)}</span>
                   <span className="font-mono text-muted-foreground">
-                    {runs.filter((run) => resolveRunKernelKind(run) === kind).length}
+                    {projectedRuns.filter((run) => resolveRunKernelKind(run) === kind).length}
                   </span>
                 </button>
               ))}
@@ -362,14 +426,6 @@ type SessionNotebookDialogProps = {
   onClose: () => void
 }
 
-const filterNotebookRunsForSessionBranch = (
-  runs: NotebookRunRecord[],
-  session: ChatSession
-): NotebookRunRecord[] => {
-  const activeMessageIds = new Set(session.messages.map((message) => message.id))
-  return runs.filter((run) => !run.promptMessageId || activeMessageIds.has(run.promptMessageId))
-}
-
 // Modal container: owns the read-only load lifecycle and wraps the pure content in a Radix dialog.
 const SessionNotebookDialog = ({
   session,
@@ -446,22 +502,25 @@ const SessionNotebookDialog = ({
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
               runs={filterNotebookRunsForSessionBranch(runs, dialogSession)}
+              frameLabels={notebookFrameLabels(dialogSession)}
               status={status}
               error={error}
               onClose={onClose}
-              onExport={async (kernel) => {
+              onExport={async (kernel, agentFrameFilter) => {
                 await window.api.notebook.exportIpynb({
                   sessionId: dialogSession.id,
                   projectName: dialogSession.projectId,
                   workspaceCwd: dialogSession.cwd ?? '',
-                  kernel
+                  kernel,
+                  ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
                 })
               }}
-              onExportAll={async () => {
+              onExportAll={async (agentFrameFilter) => {
                 const result = await window.api.notebook.exportIpynbAll({
                   sessionId: dialogSession.id,
                   projectName: dialogSession.projectId,
-                  workspaceCwd: dialogSession.cwd ?? ''
+                  workspaceCwd: dialogSession.cwd ?? '',
+                  ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
                 })
                 if (result.saved) {
                   return `Saved ${result.files.length} notebooks to ${result.directory}`

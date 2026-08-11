@@ -7,6 +7,7 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
+import { SubagentModelSelect } from './SubagentModelSelect'
 import { SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 
@@ -314,6 +315,17 @@ const ProvidersPanel = ({
       >
         <div className="max-w-md">
           <ReasoningEffortSelect />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Subagent model"
+        aria-label="Subagent model"
+        description="Model used by subagents when Delegation is on."
+        separated
+      >
+        <div className="max-w-2xl">
+          <SubagentModelSelect />
         </div>
       </SettingsSection>
 

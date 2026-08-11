@@ -5,7 +5,8 @@ import {
   reasoningEffortProfile,
   resolveReasoningEffortValue,
   resolveReasoningEffortProfile,
-  resolveReasoningEffortControl
+  resolveReasoningEffortControl,
+  projectReasoningEffortIntent
 } from './reasoning-effort'
 
 describe('isReasoningEffortPresetSetting', () => {
@@ -108,5 +109,27 @@ describe('resolveReasoningEffortValue', () => {
       'default'
     )
     expect(resolveReasoningEffortValue('max', { supported: false })).toBe('default')
+  })
+})
+
+describe('projectReasoningEffortIntent', () => {
+  it('preserves the nearest concrete strength across model profiles', () => {
+    expect(
+      projectReasoningEffortIntent(
+        'max',
+        reasoningEffortProfile('low-medium-high'),
+        reasoningEffortProfile('standard-5')
+      )
+    ).toBe('high')
+  })
+
+  it('uses the selectable intent that owns a repeated target slot', () => {
+    expect(
+      projectReasoningEffortIntent(
+        'high',
+        reasoningEffortProfile('standard-5'),
+        reasoningEffortProfile('none-high')
+      )
+    ).toBe('max')
   })
 })

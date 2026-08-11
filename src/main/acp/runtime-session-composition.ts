@@ -180,6 +180,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     },
     conversationGrants: options.permissionGrantStore,
     permissionGrantRegistry: options.permissionGrantRegistry,
+    permissionGrantContext: options.permissionGrantContext,
     permissionWaitHooks: {
       persist: (candidate) => permissionWaitOwner.persist(candidate),
       settleLive: (candidate) => permissionWaitOwner.clearLive(candidate)

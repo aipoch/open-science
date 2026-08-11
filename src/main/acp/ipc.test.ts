@@ -209,6 +209,39 @@ afterEach(() => {
   AcpRuntimeMock.mockClear()
 })
 
+it('routes delegated question responses to their owner without touching Main elicitation', async () => {
+  const respondToElicitation = vi.fn()
+  const respondDelegatedQuestion = vi.fn().mockResolvedValue(undefined)
+  const snapshot = { status: 'idle' }
+  installAcpIpcHandlers(
+    { respondToElicitation, getSnapshot: () => snapshot } as never,
+    {} as never,
+    respondDelegatedQuestion
+  )
+
+  await expect(
+    handlers.get('acp:respond-elicitation')?.(undefined, {
+      requestId: 'question-1',
+      sessionId: 'session-1',
+      answers: {},
+      delegatedQuestion: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        action: 'confirm',
+        answers: [{ questionIndex: 0, value: 'Strict' }]
+      }
+    })
+  ).resolves.toBe(snapshot)
+  expect(respondDelegatedQuestion).toHaveBeenCalledWith({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    requestId: 'question-1',
+    action: 'confirm',
+    answers: [{ questionIndex: 0, value: 'Strict' }]
+  })
+  expect(respondToElicitation).not.toHaveBeenCalled()
+})
+
 describe('ACP module transport seam', () => {
   it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
     registerWithFakes()
@@ -242,7 +275,12 @@ describe('ACP module transport seam', () => {
       'acp:set-permission-profile'
     ])
     expect(invokeChannels).toEqual([...handlers.keys()].sort())
-    expect(eventChannels).toEqual(['acp:event', 'acp:permission-request', 'acp:state'])
+    expect(eventChannels).toEqual([
+      'acp:agent-runtime-update',
+      'acp:event',
+      'acp:permission-request',
+      'acp:state'
+    ])
   })
 
   it('constructs the coordinator before installing Electron handlers', () => {

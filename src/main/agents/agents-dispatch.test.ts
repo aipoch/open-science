@@ -156,9 +156,9 @@ describe('AgentsService.dispatch — extensible operation dispatcher', () => {
       profileService: noopProfileService(),
       catalog: noopCatalog()
     })
-    await expect(service.dispatch({ op: 'switch', params: {} })).rejects.toThrow(
-      /host\.agents\.switch:.*not configured/
-    )
+    await expect(
+      service.dispatch({ op: 'switch', params: {} }, { callerRole: 'main' })
+    ).rejects.toThrow(/host\.agents\.switch:.*not configured/)
   })
 
   it('reads unchanged: existing list/get/list_skills behavior preserved', async () => {
@@ -242,7 +242,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     const { service, persist, notify, sessionBinding } = buildService({})
     const result = (await service.dispatch(
       { op: 'switch', params: { name: 'BIO_EXPERT' } },
-      { sessionId: 'session-trusted' }
+      { sessionId: 'session-trusted', callerRole: 'main' }
     )) as {
       status: string
       binding: { specialistId: string }
@@ -256,13 +256,34 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     expect(sessionBinding.setBinding).toHaveBeenCalledWith('session-trusted', 'sp-1')
   })
 
+  it('rejects a switch with a missing or unknown trusted caller role before approval or mutation', async () => {
+    for (const callerRole of [undefined, 'unknown'] as const) {
+      const { service, persist, notify, sessionBinding, gateway } = buildService({})
+
+      await expect(
+        service.dispatch(
+          { op: 'switch', params: { name: 'BIO_EXPERT', caller_role: 'main' } },
+          {
+            sessionId: 'session-trusted',
+            ...(callerRole ? { callerRole: callerRole as never } : {})
+          }
+        )
+      ).rejects.toThrow('host.agents.switch: Only Main Agent may switch Specialist profile.')
+
+      expect(gateway.decide).not.toHaveBeenCalled()
+      expect(sessionBinding.setBinding).not.toHaveBeenCalled()
+      expect(persist).not.toHaveBeenCalled()
+      expect(notify).not.toHaveBeenCalled()
+    }
+  })
+
   it('a declined switch returns the structured declined shape and changes nothing', async () => {
     const { service, persist, notify, sessionBinding } = buildService({
       decision: { status: 'declined', operation: 'switch' }
     })
     const result = await service.dispatch(
       { op: 'switch', params: { name: 'BIO_EXPERT' } },
-      { sessionId: 'session-trusted' }
+      { sessionId: 'session-trusted', callerRole: 'main' }
     )
     expect(result).toEqual({ status: 'declined', operation: 'switch' })
     expect(persist).not.toHaveBeenCalled()
@@ -274,7 +295,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     const { service, persist, notify } = buildService({})
     const result = (await service.dispatch(
       { op: 'switch', params: { name: null } },
-      { sessionId: 'session-trusted' }
+      { sessionId: 'session-trusted', callerRole: 'main' }
     )) as { binding: { specialistId: string | undefined } }
     expect(result.binding.specialistId).toBeUndefined()
     expect(persist).toHaveBeenCalledWith('session-trusted', undefined)
@@ -286,7 +307,7 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     // A sandbox forges a session id in params; the dispatcher honors only the server context.
     await service.dispatch(
       { op: 'switch', params: { name: 'BIO_EXPERT', session_id: 'forged', sessionId: 'forged' } },
-      { sessionId: 'session-trusted' }
+      { sessionId: 'session-trusted', callerRole: 'main' }
     )
     expect(persist).toHaveBeenCalledWith('session-trusted', 'sp-1')
   })

@@ -115,6 +115,9 @@ export type SessionCapabilityArtifactOptions = {
   mcpEntryPath: string
   mcpCommand?: string
   getRpcConnection?: () => Promise<NotebookRpcConnection>
+  // A delegated Attempt owns this handoff path. Its runtime may use Artifact tools, but must not
+  // create or replace the turn owned by DurableDelegatedWork.
+  currentRunFile?: string
 }
 
 export type SessionCapabilityNotebookOptions = {
@@ -783,11 +786,9 @@ export class AcpSessionCapabilityOwner {
       storageRoot: this.options.artifacts.dataRoot,
       projectName,
       sessionId: routingId,
-      currentRunFile: getArtifactCurrentRunFilePath(
-        this.options.artifacts.dataRoot,
-        projectName,
-        routingId
-      ),
+      currentRunFile:
+        this.options.artifacts.currentRunFile ??
+        getArtifactCurrentRunFilePath(this.options.artifacts.dataRoot, projectName, routingId),
       allowedImportRoots: [sessionCwd],
       rpcEndpoint: connection?.endpoint,
       rpcSocketPath: connection?.socketPath

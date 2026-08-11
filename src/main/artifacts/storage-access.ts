@@ -6,6 +6,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   stat,
   writeFile
 } from 'node:fs/promises'
@@ -31,6 +32,9 @@ import {
 type ArtifactStorageAccessDurability = ArtifactDurability & {
   readMarkerFile?: (path: string) => Promise<string>
 }
+
+const LEGACY_EXECUTION_HANDOFF_DIR = 'executions'
+const LEGACY_EXECUTION_HANDOFF_FILE_PATTERN = /^artifact-run-\d+-\d+\.json$/
 
 const assertSafePathSegment = (segment: string): string => {
   if (typeof segment !== 'string') throw new Error('Invalid artifact path segment')
@@ -230,6 +234,44 @@ class ArtifactStorageAccess {
     }
   }
 
+  isPendingArtifactRunDirectory(name: string): boolean {
+    return name !== LEGACY_EXECUTION_HANDOFF_DIR && SAFE_SEGMENT_PATTERN.test(name)
+  }
+
+  async cleanupLegacyExecutionHandoffs(directory: string): Promise<void> {
+    for (const entry of await this.readFileEntries(directory)) {
+      if (!LEGACY_EXECUTION_HANDOFF_FILE_PATTERN.test(entry.name)) continue
+      const path = join(directory, entry.name)
+      let value: unknown
+      try {
+        value = JSON.parse(await readFile(path, 'utf8'))
+      } catch {
+        continue
+      }
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        Array.isArray(value) ||
+        Object.keys(value).length !== 0
+      ) {
+        continue
+      }
+      await rm(path, { force: true })
+    }
+    await rmdir(directory).catch((error: unknown) => {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        ((error as { code?: unknown }).code === 'ENOENT' ||
+          (error as { code?: unknown }).code === 'ENOTEMPTY')
+      ) {
+        return
+      }
+      throw error
+    })
+  }
+
   async writeArtifactMetadata(
     directory: string,
     filename: string,
@@ -379,6 +421,8 @@ const createArtifactPublicationStorage = (
   renameIfPresent: (sourcePath, targetPath) => access.renameIfPresent(sourcePath, targetPath),
   readSubdirectoryNames: (directory) => access.readSubdirectoryNames(directory),
   readFileEntries: (directory) => access.readFileEntries(directory),
+  isPendingArtifactRunDirectory: (name) => access.isPendingArtifactRunDirectory(name),
+  cleanupLegacyExecutionHandoffs: (directory) => access.cleanupLegacyExecutionHandoffs(directory),
   readArtifactMetadata: (directory, filename) => access.readArtifactMetadata(directory, filename),
   writeArtifactMetadata: (directory, filename, metadata) =>
     access.writeArtifactMetadata(directory, filename, metadata),

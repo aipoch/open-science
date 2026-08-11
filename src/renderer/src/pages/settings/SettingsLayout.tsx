@@ -70,9 +70,10 @@ const SettingsSection = ({
 )
 
 type SettingsRowProps = ComponentProps<'div'> & {
-  label: ReactNode
+  label?: ReactNode
   description?: ReactNode
   controlClassName?: string
+  layout?: 'standard' | 'model-effort'
 }
 
 // Aligns descriptive copy and controls to a stable two-column settings grid.
@@ -80,6 +81,7 @@ const SettingsRow = ({
   label,
   description,
   controlClassName,
+  layout = 'standard',
   className,
   children,
   ...props
@@ -87,19 +89,45 @@ const SettingsRow = ({
   <div
     data-slot="settings-row"
     className={cn(
-      'grid min-h-14 grid-cols-1 items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,20rem)] sm:gap-6',
+      layout === 'standard'
+        ? 'grid min-h-14 grid-cols-1 items-center gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,20rem)] sm:gap-6'
+        : 'grid grid-cols-1 gap-3 py-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]',
       className
     )}
     {...props}
   >
-    <div className="min-w-0">
-      <div className="text-sm font-medium text-foreground">{label}</div>
-      {description ? (
-        <div className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{description}</div>
-      ) : null}
-    </div>
-    <div className={cn('min-w-0 justify-self-stretch', controlClassName)}>{children}</div>
+    {layout === 'standard' ? (
+      <>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">{label}</div>
+          {description ? (
+            <div className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{description}</div>
+          ) : null}
+        </div>
+        <div className={cn('min-w-0 justify-self-stretch', controlClassName)}>{children}</div>
+      </>
+    ) : (
+      children
+    )}
   </div>
+)
+
+type SettingsFieldProps = ComponentProps<'label'> & { label: ReactNode }
+
+const SettingsField = ({
+  label,
+  className,
+  children,
+  ...props
+}: SettingsFieldProps): React.JSX.Element => (
+  <label
+    data-slot="settings-field"
+    className={cn('grid min-w-0 gap-1.5 text-sm font-medium', className)}
+    {...props}
+  >
+    {label}
+    {children}
+  </label>
 )
 
 type SettingsToggleProps = Omit<ComponentProps<typeof Switch>, 'checked' | 'onCheckedChange'> & {
@@ -162,4 +190,4 @@ const SettingsIconAction = ({
   </TooltipProvider>
 )
 
-export { SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle }
+export { SettingsField, SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle }

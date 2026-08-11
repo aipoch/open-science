@@ -141,6 +141,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.deleteSession': 'sessions:delete-session',
   'sessions.exportConversation': 'sessions:export-conversation',
   'sessions.loadAll': 'sessions:load-all',
+  'sessions.loadOne': 'sessions:load-one',
   'sessions.saveManifest': 'sessions:save-manifest',
   'sessions.saveSession': 'sessions:save-session',
   'sessions.updateArchive': 'sessions:update-archive',
@@ -212,6 +213,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setProjectFilesFilter': 'settings:set-project-files-filter',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
+  'settings.setSubagentModel': 'settings:set-subagent-model',
   'settings.setToolPermission': 'settings:set-tool-permission',
   'settings.uninstallClaude': 'settings:uninstall-claude',
   'settings.uninstallCodex': 'settings:uninstall-codex',
@@ -253,6 +255,7 @@ export const WEB_INVOKE_CHANNELS = {
 } as const
 
 export const WEB_EVENT_CHANNELS = {
+  'acp.onAgentRuntimeUpdate': 'acp:agent-runtime-update',
   'acp.onEvent': 'acp:event',
   'acp.onPermissionRequest': 'acp:permission-request',
   'acp.onState': 'acp:state',
@@ -277,6 +280,7 @@ export const WEB_EVENT_CHANNELS = {
   'sessions.onCreated': 'session:created',
   'sessions.onDeleted': 'session:deleted',
   'sessions.onUpdated': 'session:updated',
+  'settings.onChanged': 'settings:changed',
   'settings.onConnectorApprovalRequest': 'connectors:approval-request',
   'settings.onConnectorRuntimeChanged': 'settings:connector-runtime-changed',
   'settings.onInstallLog': 'settings:install-log',

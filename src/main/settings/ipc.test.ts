@@ -42,6 +42,7 @@ type FakeSettingsService = Record<
   | 'uninstallCodex'
   | 'setAgentFramework'
   | 'setReasoningEffort'
+  | 'setSubagentModel'
   | 'resolveActiveReasoningEffort'
   | 'resolveActiveModelChangeTarget'
   | 'setNotificationsEnabled'
@@ -118,6 +119,9 @@ const createFakeService = (): FakeSettingsService => ({
   setReasoningEffort: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
+  setSubagentModel: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], subagentModel: { mode: 'inherit' } }),
   resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
   resolveActiveModelChangeTarget: vi.fn().mockResolvedValue(undefined),
   setNotificationsEnabled: vi
@@ -303,6 +307,7 @@ describe('settings IPC handlers', () => {
       'settings:upsert-provider',
       'settings:delete-provider',
       'settings:set-active-provider',
+      'settings:set-subagent-model',
       'settings:set-conversation-skill-import-enabled',
       'settings:validate-provider',
       'settings:cancel-codex-login',
@@ -1077,6 +1082,30 @@ describe('settings IPC handlers', () => {
     )
     expect(service.setReasoningEffort).not.toHaveBeenCalled()
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
+  })
+
+  it('validates and forwards one complete Subagent model mutation', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const configuration = {
+      mode: 'fixed' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high' as const
+    }
+    const snapshot = { claude: {}, providers: [], subagentModel: configuration }
+    service.setSubagentModel.mockResolvedValue(snapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await expect(invoke('settings:set-subagent-model', { configuration })).resolves.toBe(snapshot)
+    expect(service.setSubagentModel).toHaveBeenCalledWith(configuration)
+
+    await expect(
+      invoke('settings:set-subagent-model', {
+        configuration: { ...configuration, providerId: '' }
+      })
+    ).rejects.toThrow('Invalid Subagent model configuration.')
+    expect(service.setSubagentModel).toHaveBeenCalledOnce()
   })
 
   it('persists the notifications preference on set-notifications-enabled', async () => {

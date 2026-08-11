@@ -54,6 +54,8 @@ const settingsPaths = {
   responsesProtocolTypes: resolve(settingsRoot, 'responses-protocol-types.ts'),
   responsesRequestAdapter: resolve(settingsRoot, 'responses-request-adapter.ts'),
   responsesResponseAdapter: resolve(settingsRoot, 'responses-response-adapter.ts'),
+  subagentModelOwner: resolve(settingsRoot, 'subagent-model-owner.ts'),
+  subagentModelSettings: resolve(settingsRoot, 'subagent-model-settings.ts'),
   service: resolve(settingsRoot, 'service.ts'),
   types: resolve(settingsRoot, 'types.ts'),
   notebookLocalRpcServer: resolve(projectRoot, 'src/main/notebook/local-rpc-server.ts')
@@ -278,9 +280,9 @@ const productionSourcePaths = productionSources()
 
 describe('Settings backend ownership architecture', () => {
   it('locks the final facade ceilings and every internal owner below the hard limit', () => {
-    // D3 explicitly accepted 664 as the non-growing Repository facade baseline under the 660+ gate;
-    // the granted-roots legacy import added setProjectFilesFilter and clearGrantedLocalRoots.
+    // Repository remains one atomic mutation facade; Subagent validation runs inside its CAS write.
     expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(664)
+    expect(rawLineCount(readSource(settingsPaths.subagentModelSettings))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentStore))).toBeLessThanOrEqual(660)
@@ -300,7 +302,8 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.responsesResponseAdapter))).toBeLessThanOrEqual(
       660
     )
-    // The granted-roots legacy store and Files-filter preference added 33 facade lines.
+    expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
+    // Main's 1023-line facade plus four typed Subagent forwarding operations and owner composition.
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1036)
   })
 
@@ -324,6 +327,7 @@ describe('Settings backend ownership architecture', () => {
       'value:requiresNativeResponsesCompatibility'
     ])
     expect(exportInventoryFrom(settingsPaths.backendResolver)).toEqual([
+      'type:AdmittedAgentBackendTarget',
       'type:AgentBackendConnectorPort',
       'type:AgentBackendProviderPort',
       'type:AgentBackendResolutionContext',
@@ -361,6 +365,16 @@ describe('Settings backend ownership architecture', () => {
       'type:UninstallResult',
       'value:SettingsService',
       'value:createDefaultSettingsService'
+    ])
+    expect(exportInventoryFrom(settingsPaths.subagentModelOwner)).toEqual([
+      'type:InheritedSubagentModel',
+      'type:SubagentModelOwnerOptions',
+      'value:SubagentModelOwner',
+      'value:createSubagentModels'
+    ])
+    expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
+      'type:SubagentModelValidator',
+      'value:buildSubagentModelMutation'
     ])
   })
 
@@ -404,6 +418,7 @@ describe('Settings backend ownership architecture', () => {
       'setRuntimeEnablement',
       'setRuntimeSelection',
       'setSkillEnabled',
+      'setSubagentModel',
       'setToolBlocked',
       'setToolPolicy',
       'updateClaudeIsolatedCredentialsIfExists',
@@ -451,6 +466,7 @@ describe('Settings backend ownership architecture', () => {
       'resolveActiveModelChangeTarget',
       'resolveActiveReasoningEffort',
       'resolveActiveSpawnConfig',
+      'resolveAdmittedTarget',
       'resolveExplicitTarget',
       'resolveSelection'
     ])
@@ -476,7 +492,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter authenticateCustomServer buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitSubagentExecutionModel authenticateCustomServer buildCustomServerTemplateExport
         buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
@@ -491,13 +507,13 @@ describe('Settings backend ownership architecture', () => {
         previewCustomServerTemplateImport previewGitHubSkill previewSkillArchive previewSkillZip
         provisionedConnectorSkillNames publishHostSkill refreshProviderModels removeCustomServer removeGitHubToken
         removeManualInterpreter resolveActiveModelChangeTarget resolveActiveReasoningEffort
-        resolveAgentBackend resolveExplicitAgentBackend saveCustomServerOAuthState saveGitHubToken
+        resolveAdmittedSubagentBackend resolveAgentBackend resolveExplicitAgentBackend resolveSubagentExecutionModel saveCustomServerOAuthState saveGitHubToken
         scanRepoSkills setActiveProvider setAgentFramework setAppIconVariant setClosePreference
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled
+        setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSubagentModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
       `
@@ -518,7 +534,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
       'src/main/settings/service.ts',
-      'src/main/settings/skill-catalog.ts'
+      'src/main/settings/skill-catalog.ts',
+      'src/main/settings/subagent-model-owner.ts'
     ])
     expect(importersOf(settingsPaths.recordCodec)).toEqual([
       'src/main/settings/document-codec.ts',
@@ -536,7 +553,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-route-planner.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/provider-transport-owner.ts',
-      'src/main/settings/service.ts'
+      'src/main/settings/service.ts',
+      'src/main/settings/subagent-model-owner.ts'
     ])
     expect(importersOf(settingsPaths.backendResolver)).toEqual([
       'src/main/acp/artifact-code-reconstruction-runner.ts',
@@ -544,6 +562,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/notebook/host-llm-service.ts',
       'src/main/settings/service.ts',
+      'src/main/settings/subagent-model-owner.ts',
       'src/main/side-chat/runtime-owner.ts'
     ])
     expect(importersOf(settingsPaths.backendRoutePlanner)).toEqual([
@@ -612,6 +631,8 @@ describe('Settings backend ownership architecture', () => {
       'mcpCall',
       'computeCall',
       'agentsCall',
+      'hostSdkHelp',
+      'delegatedWorkCall',
       'skillsCall',
       'llmCall',
       'requestUserInput'
@@ -657,6 +678,7 @@ describe('Settings backend ownership architecture', () => {
       'projectFilesFilter',
       'providers',
       'reasoningEffort',
+      'subagentModel',
       'version'
     ])
     expect(typePropertyNames(settingsPaths.types, 'StoredProvider')).toEqual([
@@ -682,7 +704,7 @@ describe('Settings backend ownership architecture', () => {
       'vendorId'
     ])
     expect(typePropertyNames(settingsPaths.backendSelection, 'ExplicitAgentBackendTarget')).toEqual(
-      ['frameworkId', 'model', 'providerId', 'reasoningEffort']
+      ['frameworkId', 'model', 'providerId', 'reasoningEffort', 'resolvedReasoningEffort']
     )
   })
 
@@ -710,7 +732,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/record-codec.ts',
       'src/main/settings/document-codec.ts',
       'src/main/settings/document-store.ts',
-      'src/main/settings/compute-grant-port.ts'
+      'src/main/settings/compute-grant-port.ts',
+      'src/main/settings/subagent-model-settings.ts'
     ])
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
@@ -740,7 +763,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/responses-bridge.ts'
     ])
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
-      'src/main/settings/service.ts'
+      'src/main/settings/service.ts',
+      'src/main/settings/subagent-model-owner.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([
       'src/main/settings/service.ts',

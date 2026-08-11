@@ -197,7 +197,10 @@ const createHarness = (): {
       planService: service,
       planInteractions: interactions,
       sessionInteractions,
-      artifactTurns: { promptMessageIdFor: vi.fn(() => 'prompt-1') }
+      artifactTurns: {
+        handleForExecution: vi.fn(() => 'artifact-turn'),
+        snapshot: vi.fn(() => ({ promptMessageId: 'prompt-1' }))
+      }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
     {
       publication,
@@ -630,7 +633,7 @@ describe('ACP Runtime Session Plan composition', () => {
     )
     const service = new PlanService({
       interactions,
-      writeArtifactForActiveTurn: vi.fn(async (_sessionId, input) => {
+      writeArtifactForExecution: vi.fn(async (_executionId, input) => {
         version += 1
         const versionId = `version-${version}`
         const checksum = createHash('sha256').update(input.content).digest('hex')
@@ -672,6 +675,7 @@ describe('ACP Runtime Session Plan composition', () => {
     const original = await service.generate({
       projectId: 'project-1',
       sessionId: 'session-1',
+      executionId: 'original-turn',
       interactionId: 'plan-origin',
       content: originalContent
     })
@@ -684,7 +688,10 @@ describe('ACP Runtime Session Plan composition', () => {
         planService: service,
         planInteractions: interactions,
         sessionInteractions,
-        artifactTurns: { promptMessageIdFor: vi.fn(() => 'revision-prompt') }
+        artifactTurns: {
+          handleForExecution: vi.fn(() => 'revision-turn'),
+          snapshot: vi.fn(() => ({ promptMessageId: 'revision-prompt' }))
+        }
       } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
       {
         publication: { pushEvent: vi.fn() },

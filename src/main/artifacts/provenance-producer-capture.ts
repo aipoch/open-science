@@ -59,7 +59,7 @@ type PreparedArtifactVersionPersistence = {
 
 type ArtifactProvenanceProducerCaptureOptions = {
   inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
-  notebookRepository: Pick<NotebookRunRepository, 'findExisting'>
+  notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
   createId: () => string
 }
 
@@ -110,10 +110,20 @@ class ArtifactProvenanceProducerCapture {
       return { state: 'unavailable', reason: 'producer-not-supplied' }
     }
 
-    const document = await this.options.notebookRepository.findExisting(
+    const documents = await this.options.notebookRepository.readSessionDocuments(
       request.projectId,
       request.notebookSessionId
     )
+    const document =
+      (request.producerRunId
+        ? documents.find((candidate) =>
+            candidate.runs.some((run) => run.runId === request.producerRunId)
+          )
+        : documents.find((candidate) =>
+            candidate.runs.some((run) => run.agentFrameId === request.agentFrameId)
+          )) ??
+      documents[0] ??
+      null
     const sourceFileObservation = request.sourceFileObservation
       ? await this.verifySourceFileObservation(
           document,
@@ -151,6 +161,11 @@ class ArtifactProvenanceProducerCapture {
     }
     for (const [field, value] of Object.entries(expected)) {
       if (producerRun[field as keyof typeof expected] !== value) {
+        if (field === 'agentFrameId') {
+          throw new Error(
+            'Notebook producer run belongs to a different agent frame. Have the producing agent publish it directly, or reference an already completed Artifact Version.'
+          )
+        }
         throw new Error(
           `Notebook producer run does not belong to the active Artifact ${field}: ${producerRunId}`
         )

@@ -8,7 +8,8 @@ import {
   readIsolatedClaudeToken,
   readNotificationsEnabled,
   readProjectFilesFilter,
-  readReasoningEffort
+  readReasoningEffort,
+  readSubagentModel
 } from './transport-validation'
 
 describe('Settings transport validation', () => {
@@ -29,6 +30,43 @@ describe('Settings transport validation', () => {
     )
     expect(() => readReasoningEffort({ effort: 3 })).toThrow('Unknown reasoning effort: 3')
     expect(() => readReasoningEffort({})).toThrow('Unknown reasoning effort: undefined')
+  })
+
+  it('accepts only complete atomic Subagent model configurations', () => {
+    expect(readSubagentModel({ configuration: { mode: 'inherit' } })).toEqual({ mode: 'inherit' })
+    expect(
+      readSubagentModel({
+        configuration: {
+          mode: 'fixed',
+          providerId: 'provider-a',
+          model: 'model-a',
+          reasoningEffort: 'high'
+        }
+      })
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    })
+    expect(() =>
+      readSubagentModel({
+        configuration: { mode: 'fixed', providerId: '', model: 'model-a', reasoningEffort: 'high' }
+      })
+    ).toThrow('Invalid Subagent model configuration.')
+    expect(() =>
+      readSubagentModel({
+        configuration: {
+          mode: 'fixed',
+          providerId: 'provider-a',
+          model: 'model-a',
+          reasoningEffort: 'ultra'
+        }
+      })
+    ).toThrow('Invalid Subagent model configuration.')
+    expect(() =>
+      readSubagentModel({ configuration: { mode: 'inherit', providerId: 'stale' } })
+    ).toThrow('Invalid Subagent model configuration.')
   })
 
   it('accepts only boolean conversation Skill import preferences', () => {

@@ -573,7 +573,7 @@ describe('AcpPromptTurnWorkflow', () => {
       stopReason: 'cancelled'
     })
 
-    expect(harness.artifacts.open).toHaveBeenCalledWith('s1', {
+    expect(harness.artifacts.open).toHaveBeenCalledWith('s1', expect.any(String), {
       promptMessageId: 'message-1'
     })
     expect(harness.preparation).not.toHaveBeenCalled()

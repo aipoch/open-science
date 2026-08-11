@@ -86,6 +86,29 @@ const assertCapabilityConfigShape = (
 }
 
 const log = createLogger('specialist.service')
+const MAX_AVAILABLE_SPECIALIST_NAMES = 8
+
+const specialistReferenceError = (
+  reason: 'unknown' | 'ambiguous' | 'unavailable',
+  profiles: readonly SpecialistProfileView[]
+): Error => {
+  const names = [
+    ...new Set(
+      profiles
+        .filter((profile) => profile.enabled && profile.setupPending !== true)
+        .map((profile) => profile.name.trim())
+        .filter(Boolean)
+    )
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+  const listed = names.slice(0, MAX_AVAILABLE_SPECIALIST_NAMES)
+  const availability =
+    listed.length === 0
+      ? 'No enabled Specialists are available.'
+      : `Available Specialists: ${listed.join(', ')}${
+          names.length > listed.length ? ' (list truncated).' : '.'
+        }`
+  return new Error(`Requested Specialist is ${reason}. ${availability}`)
+}
 
 export class SpecialistReadonlyError extends Error {
   readonly code = 'SPECIALIST_READ_ONLY' as const
@@ -259,6 +282,28 @@ export class ProfileService {
     const builtin = (await this.builtinEntries()).find((entry) => entry.name === name)
     if (builtin) return this.toBuiltinView(builtin)
     throw new Error(`Runnable Specialist "${name}" not found.`)
+  }
+
+  async resolveRunnableByReference(reference: string): Promise<SpecialistProfileView> {
+    const profiles = [
+      ...(await this.list()),
+      ...(await this.builtinEntries()).map((entry) => this.toBuiltinView(entry))
+    ]
+    const byId = profiles.find((profile) => profile.id === reference)
+    if (byId) {
+      if (!byId.enabled || byId.setupPending === true) {
+        throw specialistReferenceError('unavailable', profiles)
+      }
+      return byId
+    }
+    const byName = profiles.filter((profile) => profile.name === reference)
+    if (byName.length === 0) throw specialistReferenceError('unknown', profiles)
+    if (byName.length > 1) throw specialistReferenceError('ambiguous', profiles)
+    const selected = byName[0]
+    if (!selected.enabled || selected.setupPending === true) {
+      throw specialistReferenceError('unavailable', profiles)
+    }
+    return selected
   }
 
   async getById(id: string): Promise<SpecialistProfileView> {

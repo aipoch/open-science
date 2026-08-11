@@ -33,6 +33,19 @@ export type ElicitationAnswer = {
   value: ElicitationValue
 }
 
+export type AgentTurnProvenanceContext = {
+  promptMessageId: string
+  // A suppressed application continuation may use a synthetic prompt identity while retaining a
+  // durable conversation message as the authorization origin for control-plane calls.
+  originMessageId?: string
+  rootFrameId?: string
+  agentFrameId?: string
+  messageBranchId?: string
+  messageBranchAncestry?: string[]
+  messageAncestry?: string[]
+  runtimeSegmentId?: string
+}
+
 export type ElicitationProjection = {
   message: string
   fields: ElicitationField[]
@@ -41,6 +54,7 @@ export type ElicitationProjection = {
     kind: 'agent-user-choice'
     requestId: string
     promptMessageId?: string
+    provenanceContext?: AgentTurnProvenanceContext
   }
   // Pending multi-question choices keep completed steps here so a restored Session resumes at the
   // first unanswered question. The Agent receives only `answers` after the user finishes the form.
@@ -121,6 +135,7 @@ export const MAX_ELICITATION_MULTI_SELECT_VALUES = 64
 export const MIN_AGENT_USER_CHOICE_OPTIONS = 2
 export const MAX_AGENT_USER_CHOICE_OPTIONS = 4
 export const MAX_AGENT_USER_CHOICE_QUESTIONS = 3
+export const MAX_AGENT_TURN_PROVENANCE_ANCESTRY = 256
 
 const resolveAgentUserChoiceQuestion = (
   choiceField: ElicitationField,
@@ -326,6 +341,61 @@ const sanitizeAnswer = (value: unknown): ElicitationAnswer | undefined => {
   return fieldId && answerValue !== undefined ? { fieldId, value: answerValue } : undefined
 }
 
+const sanitizeProvenanceAncestry = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value) || value.length > MAX_AGENT_TURN_PROVENANCE_ANCESTRY) return undefined
+  const ancestry = value.map((candidate) => boundedString(candidate, MAX_ELICITATION_LABEL_CHARS))
+  return ancestry.every((candidate): candidate is string => candidate !== undefined)
+    ? ancestry
+    : undefined
+}
+
+const sanitizeAgentTurnProvenanceContext = (
+  value: unknown
+): AgentTurnProvenanceContext | undefined => {
+  if (!isRecord(value)) return undefined
+  const promptMessageId = boundedString(value.promptMessageId, MAX_ELICITATION_LABEL_CHARS)
+  if (!promptMessageId) return undefined
+
+  const optionalIds = [
+    'rootFrameId',
+    'agentFrameId',
+    'messageBranchId',
+    'runtimeSegmentId'
+  ] as const
+  const ids = Object.fromEntries(
+    optionalIds.map((key) => [
+      key,
+      value[key] === undefined ? undefined : boundedString(value[key], MAX_ELICITATION_LABEL_CHARS)
+    ])
+  ) as Record<(typeof optionalIds)[number], string | undefined>
+  if (optionalIds.some((key) => value[key] !== undefined && !ids[key])) return undefined
+
+  const messageBranchAncestry =
+    value.messageBranchAncestry === undefined
+      ? undefined
+      : sanitizeProvenanceAncestry(value.messageBranchAncestry)
+  const messageAncestry =
+    value.messageAncestry === undefined
+      ? undefined
+      : sanitizeProvenanceAncestry(value.messageAncestry)
+  if (
+    (value.messageBranchAncestry !== undefined && !messageBranchAncestry) ||
+    (value.messageAncestry !== undefined && !messageAncestry)
+  ) {
+    return undefined
+  }
+
+  return {
+    promptMessageId,
+    ...(ids.rootFrameId ? { rootFrameId: ids.rootFrameId } : {}),
+    ...(ids.agentFrameId ? { agentFrameId: ids.agentFrameId } : {}),
+    ...(ids.messageBranchId ? { messageBranchId: ids.messageBranchId } : {}),
+    ...(messageBranchAncestry ? { messageBranchAncestry } : {}),
+    ...(messageAncestry ? { messageAncestry } : {}),
+    ...(ids.runtimeSegmentId ? { runtimeSegmentId: ids.runtimeSegmentId } : {})
+  }
+}
+
 const sanitizeDurableElicitation = (
   value: unknown
 ): ElicitationProjection['durable'] | undefined => {
@@ -335,11 +405,19 @@ const sanitizeDurableElicitation = (
     value.promptMessageId === undefined
       ? undefined
       : boundedString(value.promptMessageId, MAX_ELICITATION_LABEL_CHARS)
-  if (!requestId || (value.promptMessageId !== undefined && !promptMessageId)) return undefined
+  const provenanceContext = sanitizeAgentTurnProvenanceContext(value.provenanceContext)
+  if (
+    !requestId ||
+    (value.promptMessageId !== undefined && !promptMessageId) ||
+    (value.provenanceContext !== undefined && !provenanceContext)
+  ) {
+    return undefined
+  }
   return {
     kind: 'agent-user-choice',
     requestId,
-    ...(promptMessageId ? { promptMessageId } : {})
+    ...(promptMessageId ? { promptMessageId } : {}),
+    ...(provenanceContext ? { provenanceContext } : {})
   }
 }
 

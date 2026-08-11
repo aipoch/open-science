@@ -109,6 +109,7 @@ const createRuntimeHarness = (options: {
     kind: 'prompt' as const,
     sessionId: 'session-1',
     sequence: 7,
+    turnToken: 'turn-token-7',
     promptMessageId: 'interaction-1'
   }
   const sessionInteractions = {
@@ -135,7 +136,10 @@ const createRuntimeHarness = (options: {
       planService: service,
       planInteractions: interactions,
       sessionInteractions,
-      artifactTurns: { promptMessageIdFor: () => 'interaction-1' }
+      artifactTurns: {
+        handleForExecution: () => 'artifact-handle',
+        snapshot: () => ({ promptMessageId: 'interaction-1' })
+      }
     } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
     {
       publication: { pushEvent: (event: unknown) => options.onEvent?.(event) }
@@ -166,7 +170,8 @@ const createRuntimeHarness = (options: {
     },
     planContinuationClaimRetries: new Map(),
     artifactTurns: {
-      promptMessageIdFor: () => 'interaction-1'
+      handleForExecution: () => 'artifact-handle',
+      snapshot: () => ({ promptMessageId: 'interaction-1' })
     },
     sessionDeletion: {
       delete: vi.fn(async () => ({ status: 'closed' }))

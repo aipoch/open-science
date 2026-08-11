@@ -32,7 +32,11 @@ describe('lineageCall RPC', () => {
       transport: 'tcp',
       hostLineage: { graph, get } as never
     })
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     const graphed = await callLineage(control, control.token, {
       op: 'graph',
@@ -65,7 +69,11 @@ describe('lineageCall RPC', () => {
       transport: 'tcp',
       hostLineage: { graph: vi.fn(), get: vi.fn() }
     })
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     for (const forged of [
       { projectId: 'forged-project' },
@@ -98,8 +106,16 @@ describe('lineageCall RPC', () => {
       hostLineage: { graph: vi.fn(), get: vi.fn() }
     })
     const bootstrap = await server.ensureStarted()
-    const ordinary = await server.issueSessionConnection('trusted-session', 'trusted-project')
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const ordinary = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
     const params = { op: 'graph', version_id: 'version-1', options: {} }
 
     await expect(callLineage(control, bootstrap.token, params)).resolves.toMatchObject({

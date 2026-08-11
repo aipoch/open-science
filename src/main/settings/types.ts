@@ -8,7 +8,8 @@ import type {
   ProjectFilesFilterPreference,
   ProviderType,
   ProviderValidationFailure,
-  ReasoningEffort
+  ReasoningEffort,
+  SubagentModelConfiguration
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -151,6 +152,8 @@ export type StoredSettings = {
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort
+  // Global direct-Subagent model routing. Absence in older documents means dynamic inheritance.
+  subagentModel?: SubagentModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.

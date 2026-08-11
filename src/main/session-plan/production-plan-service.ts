@@ -9,7 +9,7 @@ import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 type ProductionPlanServiceDependencies = Readonly<{
   interactions?: SessionPlanInteractionOwner
-  artifactTurns: Pick<ArtifactTurnOwner, 'writeForActiveTurn'>
+  artifactTurns: Pick<ArtifactTurnOwner, 'handleForExecution' | 'write'>
   provenance: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
   sessions: Pick<
     SessionPersistenceCoordinator,
@@ -29,8 +29,8 @@ const createProductionPlanService = ({
 }: ProductionPlanServiceDependencies): PlanService =>
   new PlanService({
     interactions,
-    writeArtifactForActiveTurn: (sessionId, input) =>
-      artifactTurns.writeForActiveTurn(sessionId, input),
+    writeArtifactForExecution: (executionId, input) =>
+      artifactTurns.write(artifactTurns.handleForExecution(executionId), input),
     readArtifactVersion: async ({ projectId, sessionId, artifactId, artifactVersionId }) => {
       const resolved = await provenance.resolveVersionContent({
         projectId,

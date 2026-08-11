@@ -59,6 +59,7 @@ export type ArtifactRpcMethod = 'artifactCreateVersion' | 'artifactReplayVersion
 // App-issued capability scope for one active assistant turn. These fields are runtime-owned and
 // must match every durable Artifact RPC call; the model and MCP process cannot widen the scope.
 export type ArtifactRpcCapabilityBinding = {
+  executionId?: string
   projectId: string
   appSessionId: string
   artifactStorageSessionId: string

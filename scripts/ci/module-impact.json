@@ -5,6 +5,7 @@
       "ownerPaths": [
         "src/renderer/src/stores/session-store.ts",
         "src/renderer/src/stores/session-store-interaction-state.ts",
+        "src/renderer/src/stores/session-store-persistence-merge.ts",
         "src/renderer/src/stores/session-store-persistence-owner.ts",
         "src/renderer/src/stores/session-store-message-graph-owner.ts",
         "src/renderer/src/stores/session-store-message-graph-helpers.ts",
@@ -33,7 +34,8 @@
         "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
-        "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts"
+        "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
       ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
       "consumerModules": ["workspace_page"],
@@ -270,7 +272,8 @@
         "src/main/settings/record-codec.ts",
         "src/main/settings/document-codec.ts",
         "src/main/settings/document-store.ts",
-        "src/main/settings/compute-grant-port.ts"
+        "src/main/settings/compute-grant-port.ts",
+        "src/main/settings/subagent-model-settings.ts"
       ],
       "interfacePaths": [
         "src/main/settings/repository.ts",
@@ -412,7 +415,7 @@
       "fallbackCapability": "main_runtime"
     },
     "settings_service_facade": {
-      "ownerPaths": ["src/main/settings/service.ts"],
+      "ownerPaths": ["src/main/settings/service.ts", "src/main/settings/subagent-model-owner.ts"],
       "interfacePaths": [
         "src/main/settings/service.ts",
         "src/main/settings/application-commands.ts",
@@ -599,8 +602,12 @@
     "session_persistence": {
       "ownerPaths": [
         "src/main/session-persistence/coordinator.ts",
+        "src/main/session-persistence/delegated-question-owner.ts",
+        "src/main/session-persistence/delegated-work-owner.ts",
+        "src/main/session-persistence/delegated-work-store.ts",
         "src/main/session-persistence/deletion-owner.ts",
         "src/main/session-persistence/legacy-upload.ts",
+        "src/main/session-persistence/message-delivery-owner.ts",
         "src/main/session-persistence/reconciliation-owner.ts",
         "src/main/session-persistence/side-chat-owner.ts",
         "src/main/session-persistence/state-owner.ts"

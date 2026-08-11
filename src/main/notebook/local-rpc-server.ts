@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 import type { NotebookRunProvenanceContext } from '../../shared/notebook'
@@ -6,6 +6,8 @@ import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lin
 import type { NotebookRpcConnection } from './mcp-server'
 import { NotebookControlCompletionCapturedError } from './execution-owner'
 import {
+  NOTEBOOK_LOCAL_RPC_METHODS,
+  isNotebookLocalRpcMethod,
   opensNotebookInputRun,
   resolveNotebookLocalRpcHandler,
   type NotebookLocalRpcCapability
@@ -44,6 +46,14 @@ import {
 import { createLogger, errorLogFields } from '../logger'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-llm-service'
+import type {
+  AuthenticatedDelegateCaller,
+  DurableDelegatedWork
+} from '../delegation/durable-delegated-work'
+import { hostSdkHelp } from '../host-sdk/help'
+import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
+import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
+import { StructuredOutputError } from '../delegation/structured-output'
 
 const log = createLogger('notebook:local-rpc')
 
@@ -168,6 +178,20 @@ type NotebookLocalRpcServerOptions = {
     read(op: unknown, context: TrustedCallingSession): Promise<unknown>
     dispatch?(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
+  delegatedWorkService?: Pick<DurableDelegatedWork, 'delegate'> &
+    Partial<
+      Pick<
+        DurableDelegatedWork,
+        | 'children'
+        | 'collect'
+        | 'stopChildren'
+        | 'sendMessage'
+        | 'messageReceipt'
+        | 'resolveMessage'
+        | 'submitOutput'
+        | 'requestUserInput'
+      >
+    >
   skillsService?: {
     dispatch(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
@@ -195,9 +219,38 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
 type NotebookRpcSessionBinding = {
   sessionId: string
   projectId?: string
+  agentFrameId?: string
+  delegatedWorkRole?: 'main' | 'delegate'
+  delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
   isControl?: true
+  delegatedNotebook?: {
+    attemptId: string
+    workspaceCwd: string
+    provenanceContext: NotebookRunProvenanceContext
+    isAttemptWritable: () => boolean | Promise<boolean>
+    revoked: boolean
+    inFlightRequests: number
+    drainWaiters: Set<() => void>
+  }
+}
+
+type DelegatedNotebookConnectionRequest = Readonly<{
+  projectId: string
+  sessionId: string
+  rootFrameId: string
+  agentFrameId: string
+  attemptId: string
+  messageBranchId: string
+  runtimeSegmentId: string
+  promptMessageId: string
+  workspaceCwd: string
+  isAttemptWritable(): boolean | Promise<boolean>
+}>
+
+type DelegatedNotebookConnection = NotebookRpcConnection & {
+  revoke(): Promise<void>
 }
 
 type NotebookRpcRequestLifecycle = {
@@ -242,10 +295,13 @@ const CONTROL_RPC_METHODS = new Set([
   'mcpCall',
   'computeCall',
   'agentsCall',
+  'hostSdkHelp',
+  'delegatedWorkCall',
   'skillsCall',
   'llmCall',
   'requestUserInput'
 ])
+const DELEGATED_CONTROL_RPC_METHODS = new Set([...CONTROL_RPC_METHODS, 'delegatedOutputCall'])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
 const PLAN_RPC_METHODS = new Set(['planCall'])
 
@@ -292,6 +348,7 @@ class NotebookLocalRpcServer {
   private readonly hostLineage: NotebookLocalRpcServerOptions['hostLineage']
   private readonly hostFrames: NotebookLocalRpcServerOptions['hostFrames']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
+  private readonly delegatedWorkService: NotebookLocalRpcServerOptions['delegatedWorkService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostLlm: NotebookLocalRpcServerOptions['hostLlm']
   private server: Server | undefined
@@ -334,6 +391,7 @@ class NotebookLocalRpcServer {
     this.hostLineage = options.hostLineage
     this.hostFrames = options.hostFrames
     this.agentsService = options.agentsService
+    this.delegatedWorkService = options.delegatedWorkService
     this.skillsService = options.skillsService
     this.hostLlm = options.hostLlm
   }
@@ -501,6 +559,28 @@ class NotebookLocalRpcServer {
   // Remembers the final ACP session id for notebook aliases created before session start.
   registerSessionAlias(aliasSessionId: string, sessionId: string): void {
     this.sessionAliases.set(aliasSessionId, sessionId)
+    const activeRootContext = this.artifactProvenanceContexts.get(sessionId)
+    const canonicalRootFrameId =
+      activeRootContext && activeRootContext.agentFrameId === activeRootContext.rootFrameId
+        ? activeRootContext.agentFrameId
+        : `root-frame-${sessionId}`
+
+    // Root capabilities are created before the provider returns the canonical app Session id, and
+    // the provider retains the original Agent-facing MCP route. Adopt only their exact provisional
+    // root Frame alongside the Session alias; delegated child capabilities have independent durable
+    // Frame ownership and are never rewritten here.
+    for (const binding of this.sessionRpcCapabilities.values()) {
+      if (
+        binding.delegatedNotebook ||
+        (binding.allowedMethods && binding.allowedMethods !== CONTROL_RPC_METHODS) ||
+        binding.sessionId !== aliasSessionId ||
+        binding.agentFrameId !== `root-frame-${aliasSessionId}`
+      ) {
+        continue
+      }
+      binding.sessionId = sessionId
+      binding.agentFrameId = canonicalRootFrameId
+    }
   }
 
   private resolveSessionCapabilityOwners(sessionId: string): Set<string> {
@@ -572,8 +652,12 @@ class NotebookLocalRpcServer {
 
   async issueSessionConnection(
     sessionId: string,
-    projectId: string
+    projectId: string,
+    agentFrameId: string
   ): Promise<NotebookRpcConnection> {
+    if (!agentFrameId.trim()) {
+      throw new Error('Notebook RPC capabilities require an explicit Agent Frame owner.')
+    }
     const connection = await this.ensureStarted()
     // A context reset issues the replacement under the final ACP id, while the original token can be
     // keyed by its pre-start notebook-session-* alias. Rotate the complete Agent-facing alias closure;
@@ -581,8 +665,18 @@ class NotebookLocalRpcServer {
     this.revokeAgentSessionCapabilities(sessionId)
 
     const token = randomUUID()
+    const resolvedSessionId = this.sessionAliases.get(sessionId) ?? sessionId
+    const resolvedAgentFrameId =
+      resolvedSessionId !== sessionId && agentFrameId === `root-frame-${sessionId}`
+        ? `root-frame-${resolvedSessionId}`
+        : agentFrameId
     this.sessionRpcTokens.set(sessionId, token)
-    this.sessionRpcCapabilities.set(token, { sessionId, projectId })
+    this.sessionRpcCapabilities.set(token, {
+      sessionId: resolvedSessionId,
+      projectId,
+      agentFrameId: resolvedAgentFrameId,
+      delegatedWorkRole: 'main'
+    })
     return {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
@@ -595,6 +689,87 @@ class NotebookLocalRpcServer {
         }
         this.sessionRpcCapabilities.delete(token)
       }
+    }
+  }
+
+  // Provisions one fail-closed child capability. The caller supplies the durable Attempt check;
+  // revocation closes admission before tearing down only this Frame's lane and draining its request.
+  async issueDelegatedNotebookConnection(
+    scope: DelegatedNotebookConnectionRequest
+  ): Promise<DelegatedNotebookConnection> {
+    const required = [
+      scope.projectId,
+      scope.sessionId,
+      scope.rootFrameId,
+      scope.agentFrameId,
+      scope.attemptId,
+      scope.messageBranchId,
+      scope.runtimeSegmentId,
+      scope.promptMessageId,
+      scope.workspaceCwd
+    ]
+    if (required.some((value) => !value.trim()) || scope.agentFrameId === scope.rootFrameId) {
+      throw new Error('Delegated Notebook capability scope is incomplete or not a child Frame.')
+    }
+    const connection = await this.ensureStarted()
+    const token = randomUUID()
+    const delegatedNotebook: NonNullable<NotebookRpcSessionBinding['delegatedNotebook']> = {
+      attemptId: scope.attemptId,
+      workspaceCwd: scope.workspaceCwd,
+      provenanceContext: {
+        rootFrameId: scope.rootFrameId,
+        agentFrameId: scope.agentFrameId,
+        messageBranchId: scope.messageBranchId,
+        runtimeSegmentId: scope.runtimeSegmentId,
+        promptMessageId: scope.promptMessageId
+      },
+      isAttemptWritable: scope.isAttemptWritable,
+      revoked: false,
+      inFlightRequests: 0,
+      drainWaiters: new Set()
+    }
+    this.sessionRpcCapabilities.set(token, {
+      sessionId: scope.sessionId,
+      projectId: scope.projectId,
+      agentFrameId: scope.agentFrameId,
+      allowedMethods: new Set([
+        ...NOTEBOOK_LOCAL_RPC_METHODS,
+        'hostSdkHelp',
+        'delegatedWorkCall',
+        'delegatedOutputCall',
+        'requestUserInput'
+      ]),
+      delegatedWorkRole: 'delegate',
+      delegatedWorkAttemptId: scope.attemptId,
+      delegatedNotebook
+    })
+    let revokePromise: Promise<void> | undefined
+    const revoke = (): Promise<void> => {
+      if (revokePromise) return revokePromise
+      delegatedNotebook.revoked = true
+      this.sessionRpcCapabilities.delete(token)
+      const drained =
+        delegatedNotebook.inFlightRequests === 0
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => delegatedNotebook.drainWaiters.add(resolve))
+      const shutdown = this.service.shutdown({
+        projectName: scope.projectId,
+        sessionId: scope.sessionId,
+        workspaceCwd: scope.workspaceCwd,
+        provenanceContext: delegatedNotebook.provenanceContext,
+        delegatedWorkAttemptId: scope.attemptId
+      } as Parameters<NotebookLocalRpcCapability['shutdown']>[0] & {
+        delegatedWorkAttemptId: string
+      })
+      revokePromise = Promise.all([drained, shutdown]).then(() => undefined)
+      return revokePromise
+    }
+    return {
+      endpoint: connection.endpoint,
+      socketPath: connection.socketPath,
+      token,
+      release: () => void revoke().catch(() => undefined),
+      revoke
     }
   }
 
@@ -648,19 +823,40 @@ class NotebookLocalRpcServer {
   // narrower capability cannot invoke Notebook lifecycle or execution RPC methods.
   async issueControlConnection(
     sessionId: string,
-    projectId: string
+    projectId: string,
+    agentFrameId: string,
+    delegatedWorkIdentity: Readonly<{
+      role: 'main' | 'delegate'
+      attemptId?: string
+    }> = { role: 'main' }
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
       release: () => void
     }
   > {
+    if (!agentFrameId.trim()) {
+      throw new Error('Notebook control capabilities require an explicit Agent Frame owner.')
+    }
     const connection = await this.ensureStarted()
     const token = randomUUID()
+    const resolvedSessionId = this.sessionAliases.get(sessionId) ?? sessionId
+    const resolvedAgentFrameId =
+      resolvedSessionId !== sessionId && agentFrameId === `root-frame-${sessionId}`
+        ? `root-frame-${resolvedSessionId}`
+        : agentFrameId
     const binding: NotebookRpcSessionBinding = {
-      sessionId,
+      sessionId: resolvedSessionId,
       projectId,
-      allowedMethods: CONTROL_RPC_METHODS,
+      agentFrameId: resolvedAgentFrameId,
+      delegatedWorkRole: delegatedWorkIdentity.role,
+      ...(delegatedWorkIdentity.attemptId
+        ? { delegatedWorkAttemptId: delegatedWorkIdentity.attemptId }
+        : {}),
+      allowedMethods:
+        delegatedWorkIdentity.role === 'delegate'
+          ? DELEGATED_CONTROL_RPC_METHODS
+          : CONTROL_RPC_METHODS,
       isControl: true
     }
     this.sessionRpcCapabilities.set(token, binding)
@@ -694,8 +890,23 @@ class NotebookLocalRpcServer {
     sessionId: string,
     context: NotebookRunProvenanceContext | undefined
   ): void {
-    if (context) this.artifactProvenanceContexts.set(sessionId, context)
-    else {
+    if (context) {
+      this.artifactProvenanceContexts.set(sessionId, context)
+      if (context.agentFrameId === context.rootFrameId) {
+        for (const binding of this.sessionRpcCapabilities.values()) {
+          if (
+            (!binding.allowedMethods || binding.allowedMethods === CONTROL_RPC_METHODS) &&
+            !binding.delegatedNotebook &&
+            binding.delegatedWorkRole !== 'delegate' &&
+            (this.sessionAliases.get(binding.sessionId) ?? binding.sessionId) === sessionId &&
+            binding.agentFrameId === `root-frame-${binding.sessionId}`
+          ) {
+            binding.sessionId = sessionId
+            binding.agentFrameId = context.agentFrameId
+          }
+        }
+      }
+    } else {
       this.artifactProvenanceContexts.delete(sessionId)
       this.activeTurnProjectIds.delete(sessionId)
     }
@@ -816,6 +1027,8 @@ class NotebookLocalRpcServer {
     response.once('close', abortDisconnectedResponse)
     response.once('finish', closeIdleResponseDuringShutdown)
     let releaseArtifactRequest: (() => void) | undefined
+    let releaseDelegatedNotebookRequest: (() => void) | undefined
+    let authenticatedSessionBinding: NotebookRpcSessionBinding | undefined
     try {
       if (lifecycle.closing) {
         disconnect.abort()
@@ -849,6 +1062,7 @@ class NotebookLocalRpcServer {
       } else {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
+          authenticatedSessionBinding = sessionBinding
           if (sessionBinding.allowedMethods && !sessionBinding.allowedMethods.has(method)) {
             throw new RpcHttpError(403, `Notebook RPC capability does not allow ${method}.`)
           }
@@ -909,8 +1123,59 @@ class NotebookLocalRpcServer {
                 (await this.hostLlm!.isAvailable())
             }
           }
+          if (
+            method === 'delegatedWorkCall' &&
+            !sessionBinding.delegatedNotebook &&
+            (!sessionBinding.projectId ||
+              !sessionBinding.agentFrameId ||
+              !sessionBinding.activeControlInvocation?.toolInvocationId ||
+              !sessionBinding.activeControlInvocation.originatingUserMessageId)
+          ) {
+            throw new RpcHttpError(
+              403,
+              'host.delegate requires an active trusted control invocation.'
+            )
+          }
+          const delegatedNotebook = sessionBinding.delegatedNotebook
+          if (
+            delegatedNotebook &&
+            (isNotebookLocalRpcMethod(method) ||
+              method === 'hostSdkHelp' ||
+              method === 'delegatedWorkCall' ||
+              method === 'delegatedOutputCall')
+          ) {
+            if (delegatedNotebook.revoked || !(await delegatedNotebook.isAttemptWritable())) {
+              throw new RpcHttpError(
+                403,
+                `Notebook capability for Attempt ${delegatedNotebook.attemptId} is no longer writable.`
+              )
+            }
+            delegatedNotebook.inFlightRequests += 1
+            let released = false
+            releaseDelegatedNotebookRequest = () => {
+              if (released) return
+              released = true
+              delegatedNotebook.inFlightRequests -= 1
+              if (delegatedNotebook.inFlightRequests === 0) {
+                for (const resolve of delegatedNotebook.drainWaiters) resolve()
+                delegatedNotebook.drainWaiters.clear()
+              }
+            }
+          }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
           // per-session capability issued while building this session's Notebook environment.
+          const delegatedQuestionInvocationId =
+            method === 'requestUserInput' && sessionBinding.delegatedNotebook
+              ? `delegated-question:${createHash('sha256')
+                  .update(sessionBinding.delegatedNotebook.attemptId)
+                  .update('\0')
+                  .update(
+                    typeof params._appToolRequestId === 'string'
+                      ? params._appToolRequestId
+                      : JSON.stringify(params.questions)
+                  )
+                  .digest('hex')}`
+              : undefined
           params = {
             ...params,
             sessionId: sessionBinding.sessionId,
@@ -918,12 +1183,43 @@ class NotebookLocalRpcServer {
             ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
+                  caller_role:
+                    sessionBinding.delegatedWorkRole === 'delegate' ? 'delegate' : 'main',
                   turn_id: sessionBinding.activeControlInvocation?.turnId,
                   control_invocation_generation:
                     sessionBinding.activeControlInvocation?.controlInvocationGeneration,
                   control_invocation_id: sessionBinding.activeControlInvocation?.toolInvocationId
                 }
-              : {})
+              : {}),
+            ...(method === 'delegatedWorkCall' || method === 'requestUserInput'
+              ? {
+                  project_id: sessionBinding.projectId,
+                  session_id: sessionBinding.sessionId,
+                  frame_id: sessionBinding.agentFrameId,
+                  caller_role: sessionBinding.delegatedWorkRole,
+                  attempt_id: sessionBinding.delegatedWorkAttemptId,
+                  origin_message_id:
+                    sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
+                    sessionBinding.activeControlInvocation?.originatingUserMessageId,
+                  tool_invocation_id:
+                    delegatedQuestionInvocationId ??
+                    (sessionBinding.delegatedNotebook
+                      ? `delegated-notebook-capability:${randomUUID()}`
+                      : sessionBinding.activeControlInvocation?.toolInvocationId)
+                }
+              : method === 'delegatedOutputCall'
+                ? {
+                    project_id: sessionBinding.projectId,
+                    session_id: sessionBinding.sessionId,
+                    frame_id: sessionBinding.agentFrameId,
+                    attempt_id: sessionBinding.delegatedWorkAttemptId,
+                    origin_message_id:
+                      sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
+                      sessionBinding.activeControlInvocation?.originatingUserMessageId
+                  }
+                : method === 'hostSdkHelp'
+                  ? { caller_role: sessionBinding.delegatedWorkRole }
+                  : {})
           }
         } else {
           if (authorization !== `Bearer ${this.token}`) {
@@ -932,7 +1228,8 @@ class NotebookLocalRpcServer {
           if (
             CONTROL_RPC_METHODS.has(method) ||
             SKILL_IMPORT_RPC_METHODS.has(method) ||
-            PLAN_RPC_METHODS.has(method)
+            PLAN_RPC_METHODS.has(method) ||
+            method === 'delegatedOutputCall'
           ) {
             throw new RpcHttpError(401, 'A session-bound notebook RPC token is required.')
           }
@@ -940,9 +1237,52 @@ class NotebookLocalRpcServer {
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
+      let resolvedParams = this.resolveSessionAlias(params)
+      const authenticatedBinding = authenticatedSessionBinding
+      if (authenticatedBinding?.delegatedNotebook && isNotebookLocalRpcMethod(method)) {
+        resolvedParams = {
+          ...resolvedParams,
+          sessionId: authenticatedBinding.sessionId,
+          projectName: authenticatedBinding.projectId,
+          workspaceCwd: authenticatedBinding.delegatedNotebook.workspaceCwd,
+          provenanceContext: authenticatedBinding.delegatedNotebook.provenanceContext,
+          delegatedWorkAttemptId: authenticatedBinding.delegatedNotebook.attemptId
+        }
+      }
+      if (authenticatedBinding?.agentFrameId && isNotebookLocalRpcMethod(method)) {
+        const resolvedSessionId = resolvedParams.sessionId
+        const activeContext =
+          typeof resolvedSessionId === 'string'
+            ? this.artifactProvenanceContexts.get(resolvedSessionId)
+            : undefined
+        const hasProvenRootOwner =
+          typeof resolvedSessionId === 'string' &&
+          (this.sessionAliases.get(authenticatedBinding.sessionId) ??
+            authenticatedBinding.sessionId) === resolvedSessionId &&
+          authenticatedBinding.agentFrameId === `root-frame-${authenticatedBinding.sessionId}`
+        if (
+          !authenticatedBinding.delegatedNotebook &&
+          (!authenticatedBinding.allowedMethods ||
+            authenticatedBinding.allowedMethods === CONTROL_RPC_METHODS) &&
+          authenticatedBinding.delegatedWorkRole !== 'delegate' &&
+          hasProvenRootOwner &&
+          typeof resolvedSessionId === 'string' &&
+          activeContext &&
+          activeContext.agentFrameId === activeContext.rootFrameId
+        ) {
+          authenticatedBinding.sessionId = resolvedSessionId
+          authenticatedBinding.agentFrameId = activeContext.agentFrameId
+        }
+        if (
+          !authenticatedBinding.delegatedNotebook &&
+          activeContext &&
+          activeContext.agentFrameId !== authenticatedBinding.agentFrameId
+        ) {
+          throw new RpcHttpError(403, 'Notebook RPC capability does not match active Agent Frame.')
+        }
+      }
       const result =
-        hostCapabilities ??
-        (await this.dispatch(method, this.resolveSessionAlias(params), disconnect.signal))
+        hostCapabilities ?? (await this.dispatch(method, resolvedParams, disconnect.signal))
 
       writeJson(response, 200, { result })
     } catch (error) {
@@ -956,7 +1296,16 @@ class NotebookLocalRpcServer {
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
       const serializedError =
-        error instanceof PlanCommandError ? { code: error.code, message } : message
+        error instanceof PlanCommandError
+          ? { code: error.code, message }
+          : error instanceof StructuredOutputError
+            ? {
+                code: error.code,
+                ...(error.keyword ? { keyword: error.keyword } : {}),
+                ...(error.instancePath !== undefined ? { instance_path: error.instancePath } : {}),
+                ...(error.property ? { property: error.property } : {})
+              }
+            : message
 
       writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
         error: serializedError
@@ -966,6 +1315,7 @@ class NotebookLocalRpcServer {
       response.off('close', abortDisconnectedResponse)
       lifecycle.activeRequests.delete(activeRequest)
       releaseArtifactRequest?.()
+      releaseDelegatedNotebookRequest?.()
     }
   }
 
@@ -1044,9 +1394,44 @@ class NotebookLocalRpcServer {
     }
 
     if (method === 'requestUserInput') {
-      if (!this.requestUserInput) throw new Error('User input is not configured.')
       const request = sanitizeAgentUserChoiceRequest(params)
       if (!request) throw new Error('Invalid user choice request.')
+      if (params.caller_role === 'delegate') {
+        if (!this.delegatedWorkService?.requestUserInput) {
+          throw new Error('Delegated user input is not configured.')
+        }
+        const projectId = typeof params.project_id === 'string' ? params.project_id : ''
+        const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+        const frameId = typeof params.frame_id === 'string' ? params.frame_id : ''
+        const attemptId = typeof params.attempt_id === 'string' ? params.attempt_id : ''
+        const originMessageId =
+          typeof params.origin_message_id === 'string' ? params.origin_message_id : ''
+        const toolInvocationId =
+          typeof params.tool_invocation_id === 'string' ? params.tool_invocation_id : ''
+        if (
+          !projectId ||
+          !sessionId ||
+          !frameId ||
+          !attemptId ||
+          !originMessageId ||
+          !toolInvocationId
+        ) {
+          throw new RpcHttpError(403, 'delegated user question capability identity is incomplete.')
+        }
+        return this.delegatedWorkService.requestUserInput(
+          {
+            session: { projectId, sessionId },
+            frameId,
+            attemptId,
+            role: 'delegate',
+            originMessageId,
+            toolInvocationId
+          },
+          request,
+          toolInvocationId
+        )
+      }
+      if (!this.requestUserInput) throw new Error('User input is not configured.')
       return this.requestUserInput(request)
     }
 
@@ -1355,6 +1740,12 @@ class NotebookLocalRpcServer {
           ? params.control_invocation_generation
           : undefined
       const op = typeof params.op === 'string' ? params.op : ''
+      const callerRole =
+        params.caller_role === 'main'
+          ? 'main'
+          : params.caller_role === 'delegate'
+            ? 'delegate'
+            : undefined
       // Strip every reserved routing/identity/switch key before forwarding. The AgentsService and
       // its injected approval/switch seams only ever see the op + their own snake_case params; the
       // trusted session identity stays in the server context (NOT taken from the forwarded params).
@@ -1376,6 +1767,7 @@ class NotebookLocalRpcServer {
         turnId && controlInvocationGeneration !== undefined && toolInvocationId
           ? {
               sessionId: resolvedSessionId,
+              callerRole,
               turnId,
               controlInvocationGeneration,
               toolInvocationId,
@@ -1394,8 +1786,188 @@ class NotebookLocalRpcServer {
                   ?.filter((input) => input.sourceKind === 'artifact-version')
                   .map((input) => input.sourceFileId) ?? []
             }
-          : { sessionId: resolvedSessionId }
+          : { sessionId: resolvedSessionId, callerRole }
       )
+    }
+
+    if (method === 'hostSdkHelp') {
+      return hostSdkHelp.query(params.query, {
+        callerRole: params.caller_role === 'delegate' ? 'delegate' : 'main',
+        capabilities: {
+          delegate: Boolean(this.delegatedWorkService?.delegate),
+          children: Boolean(this.delegatedWorkService?.children),
+          collect: Boolean(this.delegatedWorkService?.collect),
+          stop_child: Boolean(this.delegatedWorkService?.stopChildren),
+          send_frame_message: Boolean(this.delegatedWorkService?.sendMessage),
+          message_receipt: Boolean(this.delegatedWorkService?.messageReceipt),
+          resolve_message: Boolean(this.delegatedWorkService?.resolveMessage),
+          submit_output: Boolean(this.delegatedWorkService?.submitOutput)
+        }
+      })
+    }
+
+    if (method === 'delegatedOutputCall') {
+      if (!this.delegatedWorkService?.submitOutput) {
+        throw new Error('host.submit_output is not configured.')
+      }
+      const projectId = typeof params.project_id === 'string' ? params.project_id : ''
+      const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+      const frameId = typeof params.frame_id === 'string' ? params.frame_id : ''
+      const attemptId = typeof params.attempt_id === 'string' ? params.attempt_id : ''
+      const originMessageId =
+        typeof params.origin_message_id === 'string' ? params.origin_message_id : ''
+      if (!projectId || !sessionId || !frameId || !attemptId || !originMessageId) {
+        throw new RpcHttpError(403, 'host.submit_output capability identity is incomplete.')
+      }
+      return this.delegatedWorkService.submitOutput(
+        {
+          session: { projectId, sessionId },
+          frameId,
+          attemptId,
+          role: 'delegate',
+          originMessageId,
+          toolInvocationId: 'delegated-output-capability'
+        },
+        params.value
+      )
+    }
+
+    if (method === 'delegatedWorkCall') {
+      if (!this.delegatedWorkService) throw new Error('Delegated Work service is not configured.')
+      const projectId = typeof params.project_id === 'string' ? params.project_id : ''
+      const sessionId = typeof params.session_id === 'string' ? params.session_id : ''
+      const frameId = typeof params.frame_id === 'string' ? params.frame_id : ''
+      const originMessageId =
+        typeof params.origin_message_id === 'string' ? params.origin_message_id : ''
+      const toolInvocationId =
+        typeof params.tool_invocation_id === 'string' ? params.tool_invocation_id : ''
+      const delegationCallId =
+        typeof params.delegation_call_id === 'string' &&
+        /^[1-9]\d{0,15}$/.test(params.delegation_call_id)
+          ? params.delegation_call_id
+          : undefined
+      const role = params.caller_role === 'delegate' ? 'delegate' : 'main'
+      const attemptId = typeof params.attempt_id === 'string' ? params.attempt_id : undefined
+      if (!projectId || !sessionId || !frameId || !originMessageId || !toolInvocationId) {
+        throw new RpcHttpError(403, 'delegated-work caller identity is incomplete.')
+      }
+      const parentSpecialistProfileId = this.sessionSpecialists.get(sessionId)
+      const caller: AuthenticatedDelegateCaller = {
+        session: { projectId, sessionId },
+        frameId,
+        role,
+        ...(parentSpecialistProfileId ? { parentSpecialistProfileId } : {}),
+        ...(attemptId ? { attemptId } : {}),
+        originMessageId,
+        toolInvocationId: delegationCallId
+          ? createNestedDelegateInvocationId(toolInvocationId, delegationCallId)
+          : toolInvocationId
+      }
+      if (params.operation === 'stop_children') {
+        if (!this.delegatedWorkService.stopChildren) {
+          throw new Error('host.stop_child is not configured.')
+        }
+        if (
+          !Array.isArray(params.frame_ids) ||
+          params.frame_ids.length === 0 ||
+          params.frame_ids.some((candidate) => typeof candidate !== 'string' || !candidate.trim())
+        ) {
+          throw new Error('host.stop_child requires one or more frame ids.')
+        }
+        return this.delegatedWorkService.stopChildren(caller, params.frame_ids as string[])
+      }
+      const op = params.op === undefined ? 'delegate' : params.op
+      if (op === 'send_message') {
+        if (!this.delegatedWorkService.sendMessage) {
+          throw new Error('host.send_frame_message is unavailable.')
+        }
+        const target = typeof params.target === 'string' ? params.target : ''
+        const message = typeof params.message === 'string' ? params.message : ''
+        const rawOptions = params.options === undefined ? {} : params.options
+        if (!rawOptions || typeof rawOptions !== 'object' || Array.isArray(rawOptions)) {
+          throw new Error('host.send_frame_message options must be an object.')
+        }
+        const messageOptions = rawOptions as Record<string, unknown>
+        if (
+          messageOptions.kind !== undefined &&
+          messageOptions.kind !== 'info' &&
+          messageOptions.kind !== 'question'
+        )
+          throw new Error('host.send_frame_message kind must be info or question.')
+        if (
+          messageOptions.request_id !== undefined &&
+          typeof messageOptions.request_id !== 'string'
+        )
+          throw new Error('host.send_frame_message request_id must be a string.')
+        if (
+          messageOptions.reply_to_message_id !== undefined &&
+          typeof messageOptions.reply_to_message_id !== 'string'
+        )
+          throw new Error('host.send_frame_message reply_to_message_id must be a string.')
+        if (!target || !message.trim()) {
+          throw new Error('host.send_frame_message requires a target Frame and non-empty message.')
+        }
+        return this.delegatedWorkService.sendMessage(caller, target, message, {
+          ...(messageOptions.kind ? { kind: messageOptions.kind as 'info' | 'question' } : {}),
+          ...(messageOptions.request_id ? { requestId: messageOptions.request_id as string } : {}),
+          ...(messageOptions.reply_to_message_id
+            ? { replyToMessageId: messageOptions.reply_to_message_id as string }
+            : {})
+        })
+      }
+      if (op === 'message_receipt') {
+        if (!this.delegatedWorkService.messageReceipt)
+          throw new Error('host.message_receipt is unavailable.')
+        const selector = typeof params.selector === 'string' ? params.selector : ''
+        const rawOptions = params.options === undefined ? {} : params.options
+        if (!selector || !rawOptions || typeof rawOptions !== 'object' || Array.isArray(rawOptions))
+          throw new Error('host.message_receipt requires a selector and options object.')
+        const timeout = (rawOptions as Record<string, unknown>).timeout_seconds
+        return this.delegatedWorkService.messageReceipt(
+          caller,
+          selector,
+          timeout === undefined ? {} : { timeoutSeconds: timeout as number }
+        )
+      }
+      if (op === 'resolve_message') {
+        if (!this.delegatedWorkService.resolveMessage)
+          throw new Error('host.resolve_message is unavailable.')
+        const messageId = typeof params.message_id === 'string' ? params.message_id : ''
+        if (!messageId || params.action !== 'acknowledge_uncertain')
+          throw new Error('host.resolve_message requires message_id and acknowledge_uncertain.')
+        return this.delegatedWorkService.resolveMessage(caller, messageId, {
+          action: 'acknowledge_uncertain'
+        })
+      }
+      if (op === 'children' || op === 'collect') {
+        if (op === 'collect') {
+          if (!this.delegatedWorkService.collect) {
+            throw new Error('host.collect is not configured.')
+          }
+          const call = parseCollectRpcCall({
+            selectors: params.selectors ?? params.frame_ids,
+            options: params.options
+          })
+          return this.delegatedWorkService.collect(caller, call.selectors, call.options)
+        }
+        if (
+          params.frame_ids !== undefined &&
+          (!Array.isArray(params.frame_ids) ||
+            params.frame_ids.some((id) => typeof id !== 'string'))
+        ) {
+          throw new Error(`host.${op} frame_ids must be an array of strings.`)
+        }
+        const frameIds = params.frame_ids as readonly string[] | undefined
+        if (op === 'children') {
+          if (!this.delegatedWorkService.children) {
+            throw new Error('host.children is not configured.')
+          }
+          return this.delegatedWorkService.children(caller, frameIds)
+        }
+      }
+      if (op !== 'delegate') throw new Error('Delegated Work operation is invalid.')
+      const call = parseDelegateRpcCall(params)
+      return this.delegatedWorkService.delegate(caller, call.request, call.options)
     }
 
     // skillsCall: native host.skills lifecycle. Authentication and session ownership are identical
@@ -1484,4 +2056,8 @@ class NotebookLocalRpcServer {
 }
 
 export { NotebookLocalRpcServer }
-export type { NotebookLocalRpcServerOptions }
+export type {
+  DelegatedNotebookConnection,
+  DelegatedNotebookConnectionRequest,
+  NotebookLocalRpcServerOptions
+}

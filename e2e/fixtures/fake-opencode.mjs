@@ -3,6 +3,8 @@
 import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 
 const VERSION = '1.0.0'
@@ -10,11 +12,77 @@ const PERMISSION_PROMPT = 'Request fixture permission.'
 const PROVIDER_BRIDGE_PROMPT = 'Verify the provider bridge.'
 const NOTEBOOK_LIFECYCLE_PROMPT = 'Verify the notebook lifecycle.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
+const DELEGATION_TERMINAL_PROMPT = 'Run the production delegation terminal journey.'
+const DELEGATION_BOUNDED_COLLECT_PROMPT = 'Run the production bounded collect journey.'
+const DELEGATION_BOUNDED_RECOLLECT_PROMPT = 'Collect the running Subagent in Turn B.'
+const DELEGATION_PERMISSION_PROMPT = 'Run the production delegated permission journey.'
+const DELEGATION_USER_QUESTION_PROMPT = 'Run the production delegated user question journey.'
+const DELEGATION_STOP_PROMPT = 'Run the production delegation Stop journey.'
+const DELEGATION_BRANCH_A_PROMPT = 'Start the inactive-branch Stop certification journey.'
+const DELEGATION_BRANCH_B_PROMPT = 'Start the active-branch partial Stop certification journey.'
+const DELEGATION_UNAVAILABLE_PROMPT = 'Verify unsupported delegation admission.'
+const DELEGATION_STRUCTURED_OUTPUT_PROMPT = 'Run the production structured output journey.'
+const RELIABLE_MESSAGING_PROMPT = 'Run the production reliable messaging journey.'
+const RELIABLE_BRANCH_PARK_PROMPT = 'Start the reliable messaging branch park journey.'
+const RELIABLE_BRANCH_WAKE_PROMPT = 'Wake the reliable messaging branch park journey.'
+const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure journey.'
+const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
+const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
+const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
+const DELEGATION_INHERITED_SPECIALIST_PROMPT =
+  'Run the production inherited Specialist delegation journey.'
+const SUBAGENT_MODEL_BATCH_PROMPT = 'Run the Subagent model batch journey.'
+const SUBAGENT_MODEL_CONTINUATION_START_PROMPT = 'Start the Subagent model continuation journey.'
+const SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT = 'Finish the Subagent model continuation journey.'
+const SUBAGENT_MODEL_UNAVAILABLE_PROMPT = 'Verify the Subagent model unavailable journey.'
+const SUBAGENT_MODEL_INHERITED_PROMPT = 'Run the inherited Subagent model journey.'
+const SUBAGENT_MODEL_HOLDER_PROMPT = 'Create the global Active model holder.'
+const DELEGATED_TERMINAL_TASK = 'Complete the certified delegated terminal fixture.'
+const DELEGATED_TERMINAL_NAME = 'Certified delegated terminal'
+const DELEGATED_MODEL_CONTINUATION_NAME = 'Model continuation child'
+const DELEGATED_INHERITED_SPECIALIST_NAME = 'Inherited specialist terminal'
+const DELEGATED_BOUNDED_SLOW_TASK = 'Complete the bounded fixture after a delay.'
+const DELEGATED_PERMISSION_TASK = 'Request the delegated fixture permission.'
+const DELEGATED_USER_QUESTION_TASK = 'Ask the user for the delegated fixture scope.'
+const DELEGATED_USER_QUESTION_NAME = 'Delegated scope researcher'
+const DELEGATED_USER_QUESTION_TASK_TWO = 'Ask the user for the delegated citation style.'
+const DELEGATED_USER_QUESTION_NAME_TWO = 'Delegated citation reviewer'
+const DELEGATED_WAIT_MARKER = 'Wait until the Main Agent stops'
+const DELEGATED_WAIT_TASK = `${DELEGATED_WAIT_MARKER} delegated fixture A.`
+const DELEGATED_WAIT_TASK_TWO = `${DELEGATED_WAIT_MARKER} delegated fixture B.`
+const DELEGATED_WAIT_NAME = 'Delegated fixture A'
+const DELEGATED_WAIT_NAME_TWO = 'Delegated fixture B'
+const DELEGATED_STRUCTURED_OUTPUT_TASK = 'Create certified structured evidence.'
+const DELEGATED_RELIABLE_MESSAGING_TASK = 'Send a reliable question to Main.'
+const DELEGATED_RELIABLE_PARK_TASK = 'Queue a reliable question for branch parking.'
+const DELEGATED_RELIABLE_FAILURE_TASK = 'Queue a reliable question for post-fence failure.'
+const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
+const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
+const DELEGATED_RELIABLE_FAIRNESS_TASK_B = 'Queue reliable fairness question B.'
+const RELIABLE_CHILD_DIRECTIVE = 'Use the renderer-visible reliable evidence.'
+const DELEGATED_BRANCH_A_TASK = `${DELEGATED_WAIT_MARKER} inactive branch child A.`
+const DELEGATED_BRANCH_B_TASK = `${DELEGATED_WAIT_MARKER} active branch child B1.`
+const DELEGATED_BRANCH_B_TASK_TWO = `${DELEGATED_WAIT_MARKER} active branch child B2.`
+const DELEGATED_BRANCH_A_NAME = 'Inactive branch child A'
+const DELEGATED_BRANCH_B_NAME = 'Active branch child B1'
+const DELEGATED_BRANCH_B_NAME_TWO = 'Active branch child B2'
 const CONTEXT_COMPACTION_PROMPT = 'Preview context compaction.'
 
 const sessionRoutes = new Map()
+const sessionCancellationResolvers = new Map()
+const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+const suspendSessionWrites = async () => {
+  const sessionsRoot = join(process.env.OPEN_SCIENCE_STORAGE_ROOT ?? '', 'sessions')
+  const projects = await readdir(sessionsRoot, { withFileTypes: true })
+  const directories = projects
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(sessionsRoot, entry.name))
+  await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
+  return async () => Promise.all(directories.map((directory) => chmod(directory, 0o700)))
+}
 
 const stringEnvironment = (overrides = []) => {
   const environment = Object.fromEntries(
@@ -34,6 +102,94 @@ const toolResult = (name, result) => {
 }
 
 const frameworkServerName = (name) => name.replaceAll('-', '_')
+
+const delegatedArtifactHandoff = async (mcpServers) => {
+  const currentRunFile = mcpServers
+    .flatMap((server) => server.env ?? [])
+    .find((entry) => entry.name === 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE')?.value
+  if (!currentRunFile) return {}
+  const executionId = await readFile(currentRunFile, 'utf8')
+    .then((content) => JSON.parse(content).executionId)
+    .catch(() => undefined)
+  return { artifactCurrentRunFile: currentRunFile, artifactExecutionId: executionId }
+}
+
+const parseMcpResponse = (body) => {
+  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
+  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
+  return json ? JSON.parse(json) : {}
+}
+
+const submitReviewerPass = async (mcpServers) => {
+  const server = mcpServers.find((candidate) => candidate.type === 'http')
+  if (!server?.url) return false
+  const token =
+    server.headers
+      ?.find((header) => header.name?.toLowerCase() === 'authorization')
+      ?.value?.replace('Bearer ', '') ?? ''
+  const baseHeaders = {
+    accept: 'application/json, text/event-stream',
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json'
+  }
+  const initialize = await fetch(server.url, {
+    method: 'POST',
+    headers: baseHeaders,
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'open-science-e2e-reviewer', version: '1.0' }
+      }
+    })
+  })
+  if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
+  const initialized = parseMcpResponse(await initialize.text())
+  const sessionId = initialize.headers.get('mcp-session-id')
+  if (!sessionId || !initialized.result) {
+    throw new Error('Reviewer MCP initialize did not return a session.')
+  }
+  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
+  await fetch(server.url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
+  })
+  let nextId = 2
+  const callTool = async (name, args) => {
+    const response = await fetch(server.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: nextId++,
+        method: 'tools/call',
+        params: { name, arguments: args }
+      })
+    })
+    if (!response.ok) throw new Error(`${name} failed: ${response.status}`)
+    const payload = parseMcpResponse(await response.text())
+    if (payload.error) throw new Error(`${name} failed: ${payload.error.message ?? 'unknown'}`)
+    if (payload.result?.isError) {
+      throw new Error(payload.result.content?.[0]?.text ?? `${name} returned an error`)
+    }
+    return payload.result
+  }
+  await callTool('read_turn', {})
+  await callTool('submit_findings', {
+    checks: [
+      {
+        status: 'pass',
+        claim: 'The completed turn follows the requested production path.',
+        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
+      }
+    ]
+  })
+  return true
+}
 
 const withMcpClient = async (sessionId, serverName, operation) => {
   const route = sessionRoutes.get(sessionId)
@@ -59,6 +215,97 @@ const withMcpClient = async (sessionId, serverName, operation) => {
   } finally {
     await client.close()
   }
+}
+
+const executeControlCode = async (sessionId, code) =>
+  withMcpClient(sessionId, 'open-science-notebook', async (client) =>
+    toolResult(
+      'repl_execute',
+      await client.callTool({
+        name: 'repl_execute',
+        arguments: { code, timeoutMs: 120_000 }
+      })
+    )
+  )
+
+const controlResultValue = (execution) => {
+  if (execution?.status !== 'completed') {
+    throw new Error(`Control REPL execution failed: ${JSON.stringify(execution)}`)
+  }
+  const text = execution.outputs
+    ?.map((output) => output?.data?.['text/plain'])
+    .find((value) => typeof value === 'string')
+  if (typeof text !== 'string') {
+    throw new Error(`Control REPL returned no display value: ${JSON.stringify(execution)}`)
+  }
+  return JSON.parse(text)
+}
+
+const runProductionDelegationRequest = async (sessionId, request, wait) =>
+  executeControlCode(
+    sessionId,
+    `return await host.delegate(${JSON.stringify(request)}, { wait: ${String(wait)} })`
+  )
+
+const runProductionDelegation = async (sessionId, task, name, wait) =>
+  runProductionDelegationRequest(sessionId, { task, name }, wait)
+
+const runProductionTimedDelegationRequest = async (sessionId, request) =>
+  executeControlCode(
+    sessionId,
+    `return await host.delegate(${JSON.stringify(request)}, { timeout_seconds: 0 })`
+  )
+
+const waitForSessionCancellation = (sessionId) =>
+  new Promise((resolve) => {
+    sessionCancellationResolvers.set(sessionId, resolve)
+  })
+
+const captureDelegatedHandoff = async (sessionId, task) => {
+  const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+  if (!captureRoot) throw new Error('The delegated handoff capture root is unavailable.')
+  const route = sessionRoutes.get(sessionId)
+  const currentRunFile = route?.artifactCurrentRunFile
+  if (!currentRunFile)
+    throw new Error('The delegated Artifact handoff was not routed to the Agent.')
+  await mkdir(captureRoot, { recursive: true })
+  const delegateName = task.includes(DELEGATED_BRANCH_B_TASK_TWO)
+    ? DELEGATED_BRANCH_B_NAME_TWO
+    : task.includes(DELEGATED_BRANCH_B_TASK)
+      ? DELEGATED_BRANCH_B_NAME
+      : task.includes(DELEGATED_BRANCH_A_TASK)
+        ? DELEGATED_BRANCH_A_NAME
+        : task.includes(DELEGATED_WAIT_TASK_TWO)
+          ? DELEGATED_WAIT_NAME_TWO
+          : task.includes(DELEGATED_WAIT_TASK)
+            ? DELEGATED_WAIT_NAME
+            : task
+  const captureKey = Buffer.from(delegateName).toString('base64url')
+  const sabotagePlan = join(captureRoot, `${captureKey}.sabotage`)
+  const shouldSabotage = await readFile(sabotagePlan, 'utf8')
+    .then(() => true)
+    .catch(() => false)
+  if (!shouldSabotage) return
+  await rm(sabotagePlan, { force: true })
+  await writeFile(
+    join(captureRoot, `${captureKey}.json`),
+    JSON.stringify({ executionId: route.artifactExecutionId, handoffPath: currentRunFile })
+  )
+}
+
+const captureProviderPrompt = async (sessionId, prompt) => {
+  const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
+  if (!captureRoot) return
+  await mkdir(captureRoot, { recursive: true })
+  await appendFile(
+    join(captureRoot, 'provider-prompts.jsonl'),
+    `${JSON.stringify({
+      sessionId,
+      role: sessionRoutes.get(sessionId)?.artifactCurrentRunFile ? 'delegate' : 'main',
+      prompt
+    })}\n`,
+    'utf8'
+  )
 }
 
 const verifyProviderBridge = () => {
@@ -175,18 +422,22 @@ if (process.argv.includes('--version')) {
       authMethods: []
     }))
     .onRequest(acp.methods.agent.authenticate, () => ({}))
-    .onRequest(acp.methods.agent.session.new, (context) => {
+    .onRequest(acp.methods.agent.session.new, async (context) => {
       const sessionId = `e2e-session-${nextSessionId++}`
+      const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
-        mcpServers: context.params.mcpServers ?? []
+        mcpServers,
+        ...(await delegatedArtifactHandoff(mcpServers))
       })
       return { sessionId }
     })
-    .onRequest(acp.methods.agent.session.resume, (context) => {
+    .onRequest(acp.methods.agent.session.resume, async (context) => {
+      const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(context.params.sessionId, {
         cwd: context.params.cwd,
-        mcpServers: context.params.mcpServers ?? []
+        mcpServers,
+        ...(await delegatedArtifactHandoff(mcpServers))
       })
       return {}
     })
@@ -194,10 +445,45 @@ if (process.argv.includes('--version')) {
       const prompt = context.params.prompt
         .map((content) => (content.type === 'text' ? content.text : ''))
         .join('')
+      await captureProviderPrompt(context.params.sessionId, prompt)
+
+      if (prompt.includes(DELEGATED_WAIT_MARKER)) {
+        await captureDelegatedHandoff(
+          context.params.sessionId,
+          prompt.includes(DELEGATED_BRANCH_B_TASK_TWO) ? DELEGATED_BRANCH_B_TASK_TWO : prompt
+        )
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
+
+      if (prompt.includes(DELEGATION_STOP_PROMPT)) {
+        await runProductionDelegationRequest(
+          context.params.sessionId,
+          [
+            { task: DELEGATED_WAIT_TASK, name: DELEGATED_WAIT_NAME },
+            { task: DELEGATED_WAIT_TASK_TWO, name: DELEGATED_WAIT_NAME_TWO }
+          ],
+          false
+        )
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${nextMessageId++}`,
+            content: { type: 'text', text: 'Production delegation is running.' }
+          }
+        })
+        await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: 'cancelled' }
+      }
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
+        if (
+          await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
+        ) {
+          reply = ''
+        } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
@@ -227,6 +513,493 @@ if (process.argv.includes('--version')) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           reply = await createProvenanceArtifact(context.params.sessionId)
+        } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
+          const delegated = await runProductionDelegation(
+            context.params.sessionId,
+            DELEGATED_TERMINAL_TASK,
+            DELEGATED_TERMINAL_NAME,
+            true
+          )
+          if (delegated.status !== 'completed') {
+            throw new Error(`Production delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Production delegation reached a terminal result.'
+        } else if (prompt.includes(DELEGATION_BOUNDED_COLLECT_PROMPT)) {
+          const dispatched = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeout_seconds: 1 }); return globalThis.s2Pending`
+            )
+          )
+          if (
+            dispatched.kind !== 'observations' ||
+            dispatched.children.length !== 2 ||
+            dispatched.children[0].status !== 'completed' ||
+            dispatched.children[1].status !== 'running' ||
+            Object.hasOwn(dispatched.children[1], 'artifacts_created')
+          ) {
+            throw new Error(`Timed delegate observation failed: ${JSON.stringify(dispatched)}`)
+          }
+          reply = 'Production bounded delegate returned while a Subagent kept running.'
+        } else if (prompt.includes(DELEGATION_BOUNDED_RECOLLECT_PROMPT)) {
+          const terminal = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frame_id: slow.frame_id, attempt_id: slow.attempt_id }], { timeout_seconds: 30 })`
+            )
+          )
+          if (terminal.length !== 1 || terminal[0].status !== 'completed') {
+            throw new Error(`Bounded terminal recollect failed: ${JSON.stringify(terminal)}`)
+          }
+          reply = 'Production bounded collect journey completed.'
+        } else if (prompt.includes(DELEGATION_PERMISSION_PROMPT)) {
+          await runProductionDelegation(
+            context.params.sessionId,
+            DELEGATED_PERMISSION_TASK,
+            DELEGATED_PERMISSION_TASK,
+            true
+          )
+          reply = 'Production delegated permission journey completed.'
+        } else if (prompt.includes(DELEGATION_USER_QUESTION_PROMPT)) {
+          await runProductionDelegation(
+            context.params.sessionId,
+            DELEGATED_USER_QUESTION_TASK,
+            DELEGATED_USER_QUESTION_NAME,
+            false
+          )
+          await runProductionDelegation(
+            context.params.sessionId,
+            DELEGATED_USER_QUESTION_TASK_TWO,
+            DELEGATED_USER_QUESTION_NAME_TWO,
+            false
+          )
+          reply = 'Production delegated user question is pending.'
+        } else if (prompt.includes(DELEGATION_BRANCH_A_PROMPT)) {
+          await runProductionTimedDelegationRequest(context.params.sessionId, {
+            task: DELEGATED_BRANCH_A_TASK,
+            name: DELEGATED_BRANCH_A_NAME
+          })
+          reply = 'Inactive branch child A is running.'
+        } else if (prompt.includes(DELEGATION_BRANCH_B_PROMPT)) {
+          await runProductionTimedDelegationRequest(context.params.sessionId, [
+            { task: DELEGATED_BRANCH_B_TASK, name: DELEGATED_BRANCH_B_NAME },
+            { task: DELEGATED_BRANCH_B_TASK_TWO, name: DELEGATED_BRANCH_B_NAME_TWO }
+          ])
+          reply = 'Active branch children B1 and B2 are running.'
+        } else if (prompt.includes(DELEGATION_UNAVAILABLE_PROMPT)) {
+          const delegated = await executeControlCode(
+            context.params.sessionId,
+            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`
+          )
+          if (delegated.status !== 'failed') {
+            throw new Error(`Unsupported delegation was admitted: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Subagents are unavailable for this session configuration.'
+        } else if (prompt.includes(DELEGATION_INHERITED_SPECIALIST_PROMPT)) {
+          const delegated = controlResultValue(
+            await runProductionDelegation(
+              context.params.sessionId,
+              DELEGATED_TERMINAL_TASK,
+              DELEGATED_INHERITED_SPECIALIST_NAME,
+              true
+            )
+          )
+          if (
+            delegated.kind !== 'results' ||
+            delegated.children?.[0]?.status !== 'completed' ||
+            delegated.children?.[0]?.agent_name !== 'Release Specialist'
+          ) {
+            throw new Error(`Inherited Specialist delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Production inherited Specialist delegation completed.'
+        } else if (prompt.includes(RELIABLE_MESSAGING_PROMPT)) {
+          const dispatched = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              { task: DELEGATED_RELIABLE_MESSAGING_TASK, name: DELEGATED_RELIABLE_MESSAGING_TASK },
+              false
+            )
+          )
+          const child = dispatched.children?.[0]
+          if (!child?.frame_id || !child?.attempt_id) {
+            throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
+          }
+          reliableMessagingChildren.set(context.params.sessionId, child.frame_id)
+          const downward = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const sent = await host.send_frame_message(${JSON.stringify(child.frame_id)}, ${JSON.stringify(RELIABLE_CHILD_DIRECTIVE)}, { kind: "info", request_id: "e2e-main-to-child" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 30 })`
+            )
+          )
+          if (downward.status !== 'accepted' || downward.direction !== 'to_child') {
+            throw new Error(`Reliable downward delivery failed: ${JSON.stringify(downward)}`)
+          }
+          reply = 'Production reliable downward message was accepted.'
+        } else if (prompt.includes(RELIABLE_BRANCH_PARK_PROMPT)) {
+          await runProductionDelegationRequest(
+            context.params.sessionId,
+            { task: DELEGATED_RELIABLE_PARK_TASK, name: DELEGATED_RELIABLE_PARK_TASK },
+            false
+          )
+          await delay(500)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${nextMessageId++}`,
+              content: { type: 'text', text: 'Branch park upward message queued.' }
+            }
+          })
+          await delay(2_000)
+          reply = 'Reliable branch park source turn completed.'
+        } else if (prompt.includes(RELIABLE_BRANCH_WAKE_PROMPT)) {
+          const receipt = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return await host.message_receipt("e2e-child-park", { timeout_seconds: 0 })`
+            )
+          )
+          if (receipt.status !== 'queued') {
+            throw new Error(
+              `Reliable parked receipt changed before wake: ${JSON.stringify(receipt)}`
+            )
+          }
+          reply = 'Reliable branch wake admitted.'
+        } else if (prompt.includes(RELIABLE_FAILURE_PROMPT)) {
+          await runProductionDelegationRequest(
+            context.params.sessionId,
+            { task: DELEGATED_RELIABLE_FAILURE_TASK, name: DELEGATED_RELIABLE_FAILURE_NAME },
+            false
+          )
+          await delay(500)
+          reply = 'Reliable post-fence source turn completed.'
+        } else if (prompt.includes(RELIABLE_FAILURE_OBSERVE_PROMPT)) {
+          const messageId = prompt.match(/Message ID (message-[a-f0-9]+)/u)?.[1]
+          if (!messageId) throw new Error('Reliable post-fence Message identity is unavailable.')
+          const receipt = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return await host.message_receipt(${JSON.stringify(messageId)}, { timeout_seconds: 0 })`
+            )
+          )
+          if (receipt.status !== 'uncertain') {
+            throw new Error(`Post-fence recovery was not uncertain: ${JSON.stringify(receipt)}`)
+          }
+          reply = 'Reliable post-fence uncertainty recovered.'
+        } else if (prompt.includes(RELIABLE_FAIRNESS_PROMPT)) {
+          await runProductionDelegationRequest(
+            context.params.sessionId,
+            [
+              {
+                task: DELEGATED_RELIABLE_FAIRNESS_TASK_A,
+                name: DELEGATED_RELIABLE_FAIRNESS_TASK_A
+              },
+              { task: DELEGATED_RELIABLE_FAIRNESS_TASK_B, name: DELEGATED_RELIABLE_FAIRNESS_TASK_B }
+            ],
+            false
+          )
+          await delay(700)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${nextMessageId++}`,
+              content: { type: 'text', text: 'Two upward lanes are queued.' }
+            }
+          })
+          await delay(1_500)
+          reply = 'Reliable fairness source turn completed.'
+        } else if (prompt.includes(SUBAGENT_MODEL_BATCH_PROMPT)) {
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              [
+                {
+                  task: `${DELEGATED_TERMINAL_TASK} batch A`,
+                  name: 'Certified terminal batch A'
+                },
+                {
+                  task: `${DELEGATED_TERMINAL_TASK} batch B`,
+                  name: 'Certified terminal batch B'
+                }
+              ],
+              true
+            )
+          )
+          if (
+            delegated.kind !== 'results' ||
+            delegated.children?.length !== 2 ||
+            delegated.children.some((child) => child.status !== 'completed')
+          ) {
+            throw new Error(`Subagent model batch failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Subagent model batch completed.'
+        } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_START_PROMPT)) {
+          const delegated = controlResultValue(
+            await runProductionDelegation(
+              context.params.sessionId,
+              DELEGATED_TERMINAL_TASK,
+              DELEGATED_MODEL_CONTINUATION_NAME,
+              true
+            )
+          )
+          const child = delegated.children?.[0]
+          if (delegated.kind !== 'results' || child?.status !== 'completed') {
+            throw new Error(`Subagent model initial Attempt failed: ${JSON.stringify(delegated)}`)
+          }
+          globalThis.subagentModelContinuationFrameId = child.frame_id
+          reply = 'Subagent model initial Attempt completed.'
+        } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT)) {
+          const frameId = globalThis.subagentModelContinuationFrameId
+          if (!frameId) throw new Error('Subagent model continuation Frame was not captured.')
+          const continued = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const receipt = await host.send_frame_message(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frame_id: receipt.target_frame_id, attempt_id: receipt.continuation_attempt_id }], { timeout_seconds: 30 })`
+            )
+          )
+          if (continued.length !== 1 || continued[0].status !== 'completed') {
+            throw new Error(`Subagent model continuation failed: ${JSON.stringify(continued)}`)
+          }
+          reply = 'Subagent model continuation completed.'
+        } else if (prompt.includes(SUBAGENT_MODEL_UNAVAILABLE_PROMPT)) {
+          const delegated = await executeControlCode(
+            context.params.sessionId,
+            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })'
+          )
+          if (delegated.status !== 'failed') {
+            throw new Error(`Unavailable Subagent model was admitted: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Unavailable Subagent model rejected the whole batch.'
+        } else if (prompt.includes(SUBAGENT_MODEL_INHERITED_PROMPT)) {
+          const delegated = await runProductionDelegation(
+            context.params.sessionId,
+            'Complete the inherited Subagent model fixture.',
+            'Inherited Subagent model fixture',
+            true
+          )
+          if (delegated.status !== 'completed') {
+            throw new Error(`Inherited Subagent model failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Inherited Subagent model completed.'
+        } else if (prompt.includes(SUBAGENT_MODEL_HOLDER_PROMPT)) {
+          reply = 'Global Active model holder completed.'
+        } else if (prompt.includes(DELEGATION_STRUCTURED_OUTPUT_PROMPT)) {
+          const delegated = controlResultValue(
+            await runProductionDelegationRequest(
+              context.params.sessionId,
+              {
+                task: DELEGATED_STRUCTURED_OUTPUT_TASK,
+                name: DELEGATED_STRUCTURED_OUTPUT_TASK,
+                output_schema: {
+                  type: 'object',
+                  required: ['count'],
+                  properties: { count: { type: 'number' } },
+                  additionalProperties: false
+                }
+              },
+              true
+            )
+          )
+          const child = delegated.children?.[0]
+          if (
+            delegated.kind !== 'results' ||
+            child?.status !== 'completed' ||
+            child.response !== 'Structured child completed.' ||
+            child.structured_output?.count !== 3 ||
+            child.structured_output_unsatisfied !== false ||
+            child.artifacts_created?.length !== 1
+          ) {
+            throw new Error(`Structured delegation failed: ${JSON.stringify(delegated)}`)
+          }
+          reply = 'Production structured output journey completed.'
+        } else if (prompt.includes(DELEGATED_STRUCTURED_OUTPUT_TASK)) {
+          const submission = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `let invalid = false; try { await host.submit_output({ count: "three" }) } catch { invalid = true }; const receipt = await host.submit_output({ count: 3 }); return { invalid, receipt }`
+            )
+          )
+          if (!submission.invalid || submission.receipt?.accepted !== true) {
+            throw new Error(`Structured submit contract failed: ${JSON.stringify(submission)}`)
+          }
+          await createProvenanceArtifact(context.params.sessionId)
+          reply = 'Structured child completed.'
+        } else if (prompt.includes(DELEGATED_RELIABLE_MESSAGING_TASK)) {
+          await delay(250)
+          const upward = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const sent = await host.send_frame_message("parent", "Child reliable question reached Main", { kind: "question", request_id: "e2e-child-to-main" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 0 })`
+            )
+          )
+          if (upward.status !== 'queued' || upward.direction !== 'to_parent') {
+            throw new Error(`Reliable upward admission failed: ${JSON.stringify(upward)}`)
+          }
+          reply = 'Child sent a reliable question.'
+        } else if (prompt.includes(DELEGATED_RELIABLE_PARK_TASK)) {
+          const upward = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `return await host.send_frame_message("parent", "Parked reliable child question", { kind: "question", request_id: "e2e-child-park" })`
+            )
+          )
+          if (upward.status !== 'queued') {
+            throw new Error(`Reliable parked admission failed: ${JSON.stringify(upward)}`)
+          }
+          reply = 'Child queued a branch-bound reliable question.'
+        } else if (prompt.includes(DELEGATED_RELIABLE_FAILURE_TASK)) {
+          await executeControlCode(
+            context.params.sessionId,
+            `return await host.send_frame_message("parent", "Trigger reliable post-fence persistence failure", { kind: "info", request_id: "e2e-child-post-fence" })`
+          )
+          reply = 'Child queued a post-fence reliable message.'
+        } else if (
+          prompt.includes(DELEGATED_RELIABLE_FAIRNESS_TASK_A) ||
+          prompt.includes(DELEGATED_RELIABLE_FAIRNESS_TASK_B)
+        ) {
+          const suffix = prompt.includes(DELEGATED_RELIABLE_FAIRNESS_TASK_B) ? 'B' : 'A'
+          await executeControlCode(
+            context.params.sessionId,
+            `return await host.send_frame_message("parent", "Reliable fairness child ${suffix}", { request_id: "e2e-fairness-${suffix.toLowerCase()}" })`
+          )
+          reply = `Child ${suffix} queued its reliable fairness message.`
+        } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
+          reply = 'Child received the reliable Main directive.'
+        } else if (prompt.includes('Child reliable question reached Main')) {
+          const childFrameId = reliableMessagingChildren.get(context.params.sessionId)
+          if (!childFrameId) throw new Error('Reliable messaging child Frame was not retained.')
+          const answered = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              `const sent = await host.send_frame_message(${JSON.stringify(childFrameId)}, "Main answered the reliable child question", { kind: "info", request_id: "e2e-main-reply-to-child" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 30 })`
+            )
+          )
+          if (answered.status !== 'accepted' || answered.direction !== 'to_child') {
+            throw new Error(`Reliable root continuation reply failed: ${JSON.stringify(answered)}`)
+          }
+          reply = 'Main replied to the reliable child question from the root continuation.'
+        } else if (prompt.includes('Main answered the reliable child question')) {
+          reply = 'Child received the reliable root continuation reply.'
+        } else if (prompt.includes('Parked reliable child question')) {
+          reply = 'Main rendered the parked child question after branch restoration.'
+        } else if (prompt.includes('Trigger reliable post-fence persistence failure')) {
+          const restoreWrites = await suspendSessionWrites()
+          try {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${nextMessageId++}`,
+                content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
+              }
+            })
+            await delay(1_000)
+          } finally {
+            await restoreWrites()
+          }
+          reply = 'Persistence sabotage released.'
+        } else if (prompt.includes('Reliable fairness child A')) {
+          reply = 'Main rendered reliable fairness child A.'
+        } else if (prompt.includes('Reliable fairness child B')) {
+          reply = 'Main rendered reliable fairness child B.'
+        } else if (prompt.includes(RELIABLE_FAIRNESS_USER_PROMPT)) {
+          reply = 'Concurrent real user prompt completed.'
+        } else if (prompt.includes(DELEGATED_BOUNDED_SLOW_TASK)) {
+          await new Promise((resolve) => setTimeout(resolve, 3_000))
+          reply = 'Delayed bounded child completed.'
+        } else if (prompt.includes(DELEGATED_PERMISSION_TASK)) {
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall: {
+                toolCallId: 'e2e-delegated-permission-tool',
+                title: 'Read delegated evidence'
+              },
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          reply =
+            permission.outcome.outcome === 'selected' &&
+            permission.outcome.optionId === 'allow-once'
+              ? 'Delegated permission allowed.'
+              : 'Delegated permission denied.'
+        } else if (prompt.includes(DELEGATED_USER_QUESTION_TASK_TWO)) {
+          const asked = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) =>
+              toolResult(
+                'ask_user_question',
+                await client.callTool({
+                  name: 'ask_user_question',
+                  arguments: {
+                    questions: [
+                      {
+                        header: 'Citations',
+                        question: 'Which citation style should the reviewer use?',
+                        options: [
+                          { label: 'Inline', description: 'Place citations in the prose.' },
+                          { label: 'Footnotes', description: 'Place citations in footnotes.' }
+                        ]
+                      }
+                    ]
+                  }
+                })
+              )
+          )
+          if (asked.action !== 'pending') {
+            throw new Error(`Delegated question was not parked: ${JSON.stringify(asked)}`)
+          }
+          reply = 'Delegated citation question requested.'
+        } else if (prompt.includes(DELEGATED_USER_QUESTION_TASK)) {
+          const asked = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) =>
+              toolResult(
+                'ask_user_question',
+                await client.callTool({
+                  name: 'ask_user_question',
+                  arguments: {
+                    questions: [
+                      {
+                        header: 'Scope',
+                        question: 'Which evidence scope should the researcher use?',
+                        options: [
+                          { label: 'Focused', description: 'Use the primary cohort only.' },
+                          { label: 'Broad', description: 'Include exploratory cohorts.' }
+                        ]
+                      },
+                      {
+                        header: 'Format',
+                        question: 'Which result format should the researcher return?',
+                        options: [
+                          { label: 'Table', description: 'Return a compact table.' },
+                          { label: 'Narrative', description: 'Return concise prose.' }
+                        ]
+                      }
+                    ]
+                  }
+                })
+              )
+          )
+          if (asked.action !== 'pending') {
+            throw new Error(`Delegated question was not parked: ${JSON.stringify(asked)}`)
+          }
+          reply = 'Delegated question requested.'
+        } else if (prompt.includes('The user answered your delegated questions:')) {
+          if (prompt.includes('Answer: Footnotes')) {
+            reply = 'Delegated citation continuation completed.'
+          } else if (!prompt.includes('Answer: Focused') || !prompt.includes('Answer: Narrative')) {
+            throw new Error(`Delegated answers did not reach the continuation: ${prompt}`)
+          } else {
+            reply = 'Delegated answer continuation completed.'
+          }
         } else if (prompt.includes(PERMISSION_PROMPT)) {
           const permission = await context.client.request(
             acp.methods.client.session.requestPermission,
@@ -263,7 +1036,11 @@ if (process.argv.includes('--version')) {
 
       return { stopReason: 'end_turn' }
     })
-    .onNotification(acp.methods.agent.session.cancel, () => undefined)
+    .onNotification(acp.methods.agent.session.cancel, (context) => {
+      const resolve = sessionCancellationResolvers.get(context.params.sessionId)
+      sessionCancellationResolvers.delete(context.params.sessionId)
+      resolve?.()
+    })
     .onRequest(acp.methods.agent.session.close, () => ({}))
 
   const connection = app.connect(

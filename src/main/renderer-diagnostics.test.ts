@@ -30,6 +30,45 @@ describe('createRendererFailureReporter', () => {
     })
   })
 
+  it('records an allowlisted handled-error context', () => {
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() } })
+
+    expect(
+      reporter.report('renderer-a', {
+        source: 'handled-error',
+        surface: 'unknown',
+        errorCategory: 'error',
+        context: 'session-save',
+        fingerprint: 'a1b2c3d4'
+      })
+    ).toBe('recorded')
+    expect(error).toHaveBeenCalledWith('renderer javascript failure', {
+      source: 'handled-error',
+      surface: 'unknown',
+      errorCategory: 'error',
+      context: 'session-save',
+      fingerprint: 'a1b2c3d4'
+    })
+  })
+
+  it('rejects a free-form handled-error context', () => {
+    const error = vi.fn()
+    const warn = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn } })
+
+    expect(
+      reporter.report('renderer-a', {
+        source: 'handled-error',
+        surface: 'unknown',
+        errorCategory: 'error',
+        context: '/Users/private/project/session-save',
+        fingerprint: 'a1b2c3d4'
+      })
+    ).toBe('rejected')
+    expect(error).not.toHaveBeenCalled()
+  })
+
   it('rejects renderer payloads that contain fields outside the diagnostics contract', () => {
     const error = vi.fn()
     const warn = vi.fn()

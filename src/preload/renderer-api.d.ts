@@ -1,5 +1,6 @@
 import type {
   AcpCancelPromptRequest,
+  AcpAgentRuntimeUpdate,
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
@@ -187,6 +188,7 @@ import type {
 import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
+  LoadSessionRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
@@ -222,6 +224,7 @@ import type {
   SetDefaultPermissionProfileRequest,
   SetAppIconVariantRequest,
   SetReasoningEffortRequest,
+  SetSubagentModelRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   AppIconPreview,
@@ -390,6 +393,7 @@ export interface OpenScienceAPI {
     setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot>
     revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
+    onAgentRuntimeUpdate(listener: AcpListener<AcpAgentRuntimeUpdate>): RemoveListener
     onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
   }
@@ -413,6 +417,7 @@ export interface OpenScienceAPI {
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>
+    loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
     saveSession(
       session: PersistedChatSession,
       options?: SaveSessionOptions
@@ -447,6 +452,8 @@ export interface OpenScienceAPI {
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
+    setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
+    onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     setConversationSkillImportEnabled(
       request: SetConversationSkillImportEnabledRequest

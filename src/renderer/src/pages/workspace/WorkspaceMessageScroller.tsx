@@ -7,13 +7,22 @@ import {
 } from '@/components/ui/message-scroller'
 import {
   usePreviewWorkbenchStore,
-  createSessionReviewerPreviewItem
+  createSessionReviewerPreviewItem,
+  createSessionSubagentsPreviewItem
 } from '@/stores/preview-workbench-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
-import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode
+} from 'react'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -38,8 +47,12 @@ import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import type { ArtifactMentionPart } from './WorkspaceMessageItem'
+import { useWorkspaceArtifactVisibility, type MessageArtifact } from './WorkspaceArtifactVisibility'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
-import { createConversationItems } from './workspace-conversation-items'
+import {
+  createConversationItems,
+  resolveTurnTerminalAgentMessageIds
+} from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -52,20 +65,17 @@ import type {
 import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
-import { MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../../../shared/artifacts'
-import {
-  createArtifactVersionLocator,
-  type ArtifactVersionDescriptor
-} from '../../../../shared/artifact-provenance'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
+import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
@@ -82,12 +92,6 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
-type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
-  // A copied message owns no artifact metadata. Resolver results retain the Version's real owner so
-  // the preview locator continues to address immutable source bytes rather than the new Session.
-  resolvedProjectId?: string
-  resolvedSessionId?: string
-}
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
 const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
@@ -145,37 +149,6 @@ const findDurablePlanOwnerActivityId = (
   return ordered.at(-1)?.id
 }
 
-// Resolves a message's artifact ids against the session-level artifact metadata store.
-const getMessageArtifacts = (
-  session: ChatSession,
-  message: ChatSession['messages'][number],
-  resolvedArtifactsByVersionId?: ReadonlyMap<string, MessageArtifact | undefined>
-): MessageArtifact[] => {
-  if (!message.artifactIds) return []
-
-  const artifactsById = new Map(
-    (session.artifacts ?? []).map((artifact) => [artifact.id, artifact as MessageArtifact])
-  )
-  const artifactsByLogicalId = new Map<string, MessageArtifact>()
-
-  for (const artifactId of message.artifactIds) {
-    const artifact = artifactsById.get(artifactId) ?? resolvedArtifactsByVersionId?.get(artifactId)
-    if (!artifact) continue
-
-    const logicalId = artifact.versionId
-      ? `version:${artifact.versionId}`
-      : `artifact:${artifact.id}`
-    const current = artifactsByLogicalId.get(logicalId)
-    const isNativeVersion = Boolean(artifact.versionId && artifact.id === artifact.versionId)
-    const currentIsNativeVersion = Boolean(current?.versionId && current.id === current.versionId)
-    if (!current || (isNativeVersion && !currentIsNativeVersion)) {
-      artifactsByLogicalId.set(logicalId, artifact)
-    }
-  }
-
-  return Array.from(artifactsByLogicalId.values())
-}
-
 // Sends an app-managed generated file to the preview workbench instead of opening it locally.
 const previewArtifact = (
   artifact: MessageArtifact,
@@ -190,136 +163,6 @@ const previewArtifact = (
 
   // Generated files keep their artifact id so repeated clicks refresh the existing preview tab.
   if (previewItem) usePreviewWorkbenchStore.getState().upsertAndActivateItem(previewItem)
-}
-
-const isSafeVersionId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
-
-const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): MessageArtifact => ({
-  id: descriptor.versionId,
-  artifactId: descriptor.artifactId,
-  versionId: descriptor.versionId,
-  versionNumber: descriptor.versionNumber,
-  kind: 'managed-file',
-  path: createArtifactVersionLocator({
-    projectId: descriptor.projectName,
-    appSessionId: descriptor.sessionId,
-    artifactId: descriptor.artifactId,
-    versionId: descriptor.versionId
-  }),
-  name: descriptor.name,
-  mimeType: descriptor.mimeType,
-  size: descriptor.size,
-  mtimeMs: descriptor.mtimeMs,
-  sha256: descriptor.checksum,
-  resolvedProjectId: descriptor.projectName,
-  resolvedSessionId: descriptor.sessionId
-})
-
-// Historical branch snapshots deliberately omit session.artifacts. Resolve only the Version ids
-// their copied messages reference, cache the results for this mount, and leave legacy identifiers
-// on the existing session-metadata path.
-const useHistoricalArtifactDescriptors = (
-  activeSession: ChatSession | undefined
-): ReadonlyMap<string, MessageArtifact | undefined> => {
-  const resolvedRef = useRef<{
-    sessionId: string | undefined
-    artifactsByVersionId: Map<string, MessageArtifact | undefined>
-  }>({ sessionId: undefined, artifactsByVersionId: new Map() })
-  const [resolved, setResolved] = useState<{
-    sessionId: string | undefined
-    artifactsByVersionId: ReadonlyMap<string, MessageArtifact | undefined>
-  }>({ sessionId: undefined, artifactsByVersionId: new Map() })
-  const [retryToken, setRetryToken] = useState(0)
-  const retriedVersionIdsRef = useRef(new Set<string>())
-  const mountedRef = useRef(false)
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    const sessionId = activeSession?.id
-    if (resolvedRef.current.sessionId !== sessionId) {
-      resolvedRef.current = { sessionId, artifactsByVersionId: new Map() }
-      retriedVersionIdsRef.current.clear()
-      setResolved(resolvedRef.current)
-    }
-    if (!activeSession || typeof window.api?.artifacts?.resolveVersionDescriptors !== 'function') {
-      return
-    }
-
-    const cache = resolvedRef.current.artifactsByVersionId
-    const storedArtifactIds = new Set(
-      (activeSession.artifacts ?? []).map((artifact) => artifact.id)
-    )
-    const unresolvedVersionIds = [
-      ...new Set(activeSession.messages.flatMap((message) => message.artifactIds ?? []))
-    ].filter(
-      (versionId) =>
-        !storedArtifactIds.has(versionId) && !cache.has(versionId) && isSafeVersionId(versionId)
-    )
-    if (unresolvedVersionIds.length === 0) return
-
-    // Claim ids before the first await so a rerender/StrictMode pass cannot issue duplicate IPC.
-    for (const versionId of unresolvedVersionIds) cache.set(versionId, undefined)
-
-    void (async () => {
-      for (
-        let index = 0;
-        index < unresolvedVersionIds.length;
-        index += MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS
-      ) {
-        const versionIds = unresolvedVersionIds.slice(
-          index,
-          index + MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS
-        )
-        try {
-          const descriptors = await window.api.artifacts.resolveVersionDescriptors({
-            projectId: activeSession.projectId,
-            appSessionId: activeSession.id,
-            versionIds
-          })
-          for (const descriptor of descriptors) {
-            cache.set(descriptor.versionId, toResolvedMessageArtifact(descriptor))
-          }
-        } catch {
-          // Failed lookups are retryable; only a successful response can confirm a missing Version.
-          let shouldRetry = false
-          for (const versionId of versionIds) {
-            cache.delete(versionId)
-            if (!retriedVersionIdsRef.current.has(versionId)) {
-              retriedVersionIdsRef.current.add(versionId)
-              shouldRetry = true
-            }
-          }
-          if (shouldRetry) {
-            // A freshly bound child can render before its queued Session save establishes ownership
-            // in main. Retry only after that persistence queue settles instead of racing a timer.
-            await flushSessionPersistence()
-            if (
-              mountedRef.current &&
-              resolvedRef.current.sessionId === sessionId &&
-              resolvedRef.current.artifactsByVersionId === cache
-            ) {
-              setRetryToken((token) => token + 1)
-            }
-          }
-        }
-      }
-      if (
-        mountedRef.current &&
-        resolvedRef.current.sessionId === sessionId &&
-        resolvedRef.current.artifactsByVersionId === cache
-      ) {
-        setResolved({ sessionId, artifactsByVersionId: new Map(cache) })
-      }
-    })()
-  }, [activeSession, retryToken])
-
-  return resolved.sessionId === activeSession?.id ? resolved.artifactsByVersionId : new Map()
 }
 
 // Sends an app-managed uploaded file to the preview workbench.
@@ -400,13 +243,14 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  trailingContent,
   pendingElicitations = [],
   handoffLifecycleSource,
   onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
-  const historicalArtifactsByVersionId = useHistoricalArtifactDescriptors(activeSession)
+  const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
@@ -495,42 +339,13 @@ const WorkspaceMessageScrollerImpl = ({
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
     [activeSession, rawConversationItems]
   )
-  const interruptedPromptMessageId =
-    activeSession?.resumeRecovery?.promptMessageId ??
-    (activeSession?.activeRun &&
-    activeSession.messages.some(
-      (message) =>
-        message.id === activeSession.activeRun?.promptMessageId && message.interrupted === true
-    )
-      ? activeSession.activeRun.promptMessageId
-      : undefined)
   // Assistant text can be split into several messages around tool calls. All fragments share the
   // prompt they respond to, but only the last visible fragment in that turn owns whole-turn metadata.
   // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
-  const assistantFooterMessageIds = useMemo(() => {
-    const footerIds = new Set<string>()
-    const footerIdByPromptMessageId = new Map<string, string>()
-
-    for (const item of conversationItems) {
-      if (item.type !== 'message' || item.message.role !== 'agent') continue
-
-      const promptMessageId = item.message.responseToMessageId
-      if (!promptMessageId) {
-        footerIds.add(item.message.id)
-        continue
-      }
-      // The interrupted user marker owns this turn's terminal state until Resume produces a new
-      // terminal response; partial assistant fragments must not claim completion or failure.
-      if (promptMessageId === interruptedPromptMessageId) continue
-
-      const previousFooterId = footerIdByPromptMessageId.get(promptMessageId)
-      if (previousFooterId) footerIds.delete(previousFooterId)
-      footerIdByPromptMessageId.set(promptMessageId, item.message.id)
-      footerIds.add(item.message.id)
-    }
-
-    return footerIds
-  }, [conversationItems, interruptedPromptMessageId])
+  const assistantFooterMessageIds = useMemo(
+    () => resolveTurnTerminalAgentMessageIds(activeSession?.messages ?? []),
+    [activeSession]
+  )
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
@@ -803,14 +618,7 @@ const WorkspaceMessageScrollerImpl = ({
                 {/* Messages and tool activities share one sorted transcript timeline. */}
                 {conversationItems.map((item, itemIndex) => {
                   if (item.type === 'message') {
-                    const artifacts =
-                      activeSession && item.message.role !== 'user'
-                        ? getMessageArtifacts(
-                            activeSession,
-                            item.message,
-                            historicalArtifactsByVersionId
-                          )
-                        : []
+                    const artifacts = artifactVisibility.artifactsForMessage(item.message)
                     // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                     const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
                     const graph = activeSession?.conversationGraph
@@ -924,6 +732,32 @@ const WorkspaceMessageScrollerImpl = ({
                     )
                   }
 
+                  if (item.type === 'subagent-message') {
+                    return (
+                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                        <div className="px-4 pb-1 pt-3 md:px-6">
+                          <div className="mx-auto w-full max-w-[56rem]">
+                            <WorkspaceSubagentMessageRow
+                              message={item.message}
+                              onOpenSource={() => {
+                                if (!currentSessionId) return
+                                usePreviewWorkbenchStore
+                                  .getState()
+                                  .upsertAndActivateItem(
+                                    createSessionSubagentsPreviewItem(
+                                      currentSessionId,
+                                      currentProjectId,
+                                      item.message.sourceFrameId
+                                    )
+                                  )
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
+
                   if (item.type === 'handoff') {
                     return (
                       <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
@@ -1032,12 +866,15 @@ const WorkspaceMessageScrollerImpl = ({
                   </MessageScrollerItem>
                 ))}
 
+                {trailingContent}
+
                 {isResumingSession && activeSession ? (
                   <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
                 ) : agentLoadingPhase !== 'hidden' && activeSession ? (
                   <WorkspaceAgentLoadingRow
                     sessionId={activeSession.id}
                     phase={agentLoadingPhase}
+                    agentStatus={activeSession.agentStatus}
                   />
                 ) : null}
               </div>
@@ -1102,6 +939,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
   previous.notebookReference?.projectName === next.notebookReference?.projectName &&

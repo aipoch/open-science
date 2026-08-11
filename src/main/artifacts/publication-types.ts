@@ -81,6 +81,8 @@ type ArtifactPublicationStorage = PendingFileTransactionStorage & {
   getMessageDir: (projectName: string, sessionId: string, messageId: string) => string
   readSubdirectoryNames: (directory: string) => Promise<string[]>
   readFileEntries: (directory: string) => Promise<Array<{ name: string }>>
+  isPendingArtifactRunDirectory: (name: string) => boolean
+  cleanupLegacyExecutionHandoffs: (directory: string) => Promise<void>
   readArtifactMetadata: (directory: string, filename: string) => Promise<ArtifactMetadata>
   toPendingRouting: (metadata: ArtifactMetadata) => PendingArtifactVersionRouting | undefined
   moveArtifactMetadata: (

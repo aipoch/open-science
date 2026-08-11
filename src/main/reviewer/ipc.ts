@@ -154,8 +154,15 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // NO Review row created. That lets a caller (e.g. the ReviewerCard "Re-run") release its pending
   // state and leave the turn retriable, instead of us fabricating a non-retriable error review.
   const triggerReview = async (request: ReviewRunRequest): Promise<ReviewRunResult> => {
-    const { sessionId, turnMessageId, scopeTurnMessageId, projectId, mainSessionId, model } =
-      request
+    const {
+      sessionId,
+      turnMessageId,
+      scopeTurnMessageId,
+      evidenceScope,
+      projectId,
+      mainSessionId,
+      model
+    } = request
 
     // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
     // both pass the guard before the key is set. Released on the start-failure paths and, on success,
@@ -271,6 +278,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         sessionId,
         turnMessageId,
         scopeTurnMessageId,
+        evidenceScope,
         projectId,
         mainSessionId,
         model: model ?? '',

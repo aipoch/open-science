@@ -23,6 +23,12 @@ import type {
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import {
+  createLinearConversationGraph,
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
+import { normalizeSessionFile } from '../../../../shared/session-persistence'
+import {
   createInitialGrantedFoldersState,
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
@@ -102,13 +108,25 @@ const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string
   toolKind: 'plan' as const,
   title: 'Plan'
 }))
+const createSessionSubagentsPreviewItem = vi.fn(
+  (sessionId: string, projectId: string | undefined, selectedAgentFrameId: string) => ({
+    id: `tool:${sessionId}:subagents`,
+    sessionId,
+    ...(projectId ? { projectId } : {}),
+    type: 'tool' as const,
+    toolKind: 'subagents' as const,
+    title: 'Subagents',
+    selectedAgentFrameId
+  })
+)
 const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
     getState: () => ({ upsertAndActivateItem })
   },
-  createSessionPlanPreviewItem
+  createSessionPlanPreviewItem,
+  createSessionSubagentsPreviewItem
 }))
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -215,6 +233,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     upsertAndActivateItem.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
     useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    createSessionSubagentsPreviewItem.mockClear()
     announceWindowFindReady.mockClear()
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
@@ -264,6 +283,98 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       root.unmount()
     })
     container.remove()
+  })
+
+  it('opens the exact durable source Frame from an inline upward message', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const rootPrompt = createMessage({
+      id: 'root-prompt',
+      content: 'Gather evidence',
+      createdAt: 100,
+      updatedAt: 100
+    })
+    const session = createSession({
+      id: 'session-inline',
+      projectId: 'project-inline',
+      messages: [rootPrompt]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 100,
+      updatedAt: 100
+    })
+    const graph = session.conversationGraph
+    const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+    graph.frames.push({
+      id: 'source-child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      delegateName: 'Evidence mapper',
+      status: 'running',
+      activeBranchId: 'source-child-branch',
+      createdAt: 110
+    })
+    session.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [],
+        messageCommands: [
+          {
+            messageId: 'upward-message',
+            requestId: 'request-upward',
+            sourcePrincipal: 'child',
+            canonicalDigest: 'digest-upward',
+            sourceFrameId: 'source-child-frame',
+            targetFrameId: graph.rootFrameId,
+            rootOriginMessageId: rootPrompt.id,
+            callerRootMessageId: rootPrompt.id,
+            rootBranchId: rootFrame.activeBranchId,
+            rootBranchRevision: 'revision-1',
+            direction: 'to_parent',
+            disposition: 'message',
+            text: 'Should I include the preprint evidence?',
+            kind: 'question',
+            laneSequence: 1,
+            queuedAt: 120,
+            receipt: {
+              status: 'accepted',
+              acceptedAt: 130,
+              evidence: 'provider_prompt_accepted'
+            }
+          }
+        ]
+      }
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const source = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Subagent preview for Evidence mapper"]'
+    )
+    expect(source).not.toBeNull()
+    await act(async () => source?.click())
+
+    expect(createSessionSubagentsPreviewItem).toHaveBeenCalledWith(
+      'session-inline',
+      'project-inline',
+      'source-child-frame'
+    )
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:session-inline:subagents',
+        selectedAgentFrameId: 'source-child-frame'
+      })
+    )
   })
 
   it('reserves a read-only transcript card while structured input waits below', async () => {
@@ -684,6 +795,629 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       selectedVersionId: 'artifact-version-1',
       versionNumber: 2
     })
+  })
+
+  it('renders a child-owned Version at its restored Notebook delegate invocation without copying root ownership', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer',
+          role: 'agent',
+          content: 'Done',
+          responseToMessageId: 'root-prompt',
+          createdAt: 6,
+          updatedAt: 6
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const rootBefore = structuredClone(graph.messages.find(({ id }) => id === 'root-prompt'))
+    const answerBefore = structuredClone(graph.messages.find(({ id }) => id === 'root-answer'))
+
+    const normalized = normalizeSessionFile(session)!
+    expect(
+      normalized.conversationGraph?.activities.find(({ id }) => id === nestedDelegateInvocationId)
+    ).toMatchObject({
+      title: 'Delegate subagent',
+      promptMessageId: 'root-prompt'
+    })
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The projected child Version renders on the root turn terminal agent message (turn-end),
+    // never as an inline placement under the delegate invocation.
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+    const cards = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Preview generated file child.md"]'
+    )
+    expect(cards).toHaveLength(1)
+    const card = cards[0]
+    expect(graph.messages.find(({ id }) => id === 'root-prompt')).toEqual(rootBefore)
+    expect(graph.messages.find(({ id }) => id === 'root-prompt')?.artifactIds).toBeUndefined()
+    expect(graph.messages.find(({ id }) => id === 'root-answer')).toEqual(answerBefore)
+    expect(graph.messages.find(({ id }) => id === 'root-answer')?.artifactIds).toBeUndefined()
+    await act(async () => card?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    const rootInvocationPreview = upsertAndActivateItem.mock.calls.at(-1)?.[0]
+    expect(rootInvocationPreview).toEqual(
+      expect.objectContaining({
+        artifactId: 'child-artifact',
+        selectedVersionId: 'child-version',
+        path: 'artifact-version:default/session-42/child-artifact/child-version'
+      })
+    )
+
+    const childGraph = structuredClone(normalized.conversationGraph)!
+    childGraph.activeFrameId = 'child-frame'
+    const childSession: ChatSession = {
+      ...rootSession,
+      conversationGraph: childGraph,
+      messages: resolveActiveConversationMessages(childGraph).map((message, index) => ({
+        ...projectConversationMessage(message),
+        sortIndex: index + 1
+      }))
+    }
+    upsertAndActivateItem.mockClear()
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={childSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const childOwnerCard = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview generated file child.md"]'
+    )
+    expect(childOwnerCard).not.toBeNull()
+    await act(async () => childOwnerCard?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(rootInvocationPreview)
+  })
+
+  it('hides a projected child Version while the root turn has no terminal agent message yet', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'running',
+      messages: [createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 })]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The root turn has not produced a terminal agent message yet, so the projected child Version
+    // stays hidden instead of rendering inline under the delegate invocation.
+    expect(container.querySelector('[aria-label="Preview generated file child.md"]')).toBeNull()
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+  })
+
+  it('renders a projected child Version only on the terminal fragment of a multi-fragment root turn', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer-1',
+          role: 'agent',
+          content: 'First fragment',
+          responseToMessageId: 'root-prompt',
+          createdAt: 4,
+          updatedAt: 4
+        }),
+        createMessage({
+          id: 'root-answer-2',
+          role: 'agent',
+          content: 'Final fragment',
+          responseToMessageId: 'root-prompt',
+          createdAt: 8,
+          updatedAt: 8
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The projected child Version renders once, on the terminal root fragment only.
+    const cards = container.querySelectorAll('[aria-label="Preview generated file child.md"]')
+    expect(cards).toHaveLength(1)
+    const footerSurface = container.querySelector(
+      '[data-slot="assistant-message-footer"]'
+    )?.parentElement
+    expect(
+      footerSurface?.querySelector('[aria-label="Preview generated file child.md"]')
+    ).not.toBeNull()
+  })
+
+  it('aggregates projected child Versions from parallel delegates onto the terminal root message', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptorA: ArtifactVersionDescriptor = {
+      id: 'version-1',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child-1.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact-1',
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    const descriptorB: ArtifactVersionDescriptor = {
+      ...descriptorA,
+      id: 'version-2',
+      name: 'child-2.md',
+      artifactId: 'child-artifact-2',
+      versionId: 'version-2',
+      checksum: 'b'.repeat(64)
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi
+      .fn()
+      .mockResolvedValue([descriptorA, descriptorB])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer',
+          role: 'agent',
+          content: 'Done',
+          responseToMessageId: 'root-prompt',
+          createdAt: 9,
+          updatedAt: 9
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const invocations = [
+      {
+        id: 'invoke-1',
+        kind: 'tool' as const,
+        title: 'repl_execute',
+        status: 'completed' as const,
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2,
+        promptMessageId: 'root-prompt'
+      },
+      {
+        id: 'invoke-2',
+        kind: 'tool' as const,
+        title: 'repl_execute',
+        status: 'completed' as const,
+        sortIndex: 2,
+        eventIds: [],
+        createdAt: 5,
+        updatedAt: 5,
+        promptMessageId: 'root-prompt'
+      }
+    ]
+    session.activities = invocations
+    for (const activity of invocations) {
+      graph.activities.push({
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: rootBranch.id,
+        runtimeSegmentId: rootRuntime.id,
+        promptMessageId: 'root-prompt'
+      })
+    }
+    const delegates = [
+      {
+        invocationId: 'invoke-1',
+        frameId: 'child-frame-1',
+        branchId: 'child-branch-1',
+        promptId: 'child-prompt-1',
+        answerId: 'child-answer-1',
+        artifactIds: ['version-1', 'version-1'],
+        startedAt: 3,
+        completedAt: 4
+      },
+      {
+        invocationId: 'invoke-2',
+        frameId: 'child-frame-2',
+        branchId: 'child-branch-2',
+        promptId: 'child-prompt-2',
+        answerId: 'child-answer-2',
+        artifactIds: ['version-2'],
+        startedAt: 6,
+        completedAt: 7
+      }
+    ]
+    for (const delegate of delegates) {
+      graph.frames.push({
+        id: delegate.frameId,
+        parentFrameId: graph.rootFrameId,
+        originMessageId: 'root-prompt',
+        originBindingState: 'validated',
+        kind: 'delegate',
+        status: 'completed',
+        activeBranchId: delegate.branchId,
+        createdAt: delegate.startedAt,
+        completedAt: delegate.completedAt
+      })
+      graph.branches.push({
+        id: delegate.branchId,
+        agentFrameId: delegate.frameId,
+        headMessageId: delegate.answerId,
+        createdAt: delegate.startedAt,
+        updatedAt: delegate.completedAt
+      })
+      graph.messages.push(
+        {
+          id: delegate.promptId,
+          role: 'user',
+          content: 'work',
+          status: 'complete',
+          eventIds: [],
+          delegatedCallerSource: {
+            rootMessageId: 'root-prompt',
+            toolInvocationId: delegate.invocationId
+          },
+          agentFrameId: delegate.frameId,
+          introducedOnBranchId: delegate.branchId,
+          revisionRootMessageId: delegate.promptId,
+          createdAt: delegate.startedAt,
+          updatedAt: delegate.startedAt
+        },
+        {
+          id: delegate.answerId,
+          role: 'agent',
+          content: 'done',
+          status: 'complete',
+          eventIds: [],
+          artifactIds: delegate.artifactIds,
+          responseToMessageId: delegate.promptId,
+          agentFrameId: delegate.frameId,
+          introducedOnBranchId: delegate.branchId,
+          parentMessageId: delegate.promptId,
+          createdAt: delegate.completedAt,
+          updatedAt: delegate.completedAt
+        }
+      )
+    }
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // Both parallel delegates aggregate onto the terminal root message, with exact duplicate
+    // Versions deduplicated.
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+    expect(
+      container.querySelectorAll('[aria-label="Preview generated file child-1.md"]')
+    ).toHaveLength(1)
+    expect(
+      container.querySelectorAll('[aria-label="Preview generated file child-2.md"]')
+    ).toHaveLength(1)
   })
 
   it('shows a resolved copied generated card after the active Session updates during lookup', async () => {

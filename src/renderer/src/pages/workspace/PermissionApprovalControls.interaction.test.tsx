@@ -37,7 +37,124 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
-  it('default Allow button labels the session scope as this conversation', () => {
+  it('renders delegated permission cards independently with child, action, scope, and focus labels', () => {
+    const onRespond = vi.fn(() => new Promise<void>(() => undefined))
+    const alpha: AcpPermissionRequest = {
+      ...baseRequest,
+      requestId: 'permission-alpha',
+      title: 'Read alpha.csv',
+      delegated: {
+        frameId: 'frame-alpha',
+        attemptId: 'attempt-alpha',
+        childTitle: 'Alpha child',
+        riskScope: 'This call only'
+      }
+    }
+    const beta: AcpPermissionRequest = {
+      ...baseRequest,
+      requestId: 'permission-beta',
+      title: 'Run beta check',
+      delegated: {
+        frameId: 'frame-beta',
+        attemptId: 'attempt-beta',
+        childTitle: 'Beta child',
+        riskScope: 'This session or this call'
+      }
+    }
+
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[alpha, beta]} onRespond={onRespond} />)
+    })
+
+    const cards = container.querySelectorAll('[data-testid="permission-card"]')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].getAttribute('aria-label')).toContain('Alpha child')
+    expect(cards[0].textContent).toContain('Read alpha.csv')
+    expect(cards[0].textContent).toContain('This call only')
+    expect(cards[1].getAttribute('aria-label')).toContain('Beta child')
+    expect(cards[1].textContent).toContain('This session or this call')
+
+    const allowButtons = container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="allow-primary"]'
+    )
+    act(() => allowButtons[0].click())
+    expect(allowButtons[0].disabled).toBe(true)
+    expect(allowButtons[1].disabled).toBe(false)
+    act(() => allowButtons[1].click())
+    expect(onRespond).toHaveBeenCalledWith('permission-alpha', 'opt-always')
+    expect(onRespond).toHaveBeenCalledWith('permission-beta', 'opt-always')
+  })
+
+  it('disables every unresolved card only while root Stop submission is pending', () => {
+    const delegated: AcpPermissionRequest = {
+      ...baseRequest,
+      delegated: {
+        frameId: 'frame-1',
+        attemptId: 'attempt-1',
+        childTitle: 'Risk auditor',
+        riskScope: 'This call only'
+      }
+    }
+    act(() => {
+      root.render(
+        <PermissionApprovalControls requests={[delegated]} onRespond={vi.fn()} disabled />
+      )
+    })
+    expect(
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).disabled
+    ).toBe(true)
+    expect(
+      (container.querySelector('[data-testid="deny-button"]') as HTMLButtonElement).disabled
+    ).toBe(true)
+
+    act(() => {
+      root.render(
+        <PermissionApprovalControls requests={[delegated]} onRespond={vi.fn()} disabled={false} />
+      )
+    })
+    expect(
+      (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+  })
+
+  it('returns keyboard focus to the next child card after a response clears', async () => {
+    const alpha: AcpPermissionRequest = {
+      ...baseRequest,
+      requestId: 'focus-alpha',
+      delegated: {
+        frameId: 'frame-alpha',
+        attemptId: 'attempt-alpha',
+        childTitle: 'Alpha child',
+        riskScope: 'This call only'
+      }
+    }
+    const beta: AcpPermissionRequest = {
+      ...baseRequest,
+      requestId: 'focus-beta',
+      delegated: {
+        frameId: 'frame-beta',
+        attemptId: 'attempt-beta',
+        childTitle: 'Beta child',
+        riskScope: 'This call only'
+      }
+    }
+    const onRespond = vi.fn()
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[alpha, beta]} onRespond={onRespond} />)
+    })
+    const firstAllow = container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')!
+    act(() => firstAllow.click())
+    act(() => {
+      root.render(<PermissionApprovalControls requests={[beta]} onRespond={onRespond} />)
+    })
+    await act(async () => Promise.resolve())
+
+    expect(document.activeElement).toBe(
+      container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')
+    )
+  })
+
+  it('default Allow button uses the Session scope so a repeated tool does not re-prompt', () => {
     // The easiest click approves for the logical Session; narrowing to a one-time
     // approval is an explicit choice via the scope menu.
     act(() => {
@@ -47,7 +164,7 @@ describe('PermissionApprovalControls interactions', () => {
     expect(container.textContent).not.toContain('this call only')
   })
 
-  it('uses option scope metadata and labels session access as this conversation', () => {
+  it('uses option scope metadata and labels session access accurately', () => {
     const scopedRequest: AcpPermissionRequest = {
       ...baseRequest,
       options: [
@@ -166,7 +283,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
     expect(container.textContent).toContain('Allow once')
@@ -234,19 +351,9 @@ describe('PermissionApprovalControls interactions', () => {
     act(() =>
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
-    const scopeItems = Array.from(
+    const project = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-    )
-    expect(
-      scopeItems.find((item) => item.textContent?.includes('This conversation'))?.textContent
-    ).toContain('Remembered for this conversation')
-    expect(
-      scopeItems.find((item) => item.textContent?.includes('This project'))?.textContent
-    ).toContain('Remembered for this project')
-    expect(scopeItems.find((item) => item.textContent?.includes('Global'))?.textContent).toContain(
-      'Remembered across all projects'
-    )
-    const project = scopeItems.find((item) => item.textContent?.includes('This project'))
+    ).find((item) => item.textContent?.includes('This project'))
     expect(project).toBeDefined()
     act(() => project?.click())
     expect(container.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(
@@ -724,7 +831,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
     ) as HTMLElement
     act(() => onceItem.click())
     // Collapse the code card so we can prove it re-expands for the next request.

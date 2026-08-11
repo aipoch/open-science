@@ -1,4 +1,5 @@
-import { create } from 'zustand'
+import { create, type StateCreator } from 'zustand'
+import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
@@ -68,7 +69,7 @@ type SessionStore = SessionStoreData &
   }
 
 // Stores all transient workspace conversation state for the renderer process.
-export const useSessionStore = create<SessionStore>((set, get) => ({
+const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, get) => ({
   ...createInitialSessionState(),
 
   // Selects only existing sessions so deleted ids cannot remain active.
@@ -335,4 +336,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       }
     })
   }
-}))
+})
+
+type SessionStoreApi = StoreApi<SessionStore>
+
+export const createSessionStore = (): SessionStoreApi =>
+  createStore<SessionStore>(createSessionStoreInitializer())
+
+export const useSessionStore = create<SessionStore>(createSessionStoreInitializer())
+
+export type { SessionStore, SessionStoreApi }

@@ -36,7 +36,11 @@ describe('llmCall RPC', () => {
       transport: 'tcp',
       hostLlm
     })
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     const response = await call(control.endpoint, control.token, {
       request: 'PING',
@@ -52,7 +56,11 @@ describe('llmCall RPC', () => {
     expect(hostLlmCall.mock.calls[0]?.[0]).toEqual({ request: 'PING' })
     expect(hostLlmCall.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal)
 
-    const agent = await server.issueSessionConnection('trusted-session', 'trusted-project')
+    const agent = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
     const forbidden = await call(agent.endpoint, agent.token, { request: 'PING' })
     expect(forbidden.status).toBe(403)
     await expect(forbidden.json()).resolves.toEqual({
@@ -85,7 +93,11 @@ describe('llmCall RPC', () => {
       transport: 'tcp',
       hostLlm
     })
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
     const controller = new AbortController()
     const request = call(control.endpoint, control.token, { request: 'PING' }, controller.signal)
 

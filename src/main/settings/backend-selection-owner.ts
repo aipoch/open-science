@@ -17,6 +17,7 @@ type ExplicitAgentBackendTarget = Readonly<{
   providerId: string
   model: Readonly<{ kind: 'required'; id: string }> | Readonly<{ kind: 'provider-default' }>
   reasoningEffort: ReasoningEffort
+  resolvedReasoningEffort?: ResolvedReasoningEffort
 }>
 
 type BackendSelectionResolution = Readonly<{
@@ -25,6 +26,7 @@ type BackendSelectionResolution = Readonly<{
   providerId: string
   modelSelection: RuntimeProviderModelSelection
   reasoningEffort: ReasoningEffort
+  resolvedReasoningEffort?: ResolvedReasoningEffort
 }>
 
 type BackendSelectionOwnerOptions = {
@@ -95,7 +97,8 @@ class BackendSelectionOwner {
       frameworkId: target.frameworkId,
       providerId: this.requireProviderId(settings, target.providerId),
       modelSelection,
-      reasoningEffort: target.reasoningEffort
+      reasoningEffort: target.reasoningEffort,
+      resolvedReasoningEffort: target.resolvedReasoningEffort
     })
   }
 

@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import type { ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
+import { normalizeSessionFile } from '../../../../shared/session-persistence'
 import {
   createConversationItems,
   formatActivityTitle,
@@ -33,6 +35,341 @@ const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
 })
 
 describe('workspace conversation items', () => {
+  it('projects each active-branch direct-child upward message once in Main Agent timeline order', () => {
+    const session: ChatSession = {
+      ...baseSession,
+      messages: [
+        {
+          id: 'root-prompt',
+          role: 'user',
+          content: 'Gather evidence',
+          status: 'complete',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 100,
+          updatedAt: 100
+        },
+        {
+          id: 'root-answer',
+          role: 'agent',
+          content: 'Working on it.',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'root-prompt',
+          sortIndex: 3,
+          createdAt: 300,
+          updatedAt: 300
+        }
+      ],
+      conversationGraph: {
+        schemaVersion: 1,
+        rootFrameId: 'root-frame',
+        activeFrameId: 'root-frame',
+        frames: [
+          {
+            id: 'root-frame',
+            originBindingState: 'root',
+            kind: 'root',
+            status: 'running',
+            activeBranchId: 'root-active',
+            createdAt: 100
+          },
+          {
+            id: 'child-frame',
+            parentFrameId: 'root-frame',
+            originMessageId: 'root-prompt',
+            originBindingState: 'validated',
+            kind: 'delegate',
+            delegateName: 'Evidence mapper',
+            status: 'running',
+            activeBranchId: 'child-branch',
+            createdAt: 120
+          },
+          {
+            id: 'nested-frame',
+            parentFrameId: 'child-frame',
+            originMessageId: 'child-prompt',
+            originBindingState: 'validated',
+            kind: 'delegate',
+            delegateName: 'Nested worker',
+            status: 'running',
+            activeBranchId: 'nested-branch',
+            createdAt: 130
+          }
+        ],
+        branches: [
+          {
+            id: 'root-active',
+            agentFrameId: 'root-frame',
+            headMessageId: 'root-answer',
+            createdAt: 100,
+            updatedAt: 300
+          }
+        ],
+        messages: [
+          {
+            id: 'root-prompt',
+            role: 'user',
+            content: 'Gather evidence',
+            status: 'complete',
+            eventIds: [],
+            agentFrameId: 'root-frame',
+            introducedOnBranchId: 'root-active',
+            createdAt: 100,
+            updatedAt: 100
+          },
+          {
+            id: 'root-answer',
+            role: 'agent',
+            content: 'Working on it.',
+            status: 'complete',
+            eventIds: [],
+            responseToMessageId: 'root-prompt',
+            parentMessageId: 'root-prompt',
+            agentFrameId: 'root-frame',
+            introducedOnBranchId: 'root-active',
+            createdAt: 300,
+            updatedAt: 300
+          }
+        ],
+        activities: [],
+        activityGroups: [],
+        runtimeSegments: []
+      },
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [],
+          messageCommands: [
+            {
+              messageId: 'upward-question',
+              requestId: 'request-upward',
+              sourcePrincipal: 'child',
+              canonicalDigest: 'digest-upward',
+              sourceFrameId: 'child-frame',
+              targetFrameId: 'root-frame',
+              rootOriginMessageId: 'root-prompt',
+              callerRootMessageId: 'root-prompt',
+              rootBranchId: 'root-active',
+              rootBranchRevision: 'revision-1',
+              direction: 'to_parent',
+              disposition: 'message',
+              text: 'Should I include the preprint evidence?',
+              kind: 'question',
+              laneSequence: 1,
+              queuedAt: 200,
+              receipt: { status: 'accepted', acceptedAt: 220, evidence: 'provider_prompt_accepted' }
+            },
+            {
+              messageId: 'inactive-message',
+              requestId: 'request-inactive',
+              sourcePrincipal: 'child',
+              canonicalDigest: 'digest-inactive',
+              sourceFrameId: 'child-frame',
+              targetFrameId: 'root-frame',
+              rootOriginMessageId: 'root-prompt',
+              callerRootMessageId: 'root-prompt',
+              rootBranchId: 'root-inactive',
+              rootBranchRevision: 'revision-2',
+              direction: 'to_parent',
+              disposition: 'message',
+              text: 'Inactive',
+              kind: 'info',
+              laneSequence: 2,
+              queuedAt: 210,
+              receipt: { status: 'queued' }
+            },
+            {
+              messageId: 'downward-message',
+              requestId: 'request-downward',
+              sourcePrincipal: 'root',
+              canonicalDigest: 'digest-downward',
+              sourceFrameId: 'root-frame',
+              targetFrameId: 'child-frame',
+              rootOriginMessageId: 'root-prompt',
+              callerRootMessageId: 'root-prompt',
+              rootBranchId: 'root-active',
+              rootBranchRevision: 'revision-1',
+              direction: 'to_child',
+              disposition: 'message',
+              text: 'Downward',
+              kind: 'info',
+              laneSequence: 1,
+              queuedAt: 230,
+              receipt: { status: 'queued' }
+            },
+            {
+              messageId: 'nested-message',
+              requestId: 'request-nested',
+              sourcePrincipal: 'nested',
+              canonicalDigest: 'digest-nested',
+              sourceFrameId: 'nested-frame',
+              targetFrameId: 'root-frame',
+              rootOriginMessageId: 'root-prompt',
+              callerRootMessageId: 'root-prompt',
+              rootBranchId: 'root-active',
+              rootBranchRevision: 'revision-1',
+              direction: 'to_parent',
+              disposition: 'message',
+              text: 'Nested',
+              kind: 'info',
+              laneSequence: 1,
+              queuedAt: 240,
+              receipt: { status: 'queued' }
+            }
+          ]
+        }
+      }
+    }
+
+    expect(createConversationItems(session)).toEqual([
+      expect.objectContaining({ id: 'root-prompt', type: 'message' }),
+      expect.objectContaining({
+        id: 'subagent-message-upward-question',
+        type: 'subagent-message',
+        createdAt: 200,
+        message: expect.objectContaining({
+          messageId: 'upward-question',
+          sourceFrameId: 'child-frame',
+          sourceName: 'Evidence mapper',
+          kind: 'question',
+          text: 'Should I include the preprint evidence?'
+        })
+      }),
+      expect.objectContaining({ id: 'root-answer', type: 'message' })
+    ])
+
+    session.conversationGraph!.activeFrameId = 'child-frame'
+    expect(createConversationItems(session).some(({ type }) => type === 'subagent-message')).toBe(
+      false
+    )
+  })
+
+  it('keeps one message identity when a valid durable receipt updates across restart hydration', () => {
+    const rootPrompt = {
+      id: 'restart-root-prompt',
+      role: 'user' as const,
+      content: 'Gather evidence',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 100,
+      updatedAt: 100
+    }
+    const session: ChatSession = {
+      ...baseSession,
+      id: 'restart-session',
+      messages: [rootPrompt]
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 100,
+      updatedAt: 100
+    })
+    const root = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+    graph.frames.push({
+      id: 'restart-child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      delegateName: 'Evidence mapper',
+      status: 'running',
+      activeBranchId: 'restart-child-branch',
+      createdAt: 110
+    })
+    graph.branches.push({
+      id: 'restart-child-branch',
+      agentFrameId: 'restart-child-frame',
+      headMessageId: 'restart-child-prompt',
+      createdAt: 110,
+      updatedAt: 110
+    })
+    graph.messages.push({
+      id: 'restart-child-prompt',
+      role: 'user',
+      content: 'Map the evidence',
+      status: 'complete',
+      eventIds: [],
+      agentFrameId: 'restart-child-frame',
+      introducedOnBranchId: 'restart-child-branch',
+      createdAt: 110,
+      updatedAt: 110
+    })
+    session.conversationGraph = graph
+    const queuedCommand = {
+      messageId: 'restart-upward-message',
+      requestId: 'restart-upward-request',
+      sourcePrincipal: 'restart-child-frame',
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: 'restart-child-frame',
+      sourceAttemptId: 'restart-child-attempt',
+      targetFrameId: graph.rootFrameId,
+      rootPromptMessageId: rootPrompt.id,
+      rootOriginMessageId: rootPrompt.id,
+      callerRootMessageId: rootPrompt.id,
+      rootBranchId: root.activeBranchId,
+      rootBranchRevision: `${root.activeBranchId}:100`,
+      direction: 'to_parent' as const,
+      disposition: 'message' as const,
+      text: 'Should I include the preprint evidence?',
+      kind: 'question' as const,
+      laneSequence: 1,
+      queuedAt: 120,
+      receipt: { status: 'queued' as const }
+    }
+    session.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: { records: [], messageCommands: [queuedCommand] }
+    }
+
+    const beforeRestart = normalizeSessionFile(structuredClone(session))
+    expect(beforeRestart?.runtimeContext?.delegatedWork?.messageCommands).toHaveLength(1)
+    expect(createConversationItems(beforeRestart as ChatSession)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'subagent-message-restart-upward-message',
+          message: expect.not.objectContaining({ receipt: expect.anything() })
+        })
+      ])
+    )
+
+    const afterRestart = normalizeSessionFile({
+      ...structuredClone(beforeRestart!),
+      runtimeContext: {
+        ...beforeRestart!.runtimeContext!,
+        revision: 2,
+        delegatedWork: {
+          records: [],
+          messageCommands: [
+            {
+              ...queuedCommand,
+              receipt: {
+                status: 'accepted' as const,
+                acceptedAt: 130,
+                evidence: 'provider_prompt_accepted' as const
+              }
+            }
+          ]
+        }
+      }
+    })
+    const hydratedItems = createConversationItems(afterRestart as ChatSession).filter(
+      ({ type }) => type === 'subagent-message'
+    )
+
+    expect(afterRestart?.runtimeContext?.delegatedWork?.messageCommands).toHaveLength(1)
+    expect(hydratedItems).toEqual([
+      expect.objectContaining({
+        id: 'subagent-message-restart-upward-message',
+        message: expect.not.objectContaining({ receipt: expect.anything() })
+      })
+    ])
+  })
+
   it('shows an OpenCode Skill name without exposing its content', () => {
     expect(
       formatActivityTitle(

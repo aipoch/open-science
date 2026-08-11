@@ -46,6 +46,7 @@ import { APP } from '../../../../shared/app-config'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
+import { hasAnswerableDelegatedQuestion } from '../workspace/subagent-release-projection'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -81,6 +82,7 @@ const getRequiredEnvironmentFailures = (
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
+  if (hasAnswerableDelegatedQuestion(session)) return 'needs-you'
   if (session.status === 'running') return 'running'
   if (
     session.status === 'waiting-for-user' ||

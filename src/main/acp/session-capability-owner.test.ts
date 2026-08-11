@@ -32,6 +32,35 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('uses an execution-owned Artifact handoff file for a delegated runtime', async () => {
+    const owner = createOwner({
+      artifacts: {
+        dataRoot: '/data',
+        projectName: 'project',
+        mcpEntryPath: '/app/main.js',
+        currentRunFile: '/data/delegated/executions/attempt-1.json'
+      },
+      notebook: undefined,
+      skillImport: undefined
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'provider-child-session',
+      framework: opencodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace/child',
+      projectName: 'project-1'
+    })
+    const artifact = provision.mcpServers.find((server) => server.name === 'open_science_artifacts')
+
+    expect(artifact && 'env' in artifact ? artifact.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE',
+      value: '/data/delegated/executions/attempt-1.json'
+    })
+  })
+
   it.each([
     [claudeCodeFramework, 'open-science-host-message'],
     [codexFramework, 'open-science-host-message'],

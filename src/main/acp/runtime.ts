@@ -153,10 +153,12 @@ type AcpRuntimeOptions = {
   callbacks?: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
+  // Replaces only physical process creation. Backend identity and initialization material still come
+  // from resolveBackend when it is available.
   spawnAgent?: () => ChildProcessWithoutNullStreams
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
-  // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
-  // inject that directly).
+  // provider switch takes effect on reconnect.
   resolveBackend?: (context: {
     forcedSkillIds: string[]
     systemPromptAppends: string[]
@@ -251,6 +253,9 @@ type AcpRuntimeArtifactOptions = {
   getRpcConnection?: () => Promise<NotebookRpcConnection>
   issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
+  // When present, the caller already owns the execution Artifact turn. Runtime only provisions the
+  // MCP transport against this exact handoff and never opens a competing root turn.
+  currentRunFile?: string
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
@@ -546,6 +551,10 @@ class AcpRuntime {
   // Returns an immutable renderer-facing view of connection and session state.
   getSnapshot(): AcpStateSnapshot {
     return this.publication.getSnapshot()
+  }
+
+  captureBackend(): AcpBackendGenerationView {
+    return this.backend
   }
 
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
@@ -1009,14 +1018,16 @@ class AcpRuntime {
       {
         epoch: identity.epoch,
         resolveBackend: async () => {
-          const backend: ResolvedAgentBackend | undefined = this.spawnAgent
-            ? { framework: this.framework, executablePath: '', env: {} }
-            : await this.options.resolveBackend?.({
+          const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
+            ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
                 systemPromptAppends: [
                   ...(await this.sessionEnvironment.backendSystemPromptAppends())
                 ]
               })
+            : this.spawnAgent
+              ? { framework: this.framework, executablePath: '', env: {} }
+              : undefined
           if (!backend) throw new Error('ACP agent spawn configuration is not available.')
           return backend
         },
@@ -1520,6 +1531,9 @@ class AcpRuntime {
         requestId,
         ...(promptInteraction?.kind === 'prompt' && promptInteraction.promptMessageId
           ? { promptMessageId: promptInteraction.promptMessageId }
+          : {}),
+        ...(promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext
+          ? { provenanceContext: promptInteraction.provenanceContext }
           : {})
       }
     )
@@ -2076,7 +2090,15 @@ class AcpRuntime {
     if (!this.artifactTurns) {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
-    return this.artifactTurns.writeForActiveTurn(sessionId, input)
+    const execution = this.sessionInteractions.current(sessionId)
+    if (!execution || execution.kind !== 'prompt') {
+      throw new Error('No active assistant turn to attach a generated file to.')
+    }
+    const artifact = this.artifactTurns.handleForExecution(execution.turnToken)
+    if (this.artifactTurns.snapshot(artifact).phase !== 'open') {
+      throw new Error('No active assistant turn to attach a generated file to.')
+    }
+    return this.artifactTurns.write(artifact, input)
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {

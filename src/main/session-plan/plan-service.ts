@@ -35,8 +35,8 @@ type SessionPlanIdentityOwner = Pick<
 
 type PlanServiceDependencies = Readonly<{
   interactions: SessionPlanIdentityOwner
-  writeArtifactForActiveTurn: (
-    sessionId: string,
+  writeArtifactForExecution: (
+    executionId: string,
     input: { filename: string; content: string; mimeType: string; kind: 'plan' }
   ) => Promise<ArtifactWriteResult>
   readArtifactVersion: (input: {
@@ -155,6 +155,7 @@ class PlanService {
   async generate(input: {
     projectId: string
     sessionId: string
+    executionId: string
     interactionId: string
     content: GeneratePlanContent
   }): Promise<{ projection: ActivePlanProjection; pauseInteraction: true }> {
@@ -181,7 +182,7 @@ class PlanService {
         )
       }
     }
-    const artifact = await this.dependencies.writeArtifactForActiveTurn(input.sessionId, {
+    const artifact = await this.dependencies.writeArtifactForExecution(input.executionId, {
       filename: `plan-${this.createId()}.json`,
       content: serialized,
       mimeType: 'application/json',

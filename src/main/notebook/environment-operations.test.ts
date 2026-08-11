@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import { NotebookEnvironmentOperations } from './environment-operations'
+import { createRootNotebookLane, type NotebookLaneIdentity } from './lane-identity'
 import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 
 let storageRoot: string | undefined
@@ -25,6 +26,7 @@ const createRoot = async (): Promise<string> => {
 type TestSession = {
   projectName: string
   sessionId: string
+  lane: NotebookLaneIdentity
   bindings: Partial<Record<NotebookLanguage, NotebookSessionRuntimeBinding>>
   statuses: Map<string, 'idle' | 'running' | 'terminated'>
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined
@@ -169,6 +171,7 @@ describe('NotebookEnvironmentOperations', () => {
     const session: TestSession = {
       projectName: 'project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
       bindings: {
         python: {
           language: 'python',

@@ -65,7 +65,11 @@ describe('notebook RPC skillsCall route', () => {
       transport: 'tcp',
       skillsService: { dispatch }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'project-a')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'project-a',
+      'root-frame-trusted-session'
+    )
     try {
       const response = await fetch(connection.endpoint, {
         method: 'POST',

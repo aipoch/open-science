@@ -10,7 +10,7 @@ const sessionConnection = (
   sessionId = 's-42',
   projectId = 'project-1'
 ): ReturnType<NotebookLocalRpcServer['issueSessionConnection']> =>
-  target.issueSessionConnection(sessionId, projectId)
+  target.issueSessionConnection(sessionId, projectId, `root-frame-${sessionId}`)
 
 afterEach(async () => {
   await server?.close()
@@ -62,7 +62,11 @@ describe('mcpCall RPC', () => {
       connectorService: fakeConnector as never
     })
     const agentConnection = await sessionConnection(server)
-    const controlConnection = await server.issueControlConnection('s-42', 'project-1')
+    const controlConnection = await server.issueControlConnection(
+      's-42',
+      'project-1',
+      'root-frame-s-42'
+    )
     const callMcp = (token: string): Promise<Response> =>
       fetch(controlConnection.endpoint, {
         method: 'POST',

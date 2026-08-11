@@ -1,5 +1,6 @@
 import type {
   RendererErrorCategory,
+  RendererFailureContext,
   RendererFailureReport,
   RendererFailureSource,
   RendererFailureSurface
@@ -52,11 +53,13 @@ const fingerprint = (value: string): string => {
 export const projectRendererFailure = (
   source: RendererFailureSource,
   value: unknown,
-  surface: RendererFailureSurface
+  surface: RendererFailureSurface,
+  context?: RendererFailureContext
 ): RendererFailureReport => ({
   source,
   surface,
   errorCategory: errorCategoryFor(value),
+  ...(context ? { context } : {}),
   fingerprint: fingerprint(normalizedStackSignature(value))
 })
 

@@ -17,6 +17,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -216,6 +217,115 @@ const planOriginMessages = (): ChatSession['messages'] => [
   }
 ]
 
+const delegatedQuestionSession = (): ChatSession => ({
+  id: 'session-delegated-question',
+  projectId: 'project-a',
+  title: 'Delegated question',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [],
+  activities: [],
+  createdAt: 1,
+  updatedAt: 3,
+  conversationGraph: {
+    schemaVersion: 1,
+    rootFrameId: 'root',
+    activeFrameId: 'root',
+    frames: [
+      {
+        id: 'root',
+        originBindingState: 'root',
+        kind: 'root',
+        status: 'completed',
+        activeBranchId: 'root-branch',
+        createdAt: 1
+      },
+      {
+        id: 'child',
+        parentFrameId: 'root',
+        originMessageId: 'root-prompt',
+        originBindingState: 'validated',
+        kind: 'delegate',
+        delegateName: 'Researcher',
+        status: 'completed',
+        activeBranchId: 'child-branch',
+        createdAt: 2
+      }
+    ],
+    branches: [
+      {
+        id: 'root-branch',
+        agentFrameId: 'root',
+        headMessageId: 'root-prompt',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-branch',
+        agentFrameId: 'child',
+        headMessageId: 'child-message',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    messages: [
+      {
+        id: 'root-prompt',
+        role: 'user',
+        content: 'Research this topic',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'root',
+        introducedOnBranchId: 'root-branch',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-message',
+        role: 'agent',
+        content: 'I need one detail.',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'child',
+        introducedOnBranchId: 'child-branch',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    activities: [],
+    activityGroups: [],
+    runtimeSegments: []
+  },
+  runtimeContext: {
+    version: 1,
+    revision: 1,
+    delegatedWork: {
+      records: [],
+      questionRequests: [
+        {
+          requestId: 'question-1',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child',
+          sourceAttemptId: 'attempt-1',
+          sourceRuntimeSegmentId: 'runtime-1',
+          sourceMessageBranchId: 'child-branch',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Researcher',
+          questions: [
+            { question: 'Which scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }
+          ],
+          sequence: 1,
+          askedAt: 2,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    }
+  }
+})
+
 const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {}): void => {
   act(() => {
     root.render(
@@ -342,6 +452,138 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('keeps the Main composer available while a delegated question is pending', () => {
+    renderPanel({
+      activeSession: delegatedQuestionSession(),
+      canSendMessage: true
+    })
+
+    expect(container.textContent).toContain('Asked by Researcher')
+    expect(container.textContent).toContain('Which scope?')
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+    expect(getComposerForm().contains(getComposerEditor())).toBe(true)
+  })
+
+  it('advances to the next Subagent request after Finish and removes an empty queue', async () => {
+    const firstSession = delegatedQuestionSession()
+    const graph = firstSession.conversationGraph!
+    graph.frames.push({
+      id: 'child-two',
+      parentFrameId: 'root',
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      delegateName: 'Reviewer',
+      status: 'completed',
+      activeBranchId: 'child-two-branch',
+      createdAt: 3
+    })
+    graph.branches.push({
+      id: 'child-two-branch',
+      agentFrameId: 'child-two',
+      headMessageId: 'child-two-message',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    graph.messages.push({
+      id: 'child-two-message',
+      role: 'agent',
+      content: 'I need the result format.',
+      status: 'complete',
+      eventIds: [],
+      agentFrameId: 'child-two',
+      introducedOnBranchId: 'child-two-branch',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    const secondRequest: DelegatedQuestionRequest = {
+      requestId: 'question-2',
+      canonicalDigest: 'b'.repeat(64),
+      sourceFrameId: 'child-two',
+      sourceAttemptId: 'attempt-2',
+      sourceRuntimeSegmentId: 'runtime-2',
+      sourceMessageBranchId: 'child-two-branch',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Reviewer',
+      questions: [
+        { question: 'Which format?', options: [{ label: 'Narrative' }, { label: 'Table' }] }
+      ],
+      sequence: 2,
+      askedAt: 3,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    Object.assign(firstSession, {
+      runtimeContext: {
+        ...firstSession.runtimeContext!,
+        delegatedWork: {
+          ...firstSession.runtimeContext!.delegatedWork!,
+          questionRequests: [
+            ...firstSession.runtimeContext!.delegatedWork!.questionRequests!,
+            secondRequest
+          ]
+        }
+      }
+    })
+    const onRespondToElicitation = vi.fn().mockResolvedValue(undefined)
+    const buttonNamed = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === name
+      )
+
+    renderPanel({ activeSession: firstSession, onRespondToElicitation })
+    expect(container.textContent).toContain('Asked by Researcher')
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Narrow"]')?.click()
+    )
+    await act(async () => buttonNamed('Finish')?.click())
+    expect(onRespondToElicitation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestId: 'question-1',
+        delegatedQuestion: expect.objectContaining({ action: 'confirm' })
+      })
+    )
+
+    const secondSession = structuredClone(firstSession)
+    Object.assign(secondSession, {
+      runtimeContext: {
+        ...secondSession.runtimeContext!,
+        delegatedWork: {
+          ...secondSession.runtimeContext!.delegatedWork!,
+          questionRequests: secondSession.runtimeContext!.delegatedWork!.questionRequests!.slice(1)
+        }
+      }
+    })
+    renderPanel({ activeSession: secondSession, onRespondToElicitation })
+    expect(container.textContent).toContain('Asked by Reviewer')
+    expect(container.textContent).toContain('Which format?')
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Narrative"]')?.click()
+    )
+    await act(async () => buttonNamed('Finish')?.click())
+    expect(onRespondToElicitation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestId: 'question-2',
+        delegatedQuestion: expect.objectContaining({ action: 'confirm' })
+      })
+    )
+
+    const emptySession = structuredClone(secondSession)
+    Object.assign(emptySession, {
+      runtimeContext: {
+        ...emptySession.runtimeContext!,
+        delegatedWork: {
+          ...emptySession.runtimeContext!.delegatedWork!,
+          questionRequests: []
+        }
+      }
+    })
+    renderPanel({ activeSession: emptySession, onRespondToElicitation })
+    expect(container.querySelector('[data-testid="delegated-question-card"]')).toBeNull()
+  })
+
   it.each([
     ['darwin', '⌘K'],
     ['win32', 'Ctrl+K'],
@@ -966,7 +1208,7 @@ describe('ConversationPanel composer intake', () => {
 
   it('submits on Enter through the editor with the picked skill ids', () => {
     const onSendMessage = vi.fn()
-    renderPanel({ onSendMessage })
+    renderPanel({ canSendMessage: true, onSendMessage })
 
     const editor = getComposerEditor()
     const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
@@ -2209,6 +2451,70 @@ describe('ConversationPanel fix loop lock', () => {
     fixLoopActive: true
   }
 
+  const detachedChildSession: ChatSession = {
+    ...idleSession,
+    status: 'idle',
+    activeRun: undefined,
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'detached-root',
+      activeFrameId: 'detached-root',
+      frames: [
+        {
+          id: 'detached-root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'detached-root-branch',
+          createdAt: 1,
+          completedAt: 2
+        },
+        {
+          id: 'detached-child',
+          parentFrameId: 'detached-root',
+          originMessageId: 'detached-origin',
+          originBindingState: 'validated',
+          kind: 'delegate',
+          status: 'running',
+          activeBranchId: 'detached-child-branch',
+          createdAt: 2
+        }
+      ],
+      branches: [
+        {
+          id: 'detached-root-branch',
+          agentFrameId: 'detached-root',
+          headMessageId: 'detached-origin',
+          createdAt: 1,
+          updatedAt: 2
+        },
+        {
+          id: 'detached-child-branch',
+          agentFrameId: 'detached-child',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      messages: [
+        {
+          id: 'detached-origin',
+          role: 'user',
+          content: 'Delegate background work.',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'detached-root',
+          introducedOnBranchId: 'detached-root-branch',
+          revisionRootMessageId: 'detached-origin',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    }
+  }
+
   it('send button is disabled when canSendMessage is false (fix loop active)', () => {
     // canSendMessage is passed from outside (computed by WorkspacePage)
     renderPanel({ activeSession: idleSession, canSendMessage: false })
@@ -2266,6 +2572,122 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(onCancelRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
+    const onCancelRun = vi.fn()
+    const onStopSubagents = vi.fn()
+    renderPanel({
+      activeSession: detachedChildSession,
+      canSendMessage: true,
+      onCancelRun,
+      onStopSubagents
+    })
+
+    expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="subagents-bar"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Running"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('1 subagent running')
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    expect(stop).not.toBeNull()
+    expect(
+      [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
+        (tooltip) => tooltip.textContent === 'Stop subagents'
+      )
+    ).toBe(true)
+
+    act(() => stop.click())
+    expect(onStopSubagents).toHaveBeenCalledOnce()
+    expect(onCancelRun).not.toHaveBeenCalled()
+  })
+
+  it('preserves duplicate prevention, progress, and failure recovery for detached-only Stop', async () => {
+    let rejectStop!: (error: Error) => void
+    const onStopSubagents = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectStop = reject
+        })
+    )
+    renderPanel({ activeSession: detachedChildSession, canSendMessage: true, onStopSubagents })
+
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    act(() => {
+      stop.click()
+      stop.click()
+    })
+    expect(onStopSubagents).toHaveBeenCalledOnce()
+    expect(stop.disabled).toBe(true)
+    expect(stop.getAttribute('aria-label')).toBe('Stopping subagents')
+
+    await act(async () => {
+      rejectStop(new Error('detached cascade unavailable'))
+      await Promise.resolve()
+    })
+
+    const retry = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    expect(retry.disabled).toBe(false)
+    const stopAlert = container.querySelector('[role="alert"]') as HTMLElement
+    expect(stopAlert.textContent).toContain('detached cascade unavailable')
+    expect(stopAlert.classList.contains('sr-only')).toBe(false)
+  })
+
+  it('uses the same disabled gate for mouse and Enter while branch Stop is pending', () => {
+    const onSendMessage = vi.fn()
+    const onStopSubagents = vi.fn(() => new Promise<void>(() => undefined))
+    renderPanel({
+      activeSession: detachedChildSession,
+      canSendMessage: true,
+      onSendMessage,
+      onStopSubagents
+    })
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    act(() => stop.click())
+
+    const send = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    expect(send.disabled).toBe(true)
+    act(() => {
+      send.click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {
+    let rejectStop!: (error: Error) => void
+    const onCancelRun = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectStop = reject
+        })
+    )
+    const runningSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+    }
+    renderPanel({ activeSession: runningSession, canSendMessage: false, onCancelRun })
+
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    act(() => {
+      cancelButton.click()
+      cancelButton.click()
+    })
+
+    expect(onCancelRun).toHaveBeenCalledOnce()
+    expect(cancelButton.disabled).toBe(true)
+    expect(cancelButton.getAttribute('aria-label')).toBe('Stopping run and subagents')
+
+    await act(async () => {
+      rejectStop(new Error('cascade unavailable'))
+      await Promise.resolve()
+    })
+
+    const retry = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(retry.disabled).toBe(false)
+    expect(container.textContent).toContain('cascade unavailable')
   })
 
   it('keeps the split-send width while running so adjacent hover controls do not shift', () => {

@@ -302,6 +302,22 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+// Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
+// provider/model/effort fields; selecting a fixed target commits the compound identity and effort
+// intent as one value so renderers can never observe a torn configuration.
+export type SubagentModelConfiguration =
+  | Readonly<{ mode: 'inherit' }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+
+export const DEFAULT_SUBAGENT_MODEL_CONFIGURATION: SubagentModelConfiguration = Object.freeze({
+  mode: 'inherit'
+})
+
 // Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
@@ -359,6 +375,8 @@ export type AgentFrameworkView = {
   displayName: string
   // Whether this framework materializes app skills; the renderer hides the skills UI when false.
   supportsSkills: boolean
+  // Release-gated app-owned subagent support. Absent legacy snapshots are treated as unavailable.
+  supportsDelegatedWork?: boolean
 }
 
 // Full renderer snapshot of settings state.
@@ -391,6 +409,7 @@ export type SettingsSnapshot = {
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
+  subagentModel?: SubagentModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
@@ -424,6 +443,10 @@ export type SetAgentFrameworkRequest = {
 
 export type SetReasoningEffortRequest = {
   effort: ReasoningEffort
+}
+
+export type SetSubagentModelRequest = {
+  configuration: SubagentModelConfiguration
 }
 
 export type SetNotificationsEnabledRequest = {

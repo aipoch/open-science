@@ -1087,5 +1087,5 @@ const WorkspaceMessageItem = ({
   )
 }
 
-export { WorkspaceMessageItem }
+export { MessageArtifactList, WorkspaceMessageItem }
 export type { ArtifactMentionPart }

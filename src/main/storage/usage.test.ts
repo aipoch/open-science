@@ -24,6 +24,7 @@ const writeSized = async (path: string, bytes: number): Promise<void> => {
 describe('computeStorageUsage', () => {
   it('sums per-category bytes and gives runtime a sorted children breakdown', async () => {
     await writeSized(join(dataRoot, 'artifacts', 'a.bin'), 100)
+    await writeSized(join(dataRoot, 'delegation', 'project-1', 'frame.bin'), 75)
     await writeSized(join(dataRoot, 'uploads', 'b.bin'), 50)
     await writeSized(join(dataRoot, 'workspaces', 'session-1', 'repo', 'data.bin'), 25)
     await writeSized(join(dataRoot, 'runtime', 'python', 'p.bin'), 200)
@@ -34,6 +35,7 @@ describe('computeStorageUsage', () => {
 
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 100 },
+      { key: 'delegation', bytes: 75 },
       { key: 'uploads', bytes: 50 },
       {
         key: 'runtime',
@@ -46,7 +48,7 @@ describe('computeStorageUsage', () => {
       { key: 'notebooks', bytes: 0 },
       { key: 'workspaces', bytes: 25 }
     ])
-    expect(usage.totalBytes).toBe(675)
+    expect(usage.totalBytes).toBe(750)
   })
 
   it('labels default-python/-r as python/r and the shared pkgs cache as conda', async () => {
@@ -154,6 +156,7 @@ describe('computeStorageUsage', () => {
 
     expect(usage.categories).toEqual([
       { key: 'artifacts', bytes: 0 },
+      { key: 'delegation', bytes: 0 },
       { key: 'uploads', bytes: 0 },
       { key: 'runtime', bytes: 0, children: [] },
       { key: 'notebooks', bytes: 0 },

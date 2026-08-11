@@ -313,8 +313,6 @@ const allowedFacadeVariables = new Set([
   'DEFAULT_FRAMEWORK_API_ENDPOINTS',
   'selectFrameworkApiEndpoints',
   'selectProviderModelOptions',
-  'selectedClaudeProvider',
-  'models',
   'settingsLoadPromise',
   'SAFE_SETTINGS_LOAD_ERROR',
   'reportSettingsLoadError',
@@ -486,10 +484,10 @@ const facadeBoundaryViolations = (source: string): readonly string[] => {
     ...importBoundaryViolations(storePath, source),
     ...settingsAudit.violations
   ]
-  if (actionNames.join(',') !== 'load,clearSettingsWriteError') {
+  if (actionNames.join(',') !== 'load,acceptCommittedSnapshot,clearSettingsWriteError') {
     violations.push(`facade actions are ${actionNames.join(',')}`)
   }
-  if (ownActionNames.join(',') !== 'load,clearSettingsWriteError') {
+  if (ownActionNames.join(',') !== 'load,clearSettingsWriteError,acceptCommittedSnapshot') {
     violations.push(`facade implementation actions are ${ownActionNames.join(',')}`)
   }
   if (
@@ -639,7 +637,7 @@ describe('settings store architecture guard regressions', () => {
     )
 
     expect(facadeBoundaryViolations(source)).toContain(
-      'facade implementation actions are load,clearSettingsWriteError,featureAction'
+      'facade implementation actions are load,clearSettingsWriteError,featureAction,acceptCommittedSnapshot'
     )
   })
 })

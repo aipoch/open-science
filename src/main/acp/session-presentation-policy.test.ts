@@ -91,6 +91,23 @@ describe('ACP Session presentation policy', () => {
               tools: { type: 'preset', preset: 'claude_code' },
               plugins: [{ type: 'local', path: '/app/claude' }],
               settingSources: ['user'],
+              disallowedTools: [
+                'Agent',
+                'Task',
+                'Workflow',
+                'SendMessage',
+                'TeamCreate',
+                'TeamDelete'
+              ],
+              managedSettings: {
+                disableAgentView: true,
+                disableWorkflows: true,
+                workflowKeywordTriggerEnabled: false
+              },
+              env: {
+                CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+                CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+              },
               skills: []
             }
           },

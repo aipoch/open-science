@@ -19,6 +19,7 @@ import { createLinearConversationGraph } from '../../shared/conversation-graph'
 import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
 import {
@@ -1209,6 +1210,7 @@ describe('artifact provenance repository', () => {
     const notebookDocument = await notebookRepository.loadOrCreate({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
     })
     const producerSourcePath = join(notebookDocument.notebookSessionRoot, 'data', 'sin.png')
@@ -1218,6 +1220,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-1',
@@ -1230,6 +1233,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-sibling',
@@ -1243,6 +1247,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-parent-after-fork',
@@ -1256,6 +1261,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-2',
@@ -1555,6 +1561,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-3',
@@ -1766,6 +1773,7 @@ describe('artifact provenance repository', () => {
     const document = await notebookRepository.loadOrCreate({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
     })
     const sourcePath = join(document.notebookSessionRoot, 'data', 'sin.png')
@@ -1789,6 +1797,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-before',
@@ -1800,6 +1809,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...baseRun,
         runId: 'notebook-run-producer',
@@ -1883,6 +1893,7 @@ describe('artifact provenance repository', () => {
     const document = await notebookRepository.loadOrCreate({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
     })
     const sourcePath = join(document.notebookSessionRoot, 'data', 'bounded.png')
@@ -1897,6 +1908,7 @@ describe('artifact provenance repository', () => {
       await notebookRepository.appendRun({
         projectName: 'project-1',
         sessionId: 'session-1',
+        lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
         run: {
           runId,
           cellId: `cell-${index}`,
@@ -2011,6 +2023,7 @@ describe('artifact provenance repository', () => {
     const document = await notebookRepository.loadOrCreate({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       workspaceCwd: '/workspace'
     })
     const sourcePath = join(document.notebookSessionRoot, 'data', 'plot.png')
@@ -2032,6 +2045,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...commonRun,
         runId: 'notebook-run-owner',
@@ -2052,6 +2066,7 @@ describe('artifact provenance repository', () => {
     await notebookRepository.appendRun({
       projectName: 'project-1',
       sessionId: 'session-1',
+      lane: createFrameNotebookLane('project-1', 'session-1', 'agent-frame-1'),
       run: {
         ...commonRun,
         runId: 'notebook-run-wrong',
@@ -2118,6 +2133,33 @@ describe('artifact provenance repository', () => {
       })
     ).rejects.toThrow(/producer.*source.*another Notebook run/i)
     await expect(client.artifactVersion.count()).resolves.toBe(1)
+
+    await compatibilityRepository.writePendingFile({
+      projectName: 'project-1',
+      sessionId: 'artifact-session-1',
+      runId: 'artifact-run-1',
+      filename: 'cross-frame.png',
+      source: createPngInlineSource('cross-frame bytes')
+    })
+    await expect(
+      repository.createVersion({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-cross-frame-producer',
+        writeRequestChecksum: 'f'.repeat(64),
+        ...graph,
+        agentFrameId: 'parent-frame-1',
+        notebookSessionId: 'session-1',
+        producerRunId: 'notebook-run-owner',
+        sourceKind: 'inline',
+        filename: 'cross-frame.png',
+        contentType: 'image/png'
+      })
+    ).rejects.toThrow(
+      'Notebook producer run belongs to a different agent frame. Have the producing agent publish it directly, or reference an already completed Artifact Version.'
+    )
 
     await compatibilityRepository.writePendingFile({
       projectName: 'project-1',

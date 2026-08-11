@@ -19,6 +19,23 @@ describe('projectRendererFailure', () => {
     expect(JSON.stringify(report)).not.toContain('/Users/example')
   })
 
+  it('projects an allowlisted handled-error context without the raw error', () => {
+    const report = projectRendererFailure(
+      'handled-error',
+      new Error('private /Users/example/session.json'),
+      'unknown',
+      'session-save'
+    )
+
+    expect(report).toMatchObject({
+      source: 'handled-error',
+      surface: 'unknown',
+      context: 'session-save',
+      errorCategory: 'error'
+    })
+    expect(JSON.stringify(report)).not.toContain('/Users/example')
+  })
+
   it('reports top-level errors through the supplied diagnostics sink and can be uninstalled', () => {
     const listeners = new Map<string, EventListener>()
     const target = {

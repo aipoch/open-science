@@ -7,6 +7,10 @@ import {
   type HandoffTranscriptProjection
 } from './handoff-lifecycle-projection'
 import { getLoadedSkillName, isSkillActivity } from './workspace-tool-activity-details'
+import {
+  projectInlineParentMessages,
+  type InlineParentMessageProjection
+} from './subagent-release-projection'
 
 type ConversationMessageItem = {
   id: string
@@ -38,12 +42,21 @@ type ConversationHandoffItem = HandoffTranscriptProjection & {
   sortIndex: number
 }
 
+type ConversationSubagentMessageItem = {
+  id: string
+  type: 'subagent-message'
+  createdAt: number
+  sortIndex: number
+  message: InlineParentMessageProjection
+}
+
 type ConversationItem =
   | ConversationMessageItem
   | ConversationActivityItem
   | ConversationPlanActivityItem
   | ConversationCompactionActivityItem
   | ConversationHandoffItem
+  | ConversationSubagentMessageItem
 
 const KNOWN_TITLE_TOOL_NAMES = new Set(['ToolSearch'])
 
@@ -212,13 +225,65 @@ const createConversationItems = (
     // authoritative across the two streams; this only makes exact ties deterministic.
     sortIndex: Number.MAX_SAFE_INTEGER
   }))
+  const subagentMessages: ConversationItem[] = projectInlineParentMessages(session).map(
+    (message) => ({
+      id: `subagent-message-${message.messageId}`,
+      type: 'subagent-message',
+      createdAt: message.queuedAt,
+      // Durable commands have their own lane sequence. Timestamp plus stable identity orders them
+      // against the independent runtime message/activity sequence without inventing shared state.
+      sortIndex: Number.MAX_SAFE_INTEGER,
+      message
+    })
+  )
 
   // Runtime events and chat chunks use separate sequences, so sorting uses timestamps first.
-  return [...messages, ...activities, ...handoffs].sort((left, right) => {
+  return [...messages, ...activities, ...handoffs, ...subagentMessages].sort((left, right) => {
     if (left.createdAt !== right.createdAt) return left.createdAt - right.createdAt
     if (left.sortIndex !== right.sortIndex) return left.sortIndex - right.sortIndex
     return left.id.localeCompare(right.id)
   })
+}
+
+// Each user turn may be answered by several agent fragments (text split around tool calls). Only
+// the chronologically last fragment owns the whole-turn surface — footer, usage, and the projected
+// child Versions. This resolves that terminal fragment id set from raw chat messages so the
+// transcript scroller and the artifact visibility hook share one definition.
+const resolveTurnTerminalAgentMessageIds = (messages: readonly ChatMessage[]): Set<string> => {
+  const footerIds = new Set<string>()
+  const footerByPrompt = new Map<string, string>()
+  const interruptedPromptIds = new Set(
+    messages
+      .filter((message) => message.role === 'user' && message.interrupted)
+      .map((message) => message.id)
+  )
+  const ordered = messages.map((message, index) => ({
+    id: message.id,
+    role: message.role,
+    responseToMessageId: message.responseToMessageId,
+    createdAt: message.createdAt,
+    sortIndex: message.sortIndex ?? index
+  }))
+  ordered.sort(
+    (left, right) =>
+      left.createdAt - right.createdAt ||
+      left.sortIndex - right.sortIndex ||
+      left.id.localeCompare(right.id)
+  )
+  for (const message of ordered) {
+    if (message.role !== 'agent') continue
+    const promptId = message.responseToMessageId
+    if (!promptId) {
+      footerIds.add(message.id)
+      continue
+    }
+    if (interruptedPromptIds.has(promptId)) continue
+    const previousId = footerByPrompt.get(promptId)
+    if (previousId) footerIds.delete(previousId)
+    footerByPrompt.set(promptId, message.id)
+    footerIds.add(message.id)
+  }
+  return footerIds
 }
 
 export {
@@ -227,6 +292,7 @@ export {
   formatNotebookToolName,
   getNotebookToolSuffix,
   isActivityActive,
+  resolveTurnTerminalAgentMessageIds,
   isContextCompactionActivity
 }
 export type { ConversationItem }

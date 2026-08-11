@@ -83,7 +83,9 @@ class ArtifactCompatibilityOwner {
 
       const pendingDir = join(sessionDir, PENDING_DIR)
       for (const runId of await this.options.storage.readSubdirectoryNames(pendingDir)) {
-        if (!SAFE_SEGMENT_PATTERN.test(runId) || activeRunIds.has(runId)) continue
+        if (!this.options.storage.isPendingArtifactRunDirectory(runId) || activeRunIds.has(runId)) {
+          continue
+        }
         const runDir = join(pendingDir, runId)
         for (const entry of await this.options.storage.readFileEntries(runDir)) {
           const metadata = await this.options.storage.readArtifactMetadata(runDir, entry.name)

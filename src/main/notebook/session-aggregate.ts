@@ -13,6 +13,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
+import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
 export type NotebookSessionResolvedInterpreter = {
   command: string
@@ -104,6 +105,7 @@ export type NotebookSessionAggregateInit<
   executionCount: number
   executor: NotebookSessionExecutor<Request, Result>
   executorGeneration: NotebookSessionExecutorGeneration
+  lane: NotebookLaneIdentity
 }
 
 export type NotebookSessionSnapshot = Readonly<{
@@ -150,6 +152,7 @@ export class NotebookSessionAggregate<
   readonly dataRoot: string
   readonly runtimeRoot: string
   readonly runJsonPath: string
+  readonly lane: NotebookLaneIdentity
 
   private cwdValue: string
   private readonly cells = new Map<string, NotebookCell>()
@@ -180,6 +183,8 @@ export class NotebookSessionAggregate<
     this.dataRoot = init.dataRoot
     this.runtimeRoot = init.runtimeRoot
     this.runJsonPath = init.runJsonPath
+    this.lane = init.lane
+    notebookLaneScope(this.lane)
     this.executionCountValue = init.executionCount
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
@@ -423,15 +428,20 @@ export class NotebookSessionAggregate<
       | ((binding: {
           sessionId: string
           projectId: string
+          agentFrameId: string
+          attemptId?: string
         }) => Promise<NotebookSessionMcpRpcConnection>)
       | undefined
   ): Promise<NotebookSessionMcpRpcConnection | undefined> {
     if (this.mcpRpcConnection) return this.mcpRpcConnection
     if (!resolver) return undefined
     try {
+      const lane = notebookLaneScope(this.lane)
       this.mcpRpcConnection = await resolver({
         sessionId: this.sessionId,
-        projectId: this.projectName
+        projectId: this.projectName,
+        agentFrameId: lane.agentFrameId,
+        ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })
       return this.mcpRpcConnection
     } catch {

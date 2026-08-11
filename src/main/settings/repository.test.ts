@@ -51,6 +51,77 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('defaults legacy and malformed Subagent model settings to dynamic inheritance', () => {
+    expect(sanitizeSettings({ providers: [] }).subagentModel).toEqual({ mode: 'inherit' })
+    expect(
+      sanitizeSettings({
+        providers: [],
+        subagentModel: { mode: 'fixed', providerId: 'p1', model: '', reasoningEffort: 'high' }
+      }).subagentModel
+    ).toEqual({ mode: 'inherit' })
+  })
+
+  it('preserves a structurally valid fixed Subagent model when its provider is unavailable', () => {
+    expect(
+      sanitizeSettings({
+        providers: [],
+        subagentModel: {
+          mode: 'fixed',
+          providerId: 'removed-provider',
+          model: 'removed-model',
+          reasoningEffort: 'high'
+        }
+      }).subagentModel
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'removed-provider',
+      model: 'removed-model',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('atomically replaces the complete Subagent model configuration', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setSubagentModel({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'max'
+    })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: {
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'max'
+      }
+    })
+
+    await repository.setSubagentModel({ mode: 'inherit' })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: { mode: 'inherit' }
+    })
+  })
+
+  it('retains the committed Subagent model when authoritative validation rejects a stale write', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setSubagentModel({ mode: 'inherit' })
+
+    await expect(
+      repository.setSubagentModel(
+        { mode: 'fixed', providerId: 'gone', model: 'gone-model', reasoningEffort: 'default' },
+        () => {
+          throw new Error('refresh catalog')
+        }
+      )
+    ).rejects.toThrow('refresh catalog')
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: { mode: 'inherit' }
+    })
+  })
+
   it('keeps only an existing Claude subscription provider as the preferred mode', () => {
     const providers = [
       {

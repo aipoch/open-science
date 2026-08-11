@@ -245,7 +245,12 @@ export class AgentsService {
       }
       // host.agents.switch(nameOrNull) — durable immediate-handoff switch. Delegates to the
       // standalone SwitchOperation via runSwitch below.
-      if (opName === 'switch') return await this.runSwitch(params, context)
+      if (opName === 'switch') {
+        if (context.callerRole !== 'main') {
+          throw new Error('Only Main Agent may switch Specialist profile.')
+        }
+        return await this.runSwitch(params, context)
+      }
       // host.agents.delete(name, { revision }) — privileged (issue 04). Routes through the injected
       // approval gateway, re-resolves name -> UUID, verifies the reviewed revision, deletes via
       // ProfileService, verifies absence, invalidates the catalog, and returns the read-back. Bound

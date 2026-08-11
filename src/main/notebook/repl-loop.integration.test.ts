@@ -9,6 +9,13 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
 import { listenForLocalRpc } from '../local-rpc-transport'
+import { hostSdkHelp } from '../host-sdk/help'
+import { NotebookLocalRpcServer } from './local-rpc-server'
+import { AgentsService } from '../agents/agents-service'
+import { createProfileService } from '../specialist/service'
+import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
+import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
+import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/notebook/repl-loop.integration.test.ts
 // Node is always available in vitest, so the only gate is RUN_KERNEL. The child is spawned exactly
@@ -50,6 +57,694 @@ const startLoop = (
 }
 
 describe('repl_loop local RPC transport', () => {
+  it('echoes a trailing expression when the call spans multiple lines', async () => {
+    const { child, send } = startLoop({})
+
+    try {
+      const oneLine = await send("await Promise.resolve({ kind: 'ok' })")
+      const multiLine = await send(['await Promise.resolve(', "  { kind: 'ok' }", ')'].join('\n'))
+
+      expect(oneLine.error).toBeNull()
+      expect(multiLine.error).toBeNull()
+      expect(JSON.parse(oneLine.result ?? '{}')).toEqual({ kind: 'ok' })
+      expect(JSON.parse(multiLine.result ?? '{}')).toEqual({ kind: 'ok' })
+    } finally {
+      child.kill()
+    }
+  })
+
+  it('publishes send_frame_message without the legacy send_message alias', async () => {
+    const { child, send } = startLoop({})
+
+    try {
+      const result = await send(
+        'return { current: typeof host.send_frame_message, legacy: typeof host.send_message }'
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        current: 'function',
+        legacy: 'undefined'
+      })
+    } finally {
+      child.kill()
+    }
+  })
+
+  it('exposes host.help as a thin Host SDK help RPC adapter', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            result: {
+              kind: 'operation',
+              id: 'host.delegate',
+              availability: { status: 'available' }
+            }
+          })
+        )
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-host-sdk-help-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send("return await host.help('delegate')")
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        kind: 'operation',
+        id: 'host.delegate',
+        availability: { status: 'available' }
+      })
+      expect(received).toEqual({ method: 'hostSdkHelp', params: { query: 'delegate' } })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('projects delegation name and Attempt agent name across help, delegate, children, and collect', async () => {
+    const received: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const call = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        received.push(call)
+        let result: unknown
+        if (call.method === 'hostSdkHelp') {
+          result = hostSdkHelp.query(call.params?.query, {
+            callerRole: 'main',
+            capabilities: {
+              delegate: true,
+              children: true,
+              collect: true,
+              stop_child: true,
+              send_frame_message: true,
+              message_receipt: true,
+              resolve_message: true,
+              submit_output: true
+            }
+          })
+        } else if (call.params?.op === 'children') {
+          result = [
+            {
+              frameId: 'child-1',
+              attemptId: 'attempt-1',
+              title: 'Source trace',
+              name: 'Source trace',
+              agentName: 'Evidence Analyst',
+              status: 'completed'
+            }
+          ]
+        } else if (call.params?.op === 'collect') {
+          result = [
+            {
+              frameId: 'child-1',
+              attemptId: 'attempt-1',
+              name: 'Source trace',
+              agentName: 'Evidence Analyst',
+              status: 'completed',
+              response: 'Durable answer',
+              artifactsCreated: []
+            }
+          ]
+        } else {
+          result = {
+            kind: 'results',
+            children: [
+              {
+                frameId: 'child-1',
+                attemptId: 'attempt-1',
+                name: 'Source trace',
+                agentName: 'Evidence Analyst',
+                status: 'completed',
+                response: 'Durable answer',
+                artifactsCreated: []
+              }
+            ]
+          }
+        }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegate-profile-projection-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const output = await send(
+        "const help = await host.help('delegate'); const delegated = await host.delegate({ task: 'Trace sources', name: 'Source trace', profile: 'EVIDENCE_ANALYST' }); const children = await host.children(); const collected = await host.collect(['child-1']); return { profile_description: help.request.fields.find(({ name }) => name === 'profile').description, constraints: help.constraints, delegated, children, collected }"
+      )
+      expect(output.error).toBeNull()
+      expect(JSON.parse(output.result ?? '{}')).toEqual({
+        profile_description: 'Specialist id/name; omit to inherit the parent.',
+        constraints: expect.arrayContaining([
+          'Use host.agents.list() for profiles; omission inherits.'
+        ]),
+        delegated: {
+          kind: 'results',
+          children: [
+            {
+              frame_id: 'child-1',
+              attempt_id: 'attempt-1',
+              name: 'Source trace',
+              agent_name: 'Evidence Analyst',
+              status: 'completed',
+              response: 'Durable answer',
+              artifacts_created: []
+            }
+          ]
+        },
+        children: [
+          {
+            frame_id: 'child-1',
+            attempt_id: 'attempt-1',
+            title: 'Source trace',
+            name: 'Source trace',
+            agent_name: 'Evidence Analyst',
+            status: 'completed'
+          }
+        ],
+        collected: [
+          {
+            frame_id: 'child-1',
+            attempt_id: 'attempt-1',
+            name: 'Source trace',
+            agent_name: 'Evidence Analyst',
+            status: 'completed',
+            response: 'Durable answer',
+            artifacts_created: []
+          }
+        ]
+      })
+      expect(received.map(({ method, params }) => [method, params?.op])).toEqual([
+        ['hostSdkHelp', undefined],
+        ['delegatedWorkCall', undefined],
+        ['delegatedWorkCall', 'children'],
+        ['delegatedWorkCall', 'collect']
+      ])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('discovers a public Specialist and delegates by its stable id and exact name through the authenticated REPL', async () => {
+    const profileStorage = await mkdtemp(join(tmpdir(), 'repl-delegate-profile-roundtrip-'))
+    const profiles = createProfileService(profileStorage)
+    const selected = await profiles.create({
+      name: 'EVIDENCE_ANALYST',
+      displayName: 'Evidence Analyst'
+    })
+    const execution = createDeterministicDelegateExecution()
+    const session = { projectId: 'project-1', sessionId: 'session-1' }
+    const records = createInMemoryDelegatedWorkRecords({
+      session,
+      rootFrameId: 'root-frame-1',
+      originMessageId: 'origin-message-1'
+    })
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      resolveSpecialist: (profileId) => profiles.resolveRunnableById(profileId),
+      resolveSpecialistReference: (reference) => profiles.resolveRunnableByReference(reference)
+    })
+    const agents = new AgentsService({
+      profileService: profiles,
+      catalog: {
+        listSkillCatalog: async () => [],
+        getConnectors: async () => undefined
+      }
+    })
+    const server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'pipe',
+      agentsService: agents,
+      delegatedWorkService: work
+    })
+    const connection = await server.issueControlConnection(
+      session.sessionId,
+      session.projectId,
+      'root-frame-1',
+      { role: 'main' }
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-call-1',
+      originatingUserMessageId: 'origin-message-1'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: session.sessionId
+    })
+
+    try {
+      const workflow =
+        "const specialists = await host.agents.list(); const selected = specialists[0]; const byId = await host.delegate({ name: 'Stable id lookup', task: 'By stable id', profile: selected.id }, { wait: false }); const byName = await host.delegate({ name: 'Exact name lookup', task: 'By exact name', profile: selected.name }, { wait: false }); const main = await host.delegate({ name: 'Default Main lookup', task: 'Default Main' }, { wait: false }); return JSON.stringify({ selected: { id: selected.id, name: selected.name }, byId, byName, main })"
+      const response = await send(workflow)
+      expect(response.error).toBeNull()
+      const result = JSON.parse(response.result ?? '{}')
+      expect(result.selected).toEqual({ id: selected.id, name: selected.name })
+      expect(result.byId.children[0]).toMatchObject({
+        agent_name: 'Evidence Analyst',
+        status: 'running'
+      })
+      expect(result.byName.children[0]).toMatchObject({
+        agent_name: 'Evidence Analyst',
+        status: 'running'
+      })
+      expect(result.main.children[0]).toMatchObject({
+        agent_name: 'Main Agent',
+        status: 'running'
+      })
+
+      await expect.poll(() => execution.controls()).toHaveLength(3)
+      expect(execution.controls().map(({ input }) => input.profile)).toEqual([
+        selected.id,
+        selected.id,
+        undefined
+      ])
+      expect(
+        (await records.snapshot()).records.map(({ attempts }) => attempts[0].resolvedAgent)
+      ).toEqual([
+        {
+          kind: 'specialist',
+          profileId: selected.id,
+          revision: selected.revision,
+          displayName: selected.displayName
+        },
+        {
+          kind: 'specialist',
+          profileId: selected.id,
+          revision: selected.revision,
+          displayName: selected.displayName
+        },
+        { kind: 'main' }
+      ])
+
+      const replay = await send(workflow)
+      expect(replay.error).toBeNull()
+      expect(JSON.parse(replay.result ?? '{}')).toEqual(result)
+      expect(execution.controls()).toHaveLength(3)
+      expect(execution.reservationCounts()).toEqual([1, 1, 1])
+      expect((await records.snapshot()).records).toHaveLength(3)
+    } finally {
+      for (const control of execution.controls()) {
+        control.accept()
+        control.cancel()
+      }
+      child.kill()
+      endInvocation()
+      connection.release()
+      await server.close()
+      await rm(profileStorage, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('exposes host.children and host.collect with snake-case durable projections', async () => {
+    const received: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const call = JSON.parse(body)
+        received.push(call)
+        const result =
+          call.params.op === undefined
+            ? {
+                kind: 'receipts',
+                children: [
+                  {
+                    frameId: 'child-1',
+                    attemptId: 'attempt-1',
+                    name: 'Source trace',
+                    agentName: 'Main Agent',
+                    status: 'running'
+                  }
+                ]
+              }
+            : call.params.op === 'children'
+              ? [
+                  {
+                    frameId: 'child-1',
+                    attemptId: 'attempt-1',
+                    title: 'Source trace',
+                    status: 'running'
+                  }
+                ]
+              : [
+                  {
+                    frameId: 'child-1',
+                    attemptId: 'attempt-1',
+                    status: 'completed',
+                    terminalMessageId: 'message-1',
+                    response: 'Durable answer',
+                    artifactsCreated: []
+                  },
+                  {
+                    frameId: 'child-2',
+                    attemptId: 'attempt-2',
+                    name: 'Long analysis',
+                    agentName: 'Main Agent',
+                    status: 'running'
+                  }
+                ]
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-work-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const firstCell = await send(
+        "globalThis.pendingDelegation = await host.delegate({ task: 'Trace sources', name: 'Source trace' }, { wait: false }); return { delegated: globalThis.pendingDelegation, children: await host.children() }"
+      )
+      expect(firstCell.error).toBeNull()
+      expect(JSON.parse(firstCell.result ?? '{}')).toEqual({
+        delegated: {
+          kind: 'receipts',
+          children: [
+            {
+              frame_id: 'child-1',
+              attempt_id: 'attempt-1',
+              name: 'Source trace',
+              agent_name: 'Main Agent',
+              status: 'running'
+            }
+          ]
+        },
+        children: [
+          {
+            frame_id: 'child-1',
+            attempt_id: 'attempt-1',
+            title: 'Source trace',
+            status: 'running'
+          }
+        ]
+      })
+      const secondCell = await send(
+        'return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frame_id, attempt_id })), { timeout_seconds: 0 }) }'
+      )
+      expect(secondCell.error).toBeNull()
+      expect(JSON.parse(secondCell.result ?? '{}')).toEqual({
+        results: [
+          {
+            frame_id: 'child-1',
+            attempt_id: 'attempt-1',
+            status: 'completed',
+            terminal_message_id: 'message-1',
+            response: 'Durable answer',
+            artifacts_created: []
+          },
+          {
+            frame_id: 'child-2',
+            attempt_id: 'attempt-2',
+            name: 'Long analysis',
+            agent_name: 'Main Agent',
+            status: 'running'
+          }
+        ]
+      })
+      expect(received).toEqual([
+        {
+          method: 'delegatedWorkCall',
+          params: {
+            request: { task: 'Trace sources', name: 'Source trace' },
+            options: { wait: false },
+            delegation_call_id: '1'
+          }
+        },
+        { method: 'delegatedWorkCall', params: { op: 'children' } },
+        {
+          method: 'delegatedWorkCall',
+          params: {
+            op: 'collect',
+            selectors: [{ frame_id: 'child-1', attempt_id: 'attempt-1' }],
+            options: { timeout_seconds: 0 }
+          }
+        }
+      ])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('routes host.submit_output through its dedicated child capability method', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result: { accepted: true } }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-submit-output-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'child-token'
+    })
+    try {
+      const result = await send('return await host.submit_output({ answer: 42 })')
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({ accepted: true })
+      expect(received).toEqual({
+        method: 'delegatedOutputCall',
+        params: { value: { answer: 42 } }
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('routes host.send_frame_message kind through delegated work and projects a continuation receipt', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            result: {
+              direction: 'to_child',
+              disposition: 'continued',
+              status: 'queued',
+              continuation_attempt_id: 'attempt-2'
+            }
+          })
+        )
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-work-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send(
+        "return JSON.stringify(await host.send_frame_message('child-frame', 'Check a counterexample', { kind: 'question' }))"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result as string)).toEqual({
+        direction: 'to_child',
+        disposition: 'continued',
+        status: 'queued',
+        continuation_attempt_id: 'attempt-2'
+      })
+      expect(received).toEqual({
+        method: 'delegatedWorkCall',
+        params: {
+          op: 'send_message',
+          target: 'child-frame',
+          message: 'Check a counterexample',
+          options: { kind: 'question' }
+        }
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('keeps the two-argument host.send_frame_message call compatible', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            result: {
+              direction: 'to_child',
+              disposition: 'continued',
+              status: 'queued',
+              continuation_attempt_id: 'attempt-2'
+            }
+          })
+        )
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-work-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send(
+        "return JSON.stringify(await host.send_frame_message('child-frame', 'Check a counterexample'))"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result as string)).toEqual({
+        direction: 'to_child',
+        disposition: 'continued',
+        status: 'queued',
+        continuation_attempt_id: 'attempt-2'
+      })
+      expect(received).toEqual({
+        method: 'delegatedWorkCall',
+        params: {
+          op: 'send_message',
+          target: 'child-frame',
+          message: 'Check a counterexample'
+        }
+      })
+      expect(received.params).not.toHaveProperty('kind')
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('projects a Delegate-to-parent queued send_frame_message receipt without a child', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            result: {
+              direction: 'to_parent',
+              disposition: 'message',
+              status: 'queued',
+              message_id: 'message-1',
+              target_frame_id: 'parent-frame',
+              source_attempt_id: 'attempt-1'
+            }
+          })
+        )
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-work-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send(
+        "return JSON.stringify(await host.send_frame_message('parent', 'Which cohort?', { kind: 'question' }))"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result as string)).toEqual({
+        direction: 'to_parent',
+        disposition: 'message',
+        status: 'queued',
+        message_id: 'message-1',
+        target_frame_id: 'parent-frame',
+        source_attempt_id: 'attempt-1'
+      })
+      expect(received).toEqual({
+        method: 'delegatedWorkCall',
+        params: {
+          op: 'send_message',
+          target: 'parent',
+          message: 'Which cohort?',
+          options: { kind: 'question' }
+        }
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
   it('routes host.mcp through the issued local socket', async () => {
     let received: { method?: string; params?: { server?: string } } = {}
     let authorization: string | undefined

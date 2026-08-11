@@ -55,7 +55,7 @@ export type PreviewFileItem = PreviewItemBase & {
 // Tool previews share the workbench chrome with files, but keep their own render path.
 export type PreviewToolItem = PreviewItemBase & {
   type: 'tool'
-  toolKind?: 'notebook' | 'files' | 'reviewer' | 'plan'
+  toolKind?: 'notebook' | 'files' | 'reviewer' | 'plan' | 'subagents'
   notebook?: NotebookSessionReference
   // Reviewer-specific: which session's reviews to show, which review to select, and the active
   // finding to scroll to.
@@ -63,6 +63,8 @@ export type PreviewToolItem = PreviewItemBase & {
   reviewerReviewId?: string
   reviewerActiveFindingId?: string
   planArtifactVersionId?: string
+  // Session-scoped Subagents Preview: one stable item owns the selected read-only Agent Frame.
+  selectedAgentFrameId?: string
 }
 
 export type PreviewItem = PreviewFileItem | PreviewToolItem
@@ -193,6 +195,20 @@ const createSessionPlanPreviewItem = (
   toolKind: 'plan',
   title: 'Session Plan',
   ...(artifactVersionId ? { planArtifactVersionId: artifactVersionId } : {})
+})
+
+const createSessionSubagentsPreviewItem = (
+  sessionId: string,
+  projectId: string | undefined,
+  selectedAgentFrameId: string
+): PreviewToolItem => ({
+  id: `tool:${sessionId}:subagents`,
+  ...(projectId ? { projectId } : {}),
+  sessionId,
+  type: 'tool',
+  toolKind: 'subagents',
+  title: 'Subagents',
+  selectedAgentFrameId
 })
 
 // Builds the stable project-level preview tab that owns the file library surface.
@@ -468,5 +484,6 @@ export {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
   createSessionPlanPreviewItem,
+  createSessionSubagentsPreviewItem,
   createSessionReviewerPreviewItem
 }

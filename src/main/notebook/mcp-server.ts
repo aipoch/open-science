@@ -16,6 +16,12 @@ import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
+// Host SDK bounded observations allow 30 minutes. Keep the outer control REPL alive slightly longer
+// so its default deadline cannot destroy the kernel while collect/message_receipt is still valid.
+const REPL_EXECUTE_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
+
+const HOST_SDK_DISCOVERY_GUIDANCE =
+  "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the operation you plan to call; each topic returns concise parameter and result field descriptions. Main/root agents can use `await host.help('delegate')` when delegation guidance is needed; do not prefetch all Help topics. Delegate agents should use the same catalog for messaging and structured-output operations; unavailable root-only topics remain visible with a reason."
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools.
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
@@ -24,6 +30,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'In Default mode, use `ask_user_question` as the first tool call when a request has materially different interpretations; do not inspect or use other tools first, and never print a textual choice list. Put all 1-3 known questions in one call with 2-4 real options each. Infer minor reversible details and omit Other; the UI adds custom, agent-decide, and Skip. It shows questions one at a time, then continues the task after Finish. A pending result ends the turn normally.',
   'Notebook preview is only for code and execution results; keep chat, explanation, and diagnosis in the chat area.',
   'Use `notebook_execute` for one persistent Python/R cell per call; reuse `cellId` to rerun it. Python/R data kernels cannot call connectors; use `repl_execute` for `host.capabilities`/`host.llm`/`host.mcp`/`host.compute`/`host.agents`/`host.skills`. For large cross-kernel data, write under `process.env.OPEN_SCIENCE_HANDOFF_DIR` in the REPL and read that path from Python/R.',
+  HOST_SDK_DISCOVERY_GUIDANCE,
   'Each runtime is a separate persistent namespace. Create named runtimes with `manage_environments`, select them with the bind/switch tools, and use files to move data across runtimes. Memory is lost on restart or app reopen; run history and files survive.',
   'The notebook already runs inside a writable session workspace. The cwd is already the session data dir; use plain relative paths for normal inputs and outputs. The connector handoff directory is outside that cwd and must be resolved from `OPEN_SCIENCE_HANDOFF_DIR`. Never copy a saved file onto the same path. Do not modify original user files.',
   'Use `inspect_packages` for version checks and `manage_packages` for installs. Never install inside a cell or shell. App-managed runtime contents belong under `$OPEN_SCIENCE_RUNTIME_DIR`, never the project, workspace, system Python, or a user global environment.',
@@ -61,7 +68,7 @@ const executeToolSchema = {
 
 const replExecuteToolSchema = {
   code: z.string(),
-  timeoutMs: z.number().int().positive().optional()
+  timeoutMs: z.number().int().positive().default(REPL_EXECUTE_DEFAULT_TIMEOUT_MS)
 }
 
 const bashExecuteToolSchema = {
@@ -168,7 +175,8 @@ const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   'Use `await host.capabilities()` to feature-gate optional host namespaces; load the `self-awareness` Skill for its boolean contract and current capability map.',
   'Only this kernel can call temporary tool-less inference (`await host.llm(prompt)` or a bounded prompt batch), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`; load its skill for the API), Specialist management (`host.agents`), and Skill authoring (`host.skills`).',
-  'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
+  HOST_SDK_DISCOVERY_GUIDANCE,
+  'Globals persist and a trailing expression is returned. Return results directly when they are for Agent inspection. The default execution deadline covers the Host SDK maximum 30-minute bounded wait; an explicit timeoutMs still overrides it. To hand off large data from the REPL to Python/R, write it under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis code.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -699,8 +707,12 @@ const registerNotebookRpcTool = (
       description: definition.description,
       inputSchema: definition.inputSchema
     },
-    async (input) => {
-      const raw = await callNotebookRpc(environment, definition.method, input)
+    async (input, extra) => {
+      const rpcInput =
+        definition.method === 'requestUserInput'
+          ? { ...input, _appToolRequestId: String(extra.requestId) }
+          : input
+      const raw = await callNotebookRpc(environment, definition.method, rpcInput)
       const result = definition.mapResult ? definition.mapResult(raw, input) : raw
       return {
         content: [

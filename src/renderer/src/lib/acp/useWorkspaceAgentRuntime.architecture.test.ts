@@ -76,7 +76,12 @@ const ownerNames = [
   'workspace-runtime-session-lifecycle-owner'
 ] as const
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
+const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
 const privateOwnerTargets = new Set(ownerTargets.values())
+const subagentPresentationTarget = modulePath(
+  resolve(__dirname, 'workspace-subagent-runtime-presentation')
+)
+const privateRuntimeTargets = new Set([...privateOwnerTargets, subagentPresentationTarget])
 const facadeTarget = modulePath(facadePath)
 const workspaceEventsTarget = modulePath(resolve(__dirname, 'workspace-events'))
 const resolveImportTarget = (sourcePath: string, specifier: string): string | undefined => {
@@ -444,9 +449,11 @@ const hookKeys = [
   'permissionProfiles',
   'permissionGrants',
   'contextUsageBySession',
+  'delegatedWorkUnavailableBySession',
   'promptInFlightSessionIds',
   'sendPreparationInFlightSessionIds',
   'nativeContextCompactionSessionIds',
+  'subscribeToSubagentRuntimeUpdates',
   'compactContext',
   'ensureSessionReady',
   'sendMessage',
@@ -478,11 +485,11 @@ const ownerDependencyNames = (path: string): string[] => {
   const targets = new Set(importsFrom(path).map((reference) => reference.target))
   return ownerNames.filter((name) => targets.has(ownerTargets.get(name)!))
 }
-const allowedOwnerConsumers = new Set([facadeTarget, ...privateOwnerTargets])
+const allowedOwnerConsumers = new Set([facadeTarget, ...privateRuntimeTargets])
 const workspaceRuntimeBoundaryTargets = new Set([
   facadeTarget,
   workspaceEventsTarget,
-  ...privateOwnerTargets
+  ...privateRuntimeTargets
 ])
 const privateOwnerBoundaryViolations = (path: string, source = readSource(path)): string[] => {
   const consumer = normalizePathSeparators(relative(rendererRoot, path))
@@ -497,7 +504,7 @@ const privateOwnerBoundaryViolations = (path: string, source = readSource(path))
     }
     if (
       reference.target &&
-      privateOwnerTargets.has(reference.target) &&
+      privateRuntimeTargets.has(reference.target) &&
       !allowedOwnerConsumers.has(modulePath(path))
     ) {
       return [`${consumer} ${reference.kind} imports a private owner`]
@@ -507,13 +514,17 @@ const privateOwnerBoundaryViolations = (path: string, source = readSource(path))
 }
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
-  it('keeps the facade and four deep owners within their completion gates', () => {
+  it('keeps the facade, four deep owners, and presentation adapter within their completion gates', () => {
     expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(600)
     for (const name of ownerNames) {
-      expect(physicalLines(`${ownerTargets.get(name)}.ts`), name).toBeLessThanOrEqual(660)
+      expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(660)
     }
+    expect(
+      physicalLines(`${subagentPresentationTarget}.ts`),
+      'subagent presentation'
+    ).toBeLessThanOrEqual(220)
   })
-  it('keeps the established 19-key hook interface', () => {
+  it('keeps the established runtime interface plus readiness and the child-update selector', () => {
     const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
     const owner = variableArrow(facadeFile, 'useOwnedWorkspaceAgentRuntime')
     const consumer = variableArrow(facadeFile, 'useWorkspaceAgentRuntime')
@@ -555,13 +566,14 @@ describe('workspace runtime architecture', () => {
       processRuntimeEvents: 1,
       recordPromptPlanAuthority: 1,
       compact: 1,
+      ensureReady: 1,
       resume: 1,
       cancel: 1,
       delete: 1
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({
       setPermissionProfile: 1,
-      resumeSession: 2,
+      resumeSession: 1,
       respondToPermission: 1,
       revokePermissionGrant: 1
     })
@@ -579,13 +591,13 @@ describe('workspace runtime architecture', () => {
         responsibility
       ).toBe(true)
     }
-    expect(readSource(facadePath)).not.toContain('window.api')
+    expect(readSource(facadePath)).toContain('window.api?.acp?.onAgentRuntimeUpdate')
   })
   it('keeps the owner dependency DAG explicit and acyclic', () => {
     expect(ownerDependencyNames(facadePath)).toEqual(ownerNames)
     expect(
       Object.fromEntries(
-        ownerNames.map((name) => [name, ownerDependencyNames(`${ownerTargets.get(name)}.ts`)])
+        ownerNames.map((name) => [name, ownerDependencyNames(ownerFilePath(name))])
       )
     ).toEqual({
       'workspace-runtime-event-owner': [],
@@ -596,6 +608,9 @@ describe('workspace runtime architecture', () => {
         'workspace-runtime-command-owner'
       ]
     })
+    expect(importsFrom(facadePath).map((reference) => reference.target)).toContain(
+      subagentPresentationTarget
+    )
   })
   it('keeps private owners behind the public facade', () => {
     const violations = productionSources().flatMap((path) => privateOwnerBoundaryViolations(path))
@@ -616,6 +631,18 @@ describe('workspace runtime architecture', () => {
     }
     expect(unsupportedFacadeImports).toEqual([])
     expect(hookConsumers).toEqual(['pages/workspace/WorkspacePage.tsx'])
+  })
+  it('keeps the delegated runtime transport subscription in the App-level owner', () => {
+    expect(
+      productionSources()
+        .filter((path) => readSource(path).includes('window.api?.acp?.onAgentRuntimeUpdate'))
+        .map((path) => normalizePathSeparators(relative(rendererRoot, path)))
+    ).toEqual(['lib/acp/useWorkspaceAgentRuntime.ts'])
+    expect(readSource(`${subagentPresentationTarget}.ts`)).not.toContain('window.api')
+    expect(readSource(`${subagentPresentationTarget}.ts`)).toContain('createSessionStore()')
+    expect(readSource(`${subagentPresentationTarget}.ts`)).toContain(
+      'never writes to the authoritative Session store'
+    )
   })
   it('rejects aliased and non-literal loader bypass attempts', () => {
     const syntheticPath = resolve(__dirname, 'synthetic-consumer.ts')
@@ -729,7 +756,7 @@ describe('workspace runtime architecture', () => {
   })
   it('prevents owners from reverse-importing the facade', () => {
     const violations = ownerNames.flatMap((name) => {
-      const path = `${ownerTargets.get(name)}.ts`
+      const path = ownerFilePath(name)
       return importsFrom(path)
         .filter((reference) => reference.target === facadeTarget)
         .map(
@@ -739,7 +766,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(violations).toEqual([])
   })
-  it('keeps the lifecycle owner interface at six operations', () => {
+  it('keeps the lifecycle owner interface at seven operations', () => {
     const lifecyclePath = `${ownerTargets.get('workspace-runtime-session-lifecycle-owner')}.ts`
     const lifecycle = variableArrow(
       sourceFileFor(lifecyclePath),
@@ -749,6 +776,7 @@ describe('workspace runtime architecture', () => {
       'recordPromptPlanAuthority',
       'processRuntimeEvents',
       'compact',
+      'ensureReady',
       'resume',
       'cancel',
       'delete'
@@ -771,7 +799,8 @@ describe('workspace runtime architecture', () => {
     expect(workspaceRuntime.ownerPaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
-      ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`)
+      ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'

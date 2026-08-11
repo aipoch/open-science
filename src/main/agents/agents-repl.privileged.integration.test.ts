@@ -126,17 +126,25 @@ const composeService = (opts: {
   durableBindings: Map<string, string | undefined>
   notified: Array<{ sessionId: string; targetName: string | null }>
   invalidateCount: () => number
+  approvalCount: () => number
 } => {
   const profileService = createProfileService(opts.profileStorage)
   const sessionBinding = new SessionBindingService(profileService)
   const durableBindings = new Map<string, string | undefined>()
   const notified: Array<{ sessionId: string; targetName: string | null }> = []
   let invalidated = 0
+  let approvals = 0
+  const approvalGateway = opts.gateway ?? passthroughApprovalGateway
   const agentsService = new AgentsService({
     profileService,
     catalog: stubCatalog,
     sessionBinding,
-    approvalGateway: opts.gateway ?? passthroughApprovalGateway,
+    approvalGateway: {
+      decide: async (request) => {
+        approvals += 1
+        return approvalGateway.decide(request)
+      }
+    },
     switchNotifier: {
       notify: (pending) => {
         notified.push({ sessionId: pending.sessionId, targetName: pending.targetName })
@@ -156,7 +164,8 @@ const composeService = (opts: {
     sessionBinding,
     durableBindings,
     notified,
-    invalidateCount: () => invalidated
+    invalidateCount: () => invalidated,
+    approvalCount: () => approvals
   }
 }
 
@@ -187,6 +196,7 @@ gate('host.agents repl privileged integration', () => {
   let durableBindings: Map<string, string | undefined>
   let notified: Array<{ sessionId: string; targetName: string | null }>
   let invalidateCount: () => number
+  let approvalCount: () => number
 
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-priv-profile-'))
@@ -197,6 +207,7 @@ gate('host.agents repl privileged integration', () => {
     durableBindings = composed.durableBindings
     notified = composed.notified
     invalidateCount = composed.invalidateCount
+    approvalCount = composed.approvalCount
     void agentsService
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
@@ -303,6 +314,57 @@ gate('host.agents repl privileged integration', () => {
       expect(durableBindings.has('sdk-main')).toBe(false)
       expect(notified).toContainEqual({ sessionId: 'sdk-main', targetName: null })
     })
+  })
+
+  it('rejects Specialist switching through a real delegate capability before approval or mutation despite forged Main fields', async () => {
+    await agentsService.dispatch({
+      op: 'create',
+      params: { name: 'DELEGATE_SWITCH_TARGET' }
+    })
+    const approvalsBefore = approvalCount()
+    const notificationsBefore = notified.length
+    const connection = await rpcServer.issueControlConnection(
+      'delegate-switch-session',
+      'project-1',
+      'delegate-frame-1',
+      { role: 'delegate', attemptId: 'delegate-attempt-1' }
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'delegate-turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'delegate-tool-1'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'delegate-switch-session'
+    })
+
+    try {
+      const response = await send(
+        agentsCallFetch(connection.endpoint, connection.token, 'forged-session', {
+          op: 'switch',
+          name: 'DELEGATE_SWITCH_TARGET',
+          caller_role: 'main',
+          role: 'main',
+          is_main: true
+        })
+      )
+      expect(response.error).toBeNull()
+      const parsed = JSON.parse(response.result ?? '{}')
+      expect(parsed).toEqual({
+        ok: false,
+        body: { error: 'host.agents.switch: Only Main Agent may switch Specialist profile.' }
+      })
+      expect(approvalCount()).toBe(approvalsBefore)
+      expect(sessionBinding.getBinding('delegate-switch-session')).toBeUndefined()
+      expect(durableBindings.has('delegate-switch-session')).toBe(false)
+      expect(notified).toHaveLength(notificationsBefore)
+    } finally {
+      child.kill()
+      endInvocation()
+      connection.release()
+    }
   })
 
   it('host.agents.delete(name, { revision }) removes the profile via the SDK method and invalidates the catalog', async () => {

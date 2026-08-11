@@ -323,6 +323,13 @@ const AppContent = (): React.JSX.Element | null => {
     () => window.api.settings.onSkillImportApprovalSettled(dismissSkillImport),
     [dismissSkillImport]
   )
+  useEffect(
+    () =>
+      window.api.settings.onChanged?.((snapshot) => {
+        useSettingsStore.getState().acceptCommittedSnapshot(snapshot)
+      }),
+    []
+  )
   // Main retains approval payloads while the agent tool call is parked. Ask it to replay after both
   // listeners are attached so a recreated window can recover requests emitted while no renderer
   // existed; duplicate delivery is harmless because the renderer queue is keyed by request id.

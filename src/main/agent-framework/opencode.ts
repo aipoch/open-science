@@ -23,6 +23,7 @@ import type {
   SessionSetup,
   SessionSetupContext
 } from './types'
+import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
@@ -112,7 +113,10 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   lsp: 'allow',
   edit: 'ask',
   bash: 'ask',
-  task: 'ask',
+  // OpenCode's Task tool creates provider-owned subagent Sessions outside the app-owned delegated
+  // work graph. Deny it at the highest-precedence config layer: asking is insufficient because an
+  // approval would still create an invisible child that bypasses Attempt authority and lifecycle.
+  task: 'deny',
   // Skill loading only reads definitions already provisioned into the isolated OpenCode config.
   // Permission for creating/editing/enabling those definitions remains app-owned elsewhere.
   skill: 'allow',
@@ -120,6 +124,15 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   websearch: 'ask',
   external_directory: 'ask'
 }
+
+// OpenCode also permits direct `@agent` invocation independently of Task permission. Disable every
+// built-in subagent exposed by supported/current OpenCode releases; external agent discovery is
+// already closed by the isolated home plus OPENCODE_DISABLE_PROJECT_CONFIG.
+const OPENCODE_DISABLED_NATIVE_AGENTS = {
+  general: { disable: true },
+  explore: { disable: true },
+  scout: { disable: true }
+} as const
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -323,6 +336,7 @@ const buildAppConfigContent = (
   return {
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     permission: { ...OPENCODE_PERMISSION_RULES },
+    agent: { ...OPENCODE_DISABLED_NATIVE_AGENTS },
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog)
   }
 }
@@ -362,6 +376,10 @@ const buildOpencodeConfig = (
       ...basePermission,
       ...OPENCODE_PERMISSION_RULES
     },
+    agent: {
+      ...asRecord(baseConfig.agent),
+      ...OPENCODE_DISABLED_NATIVE_AGENTS
+    },
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog, baseProviders)
   }
 
@@ -377,6 +395,7 @@ export const opencodeFramework: AgentFramework = {
   // opencode discovers skills natively at <configDir>/skills/<name>/SKILL.md (same layout as Claude),
   // loaded on-demand via its skill tool; the app materializes the enabled set into the isolated config.
   supportsSkills: true,
+  supportsDelegatedWork: isProductionDelegatedWorkFramework('opencode'),
   // opencode accepts stdio MCP servers over ACP (verified live vs 1.17.13: it launches a stdio server
   // and sends it the MCP initialize handshake). Its mcpCapabilities advertise only http/sse because
   // ACP has no stdio flag — stdio is the baseline transport. So opencode uses the SAME stdio artifact/

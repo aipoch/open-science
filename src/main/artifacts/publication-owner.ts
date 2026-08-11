@@ -163,7 +163,7 @@ class ArtifactPublicationOwner {
           PENDING_DIR
         )
         for (const runId of await this.storage.readSubdirectoryNames(pendingRoot)) {
-          if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
+          if (!this.storage.isPendingArtifactRunDirectory(runId)) continue
           const runDirectory = join(pendingRoot, runId)
           for (const entry of await this.storage.readFileEntries(runDirectory)) {
             const routing = this.storage.toPendingRouting(
@@ -406,6 +406,12 @@ class ArtifactPublicationOwner {
         if (!SAFE_SEGMENT_PATTERN.test(sourceSessionId)) continue
         const pendingDirectory = join(projectDirectory, sourceSessionId, PENDING_DIR)
         for (const runId of await this.storage.readSubdirectoryNames(pendingDirectory)) {
+          if (!this.storage.isPendingArtifactRunDirectory(runId)) {
+            if (runId === 'executions') {
+              await this.storage.cleanupLegacyExecutionHandoffs(join(pendingDirectory, runId))
+            }
+            continue
+          }
           if (!SAFE_SEGMENT_PATTERN.test(runId)) continue
           const runDirectory = join(pendingDirectory, runId)
           const files = await this.storage.readFileEntries(runDirectory)

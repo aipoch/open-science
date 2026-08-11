@@ -63,7 +63,7 @@ describe('production application command wiring', () => {
       ],
       [
         'sessionPersistenceHandlers',
-        'reviewRepository, sessionPersistenceHandlers )',
+        'reviewRepository, sessionPersistenceHandlers, async (session)',
         'sessions: sessionPersistenceHandlers'
       ],
       ['artifactHandlers', 'artifactHandlers )', 'artifacts: artifactHandlers'],

@@ -90,7 +90,11 @@ const createExecuteControlHarness = async (
       : {})
   })
   service.setMcpRpcConnectionResolver((binding) =>
-    server.issueControlConnection(binding.sessionId, binding.projectId)
+    server.issueControlConnection(
+      binding.sessionId,
+      binding.projectId,
+      'root-frame-' + binding.sessionId
+    )
   )
   service.setControlCompletionInterceptor(
     createCompletionGatedControlToolInterceptor(gate.coordinator, gate.deliverToOldPrompt)

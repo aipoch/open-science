@@ -24,6 +24,28 @@ const planProjection: ActivePlanProjection = {
 }
 
 describe('AcpRuntimeSnapshotOwner', () => {
+  it('preserves bounded tool terminal metadata in published runtime events', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+
+    const event = owner.appendEvent({
+      kind: 'tool',
+      level: 'info',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      terminalOutput: 'completed output',
+      terminalExitCode: 0
+    })
+
+    expect(event).toMatchObject({
+      kind: 'tool',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      terminalOutput: 'completed output',
+      terminalExitCode: 0
+    })
+  })
+
   it('retains the terminal context window in the renderer-visible event', () => {
     const owner = new AcpRuntimeSnapshotOwner('/workspace')
     const terminalContextWindow = {

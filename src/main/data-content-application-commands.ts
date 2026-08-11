@@ -250,6 +250,7 @@ const dataContentApplicationCommands = Object.freeze({
     'exportConversationFromInvokingWindow'
   ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
+  sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
   sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
   sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
   sessionSave: defineApplicationCommand<
@@ -321,6 +322,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionLoadAll,
+    dataContentApplicationCommands.sessionLoadOne,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionSave
@@ -487,6 +489,8 @@ const registerDataContentApplicationCommands = (
       },
       'sessions:load-all': () =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
+      'sessions:load-one': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
       'sessions:save-manifest': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
       'sessions:update-archive': (invocation) => {

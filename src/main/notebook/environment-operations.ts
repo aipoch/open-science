@@ -1,6 +1,7 @@
 import type { NotebookKernelMetadata, NotebookLanguage } from '../../shared/notebook'
 import type { ProvisionProgress } from '../../shared/notebook-env'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
+import type { NotebookLaneIdentity } from './lane-identity'
 import { EnvironmentLeaseManager, type EnvironmentLeaseMode } from './environment-lease-manager'
 import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import {
@@ -22,6 +23,7 @@ type EnvironmentOperationKind = 'execution' | 'inspection' | 'mutation' | 'provi
 type EnvironmentOperationSession = {
   readonly projectName: string
   readonly sessionId: string
+  readonly lane: NotebookLaneIdentity
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined
   setRuntimeBinding(language: NotebookLanguage, binding: NotebookSessionRuntimeBinding): void
   kernelStatus(processKey: string): NotebookKernelMetadata['lastKnownStatus'] | undefined

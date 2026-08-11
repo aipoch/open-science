@@ -76,7 +76,11 @@ export const buildReviewScopeSnapshot = (
   session: PersistedChatSession,
   scope: TurnScope
 ): ReviewScopeSnapshotBlock[] => {
-  const projection = resolveReviewTurnProjection(session, scope.turnMessageId)
+  const projection = resolveReviewTurnProjection(
+    session,
+    scope.turnMessageId,
+    scope.messageBranchId
+  )
   const messageMap = new Map(projection.messages.map((message) => [message.id, message]))
   const activityMap = new Map(projection.activities.map((activity) => [activity.id, activity]))
 

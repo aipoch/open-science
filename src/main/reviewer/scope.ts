@@ -9,7 +9,7 @@ import {
   projectConversationMessage,
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
-import type { ScopeBlock, TurnScope } from '../../shared/reviewer'
+import type { DelegatedReviewEvidenceScope, ScopeBlock, TurnScope } from '../../shared/reviewer'
 
 // One item in the flattened transcript: either a persisted message or a tool activity, tagged so the
 // resolver can order and hash them uniformly. Mirrors the renderer's conversation-item projection.
@@ -238,6 +238,50 @@ export const resolveTurnScope = (
     ...(projection.messageBranchId ? { messageBranchId: projection.messageBranchId } : {}),
     blocks,
     artifactVersionIds
+  }
+}
+
+// A delegated review is admitted only when the immutable Attempt record, Conversation Graph and
+// freshly-resolved Reviewer scope all name the same completed child turn. This is the Reviewer
+// owner's fail-closed gate; callers cannot widen scope by supplying another Frame/Branch/Message or
+// by substituting a newer Artifact Version from elsewhere in the Session.
+export const assertDelegatedReviewEvidenceScope = (
+  session: PersistedChatSession,
+  scope: TurnScope,
+  expected: DelegatedReviewEvidenceScope
+): void => {
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find((candidate) => candidate.id === expected.agentFrameId)
+  const branch = graph?.branches.find((candidate) => candidate.id === expected.messageBranchId)
+  const terminal = graph?.messages.find((candidate) => candidate.id === expected.terminalMessageId)
+  const record = session.runtimeContext?.delegatedWork?.records.find(
+    (candidate) => candidate.agentFrameId === expected.agentFrameId
+  )
+  const attempt = record?.attempts.find((candidate) => candidate.id === expected.attemptId)
+  const exactArtifactVersions =
+    scope.artifactVersionIds.length === expected.artifactVersionIds.length &&
+    scope.artifactVersionIds.every((id, index) => id === expected.artifactVersionIds[index])
+
+  if (
+    !graph ||
+    !frame ||
+    frame.kind !== 'delegate' ||
+    frame.status !== 'completed' ||
+    !branch ||
+    branch.agentFrameId !== frame.id ||
+    !terminal ||
+    terminal.agentFrameId !== frame.id ||
+    terminal.role !== 'agent' ||
+    terminal.status !== 'complete' ||
+    attempt?.status !== 'completed' ||
+    attempt.terminalMessageId !== terminal.id ||
+    scope.turnMessageId !== terminal.id ||
+    scope.agentFrameId !== frame.id ||
+    scope.messageBranchId !== branch.id ||
+    !scope.blocks.some((block) => block.kind === 'message' && block.sourceId === terminal.id) ||
+    !exactArtifactVersions
+  ) {
+    throw new Error('Delegated Review evidence does not match a completed child Attempt.')
   }
 }
 

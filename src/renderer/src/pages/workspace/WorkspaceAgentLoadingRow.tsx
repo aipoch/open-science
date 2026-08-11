@@ -9,6 +9,11 @@ import { getAgentThinkingStartedAt, type AgentLoadingPhase } from './agent-loadi
 type WorkspaceAgentLoadingRowProps = {
   sessionId: string
   phase: Exclude<AgentLoadingPhase, 'hidden'> | 'resuming'
+  agentStatus?: string
+}
+
+type AgentLoadingIndicatorProps = Omit<WorkspaceAgentLoadingRowProps, 'sessionId'> & {
+  sessionId?: string
 }
 
 const assistantMessageSurfaceClassName =
@@ -27,9 +32,15 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX.Element => {
+const ThinkingLoadingContent = ({
+  sessionId,
+  agentStatus
+}: {
+  sessionId?: string
+  agentStatus?: string
+}): React.JSX.Element => {
   const session = useSessionStore((state) =>
-    state.sessions.find((candidate) => candidate.id === sessionId)
+    sessionId ? state.sessions.find((candidate) => candidate.id === sessionId) : undefined
   )
   const [mountedAt] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
@@ -54,9 +65,12 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
         </span>
         {slow ? <span aria-hidden="true">· taking longer than usual</span> : null}
       </div>
-      {session?.agentStatus ? (
-        <span className="truncate text-[11px] text-text-000/70" title={session.agentStatus}>
-          {session.agentStatus}
+      {(agentStatus ?? session?.agentStatus) ? (
+        <span
+          className="truncate text-[11px] text-text-000/70"
+          title={agentStatus ?? session?.agentStatus}
+        >
+          {agentStatus ?? session?.agentStatus}
         </span>
       ) : null}
     </>
@@ -67,12 +81,13 @@ const ThinkingLoadingContent = ({ sessionId }: { sessionId: string }): React.JSX
 // small so tool cards remain the primary source of execution progress.
 const AgentLoadingIndicator = ({
   sessionId,
-  phase
-}: WorkspaceAgentLoadingRowProps): React.JSX.Element => {
+  phase,
+  agentStatus
+}: AgentLoadingIndicatorProps): React.JSX.Element => {
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
       {phase === 'thinking' ? (
-        <ThinkingLoadingContent sessionId={sessionId} />
+        <ThinkingLoadingContent sessionId={sessionId} agentStatus={agentStatus} />
       ) : (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
@@ -94,7 +109,8 @@ const AgentLoadingIndicator = ({
 // Places the loading indicator in the same transcript geometry as assistant messages.
 const WorkspaceAgentLoadingRow = ({
   sessionId,
-  phase
+  phase,
+  agentStatus
 }: WorkspaceAgentLoadingRowProps): React.JSX.Element => (
   <MessageScrollerItem
     key={`${sessionId}-agent-loading`}
@@ -103,7 +119,7 @@ const WorkspaceAgentLoadingRow = ({
   >
     <div className="px-4 pb-1 pt-5 md:px-6">
       <div className={cn(assistantMessageSurfaceClassName, 'px-0 py-2')}>
-        <AgentLoadingIndicator sessionId={sessionId} phase={phase} />
+        <AgentLoadingIndicator sessionId={sessionId} phase={phase} agentStatus={agentStatus} />
       </div>
     </div>
   </MessageScrollerItem>

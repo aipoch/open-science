@@ -4,6 +4,7 @@ import type {
   PersistedChatMessage,
   PersistedToolActivity
 } from './session-persistence'
+import { parseNestedDelegateInvocationId } from './delegated-caller-source'
 
 export type PersistedRuntimeSegment = {
   id: string
@@ -361,6 +362,123 @@ export const validateConversationGraph = (graph: PersistedConversationGraph): vo
       }
     }
   }
+}
+
+// A host.delegate call runs inside a Notebook control invocation, so ACP persists only the outer
+// repl_execute Tool activity. The authenticated Notebook bridge gives each nested delegation its own
+// stable identity; materialize that identity as a root activity so durable caller attribution and the
+// root transcript share one exact anchor. Existing direct ACP activities always win unchanged.
+export const materializeNestedDelegateActivities = (
+  graph: PersistedConversationGraph
+): PersistedConversationGraph => {
+  validateConversationGraph(graph)
+  const activityIds = new Set(graph.activities.map(({ id }) => id))
+  const messages = indexById(graph.messages)
+  const frames = indexById(graph.frames)
+  const branches = indexById(graph.branches)
+  const candidates = new Map<
+    string,
+    {
+      sourceMessage: PersistedMessageNode
+      prompts: PersistedMessageNode[]
+      controlInvocationId: string
+      delegationCallId: string
+    }
+  >()
+
+  for (const prompt of [...graph.messages].sort(
+    (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+  )) {
+    const source = prompt.delegatedCallerSource
+    if (!source || activityIds.has(source.toolInvocationId) || prompt.role !== 'user') continue
+    const nested = parseNestedDelegateInvocationId(source.toolInvocationId)
+    const frame = frames.get(prompt.agentFrameId)
+    const sourceMessage = messages.get(source.rootMessageId)
+    const sourceBranch = sourceMessage
+      ? branches.get(sourceMessage.introducedOnBranchId)
+      : undefined
+    if (
+      !nested ||
+      !frame ||
+      frame.kind !== 'delegate' ||
+      frame.parentFrameId !== graph.rootFrameId ||
+      !sourceMessage ||
+      sourceMessage.role !== 'user' ||
+      sourceMessage.agentFrameId !== graph.rootFrameId ||
+      !sourceMessage.runtimeSegmentId ||
+      !sourceBranch ||
+      sourceBranch.agentFrameId !== graph.rootFrameId ||
+      !resolveMessageBranchPath(graph, sourceBranch.id).some(({ id }) => id === sourceMessage.id)
+    ) {
+      continue
+    }
+    const candidate = candidates.get(source.toolInvocationId)
+    if (candidate) {
+      if (candidate.sourceMessage.id !== sourceMessage.id) {
+        candidates.delete(source.toolInvocationId)
+        activityIds.add(source.toolInvocationId)
+        continue
+      }
+      candidate.prompts.push(prompt)
+      continue
+    }
+    candidates.set(source.toolInvocationId, {
+      sourceMessage,
+      prompts: [prompt],
+      ...nested
+    })
+  }
+
+  if (candidates.size === 0) return graph
+  const nextSortIndex = new Map<string, number>()
+  for (const activity of graph.activities) {
+    nextSortIndex.set(
+      activity.promptMessageId,
+      Math.max(nextSortIndex.get(activity.promptMessageId) ?? -1, activity.sortIndex)
+    )
+  }
+  const activities = [...graph.activities]
+  for (const [id, candidate] of [...candidates].sort(
+    (left, right) =>
+      Math.min(...left[1].prompts.map(({ createdAt }) => createdAt)) -
+        Math.min(...right[1].prompts.map(({ createdAt }) => createdAt)) ||
+      left[0].localeCompare(right[0])
+  )) {
+    const sourceMessage = candidate.sourceMessage
+    const sortIndex = (nextSortIndex.get(sourceMessage.id) ?? -1) + 1
+    nextSortIndex.set(sourceMessage.id, sortIndex)
+    const createdAt = Math.min(...candidate.prompts.map(({ createdAt }) => createdAt))
+    activities.push({
+      id,
+      kind: 'tool',
+      title: 'Delegate subagent',
+      status: 'completed',
+      sortIndex,
+      eventIds: [],
+      providerToolName: 'host.delegate',
+      toolKind: 'other',
+      rawInput: {
+        controlInvocationId: candidate.controlInvocationId,
+        delegationCallId: candidate.delegationCallId
+      },
+      rawOutput: {
+        children: candidate.prompts
+          .map(({ agentFrameId }) => agentFrameId)
+          .filter((frameId, index, all) => all.indexOf(frameId) === index)
+          .sort()
+          .map((frameId) => ({ frameId }))
+      },
+      createdAt,
+      updatedAt: createdAt,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: sourceMessage.introducedOnBranchId,
+      promptMessageId: sourceMessage.id,
+      runtimeSegmentId: sourceMessage.runtimeSegmentId!
+    })
+  }
+  const next = { ...graph, activities }
+  validateConversationGraph(next)
+  return next
 }
 
 export const synchronizeActiveConversationMessages = (

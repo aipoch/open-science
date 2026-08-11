@@ -1,8 +1,8 @@
 import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { terminateProcessTree } from '../../src/main/process-tree'
 import { RendererFailureGate } from './renderer-failure-gate'
@@ -88,6 +88,7 @@ const closeElectronApplicationForCleanup = async (
 
 type ElectronApp = {
   readonly page: Page
+  armDelegatedHandoffCleanupSabotage: (childName: string) => Promise<void>
   completeOnboarding: () => Promise<Page>
   configureFakeAgent: () => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
@@ -96,8 +97,13 @@ type ElectronApp = {
   launchSecondInstance: () => Promise<Page>
   mainWindowState: () => Promise<{ minimized: boolean; visible: boolean }>
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
+  readFakeAgentPrompts: () => Promise<
+    readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
+  >
   requestMainWindowClose: () => Promise<void>
+  restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   restart: () => Promise<Page>
+  sabotageDelegatedHandoffCleanup: (childName: string) => Promise<void>
   writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
@@ -114,6 +120,7 @@ const launchEnvironment = (
   }
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
+  environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
   if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
     environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   }
@@ -223,6 +230,7 @@ const openMainWindow = async (
       })
     )
     .toBe('ready')
+  await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
   return page
 }
 
@@ -232,6 +240,7 @@ class ElectronAppHarness implements ElectronApp {
   private fakeAgentEnabled = false
   private fakeRemoteItEnabled = false
   private readonly rendererFailures = new RendererFailureGate()
+  private readonly sabotagedDelegatedHandoffs = new Map<string, string>()
 
   private constructor(
     private readonly testRoot: string,
@@ -310,7 +319,17 @@ class ElectronAppHarness implements ElectronApp {
     }, FAKE_PROVIDER_NAME)
 
     this.fakeAgentEnabled = true
-    return this.restart()
+    await this.close()
+    const settingsPath = join(this.roots.storageRoot, 'settings.json')
+    const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>
+    settings.opencodePath = join(
+      this.roots.fakeAgentBinRoot,
+      process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
+    )
+    settings.opencodeVersion = '1.0.0'
+    await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await this.launch()
+    return this.page
   }
 
   async createTestDirectory(name: string): Promise<string> {
@@ -408,6 +427,59 @@ class ElectronAppHarness implements ElectronApp {
     })
   }
 
+  async readFakeAgentPrompts(): Promise<
+    readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
+  > {
+    const path = join(this.roots.storageRoot, 'e2e-handoff-captures', 'provider-prompts.jsonl')
+    const content = await readFile(path, 'utf8').catch(() => '')
+    return content
+      .split('\n')
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as { sessionId: string; role: 'main' | 'delegate'; prompt: string }
+      )
+  }
+
+  async armDelegatedHandoffCleanupSabotage(childName: string): Promise<void> {
+    const captureRoot = join(this.roots.storageRoot, 'e2e-handoff-captures')
+    await mkdir(captureRoot, { recursive: true })
+    await writeFile(
+      join(captureRoot, `${Buffer.from(childName).toString('base64url')}.sabotage`),
+      '',
+      'utf8'
+    )
+  }
+
+  async sabotageDelegatedHandoffCleanup(childName: string): Promise<void> {
+    const dataRoot = await this.page.evaluate(
+      async () => (await window.api.storage.getInfo()).dataRoot
+    )
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const target = await this.findDelegatedHandoff(dataRoot, childName)
+      if (target) {
+        await rm(target, { force: true })
+        await mkdir(target)
+        this.sabotagedDelegatedHandoffs.set(childName, target)
+        return
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50))
+    }
+    const captureRoot = join(this.roots.storageRoot, 'e2e-handoff-captures')
+    const captures = await readdir(captureRoot).catch(() => [])
+    throw new Error(
+      `Timed out validating the sabotaged handoff for ${childName} under ${dataRoot}; captures: ${captures.join(', ') || 'none'}.`
+    )
+  }
+
+  async restoreDelegatedHandoffCleanup(childName: string): Promise<void> {
+    const target = this.sabotagedDelegatedHandoffs.get(childName)
+    if (!target) throw new Error(`No sabotaged delegated handoff exists for ${childName}.`)
+    await rm(target, { force: true, recursive: true })
+    this.sabotagedDelegatedHandoffs.delete(childName)
+  }
+
   async restart(): Promise<Page> {
     await this.close()
     await this.launch()
@@ -443,6 +515,56 @@ class ElectronAppHarness implements ElectronApp {
   private get runningApplication(): ElectronApplication {
     if (!this.application) throw new Error('Electron application is not running.')
     return this.application
+  }
+
+  private async findDelegatedHandoff(
+    dataRoot: string,
+    childName: string
+  ): Promise<string | undefined> {
+    const attemptId = await this.page.evaluate(
+      async ({ expectedChildName }) => {
+        const loaded = await window.api.sessions.loadAll()
+        for (const session of loaded.sessions) {
+          const frame = session.conversationGraph?.frames.find(
+            (candidate) => candidate.delegateName === expectedChildName
+          )
+          const attempt = session.runtimeContext?.delegatedWork?.records
+            .find((record) => record.agentFrameId === frame?.id)
+            ?.attempts.at(-1)
+          if (attempt?.status === 'running') return attempt.id
+        }
+        return undefined
+      },
+      { expectedChildName: childName }
+    )
+    if (!attemptId) return undefined
+
+    const capturePath = join(
+      this.roots.storageRoot,
+      'e2e-handoff-captures',
+      `${Buffer.from(childName).toString('base64url')}.json`
+    )
+    const captured = await readFile(capturePath, 'utf8')
+      .then((content) => JSON.parse(content) as { executionId?: string; handoffPath?: string })
+      .catch(() => undefined)
+    if (!captured?.handoffPath) return undefined
+    const handoffPath = resolve(captured.handoffPath)
+    const artifactRoot = resolve(dataRoot, 'artifacts')
+    const artifactRelative = relative(artifactRoot, handoffPath)
+    if (
+      !isAbsolute(handoffPath) ||
+      artifactRelative === '..' ||
+      artifactRelative.startsWith(`..${sep}`) ||
+      isAbsolute(artifactRelative)
+    ) {
+      throw new Error(`Captured delegated handoff escaped the E2E artifact root: ${handoffPath}`)
+    }
+    if (captured.executionId !== attemptId) {
+      throw new Error(
+        `Captured delegated handoff execution ${captured.executionId ?? 'missing'} did not match durable Attempt ${attemptId}.`
+      )
+    }
+    return handoffPath
   }
 
   private async close(): Promise<void> {

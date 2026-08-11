@@ -3,6 +3,8 @@ import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
+import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
+
 import {
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
@@ -110,6 +112,22 @@ describe('notebook MCP server config', () => {
     )
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
+  })
+
+  it('directs agents to concise Host SDK help without prefetching every topic', () => {
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('role-aware catalog')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('field descriptions')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_frame_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
+
+    expect(REPL_EXECUTE_DOC).toContain("await host.help('delegate')")
+    expect(REPL_EXECUTE_DOC).toMatch(/do not prefetch.*topics/i)
   })
 
   it('does not inject a 4000-character output instruction into agent guidance', () => {
@@ -329,7 +347,10 @@ describe('repl_execute tool', () => {
     expect(tool?.method).toBe('executeControl')
 
     const schema = z.object(tool?.inputSchema ?? {})
-    expect(schema.parse({ code: 'return 1' })).toEqual({ code: 'return 1' })
+    expect(schema.parse({ code: 'return 1' })).toEqual({
+      code: 'return 1',
+      timeoutMs: 1_815_000
+    })
     expect(schema.parse({ code: 'return 1', timeoutMs: 5000 })).toEqual({
       code: 'return 1',
       timeoutMs: 5000
@@ -354,6 +375,39 @@ describe('repl_execute tool', () => {
     expect(tool?.description).not.toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')
     expect(tool?.description).toContain('notebook_execute')
+  })
+
+  it('advertises the role-scoped subagent Host SDK on the only tool that can call it', () => {
+    expect(tool?.description).toContain('Main/root agents')
+    expect(tool?.description).toContain('host.help')
+    expect(tool?.description).toContain("host.help('delegate')")
+    expect(tool?.description).toContain('role-aware catalog')
+    expect(tool?.description).toContain('field descriptions')
+    expect(tool?.description).toMatch(/do not prefetch.*topics/i)
+    expect(tool?.description).toContain('Delegate agents should use the same catalog')
+    expect(tool?.description).not.toContain('host.send_frame_message(')
+    expect(tool?.description).not.toContain('host.send_message(')
+  })
+
+  it('keeps the concise delegate guide intact through the Agent-facing execution projection', () => {
+    const capabilities = Object.fromEntries(
+      HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), true])
+    ) as Record<
+      (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Op}` ? Op : never,
+      boolean
+    >
+    const guide = JSON.stringify(
+      hostSdkHelp.query('delegate', { callerRole: 'main', capabilities })
+    )
+
+    const compact = compactNotebookExecutionResult({
+      status: 'completed',
+      outputs: [{ type: 'display', data: { 'text/plain': guide } }]
+    }) as { truncated?: boolean; outputs?: Array<{ data: Record<string, string> }> }
+
+    expect(compact.truncated).toBeUndefined()
+    expect(compact.outputs?.[0].data['text/plain']).toBe(guide)
+    expect(guide).not.toContain('omitted')
   })
 
   it('forwards repl_execute input to the executeControl RPC method', async () => {

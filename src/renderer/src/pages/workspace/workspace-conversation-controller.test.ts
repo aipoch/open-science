@@ -53,6 +53,7 @@ const options = (
     isReviewing: false,
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
+    hasBlockingRootPermissionRequest: false,
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
@@ -271,7 +272,7 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
     await act(async () => hook.result.current.actions.resume())
-    act(() => hook.result.current.actions.cancel())
+    await act(async () => hook.result.current.actions.cancel())
 
     expect(hook.result.current.availability).toMatchObject({
       submit: false,
@@ -407,7 +408,7 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.actions.revise).toBe(revise)
   })
 
-  it('aborts an active Fix Loop before cancelling the runtime run', () => {
+  it('aborts an active Fix Loop before cancelling the runtime run', async () => {
     const order: string[] = []
     const input = options({ activeSession: session({ fixLoopActive: true }) })
     input.abortFixLoop = vi.fn(() => {
@@ -421,7 +422,7 @@ describe('workspace conversation controller', () => {
     const hook = renderController(input)
     mounted.push(hook)
 
-    act(() => hook.result.current.actions.cancel())
+    await act(async () => hook.result.current.actions.cancel())
 
     expect(order).toEqual(['review', 'runtime'])
   })

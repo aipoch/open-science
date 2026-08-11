@@ -34,6 +34,10 @@ import {
   resolveSessionInteractionStatus,
   type SessionInteractionState
 } from './session-store-interaction-state'
+import {
+  mergeNewerPersistedSessionByIdentity,
+  mergePersistedRuntimeIdentityProjection
+} from './session-store-persistence-merge'
 
 export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
@@ -386,48 +390,53 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
   upsertPersistedSession: (session) => {
     set((state) => {
       const existing = state.sessions.find((candidate) => candidate.id === session.id)
-      if (existing && existing.updatedAt > session.updatedAt) {
-        if (existing.archivedAt === session.archivedAt) return state
-        const withoutPreviousArchive = { ...existing }
-        delete withoutPreviousArchive.archivedAt
-        const projected: ChatSession = {
-          ...withoutPreviousArchive,
-          ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt })
-        }
-        externallyHydratedSessions.add(projected)
-        return {
-          sessions: state.sessions.map((candidate) =>
-            candidate.id === session.id ? projected : candidate
-          )
-        } as Partial<State>
-      }
-      if (existing && existing.updatedAt === session.updatedAt) {
-        const flat = mergeDurableUploadProjection(
-          existing.messages,
-          existing.messages,
-          session.messages
-        )
-        const graph = existing.conversationGraph
-          ? mergeDurableUploadProjection(
-              existing.conversationGraph.messages,
-              existing.conversationGraph.messages,
-              session.conversationGraph?.messages ?? session.messages
-            )
-          : undefined
+      if (existing && existing.updatedAt >= session.updatedAt) {
+        const incomingRuntimeRevision = session.runtimeContext?.revision ?? -1
+        const existingRuntimeRevision = existing.runtimeContext?.revision ?? -1
+        const runtimeAdvanced = incomingRuntimeRevision > existingRuntimeRevision
+        const sameTimestamp = existing.updatedAt === session.updatedAt
+        const runtimeIdentityMerge =
+          sameTimestamp && incomingRuntimeRevision === existingRuntimeRevision
+        const filesAdvanced = (session.filesRevision ?? 0) > (existing.filesRevision ?? 0)
+        const fileIdentityMerge =
+          sameTimestamp && (session.filesRevision ?? 0) === (existing.filesRevision ?? 0)
         const archiveChanged = existing.archivedAt !== session.archivedAt
-        if (!flat.changed && !graph?.changed && !archiveChanged) return state
+        const flat = sameTimestamp
+          ? mergeDurableUploadProjection(existing.messages, existing.messages, session.messages)
+          : { messages: existing.messages, changed: false }
+        if (
+          !runtimeAdvanced &&
+          !runtimeIdentityMerge &&
+          !filesAdvanced &&
+          !fileIdentityMerge &&
+          !archiveChanged &&
+          !flat.changed
+        ) {
+          return state
+        }
         const withoutPreviousArchive = { ...existing }
         delete withoutPreviousArchive.archivedAt
+        const artifactsById = new Map(
+          [...(existing.artifacts ?? []), ...(session.artifacts ?? [])].map((artifact) => [
+            artifact.id,
+            artifact
+          ])
+        )
         const projected: ChatSession = {
           ...withoutPreviousArchive,
           ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
           messages: flat.messages,
-          ...(graph?.changed
+          ...(runtimeAdvanced || runtimeIdentityMerge
+            ? mergePersistedRuntimeIdentityProjection(existing, session, {
+                // A continuation removes completedAt without changing the Frame's createdAt, so
+                // runtime revision—not Frame timestamps—owns lifecycle.
+                incomingOwnsFrameConflicts: runtimeAdvanced
+              })
+            : {}),
+          ...(filesAdvanced || fileIdentityMerge
             ? {
-                conversationGraph: {
-                  ...existing.conversationGraph!,
-                  messages: graph.messages
-                }
+                filesRevision: Math.max(existing.filesRevision ?? 0, session.filesRevision ?? 0),
+                artifacts: [...artifactsById.values()]
               }
             : {})
         }
@@ -439,10 +448,16 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         } as Partial<State>
       }
 
-      const hydratedSession = hydrateSession(session)
+      const incomingProjection =
+        existing && session.updatedAt > existing.updatedAt
+          ? mergeNewerPersistedSessionByIdentity(existing, session)
+          : session
+      const hydratedSession = existing
+        ? withTransientSessionState(incomingProjection, existing)
+        : hydrateSession(session)
       const currentPlanProjection = matchesPersistedPlanProjection(
         existing?.activePlanProjection,
-        session
+        incomingProjection
       )
         ? { activePlanProjection: existing.activePlanProjection }
         : {}

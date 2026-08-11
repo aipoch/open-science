@@ -10,6 +10,7 @@ import {
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpAgentRuntimeUpdate,
   type AcpCreateSessionResponse,
   type AcpPermissionRequest,
   type AcpStateSnapshot
@@ -247,9 +248,11 @@ describe('workspace Agent Runtime hook contract', () => {
         'permissionProfiles',
         'permissionGrants',
         'contextUsageBySession',
+        'delegatedWorkUnavailableBySession',
         'promptInFlightSessionIds',
         'sendPreparationInFlightSessionIds',
         'nativeContextCompactionSessionIds',
+        'subscribeToSubagentRuntimeUpdates',
         'compactContext',
         'ensureSessionReady',
         'sendMessage',
@@ -269,10 +272,49 @@ describe('workspace Agent Runtime hook contract', () => {
       permissionProfiles: snapshot.permissionProfiles,
       permissionGrants: snapshot.permissionGrants,
       contextUsageBySession: snapshot.contextUsageBySession,
+      delegatedWorkUnavailableBySession: {},
       promptInFlightSessionIds: ['session-1'],
       sendPreparationInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
     })
+  })
+
+  it('owns one child runtime transport subscription and exposes its selector', async () => {
+    let publish!: (update: AcpAgentRuntimeUpdate) => void
+    const onAgentRuntimeUpdate = vi.fn((listener: typeof publish) => {
+      publish = listener
+      return vi.fn()
+    })
+    window.api = {
+      acp: {
+        getState: vi.fn().mockResolvedValue(createSnapshot()),
+        onAgentRuntimeUpdate
+      }
+    } as never
+
+    await render()
+    expect(onAgentRuntimeUpdate).toHaveBeenCalledOnce()
+
+    const listener = vi.fn()
+    const unsubscribe = latest.subscribeToSubagentRuntimeUpdates(listener)
+    const update = {
+      scope: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        agentFrameId: 'child-1',
+        attemptId: 'attempt-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId: 'prompt-1'
+      },
+      event: { id: 'event-1', kind: 'stop', level: 'info', timestamp: 1 }
+    } satisfies AcpAgentRuntimeUpdate
+
+    act(() => publish(update))
+    expect(listener).toHaveBeenCalledWith(update)
+
+    unsubscribe()
+    act(() => publish(update))
+    expect(listener).toHaveBeenCalledOnce()
   })
 
   it('publishes runtime adoption as preparation and releases it before opening the prompt', async () => {

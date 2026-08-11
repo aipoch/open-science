@@ -56,6 +56,7 @@ type PreloadApi = {
   }
   sessions: {
     loadAll: () => unknown
+    loadOne: (request: unknown) => unknown
     saveSession: (session: unknown, options?: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
@@ -243,6 +244,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.disconnect',
       'acp.getPlanProjection',
       'acp.getState',
+      'acp.onAgentRuntimeUpdate',
       'acp.onEvent',
       'acp.onPermissionRequest',
       'acp.onState',
@@ -413,6 +415,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.deleteSession',
       'sessions.exportConversation',
       'sessions.loadAll',
+      'sessions.loadOne',
       'sessions.onCreated',
       'sessions.onDeleted',
       'sessions.onFlushRequest',
@@ -463,6 +466,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.logoutIsolatedCodex',
       'settings.logoutSharedClaude',
       'settings.markOnboardingComplete',
+      'settings.onChanged',
       'settings.onConnectorApprovalRequest',
       'settings.onConnectorRuntimeChanged',
       'settings.onInstallLog',
@@ -498,6 +502,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setSkillEnabled',
+      'settings.setSubagentModel',
       'settings.setToolPermission',
       'settings.uninstallClaude',
       'settings.uninstallCodex',
@@ -601,7 +606,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(190)
+    expect(runtimeContracts).toHaveLength(193)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -694,8 +699,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(156)
-
+    expect(coreContracts).toHaveLength(157)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -707,16 +711,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 116, events: 29, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 117, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 116 request methods through their cataloged Electron channels', async () => {
+  it('routes all 117 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(116)
+    expect(requestContracts).toHaveLength(117)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -1058,6 +1062,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.loadAll(),
     channel: 'sessions:load-all',
     args: []
+  },
+  {
+    name: 'sessions.loadOne → sessions:load-one',
+    invoke: (a) => a.sessions.loadOne(sampleDeleteSession),
+    channel: 'sessions:load-one',
+    args: [sampleDeleteSession]
   },
   {
     name: 'sessions.saveSession → sessions:save-session',

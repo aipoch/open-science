@@ -10,8 +10,15 @@ import type {
   NotebookSessionState
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shared/notebook-runtime'
-import { getNotebookRunJsonPath, getRuntimeRoot, NotebookRunRepository } from './repository'
+import {
+  getNotebookDataRoot,
+  getNotebookRunJsonPath,
+  getNotebookSessionRoot,
+  getRuntimeRoot,
+  NotebookRunRepository
+} from './repository'
 import type { NotebookSessionSnapshot } from './session-aggregate'
+import type { NotebookLaneIdentity } from './lane-identity'
 
 type NotebookHandoffContext = {
   activeRunId?: string
@@ -46,6 +53,7 @@ type NotebookSessionReadSource = {
   readonly dataRoot: string
   readonly runtimeRoot: string
   readonly runJsonPath: string
+  readonly lane: NotebookLaneIdentity
   snapshot: () => NotebookSessionSnapshot
   kernelStatusEntries: () => Array<[string, NotebookKernelMetadata['lastKnownStatus']]>
   runtimeBindingEntries: () => Array<[NotebookLanguage, NotebookRuntimeBinding]>
@@ -122,9 +130,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const document = await this.options.repository.loadOrCreate({
       projectName: session.projectName,
       sessionId: session.sessionId,
-      workspaceCwd: session.cwd
+      workspaceCwd: session.cwd,
+      lane: session.lane
     })
     const snapshot = session.snapshot()
+    const runs = await this.options.repository.readSessionRuns(
+      session.projectName,
+      session.sessionId
+    )
 
     return {
       id: session.id,
@@ -139,8 +152,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       cells: snapshot.cells.map((cell) => ({ ...cell })),
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
-      runs: document.runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: document.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      runs: runs.map((run) => this.toPublicRunRecord(run)),
+      recentRuns: runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.environmentStatuses(session),
       runtimeBindings: this.options.runtimeBindings(session)
     }
@@ -153,15 +166,22 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     if (live) return this.toSessionReference(live)
 
     const projectName = request.projectName ?? this.options.defaultProjectName
-    const document = await this.options.repository.findExisting(projectName, request.sessionId)
+    const document = await this.options.repository.findAnyExisting(projectName, request.sessionId)
     if (!document) return null
+
+    const rootDocument = await this.options.repository.findExisting(projectName, request.sessionId)
+    const notebookSessionRoot = getNotebookSessionRoot(
+      this.options.storageRoot,
+      projectName,
+      request.sessionId
+    )
 
     return {
       sessionId: request.sessionId,
       projectName,
-      workspaceCwd: document.workspaceCwd,
-      notebookSessionRoot: document.notebookSessionRoot,
-      dataRoot: document.dataRoot,
+      workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
+      notebookSessionRoot,
+      dataRoot: getNotebookDataRoot(this.options.storageRoot, projectName, request.sessionId),
       runtimeRoot: document.kernel.runtimeRoot,
       runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId)
     }

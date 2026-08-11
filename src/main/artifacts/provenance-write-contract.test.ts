@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { createPngBytes } from './artifact-test-fixtures'
 import * as provenanceModule from './provenance-repository'
 import { ArtifactProvenanceRepository } from './provenance-repository'
@@ -191,10 +192,12 @@ const appendNotebookRun = async (
     inputFiles?: NotebookRunInputFile[]
   }
 ): Promise<{ path: string; sizeBytes: number; mtimeMs: number }> => {
+  const lane = createFrameNotebookLane('project-1', 'session-1', provenanceGraph.agentFrameId)
   const document = await value.notebookRepository.loadOrCreate({
     projectName: 'project-1',
     sessionId: 'session-1',
-    workspaceCwd: join(value.storageRoot, 'workspace')
+    workspaceCwd: join(value.storageRoot, 'workspace'),
+    lane
   })
   const sourcePath = join(document.notebookSessionRoot, 'data', input.filename)
   await mkdir(dirname(sourcePath), { recursive: true })
@@ -203,6 +206,7 @@ const appendNotebookRun = async (
   await value.notebookRepository.appendRun({
     projectName: 'project-1',
     sessionId: 'session-1',
+    lane,
     run: {
       runId: input.runId,
       cellId: `cell-${input.runId}`,

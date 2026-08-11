@@ -16,6 +16,13 @@ import { NotebookSessionRegistry } from './session-registry'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
 import { DEFAULT_PY_ENV, DEFAULT_R_ENV } from './runtime-paths'
 import type { KernelProcessKind } from './kernel-executor'
+import {
+  createFrameNotebookLane,
+  createRootNotebookLane,
+  notebookLaneKey,
+  notebookLaneScope,
+  type NotebookLaneIdentity
+} from './lane-identity'
 
 type RuntimeSession = NotebookSessionAggregate
 
@@ -45,6 +52,10 @@ type NotebookSessionLifecycleOptions = {
   toSessionReference: (session: RuntimeSession) => NotebookSessionReference
 }
 
+type InternalNotebookSessionRequest = NotebookSessionRequest & {
+  delegatedWorkAttemptId?: string
+}
+
 const processKeyFor = (kind: KernelProcessKind | undefined, env: string | undefined): string => {
   const resolvedKind = kind ?? 'python'
   if (resolvedKind === 'repl') return 'repl'
@@ -60,26 +71,45 @@ const persistsToRunJson = (processKey: string): boolean =>
 
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
-  private readonly announcedAgentSessionIds = new Set<string>()
+  private readonly announcedAgentLaneKeys = new Set<string>()
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
+  laneForRequest(request: NotebookSessionRequest): NotebookLaneIdentity {
+    const projectName = request.projectName ?? this.options.defaultProjectName
+    const context = request.provenanceContext
+    const attemptId = (request as InternalNotebookSessionRequest).delegatedWorkAttemptId
+    if (context && context.agentFrameId === context.rootFrameId) {
+      return createRootNotebookLane(projectName, request.sessionId, context.agentFrameId)
+    }
+    return context?.agentFrameId
+      ? createFrameNotebookLane(projectName, request.sessionId, context.agentFrameId, attemptId)
+      : this.rootLane(request.sessionId, projectName)
+  }
+
+  rootLane(sessionId: string, projectName = this.options.defaultProjectName): NotebookLaneIdentity {
+    return createRootNotebookLane(projectName, sessionId, `root-frame-${sessionId}`)
+  }
+
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectName = request.projectName ?? this.options.defaultProjectName
-    return this.options.sessions.getOrCreate(request.sessionId, async () => {
+    const lane = this.laneForRequest(request)
+    return this.options.sessions.getOrCreate(lane, async () => {
       let document = await this.options.repository.loadOrCreate({
         projectName,
         sessionId: request.sessionId,
-        workspaceCwd: request.workspaceCwd
+        workspaceCwd: request.workspaceCwd,
+        lane
       })
       if (document.runs.some((run) => run.status === 'running' || run.status === 'queued')) {
         document = await this.options.repository.reconcileInterruptedRuns(
           projectName,
-          request.sessionId
+          request.sessionId,
+          lane
         )
       }
 
-      const ownedExecutor = this.createExecutor(request.sessionId)
+      const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({
         sessionId: request.sessionId,
         projectName,
@@ -90,11 +120,13 @@ class NotebookSessionLifecycleOwner {
         runJsonPath: getNotebookRunJsonPath(
           this.options.storageRoot,
           projectName,
-          request.sessionId
+          request.sessionId,
+          lane
         ),
         executionCount: document.runs.length,
         executor: ownedExecutor.executor,
-        executorGeneration: ownedExecutor.generation
+        executorGeneration: ownedExecutor.generation,
+        lane
       })
 
       try {
@@ -112,11 +144,12 @@ class NotebookSessionLifecycleOwner {
     })
   }
 
-  createExecutor(sessionId: string): NotebookSessionOwnedExecutor {
-    const generation = Symbol(`notebook-executor:${sessionId}`)
+  createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
+    const { sessionId } = notebookLaneScope(lane)
+    const generation = Symbol(`notebook-executor:${notebookLaneKey(lane)}`)
     const lifecycle: NotebookExecutorLifecycleCallbacks = {
-      onIdleShutdown: (kind, env) => this.handleIdleShutdown(sessionId, kind, env, generation),
-      onTerminated: (kind, env) => this.handleTerminated(sessionId, kind, env, generation)
+      onIdleShutdown: (kind, env) => this.handleIdleShutdown(lane, kind, env, generation),
+      onTerminated: (kind, env) => this.handleTerminated(lane, kind, env, generation)
     }
     const injected = this.options.executorFactory
     if (injected) return { executor: injected(sessionId, lifecycle), generation }
@@ -132,10 +165,24 @@ class NotebookSessionLifecycleOwner {
     }
   }
 
+  async shutdown(
+    request: NotebookSessionRequest
+  ): Promise<{ sessionId: string; status: 'shutdown' }> {
+    return this.shutdownLane(this.laneForRequest(request))
+  }
+
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    await this.options.runtimeBindings.withSessionTeardown(sessionId, async () => {
-      await this.options.runtimeBindings.waitForWrites(sessionId)
-      await this.options.sessions.remove(sessionId)
+    return this.shutdownLane(this.rootLane(sessionId))
+  }
+
+  private async shutdownLane(
+    lane: NotebookLaneIdentity
+  ): Promise<{ sessionId: string; status: 'shutdown' }> {
+    const { sessionId } = notebookLaneScope(lane)
+    const key = notebookLaneKey(lane)
+    await this.options.runtimeBindings.withSessionTeardown(key, async () => {
+      await this.options.runtimeBindings.waitForWrites(key)
+      await this.options.sessions.remove(lane)
     })
     return { sessionId, status: 'shutdown' }
   }
@@ -157,8 +204,9 @@ class NotebookSessionLifecycleOwner {
   }
 
   notifyAvailable(session: RuntimeSession, source: NotebookRunSource): void {
-    if (source !== 'agent' || this.announcedAgentSessionIds.has(session.sessionId)) return
-    this.announcedAgentSessionIds.add(session.sessionId)
+    const laneKey = notebookLaneKey(session.lane)
+    if (source !== 'agent' || this.announcedAgentLaneKeys.has(laneKey)) return
+    this.announcedAgentLaneKeys.add(laneKey)
     this.options.callbacks?.onNotebookAvailable?.(this.options.toSessionReference(session))
   }
 
@@ -177,6 +225,7 @@ class NotebookSessionLifecycleOwner {
       await this.options.repository.updateKernelStatus({
         projectName: session.projectName,
         sessionId: session.sessionId,
+        lane: session.lane,
         status
       })
     } catch {
@@ -184,34 +233,53 @@ class NotebookSessionLifecycleOwner {
     }
   }
 
+  async projectKernelIdleShutdown(
+    lane: NotebookLaneIdentity,
+    kind?: KernelProcessKind,
+    env?: string
+  ): Promise<void> {
+    const session = this.options.sessions.get(lane)
+    if (!session) return
+    await this.persistKernelStatus(session, 'terminated', processKeyFor(kind, env))
+    this.notifyChanged(session)
+  }
+
+  async projectKernelTerminated(
+    lane: NotebookLaneIdentity,
+    kind: KernelProcessKind,
+    env?: string
+  ): Promise<void> {
+    const session = this.options.sessions.get(lane)
+    if (!session) return
+    const processKey = processKeyFor(kind, env)
+    session.markKernelTerminated(processKey)
+    await this.persistKernelStatus(session, 'terminated', processKey)
+    this.notifyChanged(session)
+  }
+
   private async handleIdleShutdown(
-    sessionId: string,
+    lane: NotebookLaneIdentity,
     kind: KernelProcessKind | undefined,
     env: string | undefined,
     generation: NotebookSessionExecutorGeneration
   ): Promise<void> {
-    const session = this.options.sessions.get(sessionId)
+    const session = this.options.sessions.get(lane)
     if (!session) return
-    const processKey = processKeyFor(kind, env)
     await session.runExecutorLifecycleCallback(generation, async () => {
-      await this.persistKernelStatus(session, 'terminated', processKey)
-      this.notifyChanged(session)
+      await this.projectKernelIdleShutdown(lane, kind, env)
     })
   }
 
   private async handleTerminated(
-    sessionId: string,
+    lane: NotebookLaneIdentity,
     kind: KernelProcessKind,
     env: string | undefined,
     generation: NotebookSessionExecutorGeneration
   ): Promise<void> {
-    const session = this.options.sessions.get(sessionId)
+    const session = this.options.sessions.get(lane)
     if (!session) return
-    const processKey = processKeyFor(kind, env)
     await session.runExecutorLifecycleCallback(generation, async () => {
-      session.markKernelTerminated(processKey)
-      await this.persistKernelStatus(session, 'terminated', processKey)
-      this.notifyChanged(session)
+      await this.projectKernelTerminated(lane, kind, env)
     })
   }
 }

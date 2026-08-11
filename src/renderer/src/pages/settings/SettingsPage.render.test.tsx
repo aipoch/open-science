@@ -377,15 +377,21 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model and Reasoning effort (their own sections) from provider
-    // management; the agent framework moved to the Agent sub-panel.
+    // The Model panel splits Active model, Reasoning effort, and Subagent model (their own
+    // sections) from provider management; the agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    expect(
+      Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
+        section.getAttribute('aria-label')
+      )
+    ).toEqual(['Active model', 'Reasoning effort', 'Subagent model', 'Providers'])
+    expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Add provider'

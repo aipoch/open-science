@@ -6,19 +6,13 @@ import {
   SelectLabel,
   SelectTrigger
 } from '@/components/ui/select'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import {
-  selectFrameworkApiEndpoints,
-  selectProviderModelOptions,
-  useSettingsStore
-} from '@/stores/settings-store'
-import { isProviderUsableByFramework } from '../../../../shared/settings'
-import { isModelBridgeSupported } from '../../../../shared/provider-registry'
+  buildConfiguredModelCatalog,
+  parseConfiguredModelKey
+} from '../../../../shared/configured-model-catalog'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
-
-// Separator for the composite (providerId, model) select value. This unit-separator control char
-// never appears in provider ids or model names, so splitting on it is unambiguous.
-const SEP = '␟'
 
 // The single "active model" selector for settings: one selected model, grouped and tagged by its
 // source provider. Mirrors the composer picker (both drive activeProviderId + activeModel), so
@@ -34,21 +28,15 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
 
-  const options = selectProviderModelOptions(
+  const options = buildConfiguredModelCatalog({
     providers,
     activeProviderId,
-    claudeSubscriptionProviderId
-  )
+    claudeSubscriptionProviderId,
+    frameworkId: agentFrameworkId,
+    frameworkEndpoints
+  })
 
   if (options.length === 0) return null
-
-  // A provider is selectable only when it can actually drive the current framework (endpoint + type).
-  const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
-    isProviderUsableByFramework(
-      { apiEndpoints: provider.apiEndpoints, type: provider.type },
-      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-    ) &&
-    (agentFrameworkId !== 'codex' || isModelBridgeSupported(provider, model))
 
   const activeKeyModel = activeModel ?? ''
   const current = options.find(
@@ -64,10 +52,11 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
 
   return (
     <Select
-      value={current ? `${current.providerId}${SEP}${current.model}` : undefined}
+      value={current?.key}
       onValueChange={(value) => {
-        const [providerId, model] = value.split(SEP)
-        void setActiveProvider(providerId, model).catch(() => undefined)
+        const identity = parseConfiguredModelKey(value)
+        if (identity)
+          void setActiveProvider(identity.providerId, identity.model).catch(() => undefined)
       }}
     >
       <SelectTrigger aria-label="Active model">
@@ -90,9 +79,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
       </SelectTrigger>
       <SelectContent>
         {groups.map((group) => {
-          const compatible = group.options.some((option) =>
-            isCompatible(group.provider, option.model)
-          )
+          const compatible = group.options.some((option) => option.selectable)
 
           return (
             <SelectGroup key={group.provider.id}>
@@ -105,12 +92,11 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 )}
               </SelectLabel>
               {group.options.map((option) => {
-                const optionCompatible = isCompatible(group.provider, option.model)
                 return (
                   <SelectItem
-                    key={`${option.providerId}${SEP}${option.model}`}
-                    value={`${option.providerId}${SEP}${option.model}`}
-                    disabled={!optionCompatible}
+                    key={option.key}
+                    value={option.key}
+                    disabled={!option.selectable}
                     icon={
                       <ProviderKindIcon
                         kindKey={providerKindKey(option.providerType, option.vendorId)}

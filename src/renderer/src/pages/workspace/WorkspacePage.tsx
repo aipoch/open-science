@@ -47,8 +47,11 @@ import { RenameSessionDialog } from './RenameSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import { getVisiblePermissionRequests } from './session-permissions'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
+import {
+  getVisiblePermissionRequests,
+  hasBlockingRootPermissionRequest
+} from './session-permissions'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
@@ -205,6 +208,7 @@ const WorkspacePage = ({
     permissionProfiles,
     permissionGrants,
     contextUsageBySession,
+    delegatedWorkUnavailableBySession = {},
     promptInFlightSessionIds = [],
     sendPreparationInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
@@ -387,8 +391,13 @@ const WorkspacePage = ({
   }, [activeSession, setActivePlanProjection])
   const canArchiveSession = sessionController.lifecycle.canArchive
   const visiblePermissionRequests = useMemo(
-    () => getVisiblePermissionRequests(pendingPermissions, activeSession?.id),
-    [activeSession?.id, pendingPermissions]
+    () =>
+      getVisiblePermissionRequests(
+        pendingPermissions,
+        activeSession?.id,
+        activeSession?.conversationGraph
+      ),
+    [activeSession?.conversationGraph, activeSession?.id, pendingPermissions]
   )
   const visibleElicitationRequests = useMemo(
     () => pendingWorkspaceElicitations(activeSession),
@@ -440,6 +449,10 @@ const WorkspacePage = ({
     isReviewing,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
+    hasBlockingRootPermissionRequest: hasBlockingRootPermissionRequest(
+      pendingPermissions,
+      activeSession?.id
+    ),
     newConversationAutoReviewEnabled,
     newConversationEnabledComputeHosts,
     composer,
@@ -992,6 +1005,9 @@ const WorkspacePage = ({
             isUploadingAttachments={isUploadingAttachments}
             notebookReference={activeNotebookReference}
             pendingPermissions={visiblePermissionRequests}
+            subagentUnavailableReason={
+              activeSession ? delegatedWorkUnavailableBySession[activeSession.id] : undefined
+            }
             pendingElicitations={visibleElicitationRequests}
             permissionProfile={activePermissionProfile}
             permissionProfileState={activePermissionProfileState}
@@ -1031,6 +1047,12 @@ const WorkspacePage = ({
             onRemoveAttachment={removeComposerAttachment}
             onCancelAttachmentTransfer={cancelAttachmentTransfer}
             onCancelRun={conversation.actions.cancel}
+            onStopSubagents={() => {
+              if (!activeSession) return
+              return window.api.acp
+                .cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                .then(() => undefined)
+            }}
             onResumeSession={conversation.actions.resume}
             onOpenNotebook={openNotebookPreview}
             onTogglePreviewPanel={togglePreviewPanelFromLayout}

@@ -78,6 +78,32 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('ACP application commands', () => {
+  it('routes delegated question responses to the delegated owner without calling Main elicitation', async () => {
+    const dependencies = createDependencies()
+    const respondDelegatedQuestion = vi.fn(async () => undefined)
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, { ...dependencies, respondDelegatedQuestion })
+    const response = {
+      requestId: 'delegated-question-1',
+      action: 'accept' as const,
+      delegatedQuestion: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        action: 'confirm' as const,
+        answers: [{ questionIndex: 0, value: 'Strict' }]
+      }
+    }
+
+    await expect(
+      router.dispatcher.invoke(acpCommands.respondElicitation, invocation([response]))
+    ).resolves.toBe(snapshot)
+    expect(respondDelegatedQuestion).toHaveBeenCalledWith({
+      ...response.delegatedQuestion,
+      requestId: response.requestId
+    })
+    expect(dependencies.runtime.respondToElicitation).not.toHaveBeenCalled()
+  })
+
   it('registers the exact renderer command inventory as one installable group', () => {
     const router = createApplicationCommandRouter()
 

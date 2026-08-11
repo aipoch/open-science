@@ -52,8 +52,12 @@ import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
   'coordinator.ts',
+  'delegated-question-owner.ts',
+  'delegated-work-owner.ts',
+  'delegated-work-store.ts',
   'deletion-owner.ts',
   'legacy-upload.ts',
+  'message-delivery-owner.ts',
   'reconciliation-owner.ts',
   'side-chat-owner.ts',
   'state-owner.ts'
@@ -183,9 +187,14 @@ const calledOwnerMethods = (method: MethodDeclaration): string[] =>
       isPropertyAccessExpression(node.expression) &&
       isPropertyAccessExpression(node.expression.expression) &&
       node.expression.expression.expression.kind === SyntaxKind.ThisKeyword &&
-      ['stateOwner', 'deletionOwner', 'reconciliationOwner', 'sideChatOwner'].includes(
-        node.expression.expression.name.text
-      )
+      [
+        'stateOwner',
+        'deletionOwner',
+        'reconciliationOwner',
+        'sideChatOwner',
+        'messageDeliveryOwner',
+        'delegatedWorkOwner'
+      ].includes(node.expression.expression.name.text)
   )
     .map((node) => {
       const call = node
@@ -379,6 +388,19 @@ describe('Session persistence coordinator architecture', () => {
     'reconciliation-owner.ts',
     'SessionPersistenceReconciliationOwner'
   )
+  const messageDeliveryOwner = classFrom(
+    'message-delivery-owner.ts',
+    'SessionMessageDeliveryPersistenceOwner'
+  )
+  const delegatedWorkOwner = classFrom(
+    'delegated-work-owner.ts',
+    'SessionDelegatedWorkPersistenceOwner'
+  )
+  const delegatedWorkStore = classFrom('delegated-work-store.ts', 'SessionDelegatedWorkStore')
+  const delegatedQuestionOwner = classFrom(
+    'delegated-question-owner.ts',
+    'SessionDelegatedQuestionPersistenceOwner'
+  )
 
   it('keeps the facade and every deep owner within their completion gates', () => {
     for (const [file, source] of sources) {
@@ -390,14 +412,23 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps the established facade, constructor, and module exports', () => {
     expect(methods(facade, 'public')).toEqual(
       [
+        'acknowledgeUncertainMessage',
+        'admitMessageCommand',
+        'admitQuestion',
         'appendSideChatRelay',
         'appendUserMessageToInteraction',
+        'applyAgentEvent',
         'assertProjectArchivable',
         'assertSessionAvailable',
+        'attachDelegatedMessageArtifacts',
+        'cancelQuestions',
         'clearSideChat',
         'commitSideChatRelays',
+        'completeChildTurn',
         'completeProjectSessionDeletion',
+        'confirmQuestion',
         'containsMessageOnActiveBranch',
+        'createChildren',
         'deleteProjectSessions',
         'deleteSession',
         'getProjectSessionDeletionState',
@@ -408,7 +439,9 @@ describe('Session persistence coordinator architecture', () => {
         'loadPersistedSideChats',
         'markCommittedProjectSessionsPrepared',
         'patchSessionRuntimeContext',
+        'readChildren',
         'readSessionRuntimeContext',
+        'recoverInterruptedDelegatedWork',
         'repairProjectFiles',
         'runSessionMutation',
         'saveManifest',
@@ -418,7 +451,15 @@ describe('Session persistence coordinator architecture', () => {
         'sessionMetadataSnapshot',
         'sessionProjectId',
         'setSessionDeletionHandlers',
-        'updateArchive'
+        'settleMessage',
+        'startAttemptRuntime',
+        'startContinuationAttempt',
+        'startMessageDispatch',
+        'startPendingMessageTurn',
+        'submitStructuredOutput',
+        'transitionAttempt',
+        'updateArchive',
+        'updateQuestionDraft'
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
@@ -468,12 +509,14 @@ describe('Session persistence coordinator architecture', () => {
     expect(fields(facade)).toEqual(
       [
         'computeJobs',
+        'delegatedStartupRecoveryComplete',
         'deletedProjects',
         'deletedSessions',
         'deletionOwner',
         'destructiveStartupWindowOpen',
         'fileIndex',
         'log',
+        'delegatedWorkOwner',
         'onFilesChanged',
         'queue',
         'reconciliationOwner',
@@ -484,7 +527,12 @@ describe('Session persistence coordinator architecture', () => {
       ].sort()
     )
     expect(mutableFields(facade)).toEqual(
-      ['destructiveStartupWindowOpen', 'queue', 'sessionDeletionHandlers'].sort()
+      [
+        'delegatedStartupRecoveryComplete',
+        'destructiveStartupWindowOpen',
+        'queue',
+        'sessionDeletionHandlers'
+      ].sort()
     )
     expect(mutableFields(stateOwner)).toEqual(
       ['isSessionMetadataComplete', 'sessionMetadata'].sort()
@@ -492,10 +540,18 @@ describe('Session persistence coordinator architecture', () => {
     expect(mutableFields(deletionOwner)).toEqual([])
     expect(mutableFields(reconciliationOwner)).toEqual([])
     expect(mutableFields(sideChatOwner)).toEqual([])
+    expect(mutableFields(messageDeliveryOwner)).toEqual([])
+    expect(mutableFields(delegatedWorkOwner)).toEqual([])
+    expect(mutableFields(delegatedWorkStore)).toEqual([])
+    expect(mutableFields(delegatedQuestionOwner)).toEqual([])
     expect(publicNonMethodMembers(stateOwner)).toEqual([])
     expect(publicNonMethodMembers(deletionOwner)).toEqual([])
     expect(publicNonMethodMembers(reconciliationOwner)).toEqual([])
     expect(publicNonMethodMembers(sideChatOwner)).toEqual([])
+    expect(publicNonMethodMembers(messageDeliveryOwner)).toEqual([])
+    expect(publicNonMethodMembers(delegatedWorkOwner)).toEqual([])
+    expect(publicNonMethodMembers(delegatedWorkStore)).toEqual([])
+    expect(publicNonMethodMembers(delegatedQuestionOwner)).toEqual([])
     expect(fields(stateOwner)).toEqual(
       [
         'isSessionMetadataComplete',
@@ -548,6 +604,18 @@ describe('Session persistence coordinator architecture', () => {
     expect(constructionSites('SessionSideChatPersistenceOwner')).toEqual([
       'src/main/session-persistence/coordinator.ts:constructor'
     ])
+    expect(constructionSites('SessionMessageDeliveryPersistenceOwner')).toEqual([
+      'src/main/session-persistence/delegated-work-owner.ts:module'
+    ])
+    expect(constructionSites('SessionDelegatedWorkPersistenceOwner')).toEqual([
+      'src/main/session-persistence/coordinator.ts:constructor'
+    ])
+    expect(constructionSites('SessionDelegatedWorkStore')).toEqual([
+      'src/main/session-persistence/delegated-work-owner.ts:constructor'
+    ])
+    expect(constructionSites('SessionDelegatedQuestionPersistenceOwner')).toEqual([
+      'src/main/session-persistence/delegated-work-owner.ts:constructor'
+    ])
   })
 
   it('keeps one coordinator queue around every asynchronous public operation', () => {
@@ -571,13 +639,24 @@ describe('Session persistence coordinator architecture', () => {
       const target = statement.expression.expression
       expect(
         isPropertyAccessExpression(target) &&
-          target.expression.kind === SyntaxKind.ThisKeyword &&
-          target.name.text === 'enqueue',
+          ((target.expression.kind === SyntaxKind.ThisKeyword && target.name.text === 'enqueue') ||
+            (isPropertyAccessExpression(target.expression) &&
+              target.expression.expression.kind === SyntaxKind.ThisKeyword &&
+              target.expression.name.text === 'delegatedWorkOwner')),
         name
       ).toBe(true)
     }
 
-    for (const owner of [stateOwner, deletionOwner, reconciliationOwner, sideChatOwner]) {
+    for (const owner of [
+      stateOwner,
+      deletionOwner,
+      reconciliationOwner,
+      sideChatOwner,
+      messageDeliveryOwner,
+      delegatedWorkOwner,
+      delegatedWorkStore,
+      delegatedQuestionOwner
+    ]) {
       expect(fields(owner)).not.toContain('queue')
       expect(methods(owner, 'public')).not.toContain('enqueue')
       expect(methods(owner, 'private')).not.toContain('enqueue')
@@ -699,7 +778,9 @@ describe('Session persistence coordinator architecture', () => {
     for (const file of [
       'state-owner.ts',
       'deletion-owner.ts',
+      'message-delivery-owner.ts',
       'reconciliation-owner.ts',
+      'message-delivery-owner.ts',
       'side-chat-owner.ts'
     ] as const) {
       expect(sources.get(file), file).not.toMatch(/deletedProjects|deletedSessions/)
@@ -755,8 +836,22 @@ describe('Session persistence coordinator architecture', () => {
     expect(methods(sideChatOwner, 'private')).toEqual(
       ['loadMutable', 'requireSideChat', 'save'].sort()
     )
+    expect(methods(messageDeliveryOwner, 'public')).toEqual(
+      [
+        'acknowledge',
+        'admit',
+        'completeChildTurn',
+        'settle',
+        'startChildTurn',
+        'startDispatch'
+      ].sort()
+    )
+    expect(methods(messageDeliveryOwner, 'private')).toEqual(['assertWritable'])
 
     const expectedCalls: Record<string, string[]> = {
+      acknowledgeUncertainMessage: ['delegatedWorkOwner.acknowledgeUncertainMessage'],
+      admitMessageCommand: ['delegatedWorkOwner.admitMessageCommand'],
+      admitQuestion: ['delegatedWorkOwner.admitQuestion'],
       appendSideChatRelay: ['sideChatOwner.appendRelay'],
       appendUserMessageToInteraction: ['stateOwner.appendUserMessage'],
       assertProjectArchivable: ['deletionOwner.assertProjectArchivable'],
@@ -764,6 +859,9 @@ describe('Session persistence coordinator architecture', () => {
       clearSideChat: ['sideChatOwner.clear'],
       commitSideChatRelays: ['sideChatOwner.commitRelays'],
       completeProjectSessionDeletion: ['deletionOwner.completeProjectSessionDeletion'],
+      completeChildTurn: ['delegatedWorkOwner.completeChildTurn'],
+      confirmQuestion: ['delegatedWorkOwner.confirmQuestion'],
+      createChildren: ['delegatedWorkOwner.createChildren'],
       containsMessageOnActiveBranch: ['stateOwner.containsMessageOnActiveBranch'],
       deleteProjectSessions: [
         'deletionOwner.deleteProjectSessions',
@@ -781,6 +879,11 @@ describe('Session persistence coordinator architecture', () => {
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
+      readChildren: ['delegatedWorkOwner.readChildren'],
+      recoverInterruptedDelegatedWork: ['delegatedWorkOwner.recoverInterruptedDelegatedWork'],
+      settleMessage: ['delegatedWorkOwner.settleMessage'],
+      startMessageDispatch: ['delegatedWorkOwner.startMessageDispatch'],
+      startPendingMessageTurn: ['delegatedWorkOwner.startPendingMessageTurn'],
       updateArchive: ['deletionOwner.updateArchive']
     }
     for (const [method, calls] of Object.entries(expectedCalls)) {
@@ -795,6 +898,7 @@ describe('Session persistence coordinator architecture', () => {
     expect(sessionDependencies('coordinator.ts')).toEqual(
       [
         'deletion-owner.ts',
+        'delegated-work-owner.ts',
         'reconciliation-owner.ts',
         'side-chat-owner.ts',
         'state-owner.ts'
@@ -806,9 +910,21 @@ describe('Session persistence coordinator architecture', () => {
     )
     expect(sessionDependencies('reconciliation-owner.ts')).toEqual(['legacy-upload.ts'])
     expect(sessionDependencies('side-chat-owner.ts')).toEqual([])
+    expect(sessionDependencies('message-delivery-owner.ts')).toEqual([])
+    expect(sessionDependencies('delegated-question-owner.ts')).toEqual(
+      ['delegated-work-store.ts', 'message-delivery-owner.ts'].sort()
+    )
+    expect(sessionDependencies('delegated-work-owner.ts')).toEqual(
+      ['delegated-question-owner.ts', 'delegated-work-store.ts', 'message-delivery-owner.ts'].sort()
+    )
+    expect(sessionDependencies('delegated-work-store.ts')).toEqual(['state-owner.ts'])
     for (const file of [
       'state-owner.ts',
+      'delegated-question-owner.ts',
+      'delegated-work-owner.ts',
+      'delegated-work-store.ts',
       'deletion-owner.ts',
+      'message-delivery-owner.ts',
       'reconciliation-owner.ts',
       'side-chat-owner.ts'
     ] as const) {

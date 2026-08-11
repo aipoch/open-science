@@ -32,7 +32,11 @@ describe('framesCall RPC', () => {
       transport: 'tcp',
       hostFrames: { list, get }
     })
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
 
     const listed = await callFrames(control, control.token, {
       op: 'list',
@@ -69,8 +73,16 @@ describe('framesCall RPC', () => {
       hostFrames: { list: vi.fn(), get: vi.fn() }
     })
     const bootstrap = await server.ensureStarted()
-    const ordinary = await server.issueSessionConnection('trusted-session', 'trusted-project')
-    const control = await server.issueControlConnection('trusted-session', 'trusted-project')
+    const ordinary = await server.issueSessionConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
     const params = { op: 'list', options: {} }
 
     await expect(callFrames(control, bootstrap.token, params)).resolves.toMatchObject({

@@ -25,6 +25,7 @@ type RuntimeBindingSession = Pick<
 > & {
   readonly projectName: string
   readonly sessionId: string
+  readonly lane: NotebookSessionAggregate['lane']
 }
 
 type RuntimeBindingRepository = Pick<NotebookRunRepository, 'setRuntimeBindings'>
@@ -261,7 +262,8 @@ export class NotebookRuntimeBindingOwner {
       await this.options.repository.setRuntimeBindings(
         session.projectName,
         session.sessionId,
-        this.snapshot(session)
+        this.snapshot(session),
+        session.lane
       )
     } catch (error) {
       console.error('[notebook] Failed to persist runtime bindings', error)

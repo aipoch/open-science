@@ -76,6 +76,110 @@ const pendingPlan: ActivePlanProjection = {
   counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
 }
 
+const sessionWithPendingDelegatedQuestion = (
+  status: ChatSession['status'],
+  updatedAt: number
+): ChatSession => ({
+  ...session('delegated-question', 'Delegated question', status, updatedAt),
+  conversationGraph: {
+    schemaVersion: 1,
+    rootFrameId: 'root',
+    activeFrameId: 'root',
+    frames: [
+      {
+        id: 'root',
+        originBindingState: 'root',
+        kind: 'root',
+        status: status === 'running' ? 'running' : 'completed',
+        activeBranchId: 'root-branch',
+        createdAt: 1
+      },
+      {
+        id: 'child',
+        parentFrameId: 'root',
+        originMessageId: 'root-prompt',
+        originBindingState: 'validated',
+        kind: 'delegate',
+        delegateName: 'Researcher',
+        status: 'completed',
+        activeBranchId: 'child-branch',
+        createdAt: 2
+      }
+    ],
+    branches: [
+      {
+        id: 'root-branch',
+        agentFrameId: 'root',
+        headMessageId: 'root-prompt',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-branch',
+        agentFrameId: 'child',
+        headMessageId: 'child-message',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    messages: [
+      {
+        id: 'root-prompt',
+        role: 'user',
+        content: 'Research this topic',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'root',
+        introducedOnBranchId: 'root-branch',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-message',
+        role: 'agent',
+        content: 'I need one detail.',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'child',
+        introducedOnBranchId: 'child-branch',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    activities: [],
+    activityGroups: [],
+    runtimeSegments: []
+  },
+  runtimeContext: {
+    version: 1,
+    revision: 1,
+    delegatedWork: {
+      records: [],
+      questionRequests: [
+        {
+          requestId: 'question-1',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child',
+          sourceAttemptId: 'attempt-1',
+          sourceRuntimeSegmentId: 'runtime-1',
+          sourceMessageBranchId: 'child-branch',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Researcher',
+          questions: [
+            { question: 'Which scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }
+          ],
+          sequence: 1,
+          askedAt: 2,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    }
+  }
+})
+
 const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheckResult => ({
   checkedAt: 1,
   platform: 'darwin',
@@ -579,6 +683,156 @@ describe('HomePage activity overview', () => {
 
     expect(openSession).toHaveBeenCalledWith(project.id, 'plan', 'user')
     nowSpy.mockRestore()
+  })
+
+  it('shows a running Session as Needs you when its active branch has a delegated question', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [sessionWithPendingDelegatedQuestion('running', 600_000)]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+  })
+
+  it('shows Needs you ahead of an unread completion for an idle Session', async () => {
+    const now = 600_000
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [sessionWithPendingDelegatedQuestion('idle', now - 60_000)]
+    })
+    useNotificationInboxStore.setState({
+      revision: 1,
+      unreadCount: 1,
+      latestSequence: 1,
+      status: 'ready',
+      items: [
+        {
+          id: 'completed-delegated-question',
+          sequence: 1,
+          dedupeKey: 'task:completed:delegated-question',
+          kind: 'task.completed',
+          projectId: project.id,
+          sessionId: 'delegated-question',
+          originId: 'delegated-question-run',
+          title: 'Delegated question',
+          summary: 'A task completed.',
+          createdAt: now
+        }
+      ]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, completed"]')
+    ).toBeNull()
+    expect(
+      container.querySelector('[aria-label^="Mark completed session Delegated question"]')
+    ).toBeNull()
+  })
+
+  it('still shows Needs you while the user is previewing the question source Subagent', async () => {
+    const candidate = sessionWithPendingDelegatedQuestion('running', 600_000)
+    if (candidate.conversationGraph) candidate.conversationGraph.activeFrameId = 'child'
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [candidate]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+    ).not.toBeNull()
+  })
+
+  it.each([
+    {
+      reason: 'the question belongs to an inactive root Branch',
+      mutate: (candidate: ChatSession) => {
+        const rootFrame = candidate.conversationGraph?.frames.find(({ id }) => id === 'root')
+        if (rootFrame) rootFrame.activeBranchId = 'inactive-root-branch'
+      }
+    },
+    {
+      reason: 'the source route is invalid',
+      mutate: (candidate: ChatSession) => {
+        const request = candidate.runtimeContext?.delegatedWork?.questionRequests?.[0]
+        if (request) Object.assign(request, { sourceName: 'Unexpected source' })
+      }
+    },
+    {
+      reason: 'the question owner is quarantined',
+      mutate: (candidate: ChatSession) => {
+        const owner = candidate.runtimeContext?.delegatedWork
+        if (owner) {
+          Object.assign(owner, {
+            questionRequestsQuarantine: { reason: 'corrupt question owner' }
+          })
+        }
+      }
+    }
+  ])('does not show Needs you when $reason', async ({ mutate }) => {
+    const candidate = sessionWithPendingDelegatedQuestion('running', 600_000)
+    mutate(candidate)
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [candidate]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, running"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+    ).toBeNull()
   })
 
   it('updates an active card while Home remains mounted', async () => {

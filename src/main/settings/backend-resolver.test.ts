@@ -384,6 +384,35 @@ describe('AgentBackendResolver construction and selection', () => {
 })
 
 describe('AgentBackendResolver configured and explicit targets', () => {
+  it('fails closed instead of rerouting an admitted backend after endpoint compatibility changes', async () => {
+    let apiEndpoints: ProviderRuntimeTarget['apiEndpoints'] = ['openai']
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'opencode' }),
+      targetOverride: () => ({
+        apiEndpoints,
+        provider: { apiEndpoints }
+      })
+    })
+    const admitted = {
+      frameworkId: 'opencode' as const,
+      providerId: 'provider-a',
+      model: { kind: 'required' as const, id: 'model-a' },
+      reasoningEffort: 'default' as const,
+      expectedBackendId: 'opencode:provider-a',
+      expectedModelRoute: 'opencode-openai' as const
+    }
+
+    await expect(harness.resolver.resolveAdmittedTarget(admitted)).resolves.toMatchObject({
+      backendId: 'opencode:provider-a',
+      modelRoute: 'opencode-openai'
+    })
+
+    apiEndpoints = ['anthropic']
+    await expect(harness.resolver.resolveAdmittedTarget(admitted)).rejects.toThrow(
+      'changed since admission'
+    )
+  })
+
   it('captures the click-time provider, model, framework, and effort as one explicit target', async () => {
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'codex', reasoningEffort: 'max' })

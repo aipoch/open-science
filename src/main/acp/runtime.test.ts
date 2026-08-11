@@ -1112,6 +1112,67 @@ describe('ACP runtime migration write-gate', () => {
     ])
   })
 
+  it('preserves resolved backend initialization when the agent process is injected', async () => {
+    const process = new FakeAgentProcess()
+    const actions: string[] = []
+    acp
+      .agent({ name: 'injected-process-agent' })
+      .onRequest(acp.methods.agent.initialize, () => {
+        actions.push('initialize')
+        return {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false },
+          authMethods: []
+        }
+      })
+      .onRequest(acp.methods.agent.authenticate, () => {
+        actions.push('authenticate')
+        return {}
+      })
+      .onRequest(acp.methods.agent.providers.set, () => {
+        actions.push('configure-provider')
+        return {}
+      })
+      .onRequest(acp.methods.agent.session.new, () => {
+        actions.push('session-new')
+        return {
+          sessionId: 'injected-session',
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+        }
+      })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const spawnAgent = vi.fn(() => asAgentProcess(process))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent,
+      resolveBackend: () => ({
+        framework: codexFramework,
+        executablePath: '/bin/codex-acp',
+        env: {},
+        authentication: { methodId: 'api-key' },
+        providerConfiguration: {
+          providerId: 'custom-gateway',
+          apiType: 'openai',
+          baseUrl: 'http://127.0.0.1:1234/v1',
+          headers: {}
+        }
+      })
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+
+    expect({ actions, spawnCount: spawnAgent.mock.calls.length }).toEqual({
+      actions: ['initialize', 'authenticate', 'configure-provider', 'session-new'],
+      spawnCount: 1
+    })
+  })
+
   it('publishes connected only after initialize, authentication, and provider configuration', async () => {
     const process = new FakeAgentProcess()
     const actions: string[] = []
@@ -5531,7 +5592,14 @@ describe('ACP runtime session management', () => {
       durable: {
         kind: 'agent-user-choice' as const,
         requestId: 'choice-restored-1',
-        promptMessageId: 'prompt-restored-1'
+        promptMessageId: 'prompt-restored-1',
+        provenanceContext: {
+          rootFrameId: 'durable-root-frame',
+          agentFrameId: 'durable-root-frame',
+          messageBranchId: 'durable-root-branch',
+          runtimeSegmentId: 'durable-runtime-segment',
+          promptMessageId: 'prompt-restored-1'
+        }
       }
     }
 
@@ -5563,11 +5631,11 @@ describe('ACP runtime session management', () => {
           promptMessageId: 'prompt-restored-1',
           elicitation: expect.objectContaining({
             state: 'answered',
-            durable: {
+            durable: expect.objectContaining({
               kind: 'agent-user-choice',
               requestId: 'choice-restored-1',
               promptMessageId: 'prompt-restored-1'
-            }
+            })
           })
         })
       ])
@@ -6695,7 +6763,7 @@ describe('ACP runtime session management', () => {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
         getRpcConnection: ({ sessionId, projectId }) =>
-          notebookRpcServer.issueSessionConnection(sessionId, projectId),
+          notebookRpcServer.issueSessionConnection(sessionId, projectId, `root-frame-${sessionId}`),
         registerSessionAlias: (aliasSessionId, sessionId) =>
           notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
         releaseSessionCapabilities: (sessionId) =>
@@ -14623,7 +14691,24 @@ describe('ACP runtime session management', () => {
             emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
             options: {
               settingSources: ['user'],
-              tools: { type: 'preset', preset: 'claude_code' }
+              tools: { type: 'preset', preset: 'claude_code' },
+              disallowedTools: [
+                'Agent',
+                'Task',
+                'Workflow',
+                'SendMessage',
+                'TeamCreate',
+                'TeamDelete'
+              ],
+              managedSettings: {
+                disableAgentView: true,
+                disableWorkflows: true,
+                workflowKeywordTriggerEnabled: false
+              },
+              env: {
+                CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+                CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+              }
             }
           },
           systemPrompt: {
@@ -23669,7 +23754,14 @@ describe('Specialist Skill scoping', () => {
         }
       }
     })
-    const turn = await owners.artifactTurns!.open({
+    const reservation = owners.sessionInteractions.reservePrompt({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'interaction-1'
+    })
+    const execution = owners.sessionInteractions.activatePrompt(reservation)
+    const turn = await owners.artifactTurns!.openRootExecution({
+      executionId: execution.turnToken,
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -23681,6 +23773,7 @@ describe('Specialist Skill scoping', () => {
         owners.planService!.generate({
           projectId: 'project-1',
           sessionId: 'session-1',
+          executionId: execution.turnToken,
           interactionId: 'interaction-1',
           content: {
             task_summary: 'Analyze one dataset',
@@ -23702,6 +23795,7 @@ describe('Specialist Skill scoping', () => {
       ).resolves.toMatchObject({ projection: { artifactVersionId: 'version-1' } })
     } finally {
       await owners.artifactTurns!.dispose(turn)
+      owners.sessionInteractions.release(execution)
     }
   })
 })

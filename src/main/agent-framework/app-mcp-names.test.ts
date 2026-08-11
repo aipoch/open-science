@@ -73,6 +73,15 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     }
   )
 
+  it.each(['codex', 'claude-code', 'opencode'] as const)(
+    'does not reinterpret the Host SDK send_frame_message method as an MCP tool for %s',
+    (frameworkId) => {
+      const guidance = "Use await host.send_frame_message('parent', message)."
+
+      expect(renderAppMcpToolReferences(frameworkId, guidance)).toBe(guidance)
+    }
+  )
+
   it.each([
     'mcp__open-science-notebook__ask_user_question',
     'mcp.open-science-notebook.ask_user_question',

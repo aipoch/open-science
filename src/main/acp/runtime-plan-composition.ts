@@ -170,7 +170,13 @@ const composeAcpRuntimePlanWorkflow = (
   const call = async (input: AcpSessionPlanCall): Promise<unknown> => {
     if (!service) throw new Error('Session Plan capability is not configured.')
     if (input.operation === 'generate') {
-      const interactionId = base.artifactTurns?.promptMessageIdFor(input.sessionId)
+      const execution = sessionInteractions.current(input.sessionId)
+      if (!execution || execution.kind !== 'prompt') {
+        throw new Error('No active interaction can generate a Session Plan.')
+      }
+      const interactionId = base.artifactTurns?.snapshot(
+        base.artifactTurns.handleForExecution(execution.turnToken)
+      ).promptMessageId
       if (!interactionId) throw new Error('No active interaction can generate a Session Plan.')
       interactions.reserveApproval(input.sessionId, interactionId)
       let result: Awaited<ReturnType<NonNullable<typeof service>['generate']>>
@@ -178,6 +184,7 @@ const composeAcpRuntimePlanWorkflow = (
         result = await service.generate({
           projectId: input.projectId,
           sessionId: input.sessionId,
+          executionId: execution.turnToken,
           interactionId,
           content: input.input as GeneratePlanContent
         })

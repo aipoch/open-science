@@ -149,7 +149,11 @@ describe('Codex approved handoff', () => {
       method: string,
       args: Record<string, unknown>
     ): Promise<unknown> => {
-      const connection = await notebookRpcServer.issueSessionConnection('codex-session', 'test')
+      const connection = await notebookRpcServer.issueSessionConnection(
+        'codex-session',
+        'test',
+        'root-frame-codex-session'
+      )
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
@@ -197,7 +201,11 @@ describe('Codex approved handoff', () => {
             projectName: 'test',
             mcpEntryPath: '/test/mcp.js',
             getRpcConnection: ({ sessionId, projectId }) =>
-              notebookRpcServer.issueSessionConnection(sessionId, projectId),
+              notebookRpcServer.issueSessionConnection(
+                sessionId,
+                projectId,
+                `root-frame-${sessionId}`
+              ),
             registerSessionAlias: (aliasSessionId, sessionId) =>
               notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
             releaseSessionCapabilities: (sessionId) =>

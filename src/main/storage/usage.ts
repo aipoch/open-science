@@ -3,13 +3,15 @@ import { join } from 'node:path'
 
 import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
 
-export type UsageCategoryKey = 'artifacts' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
+export type UsageCategoryKey =
+  'artifacts' | 'delegation' | 'uploads' | 'runtime' | 'notebooks' | 'workspaces'
 export type UsageChild = { name: string; bytes: number }
 export type UsageCategory = { key: UsageCategoryKey; bytes: number; children?: UsageChild[] }
 export type StorageUsage = { categories: UsageCategory[]; totalBytes: number }
 
 const CATEGORY_KEYS: UsageCategoryKey[] = [
   'artifacts',
+  'delegation',
   'uploads',
   'runtime',
   'notebooks',

@@ -43,6 +43,7 @@ delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 // running. It is never exposed to sandbox code; host.agents forwards it as server context so an
 // approved switch can capture only this invocation's outer completion.
 let ACTIVE_CONTROL_INVOCATION_ID
+let DELEGATE_CALL_SEQUENCE = 0
 
 // Private references to the RPC clients, captured before user code runs. host.mcp MUST use these, not
 // the global `fetch`: a vm sandbox is not a security boundary, so sandbox code can reach the outer
@@ -2269,6 +2270,201 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
   return body.result
 }
 
+async function delegateRpc(request, options = {}) {
+  if (!RPC_ENDPOINT) throw new Error('host.delegate is unavailable: control RPC endpoint not set')
+  const delegationCallId = String(++DELEGATE_CALL_SEQUENCE)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: { request, options, delegation_call_id: delegationCallId }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.delegate: ${body.error || 'HTTP ' + res.status}`)
+  }
+  const outcome = body.result || {}
+  return {
+    kind: outcome.kind,
+    children: (outcome.children || []).map((child) => ({
+      frame_id: child.frameId,
+      attempt_id: child.attemptId,
+      ...(child.name !== undefined ? { name: child.name } : {}),
+      ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+      status: child.status,
+      ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+      ...(child.response !== undefined ? { response: child.response } : {}),
+      ...(child.status !== 'running' ? { artifacts_created: child.artifactsCreated || [] } : {}),
+      ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+      ...(child.error ? { error: child.error } : {}),
+      ...(child.structuredOutputUnsatisfied !== undefined
+        ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+        : {}),
+      ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+    }))
+  }
+}
+
+async function hostHelp(query = undefined) {
+  if (!RPC_ENDPOINT) throw new Error('host.help is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'hostSdkHelp',
+      params: { ...(query !== undefined ? { query } : {}) }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.help: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostDelegate(request, options = {}) {
+  return delegateRpc(request, options)
+}
+
+async function hostStopChild(frameIds) {
+  if (!RPC_ENDPOINT) throw new Error('host.stop_child is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: { operation: 'stop_children', frame_ids: frameIds }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.stop_child: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return (body.result || []).map((child) => ({
+    frame_id: child.frameId,
+    status: child.status
+  }))
+}
+
+async function delegatedObservationRpc(op, selectors = undefined, options = undefined) {
+  if (!RPC_ENDPOINT) throw new Error(`host.${op} is unavailable: control RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: {
+        op,
+        ...(selectors !== undefined
+          ? op === 'collect'
+            ? { selectors }
+            : { frame_ids: selectors }
+          : {}),
+        ...(options !== undefined ? { options } : {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return (body.result || []).map((child) => ({
+    frame_id: child.frameId,
+    attempt_id: child.attemptId,
+    ...(child.title !== undefined ? { title: child.title } : {}),
+    ...(child.name !== undefined ? { name: child.name } : {}),
+    ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+    status: child.status,
+    ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+    ...(child.response !== undefined ? { response: child.response } : {}),
+    ...(op === 'collect' && child.status !== 'running'
+      ? { artifacts_created: child.artifactsCreated || [] }
+      : {}),
+    ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+    ...(child.error ? { error: child.error } : {}),
+    ...(child.structuredOutputUnsatisfied !== undefined
+      ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+      : {}),
+    ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+  }))
+}
+
+async function hostSubmitOutput(value) {
+  if (!RPC_ENDPOINT)
+    throw new Error('host.submit_output is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'delegatedOutputCall', params: { value } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    const detail =
+      body.error && typeof body.error === 'object'
+        ? JSON.stringify(body.error)
+        : body.error || 'HTTP ' + res.status
+    throw new Error(`host.submit_output: ${detail}`)
+  }
+  return body.result
+}
+
+async function hostChildren(frameIds = undefined) {
+  return delegatedObservationRpc('children', frameIds)
+}
+
+async function hostCollect(selectors, options = undefined) {
+  return delegatedObservationRpc('collect', selectors, options)
+}
+
+async function hostSendFrameMessage(target, message, options = undefined) {
+  if (!RPC_ENDPOINT) {
+    throw new Error('host.send_frame_message is unavailable: control RPC endpoint not set')
+  }
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: {
+        op: 'send_message',
+        target,
+        message,
+        ...(options !== undefined ? { options } : {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.send_frame_message: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostMessageReceipt(selector, options = undefined) {
+  return delegatedMessageRpc('message_receipt', { selector, options })
+}
+
+async function hostResolveMessage(messageId, options) {
+  return delegatedMessageRpc('resolve_message', {
+    message_id: messageId,
+    action: options && options.action
+  })
+}
+
+async function delegatedMessageRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error(`host.${op} is unavailable: control RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'delegatedWorkCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+  return body.result
+}
+
 // host.agents namespace. Methods and filter/write fields are snake_case; returned records are
 // camelCase. list_skills/list_connectors accept an optional stable id or unique public name.
 // create/update/attach_*/detach_* are the ordinary-mutation surface (issue 03); they return a real
@@ -2507,9 +2703,23 @@ const hostCompute = {
   }
 }
 
+// Keep this explicit object in sync with HostSdkHelpRegistry. Its keys are the published Subagent
+// Host SDK surface and are checked by src/main/host-sdk/help.test.ts.
+const subagentHostOperations = Object.freeze({
+  delegate: hostDelegate,
+  children: hostChildren,
+  collect: hostCollect,
+  stop_child: hostStopChild,
+  send_frame_message: hostSendFrameMessage,
+  message_receipt: hostMessageReceipt,
+  resolve_message: hostResolveMessage,
+  submit_output: hostSubmitOutput
+})
+
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).
 const sandbox = {
   host: {
+    help: hostHelp,
     capabilities: hostCapabilities,
     llm: hostLlm,
     artifacts: hostArtifacts,
@@ -2519,7 +2729,8 @@ const sandbox = {
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,
-    skills: hostSkills
+    skills: hostSkills,
+    ...subagentHostOperations
   },
   console,
   process,
@@ -2540,27 +2751,35 @@ function wrapForRun(code) {
   const plain = '(async () => {\n' + code + '\n})()'
   const trimmed = code.replace(/[\s;]+$/, '')
   if (!trimmed) return plain
-  // Split at the rightmost top-level statement boundary (newline or ';'); the tail is the candidate
-  // trailing expression. A ';' inside a string/for-header just yields a tail that won't compile below.
-  const split = Math.max(trimmed.lastIndexOf('\n'), trimmed.lastIndexOf(';'))
-  const head = split >= 0 ? trimmed.slice(0, split + 1) : ''
-  const tail = trimmed.slice(split + 1).trim()
-  // Only echo something that can start an expression — never a declaration/control statement.
-  if (
-    !tail ||
-    /^(const|let|var|if|for|while|function|class|switch|try|throw|return|do|else|import|export)\b/.test(
-      tail
-    )
-  ) {
-    return plain
+  // Try candidate statement boundaries from right to left. A newline or semicolon may be nested
+  // inside a multiline call, string, or for-header; compile-checking progressively wider tails finds
+  // the complete final expression without needing a second JavaScript parser in the runtime bundle.
+  const boundaries = []
+  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+    if (trimmed[index] === '\n' || trimmed[index] === ';') boundaries.push(index)
   }
-  const echo = '(async () => {\n' + head + '\nreturn (\n' + tail + '\n)\n})()'
-  try {
-    new vm.Script(echo, { filename: '<repl>' })
-    return echo
-  } catch {
-    return plain
+  boundaries.push(-1)
+  for (const split of boundaries) {
+    const head = split >= 0 ? trimmed.slice(0, split + 1) : ''
+    const tail = trimmed.slice(split + 1).trim()
+    // Only echo something that can start an expression — never a declaration/control statement.
+    if (
+      !tail ||
+      /^(const|let|var|if|for|while|function|class|switch|try|throw|return|do|else|import|export)\b/.test(
+        tail
+      )
+    ) {
+      continue
+    }
+    const echo = '(async () => {\n' + head + '\nreturn (\n' + tail + '\n)\n})()'
+    try {
+      new vm.Script(echo, { filename: '<repl>' })
+      return echo
+    } catch {
+      // This boundary was inside the final expression; retry with a wider candidate.
+    }
   }
+  return plain
 }
 
 // Runs one request against the persistent context. console is redirected into strings and restored in
@@ -2612,6 +2831,7 @@ rl.on('line', (line) => {
   }
   chain = chain.then(async () => {
     ACTIVE_CONTROL_INVOCATION_ID = request.control_invocation_id
+    DELEGATE_CALL_SEQUENCE = 0
     try {
       const resp = await run(request.code || '')
       resp.req_id = request.req_id

@@ -153,9 +153,9 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
   // Same wiring order as main/ipc.ts: the Agent-facing MCP and persistent control REPL receive
   // separate session-bound capabilities, so rotating one cannot invalidate the other.
   service.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
-    rpcServer.issueControlConnection(sessionId, projectId)
+    rpcServer.issueControlConnection(sessionId, projectId, 'root-frame-' + sessionId)
   )
-  const conn = await rpcServer.issueSessionConnection(SESSION, PROJECT)
+  const conn = await rpcServer.issueSessionConnection(SESSION, PROJECT, `root-frame-${SESSION}`)
 
   const env: NotebookMcpEnvironment = {
     endpoint: conn.endpoint,

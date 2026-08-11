@@ -56,7 +56,7 @@ type ArtifactProvenanceRepositoryOptions = {
   getClient: () => Promise<PrismaClient>
   inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
-  notebookRepository?: Pick<NotebookRunRepository, 'findExisting'>
+  notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
   loadSession?: (
     projectId: string,
     appSessionId: string

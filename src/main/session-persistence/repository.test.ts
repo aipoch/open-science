@@ -61,6 +61,96 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('preserves one immutable pre-S2 Session backup before the first initiating-Turn write', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const legacy = createSession({
+      title: 'Before S2: {"initiatingTurnMessageId":"ordinary user content"}'
+    })
+    await repository.saveSession(legacy)
+    const filePath = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
+    const beforeUpgrade = await readFile(filePath, 'utf8')
+    const upgraded = createSession({
+      title: 'After S2',
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  initiatingTurnMessageId: 'message-1',
+                  status: 'cancelled',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 1710000000001,
+                  endedAt: 1710000000002,
+                  cancellationReason: 'main_agent_stop'
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    await repository.saveSession(upgraded)
+    const backupPath = `${filePath}.pre-s2-backup`
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(beforeUpgrade)
+    await repository.saveSession({ ...upgraded, title: 'Later S2 edit' })
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(beforeUpgrade)
+    await expect(readFile(filePath, 'utf8')).resolves.toContain('Later S2 edit')
+  })
+
+  it('preserves an independent immutable backup before the first execution-model snapshot write', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const legacy = createSession()
+    await repository.saveSession(legacy)
+    const filePath = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
+    const beforeUpgrade = await readFile(filePath, 'utf8')
+    const upgraded = createSession({
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  initiatingTurnMessageId: 'message-1',
+                  status: 'cancelled',
+                  resolvedAgent: { kind: 'main' },
+                  executionModel: {
+                    frameworkId: 'opencode',
+                    providerId: 'provider-a',
+                    backendId: 'provider-a',
+                    modelRoute: 'opencode-openai',
+                    model: 'model-a',
+                    reasoningEffort: 'high'
+                  },
+                  runtimeSegmentIds: [],
+                  startedAt: 1710000000001,
+                  endedAt: 1710000000002,
+                  cancellationReason: 'main_agent_stop'
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    await repository.saveSession(upgraded)
+    const backupPath = `${filePath}.pre-subagent-model-backup`
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(beforeUpgrade)
+    await repository.saveSession({ ...upgraded, title: 'Later model edit' })
+    await expect(readFile(backupPath, 'utf8')).resolves.toBe(beforeUpgrade)
+  })
+
   it('saves each session to sessions/<projectId>/<id>.json and loads it back', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const session = createSession()
@@ -85,6 +175,180 @@ describe('session persistence repository (per-session files)', () => {
       projectId: 'project-a',
       title: 'Saved conversation',
       messages: [{ content: 'Summarize this file' }]
+    })
+  })
+
+  it('round-trips raw delegated records quarantine while saving unrelated runtime owners', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    const filePath = join(root, 'sessions', 'project-a', 'session-1.json')
+    const corruptRecords = [{ agentFrameId: 'child-frame', attempts: 'corrupt' }]
+    const session = createSession({
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        plan: {
+          artifactId: 'plan-1',
+          artifactVersionId: 'plan-version-1',
+          artifactChecksum: 'a'.repeat(64),
+          approval: 'pending',
+          stepStatuses: {}
+        },
+        delegatedWork: { records: [], messageCommands: [] },
+        sideChat: {
+          version: 1,
+          id: 'side-chat-1',
+          lifecycle: 'open',
+          frameworkId: 'codex',
+          historyPreamble: 'Preserve this side chat.',
+          entries: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+    await mkdir(join(root, 'sessions', 'project-a'), { recursive: true })
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 2,
+        session: {
+          ...session,
+          runtimeContext: {
+            ...session.runtimeContext,
+            delegatedWork: { records: corruptRecords, messageCommands: [] }
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    const loaded = (await repository.loadAll()).sessions[0]
+    expect(loaded.runtimeContext).toMatchObject({
+      plan: { artifactId: 'plan-1' },
+      sideChat: { id: 'side-chat-1' },
+      delegatedWork: { records: [], recordsQuarantine: corruptRecords, messageCommands: [] }
+    })
+
+    await repository.saveSession({ ...loaded, title: 'Ordinary Session save' })
+
+    const reopened = (await repository.loadAll()).sessions[0]
+    expect(reopened.runtimeContext).toEqual(loaded.runtimeContext)
+    expect(reopened.runtimeContext?.delegatedWork?.records).toEqual([])
+
+    const laterCorruption = [{ agentFrameId: 'later-child', attempts: 'later-corruption' }]
+    const corruptedAgain = JSON.parse(await readFile(filePath, 'utf8')) as {
+      session: PersistedChatSession
+    }
+    corruptedAgain.session.runtimeContext = {
+      ...corruptedAgain.session.runtimeContext!,
+      delegatedWork: {
+        ...corruptedAgain.session.runtimeContext!.delegatedWork!,
+        records: laterCorruption
+      } as unknown as NonNullable<
+        NonNullable<PersistedChatSession['runtimeContext']>['delegatedWork']
+      >
+    }
+    await writeFile(filePath, JSON.stringify(corruptedAgain), 'utf8')
+    const twiceQuarantined = (await repository.loadAll()).sessions[0]
+    expect(twiceQuarantined.runtimeContext?.delegatedWork).toMatchObject({
+      records: [],
+      recordsQuarantine: {
+        previous: corruptRecords,
+        current: laterCorruption
+      }
+    })
+
+    await repository.saveSession(twiceQuarantined)
+    expect((await repository.loadAll()).sessions[0].runtimeContext).toEqual(
+      twiceQuarantined.runtimeContext
+    )
+  })
+
+  it('keeps the Session catalog readable after a post-fence receipt save fails', async () => {
+    const receiptCommitFailure = new Error('injected receipt commit failure')
+    let rejectReplacement = false
+    const renameFile = vi.fn((source: string, destination: string) =>
+      rejectReplacement ? Promise.reject(receiptCommitFailure) : rename(source, destination)
+    )
+    const repository = new SessionRepository(await createStorageRoot(), { renameFile })
+    const queued = createSession({
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        delegatedWork: {
+          records: [],
+          messageCommands: [
+            {
+              messageId: 'message-post-fence',
+              requestId: 'e2e-child-post-fence',
+              sourcePrincipal: 'child-frame\u0000child-attempt',
+              canonicalDigest: 'a'.repeat(64),
+              sourceFrameId: 'child-frame',
+              sourceAttemptId: 'child-attempt',
+              targetFrameId: 'root-frame-session-1',
+              rootOriginMessageId: 'message-1',
+              callerRootMessageId: 'message-1',
+              rootPromptMessageId: 'root-prompt-post-fence',
+              rootBranchId: 'root-branch-session-1',
+              rootBranchRevision: 'root-branch-session-1:1710000000000',
+              direction: 'to_parent',
+              disposition: 'message',
+              text: 'Trigger reliable post-fence persistence failure',
+              kind: 'info',
+              laneSequence: 1,
+              queuedAt: 1710000000101,
+              receipt: {
+                status: 'queued',
+                dispatchStartedAt: 1710000000102,
+                dispatchEpoch: 'message-post-fence-dispatch'
+              }
+            }
+          ]
+        }
+      }
+    })
+    await repository.saveSession(queued)
+    rejectReplacement = true
+    await expect(
+      repository.saveSession({
+        ...queued,
+        runtimeContext: {
+          ...queued.runtimeContext!,
+          revision: 4,
+          delegatedWork: {
+            ...queued.runtimeContext!.delegatedWork!,
+            messageCommands: queued.runtimeContext!.delegatedWork!.messageCommands!.map(
+              (command) => ({
+                ...command,
+                receipt: {
+                  status: 'accepted' as const,
+                  acceptedAt: 1710000000103,
+                  evidence: 'provider_prompt_accepted' as const
+                }
+              })
+            )
+          }
+        }
+      })
+    ).rejects.toBe(receiptCommitFailure)
+
+    await expect(repository.loadAllWithDiagnostics()).resolves.toMatchObject({
+      isComplete: true,
+      result: {
+        sessions: [
+          {
+            id: queued.id,
+            runtimeContext: {
+              delegatedWork: {
+                messageCommands: [
+                  { receipt: { status: 'queued', dispatchStartedAt: 1710000000102 } }
+                ]
+              }
+            }
+          }
+        ]
+      }
     })
   })
 
@@ -844,7 +1108,18 @@ describe('session persistence repository (per-session files)', () => {
     await repository.saveSession(createSession({ id: 'session-2', projectId: 'project-a' }))
     await repository.saveSession(createSession({ id: 'session-3', projectId: 'project-b' }))
 
+    const deletedPrimary = join(storageRoot!, 'sessions', 'project-a', 'session-1.json')
+    await writeFile(`${deletedPrimary}.pre-s2-backup`, 'pre-S2 authority', 'utf8')
+    await writeFile(`${deletedPrimary}.pre-subagent-model-backup`, 'pre-model authority', 'utf8')
+
     await repository.deleteSession('project-a', 'session-1')
+    await expect(readFile(deletedPrimary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(`${deletedPrimary}.pre-s2-backup`, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(
+      readFile(`${deletedPrimary}.pre-subagent-model-backup`, 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await repository.loadAll()).sessions.map((session) => session.id).sort()).toEqual([
       'session-2',
       'session-3'
@@ -883,6 +1158,36 @@ describe('session persistence repository (per-session files)', () => {
     ).resolves.toEqual({ status: 'found', session: expect.objectContaining({ id: session.id }) })
     await expect(readFile(quarantinePath, 'utf8')).resolves.toBe('{older malformed authority')
   })
+
+  it.each(['.pre-s2-backup', '.pre-subagent-model-backup'])(
+    'keeps primary Session authority when deleting %s fails',
+    async (failingSuffix) => {
+      const root = await createStorageRoot()
+      const session = createSession()
+      const primaryPath = join(root, 'sessions', session.projectId, `${session.id}.json`)
+      const failingPath = `${primaryPath}${failingSuffix}`
+      const removalFailure = new Error(`${failingSuffix} is locked`)
+      const remove = vi.fn(
+        async (path: string, options: { force: boolean; recursive: boolean }) => {
+          if (path === failingPath) throw removalFailure
+          await rm(path, options)
+        }
+      )
+      const repository = new SessionRepository(root, { remove })
+      await repository.saveSession(session)
+      await writeFile(`${primaryPath}.pre-s2-backup`, 'pre-S2 authority', 'utf8')
+      await writeFile(`${primaryPath}.pre-subagent-model-backup`, 'pre-model authority', 'utf8')
+
+      await expect(repository.deleteSession(session.projectId, session.id)).rejects.toBe(
+        removalFailure
+      )
+
+      await expect(readFile(primaryPath, 'utf8')).resolves.toContain('Saved conversation')
+      await expect(
+        repository.loadSessionWithDiagnostics(session.projectId, session.id)
+      ).resolves.toEqual({ status: 'found', session: expect.objectContaining({ id: session.id }) })
+    }
+  )
 
   it('does not delete orphan quarantines or current invalid primary authority', async () => {
     const root = await createStorageRoot()

@@ -132,7 +132,7 @@ class ProviderAccountsModule {
     })
 
     const provider: StoredProvider = {
-      id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
+      id: subscriptionIdentity?.id ?? existing?.id ?? request.id ?? this.createProviderId(),
       type: request.type === 'codex-shared' ? 'codex-isolated' : request.type,
       name:
         subscriptionIdentity?.name ??

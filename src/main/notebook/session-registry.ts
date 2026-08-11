@@ -1,3 +1,5 @@
+import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
+
 export type NotebookSessionRegistryMember = {
   readonly sessionId: string
   shutdownExecutor: () => Promise<{ reaped: boolean }>
@@ -39,22 +41,31 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
 
   constructor(private readonly options: NotebookSessionRegistryOptions = {}) {}
 
-  get(sessionId: string): Session | undefined {
-    return this.sessions.get(sessionId)
+  private key(identity: NotebookLaneIdentity): string {
+    try {
+      return notebookLaneKey(identity)
+    } catch {
+      throw new Error('Notebook owners require an explicit Frame lane.')
+    }
+  }
+
+  get(identity: NotebookLaneIdentity): Session | undefined {
+    return this.sessions.get(this.key(identity))
   }
 
   values(): IterableIterator<Session> {
     return this.sessions.values()
   }
 
-  getOrCreate(sessionId: string, create: () => Promise<Session>): Promise<Session> {
+  getOrCreate(identity: NotebookLaneIdentity, create: () => Promise<Session>): Promise<Session> {
+    const sessionId = this.key(identity)
     if (this.terminal) return Promise.reject(this.disposedError())
 
     const globalGate = this.globalGate
-    if (globalGate) return globalGate.promise.then(() => this.getOrCreate(sessionId, create))
+    if (globalGate) return globalGate.promise.then(() => this.getOrCreate(identity, create))
 
     const gate = this.removalGates.get(sessionId)
-    if (gate) return gate.promise.then(() => this.getOrCreate(sessionId, create))
+    if (gate) return gate.promise.then(() => this.getOrCreate(identity, create))
 
     const existing = this.sessions.get(sessionId)
     if (existing) return Promise.resolve(existing)
@@ -76,11 +87,12 @@ export class NotebookSessionRegistry<Session extends NotebookSessionRegistryMemb
     return creation
   }
 
-  remove(sessionId: string): Promise<{ reaped: boolean }> {
+  remove(identity: NotebookLaneIdentity): Promise<{ reaped: boolean }> {
+    const sessionId = this.key(identity)
     if (this.terminal) return Promise.reject(this.disposedError())
 
     const globalGate = this.globalGate
-    if (globalGate) return globalGate.promise.then(() => this.remove(sessionId))
+    if (globalGate) return globalGate.promise.then(() => this.remove(identity))
 
     const existing = this.removals.get(sessionId)
     if (existing) return existing.promise

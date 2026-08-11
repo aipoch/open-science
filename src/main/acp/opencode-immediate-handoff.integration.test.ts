@@ -271,7 +271,7 @@ describe('OpenCode immediate handoff production path', () => {
       agentsService: agents
     })
     notebookService.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
-      server.issueControlConnection(sessionId, projectId)
+      server.issueControlConnection(sessionId, projectId, 'root-frame-' + sessionId)
     )
     notebookService.setControlCompletionInterceptor(
       createCompletionGatedControlToolInterceptor(completionCoordinator, async () => undefined)

@@ -7,7 +7,10 @@ import { sanitizeSettings } from './document-codec'
 
 describe('settings document codec', () => {
   it('exposes one pure document boundary', async () => {
-    expect(Object.keys(await import('./document-codec')).sort()).toEqual(['sanitizeSettings'])
+    expect(Object.keys(await import('./document-codec')).sort()).toEqual([
+      'sanitizeSettings',
+      'sanitizeSubagentModel'
+    ])
   })
 
   it('fails closed for corrupt input', () => {

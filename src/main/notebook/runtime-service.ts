@@ -94,6 +94,7 @@ import {
   type NotebookControlResult
 } from './execution-owner'
 import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
+import { notebookLaneKey } from './lane-identity'
 import {
   NotebookSessionLifecycleOwner,
   type NotebookExecutorLifecycleCallbacks,
@@ -131,7 +132,12 @@ type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 // service caches it for the RuntimeSession lifetime because the child captures it only when spawned;
 // release revokes that capability when the runtime session is shut down.
 type McpRpcConnection = NotebookSessionMcpRpcConnection
-type McpRpcConnectionBinding = { sessionId: string; projectId: string }
+type McpRpcConnectionBinding = {
+  sessionId: string
+  projectId: string
+  agentFrameId: string
+  attemptId?: string
+}
 
 type NotebookRuntimeServiceOptions = {
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
@@ -369,7 +375,7 @@ class NotebookRuntimeService {
       storageRoot: options.dataRoot,
       defaultProjectName: options.projectName,
       repository: this.repository,
-      findSession: (sessionId) => this.sessions.get(sessionId),
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
       isRestartRecommended: (processKey) =>
         this.environmentOperations.isRestartRecommended(processKey)
@@ -392,7 +398,7 @@ class NotebookRuntimeService {
       bindings: this.runtimeBindingOwner,
       environmentOperations: this.environmentOperations,
       sessions: () => this.sessions.values(),
-      findSession: (sessionId) => this.sessions.get(sessionId),
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session)
     })
     this.environmentManagement = new NotebookEnvironmentManagementOwner({
@@ -419,7 +425,7 @@ class NotebookRuntimeService {
       resolvePackageMirror: options.getPackageMirror,
       ensureRecovered: () => this.ensureRecovered(),
       loadSession: (request) => this.sessionLifecycle.ensure(request),
-      findSession: (sessionId) => this.sessions.get(sessionId),
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       sessions: () => this.sessions.values(),
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
@@ -567,10 +573,13 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.sessionLifecycle.ensure(request)
-      return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
-    })
+    return this.runtimeBindingOwner.runWrite(
+      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+      async () => {
+        const session = await this.sessionLifecycle.ensure(request)
+        return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+      }
+    )
   }
 
   // notebook_switch_runtime: an EXPLICIT switch — tear down the old kernel + clear that language's
@@ -578,24 +587,27 @@ class NotebookRuntimeService {
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.sessionLifecycle.ensure(request)
-      const result = await this.runtimeBindingOwner.switch(
-        session,
-        request.language,
-        request.runtimeId,
-        async () => {
-          // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
-          // new runtime starts fresh and two same-language interpreters never coexist.
-          const oldEnv = this.resolveRunEnv(session, request.language)
-          const kind = request.language === 'r' ? 'r' : 'python'
-          await session.terminateExecutor(kind, oldEnv)
-          this.tearDownLanguageBinding(session, request.language, oldEnv)
-        }
-      )
-      this.sessionLifecycle.notifyChanged(session)
-      return result
-    })
+    return this.runtimeBindingOwner.runWrite(
+      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+      async () => {
+        const session = await this.sessionLifecycle.ensure(request)
+        const result = await this.runtimeBindingOwner.switch(
+          session,
+          request.language,
+          request.runtimeId,
+          async () => {
+            // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
+            // new runtime starts fresh and two same-language interpreters never coexist.
+            const oldEnv = this.resolveRunEnv(session, request.language)
+            const kind = request.language === 'r' ? 'r' : 'python'
+            await session.terminateExecutor(kind, oldEnv)
+            this.tearDownLanguageBinding(session, request.language, oldEnv)
+          }
+        )
+        this.sessionLifecycle.notifyChanged(session)
+        return result
+      }
+    )
   }
 
   // WS11: how many live sessions are bound to a runtime, split by kernel state, so Settings can warn
@@ -804,17 +816,19 @@ class NotebookRuntimeService {
     await this.repository.updateKernelStatus({
       projectName: session.projectName,
       sessionId: session.sessionId,
+      lane: session.lane,
       status: 'restarting'
     })
     this.sessionLifecycle.notifyChanged(session)
 
     try {
-      await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.sessionId))
+      await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
       this.environmentOperations.clearRestartRecommendations(envKeys)
     } finally {
       await this.repository.updateKernelStatus({
         projectName: session.projectName,
         sessionId: session.sessionId,
+        lane: session.lane,
         status: 'idle'
       })
     }
@@ -853,7 +867,7 @@ class NotebookRuntimeService {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.shutdownSession(request.sessionId)
+    return this.sessionLifecycle.shutdown(request)
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {

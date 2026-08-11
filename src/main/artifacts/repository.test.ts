@@ -580,6 +580,46 @@ describe('artifact repository', () => {
     ])
   })
 
+  it('cleans only legacy empty execution handoffs without treating the namespace as pending Artifact runs', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const legacyDirectories: string[] = []
+    for (const [index, sessionId] of ['storage-session-1', 'storage-session-2'].entries()) {
+      const executionsDirectory = join(
+        root,
+        'artifacts',
+        'default-project',
+        sessionId,
+        '.pending',
+        'executions'
+      )
+      legacyDirectories.push(executionsDirectory)
+      await mkdir(executionsDirectory, { recursive: true })
+      await writeFile(
+        join(executionsDirectory, `artifact-run-100-${index + 1}.json`),
+        '{}\n',
+        'utf8'
+      )
+    }
+    const liveDirectory = join(
+      root,
+      'artifacts',
+      'default-project',
+      'storage-session-3',
+      '.pending',
+      'executions'
+    )
+    const liveHandoff = join(liveDirectory, 'artifact-run-100-3.json')
+    await mkdir(liveDirectory, { recursive: true })
+    await writeFile(liveHandoff, '{"artifactRunId":"artifact-run-100-3"}\n', 'utf8')
+
+    await expect(repository.listPendingRunPublications('default-project')).resolves.toEqual([])
+    for (const directory of legacyDirectories) {
+      await expect(readdir(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+    await expect(readFile(liveHandoff, 'utf8')).resolves.toContain('artifact-run-100-3')
+  })
+
   it('marks a corrupt pending publication marker as an incomplete scan', async () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)

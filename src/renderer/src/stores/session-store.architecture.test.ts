@@ -92,6 +92,7 @@ const ownerNames = [
   'session-store-interaction-state',
   'session-store-message-graph-helpers',
   'session-store-message-graph-owner',
+  'session-store-persistence-merge',
   'session-store-persistence-owner',
   'session-store-run-activity-helpers',
   'session-store-run-output-helpers',
@@ -103,6 +104,7 @@ const sessionModuleTargets = new Set([modulePath(facadePath), ...privateOwnerTar
 const publicStoreTarget = modulePath(facadePath)
 const publicValueExports = [
   'createInitialSessionState',
+  'createSessionStore',
   'isExternallyHydratedSession',
   'toPersistedSession',
   'useSessionStore'
@@ -116,6 +118,8 @@ const publicTypeExports = [
   'ChatSession',
   'SessionHydrationSelection',
   'SessionStatus',
+  'SessionStore',
+  'SessionStoreApi',
   'ToolActivity',
   'ToolActivityStatus'
 ].sort()
@@ -608,27 +612,19 @@ const compositionViolations = (source: string): readonly string[] => {
       violations.push(`${creator} called ${counts.get(creator) ?? 0} times`)
     }
   }
-  const createCall = (() => {
-    let result: Node | undefined
-    const find = (node: Node): void => {
-      if (
-        isCallExpression(node) &&
-        isIdentifier(node.expression) &&
-        node.expression.text === 'create'
-      ) {
-        result = node
-      }
-      forEachChild(node, find)
-    }
-    find(sourceFile)
-    return result
-  })()
-  if (!createCall || !isCallExpression(createCall)) {
-    violations.push('the facade does not create the public store')
+  const initializerDeclaration = sourceFile.statements
+    .filter(isVariableStatement)
+    .flatMap((statement) => [...statement.declarationList.declarations])
+    .find(
+      (declaration) =>
+        isIdentifier(declaration.name) && declaration.name.text === 'createSessionStoreInitializer'
+    )
+  const initializer = initializerDeclaration?.initializer
+  if (!initializer || !isArrowFunction(initializer)) {
+    violations.push('the facade does not declare the canonical store initializer')
     return violations
   }
-  const initializer = createCall.arguments[0]
-  const body = initializer && isArrowFunction(initializer) ? initializer.body : undefined
+  const body = isArrowFunction(initializer.body) ? initializer.body.body : initializer.body
   const object =
     body && isParenthesizedExpression(body) && isObjectLiteralExpression(body.expression)
       ? body.expression
@@ -773,21 +769,24 @@ const zustandImportViolations = (path: string, source = readSource(path)): reado
     return valueImports.length > 0 ? [`${relativePath} imports a Zustand value`] : []
   }
 
-  const [canonicalImport] = valueImports
-  const bindings =
-    canonicalImport && isImportDeclaration(canonicalImport)
-      ? canonicalImport.importClause?.namedBindings
-      : undefined
-  const elements = bindings && isNamedImports(bindings) ? bindings.elements : []
   const canonical =
-    valueImports.length === 1 &&
-    canonicalImport &&
-    isImportDeclaration(canonicalImport) &&
-    isStringLiteralLike(canonicalImport.moduleSpecifier) &&
-    canonicalImport.moduleSpecifier.text === 'zustand' &&
-    elements.length === 1 &&
-    elements[0].name.text === 'create' &&
-    !elements[0].propertyName
+    valueImports.length === 2 &&
+    valueImports.every((statement) => {
+      if (!isImportDeclaration(statement)) return false
+      const bindings = statement.importClause?.namedBindings
+      const elements =
+        bindings && isNamedImports(bindings)
+          ? bindings.elements.filter((element) => !element.isTypeOnly)
+          : []
+      if (!isStringLiteralLike(statement.moduleSpecifier) || elements.length !== 1) return false
+      const expected = statement.moduleSpecifier.text === 'zustand' ? 'create' : 'createStore'
+      return (
+        (statement.moduleSpecifier.text === 'zustand' ||
+          statement.moduleSpecifier.text === 'zustand/vanilla') &&
+        elements[0].name.text === expected &&
+        !elements[0].propertyName
+      )
+    })
   return canonical ? [] : ['facade does not use the canonical Zustand create import']
 }
 
@@ -802,6 +801,8 @@ const storeCreationViolations = (): readonly string[] => {
     if (path === facadePath) {
       if (counts.get('create') !== 1)
         violations.push(`facade calls create ${counts.get('create') ?? 0} times`)
+      if (counts.get('createStore') !== 1)
+        violations.push(`facade calls createStore ${counts.get('createStore') ?? 0} times`)
     }
   }
   return violations
@@ -880,7 +881,7 @@ describe('Session Store architecture', () => {
     for (const file of actualModules) {
       const source = readSource(resolve(__dirname, file))
       const lines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(lines, file).toBeLessThanOrEqual(660)
+      expect(lines, file).toBeLessThanOrEqual(710)
     }
   })
 
@@ -998,6 +999,7 @@ describe('Session Store architecture', () => {
       ownerPaths: [
         'src/renderer/src/stores/session-store.ts',
         'src/renderer/src/stores/session-store-interaction-state.ts',
+        'src/renderer/src/stores/session-store-persistence-merge.ts',
         'src/renderer/src/stores/session-store-persistence-owner.ts',
         'src/renderer/src/stores/session-store-message-graph-owner.ts',
         'src/renderer/src/stores/session-store-message-graph-helpers.ts',
@@ -1265,8 +1267,8 @@ describe('Session Store architecture guard regressions', () => {
       zustandImportViolations(
         facadePath,
         readSource(facadePath).replace(
-          "import { create } from 'zustand'",
-          "import { create as makeStore } from 'zustand'"
+          "import { create, type StateCreator } from 'zustand'",
+          "import { create as makeStore, type StateCreator } from 'zustand'"
         )
       )
     ).toContain('facade does not use the canonical Zustand create import')

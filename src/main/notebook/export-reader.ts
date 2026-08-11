@@ -14,7 +14,8 @@ type NotebookExportFile = {
 }
 
 type NotebookExportReaderOptions = {
-  repository: Pick<NotebookRunRepository, 'findExisting'>
+  repository: Pick<NotebookRunRepository, 'findExisting'> &
+    Partial<Pick<NotebookRunRepository, 'readSessionRuns'>>
   defaultProjectName: string
   appVersion?: string
 }
@@ -74,7 +75,16 @@ class NotebookExportReader {
     if (!document) {
       throw new Error(`Notebook session not found: ${request.sessionId}`)
     }
-    return document
+    const sessionRuns = this.options.repository.readSessionRuns
+      ? await this.options.repository.readSessionRuns(projectName, request.sessionId)
+      : document.runs
+    const runs =
+      request.agentFrameFilter === undefined
+        ? sessionRuns
+        : request.agentFrameFilter === null
+          ? sessionRuns.filter((run) => !run.agentFrameId)
+          : sessionRuns.filter((run) => run.agentFrameId === request.agentFrameFilter)
+    return { ...document, runs }
   }
 }
 

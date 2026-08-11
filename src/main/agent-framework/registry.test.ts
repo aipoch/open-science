@@ -13,8 +13,19 @@ describe('agent framework registry', () => {
       displayName: 'Codex',
       supportedApiTypes: ['responses'],
       supportsSkills: true,
-      acceptsStdioMcp: true
+      acceptsStdioMcp: true,
+      supportsDelegatedWork: true
     })
+  })
+
+  it('admits delegated work for every certified framework', () => {
+    expect(
+      listAgentFrameworks().map(({ id, supportsDelegatedWork }) => ({ id, supportsDelegatedWork }))
+    ).toEqual([
+      { id: 'claude-code', supportsDelegatedWork: true },
+      { id: 'opencode', supportsDelegatedWork: true },
+      { id: 'codex', supportsDelegatedWork: true }
+    ])
   })
 
   it('declares native compaction commands separately from host-owned auto thresholds', () => {

@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 
 import type {
+  DelegatedReviewEvidenceScope,
   NewCheck,
   ReviewCheck,
   ReviewerLogEntry,
@@ -22,6 +23,7 @@ import type { ReviewRepository } from './repository'
 import { driveReviewerToStop } from './reviewer-session-driver'
 import { REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND } from './rubric'
 import { buildReviewScopeSnapshot } from './scope-snapshot'
+import { assertDelegatedReviewEvidenceScope } from './scope'
 
 const log = createLogger('reviewer:orchestrator')
 
@@ -31,6 +33,7 @@ type CommonAssessmentOptions = {
   session: PersistedChatSession
   sessionId: string
   scopeTurnMessageId: string
+  evidenceScope?: DelegatedReviewEvidenceScope
   turnMessageId: string
   projectId: string
   reviewRepository: ReviewRepository
@@ -130,6 +133,7 @@ export const runReviewAssessment = async (
     session,
     sessionId,
     scopeTurnMessageId,
+    evidenceScope,
     turnMessageId,
     projectId,
     reviewRepository,
@@ -149,8 +153,10 @@ export const runReviewAssessment = async (
     session,
     scopeTurnMessageId,
     artifactStorageRoot,
-    artifactVersionContentResolver
+    artifactVersionContentResolver,
+    evidenceScope?.messageBranchId
   )
+  if (evidenceScope) assertDelegatedReviewEvidenceScope(session, scope, evidenceScope)
   const scopeSnapshot = buildReviewScopeSnapshot(session, scope)
   let review = await runReviewMutation(runSessionMutation, () =>
     reviewRepository.createReview({
