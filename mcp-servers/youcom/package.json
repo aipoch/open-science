@@ -1,0 +1,22 @@
+{
+  "name": "@open-science/youcom-mcp",
+  "version": "0.1.0",
+  "description": "You.com search MCP server for Open Science",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": ["mcp", "search", "youcom", "research"],
+  "author": "Open Science Community",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
