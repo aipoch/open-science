@@ -325,23 +325,26 @@ describe('ACP Session resume policy', () => {
     }
   )
 
-  it('keeps an Unknown error authoritative for a persisted Codex Responses identity', () => {
-    const policy = new AcpSessionResumePolicy()
+  it.each(['codex-responses', 'codex-responses-compatibility'] as const)(
+    'classifies a persisted %s Unknown error as adoptable',
+    (currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
 
-    expect(
-      policy.classifyFailure(
-        { code: -32603, message: 'Unknown error' },
-        {
-          currentFrameworkId: 'codex',
-          currentModelRoute: 'codex-responses',
-          providerSessionIdPersisted: true
-        }
-      )
-    ).toEqual({
-      disposition: 'authoritative',
-      reason: 'non-internal-error'
-    })
-  })
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          {
+            currentFrameworkId: 'codex',
+            currentModelRoute,
+            providerSessionIdPersisted: true
+          }
+        )
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-codex-session-unavailable'
+      })
+    }
+  )
 
   it('keeps an Unknown error authoritative for a persisted OpenCode identity', () => {
     const policy = new AcpSessionResumePolicy()

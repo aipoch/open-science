@@ -269,19 +269,16 @@ class AcpSessionResumePolicy {
     if (service.value === 'session') return adoptableFailure('session-service-failure')
     if (service.value !== undefined) return authoritativeFailure('non-session-service-failure')
 
-    if (
-      context?.providerSessionIdPersisted === false &&
-      typeof message.value === 'string' &&
-      /^unknown error\.?$/i.test(message.value.trim())
-    ) {
+    if (typeof message.value === 'string' && /^unknown error\.?$/i.test(message.value.trim())) {
       if (
-        context.currentFrameworkId === 'codex' &&
+        context?.currentFrameworkId === 'codex' &&
         (context.currentModelRoute === 'codex-responses' ||
           context.currentModelRoute === 'codex-responses-compatibility')
       ) {
         return adoptableFailure('legacy-codex-session-unavailable')
       }
       if (
+        context?.providerSessionIdPersisted === false &&
         context.currentFrameworkId === 'opencode' &&
         (context.currentModelRoute === 'opencode-anthropic' ||
           context.currentModelRoute === 'opencode-openai')

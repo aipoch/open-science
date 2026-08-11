@@ -533,6 +533,29 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).toHaveBeenCalledOnce()
   })
 
+  it('fresh-adopts a persisted Codex Responses Session after its adapter returns Unknown error', async () => {
+    const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const harness = createHarness({
+      initialBackend: codexResponsesBackend,
+      resumeError: { code: -32603, message: 'Unknown error' }
+    })
+
+    await expect(
+      harness.resume({
+        providerSessionId,
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessionId: providerSessionId })
+    )
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
   it('fresh-adopts a legacy OpenCode Session after its adapter returns Unknown error', async () => {
     const harness = createHarness({
       initialBackend: opencodeBackend,
