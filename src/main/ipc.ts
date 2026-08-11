@@ -1001,7 +1001,7 @@ const createApplicationModules = async (
   settingsService.setCustomServerRuntimeProjectionProvider({
     materializedSkillNames: () => connectorRuntimeSettings.materializedCustomSkillNames(),
     availability: (id) => connectorRuntimeSettings.customServerAvailability(id),
-    isRefreshing: () => connectorRuntimeSettings.isRefreshing()
+    isRefreshing: (id) => connectorRuntimeSettings.isRefreshing(id)
   })
   settingsService.setCustomServerAuthenticator(
     async (serverId) => {
@@ -1741,7 +1741,10 @@ const createApplicationModules = async (
     skills: { requestSkillsReload: () => void runtime.requestSkillsReload() },
     connectors: {
       invalidatePermissionProjection: () => permissionGrantProjection.invalidateProjection(),
-      refreshConnectorSkillDocs: () => connectorRuntimeSettings.refresh(),
+      refreshConnectorSkillDocs: (customServerId) =>
+        customServerId
+          ? connectorRuntimeSettings.refreshCustomServer(customServerId)
+          : connectorRuntimeSettings.refresh(),
       requestSkillsReload: () => void runtime.requestSkillsReload(),
       pruneCustomServerPermissions: (serverId) =>
         permissionGrantRegistry.prune({ kind: 'mcp_server', serverId }).then(() => undefined),

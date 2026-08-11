@@ -30,7 +30,7 @@ type ConnectorSettingsWorkflowStore = Pick<
 
 type ConnectorSettingsWorkflowEffects = {
   invalidatePermissionProjection: () => void
-  refreshConnectorSkillDocs: () => Promise<unknown>
+  refreshConnectorSkillDocs: (customServerId?: string) => Promise<unknown>
   requestSkillsReload: () => void
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
@@ -79,7 +79,9 @@ class ConnectorSettingsWorkflows {
   async setCustomServerEnabled(
     request: Parameters<ConnectorSettingsWorkflowStore['setCustomServerEnabled']>[0]
   ): WorkflowResult<'setCustomServerEnabled'> {
-    return this.afterConnectorsChanged(() => this.settings.setCustomServerEnabled(request))
+    const snapshot = await this.settings.setCustomServerEnabled(request)
+    this.connectorsChanged(request.id)
+    return snapshot
   }
 
   async removeCustomServer(
@@ -135,14 +137,14 @@ class ConnectorSettingsWorkflows {
     return result
   }
 
-  private connectorsChanged(): void {
+  private connectorsChanged(customServerId?: string): void {
     this.effects.invalidatePermissionProjection()
-    void this.refreshConnectorProjection()
+    void this.refreshConnectorProjection(customServerId)
   }
 
-  private refreshConnectorProjection(): Promise<unknown> {
+  private refreshConnectorProjection(customServerId?: string): Promise<unknown> {
     return wireConnectorReload(
-      this.effects.refreshConnectorSkillDocs,
+      () => this.effects.refreshConnectorSkillDocs(customServerId),
       this.effects.requestSkillsReload
     )
   }

@@ -542,6 +542,19 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     await vi.waitFor(() => expect(calls).toEqual(['persist', 'invalidate', 'refresh', 'reload']))
   })
 
+  it('refreshes only the custom server whose enabled state changed', async () => {
+    const { capability } = fakeStore()
+    const refreshConnectorSkillDocs = vi.fn(async () => undefined)
+    const effects = testEffects({ refreshConnectorSkillDocs })
+
+    await createSettingsWorkflows(capability, effects).connectors.setCustomServerEnabled({
+      id: 'server-1',
+      enabled: true
+    })
+
+    expect(refreshConnectorSkillDocs).toHaveBeenCalledWith('server-1')
+  })
+
   it('refreshes Connector projections after OAuth authentication', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()

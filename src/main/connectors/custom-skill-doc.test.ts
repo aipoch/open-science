@@ -93,6 +93,18 @@ describe('syncCustomServerSkillDocs', () => {
     expect(entries).toEqual([])
   })
 
+  it('refreshes one server without validating or deleting unrelated server Skills', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'custom-skills-targeted-'))
+    const target = makeServer({ id: 'target', slug: 'target', name: 'Target' })
+    const unrelated = makeServer({ id: 'unrelated', slug: 'unrelated', name: 'Unrelated' })
+    const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
+
+    await syncCustomServerSkillDocs(dir, [target, unrelated], listTools)
+    await syncCustomServerSkillDocs(dir, [target], listTools, ['target'])
+
+    expect((await readdir(dir)).sort()).toEqual(['mcp-target', 'mcp-unrelated'])
+  })
+
   it('isolates an unavailable server while materializing the remaining enabled servers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-unavailable-'))
     const unavailable = makeServer({ id: 'unavailable', slug: 'unavailable' })

@@ -62,6 +62,63 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.materializedCustomSkillNames()).toEqual(['mcp-enabled'])
   })
 
+  it('refreshes and reports checking for only the requested custom server', async () => {
+    const target = {
+      id: 'target-id',
+      slug: 'target',
+      name: 'Target',
+      transport: 'stdio' as const,
+      command: 'mcp',
+      enabled: true
+    }
+    const unrelated = {
+      id: 'unrelated-id',
+      slug: 'unrelated',
+      name: 'Unrelated',
+      transport: 'stdio' as const,
+      command: 'mcp',
+      enabled: true
+    }
+    let finishTargetedSync: (() => void) | undefined
+    const targetedSync = new Promise<{ materializedSlugs: string[]; failures: [] }>((resolve) => {
+      finishTargetedSync = () => resolve({ materializedSlugs: ['target'], failures: [] })
+    })
+    const syncCustomSkillDocs = vi
+      .fn()
+      .mockResolvedValueOnce({ materializedSlugs: ['target', 'unrelated'], failures: [] })
+      .mockReturnValueOnce(targetedSync)
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: vi.fn().mockResolvedValue(
+        connectors({
+          customMcpServers: [target, unrelated]
+        })
+      ),
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
+      syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+      syncCustomSkillDocs
+    })
+
+    await projection.refresh()
+    const refresh = projection.refreshCustomServer(target.id)
+
+    expect(projection.isRefreshing(target.id)).toBe(true)
+    expect(projection.isRefreshing(unrelated.id)).toBe(false)
+    await vi.waitFor(() =>
+      expect(syncCustomSkillDocs).toHaveBeenLastCalledWith(
+        '/config/skills',
+        [target],
+        expect.any(Function),
+        ['target']
+      )
+    )
+
+    finishTargetedSync?.()
+    await refresh
+
+    expect(projection.materializedCustomSkillNames()).toEqual(['mcp-target', 'mcp-unrelated'])
+  })
+
   it('advertises only custom Skills that materialized when one enabled server is unavailable', async () => {
     const unavailable = {
       id: 'unavailable-id',

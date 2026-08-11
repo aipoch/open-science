@@ -252,6 +252,31 @@ describe('ConnectorSettingsModule', () => {
     expect(server).toMatchObject({ id, enabled: true, checking: true })
   })
 
+  it('projects checking only for the custom server currently being refreshed', async () => {
+    const first = await service.addCustomServer({
+      name: 'refreshing-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    const refreshingId = first.customServers[0].id
+    const second = await service.addCustomServer({
+      name: 'settled-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    const settledId = second.customServers.find((server) => server.id !== refreshingId)!.id
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [],
+      availability: () => undefined,
+      isRefreshing: (serverId) => serverId === refreshingId
+    })
+
+    const servers = (await service.listConnectors()).customServers
+
+    expect(servers.find((server) => server.id === refreshingId)).toMatchObject({ checking: true })
+    expect(servers.find((server) => server.id === settledId)?.checking).toBeUndefined()
+  })
+
   it('rejects duplicate and built-in custom connector names', async () => {
     await service.addCustomServer({
       name: 'example-server',

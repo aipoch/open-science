@@ -100,7 +100,8 @@ const isSafeCustomServerSlug = (slug: string): boolean =>
 export async function syncCustomServerSkillDocs(
   skillsDir: string,
   servers: StoredCustomMcpServer[],
-  listTools: CustomServerListTools
+  listTools: CustomServerListTools,
+  cleanupSlugs?: readonly string[]
 ): Promise<CustomServerSkillSyncResult> {
   await mkdir(skillsDir, { recursive: true })
   const safeServers = servers
@@ -136,6 +137,7 @@ export async function syncCustomServerSkillDocs(
     materializedSlugs.push(slug)
   }
   const enabledSlugs = new Set(materializedSlugs)
+  const cleanupScope = cleanupSlugs ? new Set(cleanupSlugs) : undefined
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
     const slug = customConnectorSlugFromSkillName(entry)
@@ -143,6 +145,7 @@ export async function syncCustomServerSkillDocs(
     // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.
     // Invalid/non-canonical names are also unowned and must be preserved.
     if (!slug || namesBundledConnector(slug)) continue
+    if (cleanupScope && !cleanupScope.has(slug)) continue
     if (!enabledSlugs.has(slug)) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }

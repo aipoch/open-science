@@ -43,7 +43,7 @@ type CustomServerSecurityChangeGuard = {
 type CustomServerRuntimeProjectionProvider = {
   materializedSkillNames: () => readonly string[]
   availability: (id: string) => CustomServerView['availability']
-  isRefreshing: () => boolean
+  isRefreshing: (id: string) => boolean
 }
 
 const normalizeOAuthConfig = (
@@ -549,7 +549,7 @@ class ConnectorSettingsModule {
           server.enabled &&
           !configurationAvailability &&
           !runtimeAvailability &&
-          this.customServerRuntimeProjectionProvider.isRefreshing()
+          this.customServerRuntimeProjectionProvider.isRefreshing(server.id)
         )
         return {
           id: server.id,
