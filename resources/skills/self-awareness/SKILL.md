@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The v1 result contains exactly seven boolean keys:
+The v1 result contains exactly eight boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -23,6 +23,7 @@ The v1 result contains exactly seven boolean keys:
 - `artifacts` gates `host.artifacts` and `host.artifact_path`.
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
+- `llm` gates `host.llm` one-shot, tool-less inference.
 
 Interpret the result narrowly:
 
@@ -36,6 +37,10 @@ Interpret the result narrowly:
 const caps = await host.capabilities()
 if (caps.compute === true) {
   const availableHosts = await host.compute.list()
+}
+
+if (caps.llm === true) {
+  const result = await host.llm('Summarize the current findings.')
 }
 ```
 
