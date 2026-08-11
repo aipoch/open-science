@@ -8,6 +8,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -207,15 +208,15 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
     return () => window.clearTimeout(timer)
   }, [searchQuery])
 
-  const archivedSessionIds = useMemo(
-    () =>
-      allSessions
+  const archivedSessionIds = useSessionStore(
+    useShallow((state) =>
+      state.sessions
         .filter(
           (session) => session.projectId === activeProjectId && session.archivedAt !== undefined
         )
         .map((session) => session.id)
-        .sort(),
-    [activeProjectId, allSessions]
+        .sort()
+    )
   )
   const archivedSessionIdSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds])
   const catalogIndex = useProjectFilesIndex(

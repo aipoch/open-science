@@ -494,6 +494,55 @@ describe('ProjectFilesView', () => {
     expect(container.textContent).toContain('No files yet')
   })
 
+  it('keeps the files index stable while terminal output streams', async () => {
+    await renderView([
+      createSession({
+        id: 'session-1',
+        messages: [createMessage({ id: 'prompt-1', role: 'user' })],
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 1710000001000 },
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt'
+          }
+        ]
+      })
+    ])
+    const { useSessionStore } = await import('@/stores/session-store')
+    const getOverview = vi.mocked(window.api.projectFiles.getOverview)
+    const listFiles = vi.mocked(window.api.projectFiles.listFiles)
+    const listArtifactGroups = vi.mocked(window.api.projectFiles.listArtifactGroups)
+    const initialCallCounts = {
+      overview: getOverview.mock.calls.length,
+      files: listFiles.mock.calls.length,
+      groups: listArtifactGroups.mock.calls.length
+    }
+
+    await act(async () => {
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'session-1',
+        toolCallId: 'terminal-1',
+        eventId: 'terminal-output-1',
+        title: 'python analysis.py',
+        status: 'in_progress',
+        terminalOutput: 'processing row 1\n'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect({
+      overview: getOverview.mock.calls.length,
+      files: listFiles.mock.calls.length,
+      groups: listArtifactGroups.mock.calls.length
+    }).toEqual(initialCallCounts)
+    expect(
+      container.querySelector('[aria-label="Preview generated file result.txt"]')
+    ).not.toBeNull()
+  })
+
   it('hides archived session artifacts and their filter option', async () => {
     await renderView([
       createSession({
