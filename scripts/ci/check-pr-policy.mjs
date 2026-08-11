@@ -38,7 +38,87 @@ const migrationVersion = (path) => Number(path.match(migrationPathPattern)?.[1])
 
 const escapeRegularExpression = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-export function checkDatabaseMigrationPolicy({ changes, baseMigrationPaths, headFiles = {} }) {
+const sanitizePolicySource = (source, { maskStrings = false } = {}) => {
+  let result = ''
+  let state = 'code'
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]
+    const next = source[index + 1]
+
+    if (state === 'line-comment') {
+      if (character === '\n') {
+        result += '\n'
+        state = 'code'
+      } else result += ' '
+      continue
+    }
+    if (state === 'block-comment') {
+      if (character === '*' && next === '/') {
+        result += '  '
+        index += 1
+        state = 'code'
+      } else result += character === '\n' ? '\n' : ' '
+      continue
+    }
+    if (state === 'template') {
+      if (character === '\\' && next) {
+        result += '  '
+        index += 1
+      } else if (character === '`') {
+        result += '`'
+        state = 'code'
+      } else result += character === '\n' ? '\n' : ' '
+      continue
+    }
+    if (state === 'single-quote' || state === 'double-quote') {
+      const quote = state === 'single-quote' ? "'" : '"'
+      if (character === '\\' && next) {
+        result += maskStrings ? '  ' : `${character}${next}`
+        index += 1
+      } else {
+        result += maskStrings && character !== quote ? ' ' : character
+        if (character === quote) state = 'code'
+      }
+      continue
+    }
+
+    if (character === '/' && next === '/') {
+      result += '  '
+      index += 1
+      state = 'line-comment'
+    } else if (character === '/' && next === '*') {
+      result += '  '
+      index += 1
+      state = 'block-comment'
+    } else if (character === '`') {
+      result += '`'
+      state = 'template'
+    } else if (character === "'") {
+      result += character
+      state = 'single-quote'
+    } else if (character === '"') {
+      result += character
+      state = 'double-quote'
+    } else result += character
+  }
+  return result
+}
+
+const manifestMigrationNames = (source) => {
+  const manifest = sanitizePolicySource(source, { maskStrings: true }).match(
+    /(?:^|\n)\s*const MIGRATION_MANIFEST = \[([\s\S]*?)\]\s+as const satisfies/m
+  )?.[1]
+  return manifest
+    ? [...manifest.matchAll(/\.\.\.([A-Za-z_$][\w$]*)\b/g)].map((match) => match[1])
+    : []
+}
+
+export function checkDatabaseMigrationPolicy({
+  changes,
+  baseMigrationPaths,
+  baseFiles = {},
+  headFiles = {}
+}) {
   const violations = []
   const basePaths = new Set(baseMigrationPaths)
   const schemaChanged = changes.some(({ path, previousPath }) =>
@@ -87,10 +167,9 @@ export function checkDatabaseMigrationPolicy({ changes, baseMigrationPaths, head
     versionedPaths.push({ path, version: Number(match[1]), description: match[2] })
   }
 
-  const serviceSource = headFiles[migrationServicePath] ?? ''
-  const manifestSource = serviceSource.match(
-    /const MIGRATION_MANIFEST = \[([\s\S]*?)\]\s+as const satisfies/
-  )?.[1]
+  const serviceSource = sanitizePolicySource(headFiles[migrationServicePath] ?? '')
+  const headManifestNames = manifestMigrationNames(headFiles[migrationServicePath] ?? '')
+  const addedMigrationNames = []
   for (const { path, version, description } of versionedPaths.sort(
     (left, right) => left.version - right.version || left.path.localeCompare(right.path)
   )) {
@@ -102,9 +181,9 @@ export function checkDatabaseMigrationPolicy({ changes, baseMigrationPaths, head
     }
     expectedVersion += 1
 
-    const migrationSource = headFiles[path] ?? ''
+    const migrationSource = sanitizePolicySource(headFiles[path] ?? '')
     const declaration = migrationSource.match(
-      /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*\{[^}]*\bid:\s*['"]([^'"]+)['"]/
+      /(?:^|\n)\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*\{[^}]*\bid:\s*['"]([^'"]+)['"]/m
     )
     const expectedId = `${String(version).padStart(4, '0')}_${description.replaceAll('-', '_')}`
     if (!declaration || declaration[2] !== expectedId) {
@@ -116,19 +195,33 @@ export function checkDatabaseMigrationPolicy({ changes, baseMigrationPaths, head
     }
 
     const migrationName = declaration[1]
+    addedMigrationNames.push(migrationName)
     const moduleName = path.slice(migrationDirectory.length, -3)
     const importPattern = new RegExp(
-      `import\\s*\\{[^}]*\\b${escapeRegularExpression(migrationName)}\\b[^}]*\\}\\s*from\\s*['"]\\.\\/migrations\\/${escapeRegularExpression(moduleName)}['"]`
+      `(?:^|\\n)\\s*import\\s*\\{[^}]*\\b${escapeRegularExpression(migrationName)}\\b[^}]*\\}\\s*from\\s*['"]\\.\\/migrations\\/${escapeRegularExpression(moduleName)}['"]`,
+      'm'
     )
-    const manifestPattern = new RegExp(`\\.\\.\\.${escapeRegularExpression(migrationName)}\\b`)
-    if (
-      !importPattern.test(serviceSource) ||
-      !manifestSource ||
-      !manifestPattern.test(manifestSource)
-    ) {
+    if (!importPattern.test(serviceSource) || !headManifestNames.includes(migrationName)) {
       violations.push({
         kind: 'database-migration',
         subject: `${path} must be imported and registered in MIGRATION_MANIFEST`
+      })
+    }
+  }
+
+  if (Object.hasOwn(baseFiles, migrationServicePath)) {
+    const expectedManifestNames = [
+      ...manifestMigrationNames(baseFiles[migrationServicePath]),
+      ...addedMigrationNames
+    ]
+    if (
+      expectedManifestNames.length !== headManifestNames.length ||
+      expectedManifestNames.some((name, index) => headManifestNames[index] !== name)
+    ) {
+      violations.push({
+        kind: 'database-migration',
+        subject:
+          'MIGRATION_MANIFEST must preserve the existing order and append new migrations in version order'
       })
     }
   }
@@ -216,7 +309,7 @@ export function runPrPolicyCli(environment = process.env) {
     )
     const baseMigrationPaths = execFileSync(
       'git',
-      ['ls-tree', '-r', '--name-only', mergeBase, '--', migrationDirectory],
+      ['ls-tree', '-r', '--name-only', base, '--', migrationDirectory],
       { encoding: 'utf8' }
     )
       .split('\n')
@@ -230,7 +323,10 @@ export function runPrPolicyCli(environment = process.env) {
       )
       .map(({ path }) => path)
     const headPaths = new Set(addedMigrationPaths)
-    if (addedMigrationPaths.length > 0) headPaths.add(migrationServicePath)
+    const serviceChanged = changes.some(({ path, previousPath }) =>
+      [path, previousPath].includes(migrationServicePath)
+    )
+    if (addedMigrationPaths.length > 0 || serviceChanged) headPaths.add(migrationServicePath)
     const headFiles = Object.fromEntries(
       [...headPaths].map((path) => [
         path,
@@ -240,9 +336,23 @@ export function runPrPolicyCli(environment = process.env) {
         })
       ])
     )
+    let baseFiles = {}
+    if (headPaths.has(migrationServicePath)) {
+      try {
+        baseFiles = {
+          [migrationServicePath]: execFileSync('git', ['show', `${base}:${migrationServicePath}`], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore']
+          })
+        }
+      } catch {
+        baseFiles = {}
+      }
+    }
     databaseMigrationViolations = checkDatabaseMigrationPolicy({
       changes,
       baseMigrationPaths,
+      baseFiles,
       headFiles
     })
 

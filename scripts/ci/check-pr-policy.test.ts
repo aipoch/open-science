@@ -18,8 +18,19 @@ const nextMigrationSource = `const projectLabelMigration = {
   verifiers: []
 }
 `
-const migrationServiceSource = `import { projectLabelMigration } from './migrations/0003-project-label'
+const baseMigrationServiceSource = `import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration },
+  { ...projectAgentContextMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+const migrationServiceSource = `import { projectLabelMigration } from './migrations/0003-project-label'
+import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
+const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration },
+  { ...projectAgentContextMigration },
   { ...projectLabelMigration }
 ] as const satisfies readonly MigrationManifestEntry[]
 `
@@ -42,6 +53,7 @@ describe('pull request policy', () => {
           { path: nextMigrationPath, status: 'added' }
         ],
         baseMigrationPaths: baselineMigrations,
+        baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
         headFiles: {
           [nextMigrationPath]: nextMigrationSource,
           'src/main/database/migration-service.ts': migrationServiceSource
@@ -97,6 +109,53 @@ describe('pull request policy', () => {
         subject: expect.stringContaining('registered in MIGRATION_MANIFEST')
       })
     ])
+  })
+
+  it('requires new migrations to append after the unchanged manifest prefix', () => {
+    const reversedServiceSource = `import { projectLabelMigration } from './migrations/0003-project-label'
+const MIGRATION_MANIFEST = [
+  { ...projectLabelMigration },
+  { ...runtimeSchemaBaselineMigration },
+  { ...projectAgentContextMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+
+    expect(
+      checkDatabaseMigrationPolicy({
+        changes: [{ path: nextMigrationPath, status: 'added' }],
+        baseMigrationPaths: baselineMigrations,
+        baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
+        headFiles: {
+          [nextMigrationPath]: nextMigrationSource,
+          'src/main/database/migration-service.ts': reversedServiceSource
+        }
+      })
+    ).toEqual([
+      expect.objectContaining({ subject: expect.stringContaining('preserve the existing order') })
+    ])
+  })
+
+  it('does not accept migration declarations and registrations found only in comments', () => {
+    expect(
+      checkDatabaseMigrationPolicy({
+        changes: [{ path: nextMigrationPath, status: 'added' }],
+        baseMigrationPaths: baselineMigrations,
+        baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
+        headFiles: {
+          [nextMigrationPath]: "// const projectLabelMigration = { id: '0003_project_label' }\n",
+          'src/main/database/migration-service.ts': `// import { projectLabelMigration } from './migrations/0003-project-label'
+const MIGRATION_MANIFEST = [
+  // { ...projectLabelMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+        }
+      })
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ subject: expect.stringContaining('declare migration id') }),
+        expect.objectContaining({ subject: expect.stringContaining('preserve the existing order') })
+      ])
+    )
   })
 
   it('validates commit subjects from the Git revision CLI', () => {
@@ -210,6 +269,108 @@ describe('pull request policy', () => {
       expect(readFileSync(summary, 'utf8')).toContain(
         'database schema contracts changed without a new migration'
       )
+    } finally {
+      rmSync(root, { force: true, recursive: true })
+    }
+  })
+
+  it('uses the current target base when choosing the next migration version', () => {
+    const root = mkdtempSync(join(tmpdir(), 'database-migration-target-base-'))
+
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'ci@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: root })
+      mkdirSync(join(root, 'prisma'), { recursive: true })
+      mkdirSync(join(root, 'src/main/database/migrations'), { recursive: true })
+      writeFileSync(join(root, 'prisma/schema.prisma'), 'model Probe { id String @id }\n')
+      writeFileSync(
+        join(root, 'src/main/database/migrations/0001-runtime-schema-baseline.ts'),
+        "const runtimeSchemaBaselineMigration = { id: '0001_runtime_schema_baseline' }\n"
+      )
+      writeFileSync(
+        join(root, 'src/main/database/migration-service.ts'),
+        `import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+      )
+      execFileSync('git', ['add', '.'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'chore(fixture): add baseline'], {
+        cwd: root
+      })
+      const common = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      execFileSync('git', ['checkout', '--quiet', '-b', 'feature'], { cwd: root })
+      writeFileSync(
+        join(root, 'prisma/schema.prisma'),
+        'model Probe { id String @id, value String }\n'
+      )
+      writeFileSync(
+        join(root, 'src/main/database/migrations/0002-feature-value.ts'),
+        "const featureValueMigration = { id: '0002_feature_value' }\n"
+      )
+      writeFileSync(
+        join(root, 'src/main/database/migration-service.ts'),
+        `import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+import { featureValueMigration } from './migrations/0002-feature-value'
+const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration },
+  { ...featureValueMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+      )
+      execFileSync('git', ['add', '.'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'feat(database): add feature value'], {
+        cwd: root
+      })
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      execFileSync('git', ['checkout', '--quiet', '-b', 'target', common], { cwd: root })
+      writeFileSync(
+        join(root, 'src/main/database/migrations/0002-target-field.ts'),
+        "const targetFieldMigration = { id: '0002_target_field' }\n"
+      )
+      writeFileSync(
+        join(root, 'src/main/database/migration-service.ts'),
+        `import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+import { targetFieldMigration } from './migrations/0002-target-field'
+const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration },
+  { ...targetFieldMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+      )
+      execFileSync('git', ['add', '.'], { cwd: root })
+      execFileSync('git', ['commit', '--quiet', '-m', 'feat(database): add target field'], {
+        cwd: root
+      })
+      const target = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8'
+      }).trim()
+
+      const result = spawnSync(process.execPath, [resolve('scripts/ci/check-pr-policy.mjs')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          BASE_SHA: target,
+          EVENT_NAME: 'pull_request',
+          HEAD_SHA: head,
+          POLICY_SCOPE: 'commits'
+        }
+      })
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.stdout).toContain('next migration version 0003')
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
