@@ -580,6 +580,41 @@ describe('GlobalSearchDialog', () => {
     })
   })
 
+  it('does not reload artifacts while terminal output streams', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'prompt-a', startedAt: 1 }
+            }
+          : session
+      )
+    }))
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    const searchArtifacts = vi.mocked(window.api.projectFiles.searchArtifacts)
+    const initialCallCount = searchArtifacts.mock.calls.length
+
+    await act(async () => {
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'session-a',
+        toolCallId: 'terminal-a',
+        eventId: 'terminal-output-a',
+        title: 'python analysis.py',
+        status: 'in_progress',
+        terminalOutput: 'processing row 1\n'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(searchArtifacts).toHaveBeenCalledTimes(initialCallCount)
+  })
+
   it('excludes individually archived sessions from artifact queries', async () => {
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) =>

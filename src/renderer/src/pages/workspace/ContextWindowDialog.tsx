@@ -440,7 +440,13 @@ const ContextWindowDialog = ({
   session,
   onOpenChange
 }: ContextWindowDialogProps): React.JSX.Element => {
-  const points = useMemo(() => selectContextWindowTrendPoints(session), [session])
+  const messages = session?.messages
+  const conversationGraph = session?.conversationGraph
+  const points = useMemo(
+    () =>
+      messages === undefined ? [] : selectContextWindowTrendPoints({ conversationGraph, messages }),
+    [conversationGraph, messages]
+  )
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (

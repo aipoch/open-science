@@ -100,7 +100,7 @@ const sourceForPrompt = (
 }
 
 const projectRootArtifactVisibility = (
-  session: PersistedChatSession,
+  session: Pick<PersistedChatSession, 'conversationGraph'>,
   rootBranchId: string
 ): RootArtifactVisibilityProjection => {
   const graph = session.conversationGraph

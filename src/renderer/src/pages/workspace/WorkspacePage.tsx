@@ -741,6 +741,7 @@ const WorkspacePage = ({
     sessionController.actions,
     setAttachmentError
   ])
+  const activeSessionHasMessages = (activeSession?.messages.length ?? 0) > 0
 
   useEffect(() => {
     const openNewConversationFromShortcut = (event: KeyboardEvent): void => {
@@ -759,13 +760,13 @@ const WorkspacePage = ({
       }
 
       event.preventDefault()
-      if (!activeSession || activeSession.messages.length === 0) return
+      if (!activeSessionHasMessages) return
       openNewConversation()
     }
 
     window.addEventListener('keydown', openNewConversationFromShortcut)
     return () => window.removeEventListener('keydown', openNewConversationFromShortcut)
-  }, [activeSession, openNewConversation])
+  }, [activeSessionHasMessages, openNewConversation])
 
   // Synchronizes the hidden chat session id with the selected session list item.
   const openSession = (sessionId: string): void => {

@@ -609,12 +609,13 @@ const AppContent = (): React.JSX.Element | null => {
       <ComputeApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
-      <GlobalSearchDialog
-        key={String(isGlobalSearchOpen)}
-        open={isGlobalSearchOpen}
-        onOpenChange={setIsGlobalSearchOpen}
-        isSessionPersistenceReady={isSessionPersistenceReady}
-      />
+      {isGlobalSearchOpen ? (
+        <GlobalSearchDialog
+          open
+          onOpenChange={setIsGlobalSearchOpen}
+          isSessionPersistenceReady={isSessionPersistenceReady}
+        />
+      ) : null}
       <DataRootMissingDialog
         open={missingDataRoot !== undefined}
         dataRoot={missingDataRoot ?? ''}

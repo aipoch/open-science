@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, AtSign, Hash, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { ProjectFileItem } from '../../../../shared/project-files'
 import { Button } from '@/components/ui/button'
@@ -137,13 +138,13 @@ export const GlobalSearchDialog = ({
 
   const allProjects = useProjectStore((state) => state.projects)
   const allSessions = useSessionStore((state) => state.sessions)
-  const archivedSessionIds = useMemo(
-    () =>
-      allSessions
+  const archivedSessionIds = useSessionStore(
+    useShallow((state) =>
+      state.sessions
         .filter((session) => session.archivedAt !== undefined)
         .map((session) => session.id)
-        .sort(),
-    [allSessions]
+        .sort()
+    )
   )
   const projects = useMemo(
     () => allProjects.filter((project) => project.archivedAt === undefined),

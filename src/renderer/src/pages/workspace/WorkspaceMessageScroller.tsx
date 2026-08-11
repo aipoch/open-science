@@ -344,7 +344,7 @@ const WorkspaceMessageScrollerImpl = ({
   // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
   const assistantFooterMessageIds = useMemo(
     () => resolveTurnTerminalAgentMessageIds(activeSession?.messages ?? []),
-    [activeSession]
+    [activeSession?.messages]
   )
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const messageCreatedAtById = new Map(

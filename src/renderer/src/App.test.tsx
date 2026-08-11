@@ -116,7 +116,7 @@ vi.mock('@/hooks/useUnreadTaskViewSync', () => ({
 vi.mock('@/components/global-search/GlobalSearchDialog', () => ({
   GlobalSearchDialog: (props: { open: boolean }) => {
     mocks.globalSearch.props = props
-    return null
+    return <div data-testid="global-search" />
   }
 }))
 vi.mock('@/stores/navigation-store', () => ({
@@ -426,7 +426,7 @@ describe('App startup routing', () => {
     mocks.settings.isLoaded = true
     await render()
 
-    expect(mocks.globalSearch.props?.open).toBe(false)
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
     await act(async () => {
       window.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
@@ -439,14 +439,14 @@ describe('App startup routing', () => {
         new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true })
       )
     })
-    expect(mocks.globalSearch.props?.open).toBe(false)
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
 
   it('opens the same global search from the Home header action', async () => {
     mocks.settings.isLoaded = true
     await render()
 
-    expect(mocks.globalSearch.props?.open).toBe(false)
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
 
     await act(async () => mocks.homePage.props?.onOpenGlobalSearch())
 
@@ -473,7 +473,7 @@ describe('App startup routing', () => {
     act(() => {
       expect(mocks.closeActiveModal.handler?.()).toBe(true)
     })
-    expect(mocks.globalSearch.props?.open).toBe(false)
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
 
   it('does not open Settings over an active dialog', async () => {
@@ -552,7 +552,7 @@ describe('App startup routing', () => {
       )
     })
 
-    expect(mocks.globalSearch.props?.open).toBe(false)
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
 
   it('does not open Settings under the active expanded preview modal', async () => {

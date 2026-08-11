@@ -2,6 +2,8 @@ import type { AcpContextWindowSample } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { ChatSession } from '@/stores/session-store'
 
+type ContextWindowTrendSession = Pick<ChatSession, 'conversationGraph' | 'messages'>
+
 export type ContextWindowTrendPoint = Readonly<{
   runNumber: number
   messageNumber: number
@@ -34,7 +36,7 @@ const visibleMessageSamples = (
 }
 
 export const selectContextWindowTrendPoints = (
-  session: ChatSession | undefined
+  session: ContextWindowTrendSession | undefined
 ): ContextWindowTrendPoint[] => {
   if (!session) return []
 
