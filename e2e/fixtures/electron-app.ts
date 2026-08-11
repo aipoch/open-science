@@ -298,6 +298,7 @@ class ElectronAppHarness implements ElectronApp {
               key: string
               model: string
               name: string
+              supportsImageInput: true
               type: 'custom'
             }) => Promise<{ providers: Array<{ id: string; name: string }> }>
           }
@@ -309,7 +310,8 @@ class ElectronAppHarness implements ElectronApp {
         apiEndpoints: ['openai'],
         baseUrl: 'http://127.0.0.1:9/v1',
         model: 'e2e-model',
-        key: 'e2e-key'
+        key: 'e2e-key',
+        supportsImageInput: true
       })
       const provider = snapshot.providers.find((item) => item.name === providerName)
       if (!provider) throw new Error('The E2E provider was not persisted.')

@@ -53,7 +53,7 @@ describe('production application command wiring', () => {
     const sharedOwners = [
       [
         'managedPreviewOwners',
-        'installManagedPreviewElectronAdapter(previewResources, undefined, managedPreviewOwners)',
+        'installManagedPreviewElectronAdapter( previewResources, managedPreviewProtocol, managedPreviewOwners )',
         'managedPreview: managedPreviewOwners'
       ],
       [

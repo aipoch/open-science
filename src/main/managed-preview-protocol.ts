@@ -23,6 +23,10 @@ const HTML_PREVIEW_CSP = [
 
 type FetchManagedFile = (filePath: string, request: Request) => Promise<Response>
 type PreviewProtocolRegistrar = Pick<typeof protocol, 'handle' | 'unhandle'>
+type ManagedPreviewProtocolBridge = {
+  readonly registrar: PreviewProtocolRegistrar
+  dispose(): void
+}
 type ManagedPreviewProtocolOptions = {
   isResourceAllowed?: (resourceId: string) => boolean
 }
@@ -200,5 +204,54 @@ const registerManagedPreviewProtocol = (
   return () => targetProtocol.unhandle(PREVIEW_SCHEME)
 }
 
-export { createManagedPreviewProtocolHandler, registerManagedPreviewProtocol }
-export type { FetchManagedFile, ManagedPreviewProtocolOptions, PreviewProtocolRegistrar }
+const createManagedPreviewProtocolBridge = (
+  targetProtocol: PreviewProtocolRegistrar
+): ManagedPreviewProtocolBridge => {
+  type ProtocolHandler = Parameters<PreviewProtocolRegistrar['handle']>[1]
+  let delegate: ProtocolHandler | undefined
+  let disposed = false
+
+  targetProtocol.handle(PREVIEW_SCHEME, (request) => {
+    const handler = delegate
+    return handler ? handler(request) : createLoadErrorResponse()
+  })
+
+  const assertScheme = (scheme: string): void => {
+    if (scheme !== PREVIEW_SCHEME) {
+      throw new Error(`Managed preview bridge cannot register scheme: ${scheme}`)
+    }
+    if (disposed) throw new Error('Managed preview protocol bridge is disposed.')
+  }
+
+  return {
+    registrar: {
+      handle: (scheme, handler) => {
+        assertScheme(scheme)
+        if (delegate) throw new Error('Managed preview protocol handler is already registered.')
+        delegate = handler
+      },
+      unhandle: (scheme) => {
+        assertScheme(scheme)
+        delegate = undefined
+      }
+    },
+    dispose: () => {
+      if (disposed) return
+      delegate = undefined
+      targetProtocol.unhandle(PREVIEW_SCHEME)
+      disposed = true
+    }
+  }
+}
+
+export {
+  createManagedPreviewProtocolBridge,
+  createManagedPreviewProtocolHandler,
+  registerManagedPreviewProtocol
+}
+export type {
+  FetchManagedFile,
+  ManagedPreviewProtocolBridge,
+  ManagedPreviewProtocolOptions,
+  PreviewProtocolRegistrar
+}

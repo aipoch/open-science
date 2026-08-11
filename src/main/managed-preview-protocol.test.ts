@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ManagedPreviewResources } from './managed-preview-resources'
 import {
+  createManagedPreviewProtocolBridge,
   createManagedPreviewProtocolHandler,
   registerManagedPreviewProtocol
 } from './managed-preview-protocol'
@@ -19,6 +20,44 @@ describe('managed preview protocol', () => {
 
     expect(targetProtocol.handle).toHaveBeenCalledWith('open-science-preview', expect.any(Function))
     unregister()
+    expect(targetProtocol.unhandle).toHaveBeenCalledWith('open-science-preview')
+  })
+
+  it('installs a stable session route before the resource handler is available', async () => {
+    let sessionHandler: ((request: Request) => Promise<Response> | Response) | undefined
+    const targetProtocol = {
+      handle: vi.fn((_scheme: string, handler: typeof sessionHandler) => {
+        sessionHandler = handler
+      }),
+      unhandle: vi.fn()
+    }
+    const bridge = createManagedPreviewProtocolBridge(targetProtocol)
+    const resources = {
+      resolveProtocolResource: vi.fn().mockResolvedValue({
+        filePath: '/managed/plot.png',
+        mimeType: 'image/png'
+      })
+    } as unknown as ManagedPreviewResources
+    const fetchFile = vi.fn().mockResolvedValue(new Response('image', { status: 200 }))
+
+    expect(targetProtocol.handle).toHaveBeenCalledWith('open-science-preview', expect.any(Function))
+    expect(
+      (await sessionHandler!(new Request('open-science-preview://resource-1/plot.png'))).status
+    ).toBe(404)
+
+    bridge.registrar.handle(
+      'open-science-preview',
+      createManagedPreviewProtocolHandler(resources, fetchFile)
+    )
+    expect(
+      (await sessionHandler!(new Request('open-science-preview://resource-1/plot.png'))).status
+    ).toBe(200)
+
+    bridge.registrar.unhandle('open-science-preview')
+    expect(
+      (await sessionHandler!(new Request('open-science-preview://resource-1/plot.png'))).status
+    ).toBe(404)
+    bridge.dispose()
     expect(targetProtocol.unhandle).toHaveBeenCalledWith('open-science-preview')
   })
 

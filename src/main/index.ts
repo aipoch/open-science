@@ -1,7 +1,8 @@
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
-// Only lightweight, Electron-free diagnostics and argv flags are imported statically here. The MCP
-// server modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
+// Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
+// modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
@@ -17,6 +18,8 @@ import {
   reportApplicationStartupFailure
 } from './diagnostics/startup'
 import { createLogger, diagnosticErrorFields, flushLogs } from './logger'
+import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
+import { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG } from './office-preview/office-preview-runtime-protocol'
 import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
@@ -84,7 +87,14 @@ if (shouldRunArtifactMcpServer) {
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
   const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, nativeTheme, protocol } =
-    await import('electron')
+    createRequire(import.meta.url)('electron') as typeof import('electron')
+
+  // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
+  // bootstrap before any awaited import can yield to the ready event.
+  protocol.registerSchemesAsPrivileged([
+    MANAGED_PREVIEW_SCHEME,
+    OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
+  ])
 
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
@@ -211,9 +221,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       startupDiagnostics?.phase('load-application-modules')
       const [
         { registerIpcHandlers },
+        { createManagedPreviewProtocolBridge },
         { configureMainWindow, createMainWindow },
-        { MANAGED_PREVIEW_SCHEME },
-        { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG },
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray, setTrayIconVariant },
         { installAppLifecycle },
@@ -236,9 +245,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { resolveStorageRoot }
       ] = await Promise.all([
         import('./ipc'),
+        import('./managed-preview-protocol'),
         import('./windows'),
-        import('./managed-preview-resources'),
-        import('./office-preview/office-preview-runtime-protocol'),
         import('./storage/migration-state'),
         import('./tray'),
         import('./app-lifecycle'),
@@ -261,14 +269,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./storage-root')
       ])
 
-      protocol.registerSchemesAsPrivileged([
-        MANAGED_PREVIEW_SCHEME,
-        OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
-      ])
-
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
       startupDiagnostics?.phase('prepare-shell')
+      const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
 
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
@@ -368,6 +372,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           dispose: disposeApplicationRuntime
         } = await registerIpcHandlers({
           mainEntryPath,
+          managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
           handoffRuntime: 'production',
           headless: webMode.headless,
           onAppIconVariantChanged: (variant) => {
@@ -485,12 +490,14 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           databaseStartupOwner,
           databaseStartupQuitGuard,
           disposeIpcHandlerRegistry: () => {
+            managedPreviewProtocolBridge.dispose()
             disposeDatabaseStartupIpc()
             disposeIpcHandlerRegistry()
           }
         }
       } catch (error) {
         databaseStartupQuitGuard.dispose()
+        managedPreviewProtocolBridge.dispose()
         disposeDatabaseStartupIpc()
         if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
         app.quit()

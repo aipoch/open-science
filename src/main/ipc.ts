@@ -102,6 +102,7 @@ import {
   installManagedPreviewElectronAdapter
 } from './managed-preview-ipc'
 import { ManagedPreviewResources } from './managed-preview-resources'
+import type { PreviewProtocolRegistrar } from './managed-preview-protocol'
 import type { ManagedPreviewSource } from '../shared/preview-resources'
 import {
   createOfficePreviewFrameProcessResolver,
@@ -279,6 +280,7 @@ const permissionGrantsLog = createLogger('permission-grants')
 
 type IpcRegistrationOptions = {
   mainEntryPath: string
+  managedPreviewProtocol: PreviewProtocolRegistrar
   // Headless web-serve launches (--serve) have no local desktop user; task notifications are
   // disabled there by contract, not just incidentally via Notification.isSupported().
   headless?: boolean
@@ -335,6 +337,7 @@ const previewArgs = (args: Record<string, unknown>): string => {
 const createApplicationModules = async (
   {
     mainEntryPath,
+    managedPreviewProtocol,
     headless = false,
     onAppIconVariantChanged,
     listAppIconPreviews
@@ -2144,7 +2147,11 @@ const createApplicationModules = async (
     registerRuntimeIpcHandlers(runtimeSelectionWorkflows)
   )
   declareElectronAdapter('managed-preview', () =>
-    installManagedPreviewElectronAdapter(previewResources, undefined, managedPreviewOwners)
+    installManagedPreviewElectronAdapter(
+      previewResources,
+      managedPreviewProtocol,
+      managedPreviewOwners
+    )
   )
   declareElectronAdapter('office-preview-runtime', () =>
     registerOfficePreviewRuntimeProtocol(
