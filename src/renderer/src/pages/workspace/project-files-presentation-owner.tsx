@@ -463,9 +463,9 @@ const GrantedRootMenuRow = ({
             data-testid={`granted-root-manage-${root.id}`}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000"
           >
-            <MoreHorizontal className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            <MoreHorizontal className="size-4" strokeWidth={2} aria-hidden="true" />
           </button>
         </DropdownMenuSubTrigger>
       </DropdownMenuItem>
