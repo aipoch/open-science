@@ -108,7 +108,8 @@ describe('repl_loop local RPC transport', () => {
                 skills: true,
                 artifacts: true,
                 lineage: true,
-                frames: true
+                frames: true,
+                llm: true
               }
             : {
                 mcp: true,
@@ -117,7 +118,8 @@ describe('repl_loop local RPC transport', () => {
                 skills: true,
                 artifacts: true,
                 lineage: true,
-                frames: true
+                frames: true,
+                llm: true
               }
         response
           .writeHead(200, { 'content-type': 'application/json' })
@@ -149,7 +151,8 @@ describe('repl_loop local RPC transport', () => {
           skills: true,
           artifacts: true,
           lineage: true,
-          frames: true
+          frames: true,
+          llm: true
         },
         second: {
           mcp: true,
@@ -158,7 +161,8 @@ describe('repl_loop local RPC transport', () => {
           skills: true,
           artifacts: true,
           lineage: true,
-          frames: true
+          frames: true,
+          llm: true
         },
         frozen: true,
         same: false
@@ -451,6 +455,196 @@ describe('repl_loop local RPC transport', () => {
         'host.lineage.get returned an invalid operation-log truncation'
       )
       expect(requests).toHaveLength(7)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('validates and deeply freezes host.llm single and batch results', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(parsed)
+        const batchRequests = parsed.params?.requests
+        const result = Array.isArray(batchRequests)
+          ? batchRequests.map((request, index) =>
+              request === null
+                ? {
+                    error:
+                      'host.llm requests must be a prompt string or an exact { prompt } object.'
+                  }
+                : index === 1
+                  ? { error: 'provider unavailable' }
+                  : { text: 'A', model: 'model-a', stop_reason: 'end_turn' }
+            )
+          : parsed.params?.request === 'INVALID_RESULT'
+            ? { text: 'leak', model: 'model-a', stop_reason: 'end_turn', raw: 'private' }
+            : parsed.params?.request === 'INVALID_USAGE'
+              ? {
+                  text: 'leak',
+                  model: 'model-a',
+                  stop_reason: 'end_turn',
+                  usage: { input_tokens: 1, output_tokens: 1 }
+                }
+              : {
+                  text: 'PONG',
+                  model: 'model-a',
+                  stop_reason: 'end_turn',
+                  usage: {
+                    input_tokens: 10,
+                    cache_tokens: 3,
+                    output_tokens: 4,
+                    cached_read_tokens: 2,
+                    cached_write_tokens: 1,
+                    turn_count: 1
+                  }
+                }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-host-llm-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const single = await send(
+        "const value = await host.llm('PING'); " +
+          'return JSON.stringify({ value, frozen: Object.isFrozen(value), usageFrozen: Object.isFrozen(value.usage) })'
+      )
+      expect(single.error).toBeNull()
+      expect(JSON.parse(single.result ?? '{}')).toEqual({
+        value: {
+          text: 'PONG',
+          model: 'model-a',
+          stop_reason: 'end_turn',
+          usage: {
+            input_tokens: 10,
+            cache_tokens: 3,
+            output_tokens: 4,
+            cached_read_tokens: 2,
+            cached_write_tokens: 1,
+            turn_count: 1
+          }
+        },
+        frozen: true,
+        usageFrozen: true
+      })
+
+      const batch = await send(
+        "const value = await host.llm(['a', { prompt: 'b' }], { max_concurrency: 2 }); " +
+          'return JSON.stringify({ value, frozen: Object.isFrozen(value), itemFrozen: value.every(Object.isFrozen) })'
+      )
+      expect(batch.error).toBeNull()
+      expect(JSON.parse(batch.result ?? '{}')).toEqual({
+        value: [
+          { text: 'A', model: 'model-a', stop_reason: 'end_turn' },
+          { error: 'provider unavailable' }
+        ],
+        frozen: true,
+        itemFrozen: true
+      })
+      expect(requests).toEqual([
+        { method: 'llmCall', params: { request: 'PING' } },
+        {
+          method: 'llmCall',
+          params: { requests: ['a', { prompt: 'b' }], options: { max_concurrency: 2 } }
+        }
+      ])
+
+      const invalidOptions = await send(
+        "try { await host.llm('single', { max_concurrency: 2 }); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(invalidOptions.result).toBe(
+        'TypeError: host.llm options are only accepted for batch calls'
+      )
+      expect(requests).toHaveLength(2)
+
+      const invalidSingle = await send(
+        "try { await host.llm({ prompt: 'x', model: undefined }); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(invalidSingle.result).toBe(
+        'TypeError: host.llm requests must be a prompt string or an exact { prompt } object.'
+      )
+      expect(requests).toHaveLength(2)
+
+      const invalidBatchOptions = await send(
+        "try { await host.llm(['x'], { max_concurrency: 2, extra: undefined }); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(invalidBatchOptions.result).toBe(
+        'TypeError: host.llm batch options only accept max_concurrency.'
+      )
+      expect(requests).toHaveLength(2)
+
+      const isolatedInvalidItems = await send(
+        "const cyclic = { prompt: 'bad' }; cyclic.extra = cyclic; " +
+          "const value = await host.llm(['ok', 1n, cyclic]); return JSON.stringify(value)"
+      )
+      expect(isolatedInvalidItems.error).toBeNull()
+      expect(JSON.parse(isolatedInvalidItems.result ?? '[]')).toEqual([
+        { text: 'A', model: 'model-a', stop_reason: 'end_turn' },
+        { error: 'host.llm requests must be a prompt string or an exact { prompt } object.' },
+        { error: 'host.llm requests must be a prompt string or an exact { prompt } object.' }
+      ])
+      expect(requests.at(-1)).toEqual({
+        method: 'llmCall',
+        params: { requests: ['ok', null, null] }
+      })
+
+      const snapshottedAccessor = await send(
+        "let reads = 0; const item = { get prompt() { reads += 1; return reads === 1 ? 'snapshot' : 1n } }; " +
+          'const value = await host.llm([item]); return JSON.stringify({ value, reads })'
+      )
+      expect(snapshottedAccessor.error).toBeNull()
+      expect(JSON.parse(snapshottedAccessor.result ?? '{}')).toEqual({
+        value: [{ text: 'A', model: 'model-a', stop_reason: 'end_turn' }],
+        reads: 1
+      })
+      expect(requests.at(-1)).toEqual({
+        method: 'llmCall',
+        params: { requests: [{ prompt: 'snapshot' }] }
+      })
+
+      const throwingOptionsAccessor = await send(
+        "const options = {}; Object.defineProperty(options, 'max_concurrency', { get() { throw new Error('raw getter detail') } }); " +
+          "try { await host.llm(['x'], options); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(throwingOptionsAccessor.result).toBe(
+        'TypeError: host.llm batch options only accept max_concurrency.'
+      )
+      expect(requests).toHaveLength(4)
+
+      const invalidResult = await send(
+        "try { await host.llm('INVALID_RESULT'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidResult.result).toBe('host.llm returned an invalid result')
+
+      const invalidUsage = await send(
+        "try { await host.llm('INVALID_USAGE'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidUsage.result).toBe('host.llm returned invalid usage')
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

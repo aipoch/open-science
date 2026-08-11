@@ -983,7 +983,8 @@ const HOST_CAPABILITY_NAMES = [
   'skills',
   'artifacts',
   'lineage',
-  'frames'
+  'frames',
+  'llm'
 ]
 
 async function hostCapabilities(...args) {
@@ -1010,6 +1011,150 @@ async function hostCapabilities(...args) {
   }
   return Object.freeze(
     Object.fromEntries(HOST_CAPABILITY_NAMES.map((name) => [name, result[name]]))
+  )
+}
+
+const HOST_LLM_STOP_REASONS = new Set([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled'
+])
+
+const validatedHostLlmUsage = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.llm returned invalid usage')
+  }
+  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
+  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  const keys = Object.keys(value)
+  if (
+    required.some((key) => !keys.includes(key)) ||
+    keys.some((key) => !required.includes(key) && !optional.includes(key)) ||
+    [...required, ...optional].some(
+      (key) =>
+        value[key] !== undefined &&
+        (typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || value[key] < 0)
+    ) ||
+    (value.turn_count !== undefined && value.turn_count < 1)
+  ) {
+    throw new Error('host.llm returned invalid usage')
+  }
+  return Object.freeze(Object.fromEntries(keys.map((key) => [key, value[key]])))
+}
+
+const validatedHostLlmResult = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.llm returned an invalid result')
+  }
+  const keys = Object.keys(value)
+  if (
+    !['text', 'model', 'stop_reason'].every((key) => keys.includes(key)) ||
+    keys.some((key) => !['text', 'model', 'stop_reason', 'usage'].includes(key)) ||
+    typeof value.text !== 'string' ||
+    typeof value.model !== 'string' ||
+    !HOST_LLM_STOP_REASONS.has(value.stop_reason)
+  ) {
+    throw new Error('host.llm returned an invalid result')
+  }
+  return Object.freeze({
+    text: value.text,
+    model: value.model,
+    stop_reason: value.stop_reason,
+    ...(value.usage === undefined ? {} : { usage: validatedHostLlmUsage(value.usage) })
+  })
+}
+
+const normalizedHostLlmRequest = (value) => {
+  if (typeof value === 'string') return value
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const keys = Reflect.ownKeys(value)
+    const prompt = value.prompt
+    if (keys.length !== 1 || keys[0] !== 'prompt' || typeof prompt !== 'string') {
+      return undefined
+    }
+    return { prompt }
+  } catch {
+    return undefined
+  }
+}
+
+const normalizedHostLlmOptions = (value) => {
+  if (value === undefined) return undefined
+  let concurrency
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError('host.llm batch options only accept max_concurrency.')
+    }
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => key !== 'max_concurrency')) {
+      throw new TypeError('host.llm batch options only accept max_concurrency.')
+    }
+    if (keys.length === 0) return {}
+    concurrency = value.max_concurrency
+  } catch {
+    throw new TypeError('host.llm batch options only accept max_concurrency.')
+  }
+  if (
+    typeof concurrency !== 'number' ||
+    !Number.isInteger(concurrency) ||
+    concurrency < 1 ||
+    concurrency > 4
+  ) {
+    throw new TypeError('host.llm max_concurrency must be an integer from 1 through 4.')
+  }
+  return { max_concurrency: concurrency }
+}
+
+async function hostLlm(request, options = undefined) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.llm accepts a request and optional batch options')
+  }
+  const batch = Array.isArray(request)
+  if (!batch && arguments.length > 1) {
+    throw new TypeError('host.llm options are only accepted for batch calls')
+  }
+  const normalizedRequest = batch
+    ? request.map((item) => normalizedHostLlmRequest(item) ?? null)
+    : normalizedHostLlmRequest(request)
+  if (!batch && normalizedRequest === undefined) {
+    throw new TypeError('host.llm requests must be a prompt string or an exact { prompt } object.')
+  }
+  const normalizedOptions =
+    batch && arguments.length > 1 ? normalizedHostLlmOptions(options) : undefined
+  if (!RPC_ENDPOINT) throw new Error('host.llm is unavailable: RPC endpoint not set')
+  const params = batch
+    ? {
+        requests: normalizedRequest,
+        ...(arguments.length > 1 ? { options: normalizedOptions } : {})
+      }
+    : { request: normalizedRequest }
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'llmCall', params })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(body.error || 'host.llm HTTP ' + res.status)
+  if (!batch) return validatedHostLlmResult(body.result)
+  if (!Array.isArray(body.result) || body.result.length !== request.length) {
+    throw new Error('host.llm returned an invalid batch result')
+  }
+  return Object.freeze(
+    body.result.map((item) => {
+      if (
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        Object.keys(item).length === 1 &&
+        typeof item.error === 'string'
+      ) {
+        return Object.freeze({ error: item.error })
+      }
+      return validatedHostLlmResult(item)
+    })
   )
 }
 
@@ -2366,6 +2511,7 @@ const hostCompute = {
 const sandbox = {
   host: {
     capabilities: hostCapabilities,
+    llm: hostLlm,
     artifacts: hostArtifacts,
     artifact_path: hostArtifactPath,
     lineage: hostLineage,

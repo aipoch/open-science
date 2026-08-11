@@ -36,6 +36,7 @@ import { createAcpCreateSessionWorkflow } from './acp/create-session-workflow'
 import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
+import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
 import {
@@ -124,6 +125,7 @@ import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
 import { HostFramesService } from './notebook/host-frames-service'
+import { HostLlmService } from './notebook/host-llm-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
@@ -1248,6 +1250,29 @@ const createApplicationModules = async (
     },
     onPublishedSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
   })
+  const hostLlmLog = createLogger('notebook:host-llm')
+  const hostLlmService = await modules.add(
+    new HostLlmService({
+      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+      runner: new RestrictedInferenceRunner({
+        appVersion: app.getVersion(),
+        configRoot,
+        profileNamespace: 'host-llm',
+        resolveTarget: (target, context) =>
+          settingsService.resolveExplicitAgentBackend(target, context)
+      })
+    }),
+    (service) => ({
+      name: 'host-llm-service',
+      capability: service,
+      dispose: () => service.shutdown()
+    })
+  )
+  void hostLlmService
+    .sweepStaleProfiles()
+    .catch((error) =>
+      hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
+    )
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
@@ -1298,7 +1323,8 @@ const createApplicationModules = async (
       }),
       inputRegistry: notebookInputRegistry,
       agentsService,
-      skillsService: hostSkillsService
+      skillsService: hostSkillsService,
+      hostLlm: hostLlmService
     }),
     createNotebookLocalRpcModule
   )

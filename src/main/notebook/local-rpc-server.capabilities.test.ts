@@ -40,7 +40,8 @@ describe('capabilitiesCall RPC', () => {
       skillsService: {} as never,
       hostArtifacts: {} as never,
       hostLineage: {} as never,
-      hostFrames: {} as never
+      hostFrames: {} as never,
+      hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
     })
     const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
 
@@ -59,7 +60,8 @@ describe('capabilitiesCall RPC', () => {
         skills: true,
         artifacts: true,
         lineage: true,
-        frames: true
+        frames: true,
+        llm: true
       }
     })
   })
@@ -80,7 +82,8 @@ describe('capabilitiesCall RPC', () => {
           skills: false,
           artifacts: false,
           lineage: false,
-          frames: false
+          frames: false,
+          llm: false
         }
       }
     })
@@ -95,6 +98,30 @@ describe('capabilitiesCall RPC', () => {
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: { result: { frames: false } }
+    })
+  })
+
+  it('returns false when host.llm is configured but the active route is unavailable', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostLlm: { isAvailable: async () => false, call: async () => ({}) as never }
+    })
+    const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { llm: false } }
+    })
+  })
+
+  it('does not advertise host.llm through a non-control session capability', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
+    })
+    const connection = await server.issueSessionConnection('trusted-session', 'trusted-project')
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { llm: false } }
     })
   })
 

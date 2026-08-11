@@ -43,6 +43,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'host-agents',
   'host-skills',
   'host-frames',
+  'host-llm',
   'host-message'
 ] as const
 const NOTEBOOK_CONTROL_RPC_METHODS = [
@@ -52,7 +53,8 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
   'computeCall',
   'agentsCall',
   'skillsCall',
-  'framesCall'
+  'framesCall',
+  'llmCall'
 ] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]
@@ -515,6 +517,12 @@ export class AcpSessionCapabilityOwner {
     ) {
       capabilities.push('host-frames')
     }
+    if (
+      capabilities.includes('notebook') &&
+      policyAllowsSessionCapability(request.policy, 'host-llm')
+    ) {
+      capabilities.push('host-llm')
+    }
 
     const descriptor = freezeDescriptor({
       role: request.policy.role,
@@ -526,7 +534,8 @@ export class AcpSessionCapabilityOwner {
       controlRpcMethods:
         capabilities.includes('host-agents') ||
         capabilities.includes('host-skills') ||
-        capabilities.includes('host-frames')
+        capabilities.includes('host-frames') ||
+        capabilities.includes('host-llm')
           ? [...NOTEBOOK_CONTROL_RPC_METHODS]
           : []
     })

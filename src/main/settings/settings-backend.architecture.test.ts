@@ -536,7 +536,9 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(importersOf(settingsPaths.backendResolver)).toEqual([
       'src/main/acp/artifact-code-reconstruction-runner.ts',
+      'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
+      'src/main/notebook/host-llm-service.ts',
       'src/main/settings/service.ts',
       'src/main/side-chat/runtime-owner.ts'
     ])
@@ -607,6 +609,7 @@ describe('Settings backend ownership architecture', () => {
       'computeCall',
       'agentsCall',
       'skillsCall',
+      'llmCall',
       'requestUserInput'
     ])
     expect(

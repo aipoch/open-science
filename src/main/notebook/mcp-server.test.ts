@@ -343,6 +343,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toBe(REPL_EXECUTE_DOC)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('host.capabilities')
     expect(tool?.description).toContain('host.capabilities')
+    expect(tool?.description).toContain('host.llm')
     expect(tool?.description).toContain('self-awareness')
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.

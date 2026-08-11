@@ -650,7 +650,8 @@ describe('ACP session capability owner', () => {
       'skill-import',
       'host-agents',
       'host-skills',
-      'host-frames'
+      'host-frames',
+      'host-llm'
     ])
     expect(primary.descriptor.modelFacingMcpServerNames).toEqual([
       'open_science_artifacts',
@@ -669,7 +670,8 @@ describe('ACP session capability owner', () => {
       'computeCall',
       'agentsCall',
       'skillsCall',
-      'framesCall'
+      'framesCall',
+      'llmCall'
     ])
     expect(reviewer.mcpServers).toEqual([])
     expect(reviewer.descriptor.capabilities).toEqual([])
@@ -700,10 +702,12 @@ describe('ACP session capability owner', () => {
         projectName: 'project'
       })
 
-      expect(built.descriptor.controlRpcMethods).toContain('capabilitiesCall')
-      expect(built.descriptor.controlRpcMethods).toContain('lineageCall')
-      expect(built.descriptor.controlRpcMethods).toContain('framesCall')
-      expect(built.descriptor.capabilities).toContain('host-frames')
+      expect(built.descriptor.controlRpcMethods).toEqual(
+        expect.arrayContaining(['capabilitiesCall', 'lineageCall', 'framesCall', 'llmCall'])
+      )
+      expect(built.descriptor.capabilities).toEqual(
+        expect.arrayContaining(['host-frames', 'host-llm'])
+      )
     }
   )
 

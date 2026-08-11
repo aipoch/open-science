@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
@@ -13,11 +14,13 @@ import {
   prepareBackend,
   resolveReconstructionModel
 } from './artifact-code-reconstruction-runner'
+import { RestrictedInferenceRunner } from './restricted-inference-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 
 let temporaryRoot: string | undefined
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true })
   temporaryRoot = undefined
 })
@@ -138,6 +141,32 @@ describe('Artifact code reconstruction backend profiles', () => {
 })
 
 describe('ArtifactCodeReconstructionRunner cleanup', () => {
+  it('keeps Artifact output unbounded at the restricted inference Seam', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-output-'))
+    const text = 'x'.repeat(300 * 1024)
+    const inference = vi.spyOn(RestrictedInferenceRunner.prototype, 'run').mockResolvedValue({
+      text,
+      frameworkId: 'claude-code',
+      model: 'model-a',
+      stopReason: 'end_turn'
+    })
+    const runner = new ArtifactCodeReconstructionRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn()
+    })
+
+    await expect(
+      runner.run('evidence', { ...target, frameworkId: 'claude-code' })
+    ).resolves.toEqual({
+      text,
+      frameworkId: 'claude-code',
+      model: 'model-a'
+    })
+    expect(inference.mock.calls[0]?.[0]).not.toHaveProperty('outputLimitBytes')
+  })
+
   it('removes stale disposable profiles while retaining recent work', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-sweep-'))
     const now = Date.parse('2026-08-06T12:00:00.000Z')
@@ -186,6 +215,24 @@ describe('ArtifactCodeReconstructionRunner cleanup', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('preserves the Artifact error for unsupported Codex subscription authentication', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-subscription-'))
+    const resolveTarget = vi.fn()
+    const runner = new ArtifactCodeReconstructionRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget
+    })
+
+    await expect(
+      runner.run('evidence', { ...target, providerId: CODEX_SHARED_PROVIDER_ID })
+    ).rejects.toThrow(
+      'Artifact code reconstruction is unavailable with Codex subscription authentication.'
+    )
+    expect(resolveTarget).not.toHaveBeenCalled()
+  })
+
   it('rejects new work after shutdown begins', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-shutdown-'))
     const captureTarget = vi.fn(async () => target)
@@ -201,5 +248,28 @@ describe('ArtifactCodeReconstructionRunner cleanup', () => {
     await expect(runner.captureTarget()).rejects.toThrow('is shutting down')
     await expect(runner.run('evidence', target)).rejects.toThrow('is shutting down')
     expect(captureTarget).not.toHaveBeenCalled()
+  })
+
+  it('preserves the Artifact shutdown error while target resolution is pending', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-reconstruction-shutdown-race-'))
+    let finishResolution!: (backend: ResolvedAgentBackend) => void
+    const resolving = new Promise<ResolvedAgentBackend>((resolve) => {
+      finishResolution = resolve
+    })
+    const resolveTarget = vi.fn(() => resolving)
+    const runner = new ArtifactCodeReconstructionRunner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget
+    })
+    const call = runner.run('evidence', { ...target, frameworkId: 'claude-code' })
+
+    await vi.waitFor(() => expect(resolveTarget).toHaveBeenCalledOnce())
+    const shutdown = runner.shutdown()
+    finishResolution(backend(claudeCodeFramework))
+
+    await expect(call).rejects.toThrow('Artifact code reconstruction is shutting down.')
+    await expect(shutdown).resolves.toBeUndefined()
   })
 })

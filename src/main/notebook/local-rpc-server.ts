@@ -43,6 +43,7 @@ import {
 } from '../local-rpc-transport'
 import { createLogger, errorLogFields } from '../logger'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-llm-service'
 
 const log = createLogger('notebook:local-rpc')
 
@@ -169,6 +170,13 @@ type NotebookLocalRpcServerOptions = {
   skillsService?: {
     dispatch(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
+  hostLlm?: {
+    isAvailable(): Promise<boolean>
+    call(
+      input: HostLlmCallInput,
+      signal?: AbortSignal
+    ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
+  }
 }
 
 type NotebookRpcPayload = {
@@ -217,6 +225,7 @@ const CONTROL_RPC_METHODS = new Set([
   'computeCall',
   'agentsCall',
   'skillsCall',
+  'llmCall',
   'requestUserInput'
 ])
 const SKILL_IMPORT_RPC_METHODS = new Set(['skillImport'])
@@ -266,6 +275,7 @@ class NotebookLocalRpcServer {
   private readonly hostFrames: NotebookLocalRpcServerOptions['hostFrames']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
+  private readonly hostLlm: NotebookLocalRpcServerOptions['hostLlm']
   private server: Server | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
   private readonly sessionAliases = new Map<string, string>()
@@ -305,6 +315,7 @@ class NotebookLocalRpcServer {
     this.hostFrames = options.hostFrames
     this.agentsService = options.agentsService
     this.skillsService = options.skillsService
+    this.hostLlm = options.hostLlm
   }
 
   issueArtifactRunCapability(
@@ -711,6 +722,13 @@ class NotebookLocalRpcServer {
     }
 
     let releaseArtifactRequest: (() => void) | undefined
+    const requestAbort = new AbortController()
+    const abortRequest = (): void => requestAbort.abort()
+    const abortClosedResponse = (): void => {
+      if (!response.writableEnded) abortRequest()
+    }
+    request.once('aborted', abortRequest)
+    response.once('close', abortClosedResponse)
     try {
       const payload = await readJsonBody(request)
       const method = typeof payload.method === 'string' ? payload.method : ''
@@ -721,7 +739,14 @@ class NotebookLocalRpcServer {
         : ''
       let hostCapabilities:
         | Record<
-            'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage' | 'frames',
+            | 'mcp'
+            | 'compute'
+            | 'agents'
+            | 'skills'
+            | 'artifacts'
+            | 'lineage'
+            | 'frames'
+            | 'llm',
             boolean
           >
         | undefined
@@ -758,6 +783,9 @@ class NotebookLocalRpcServer {
           if (method === 'framesCall' && !sessionBinding.isControl) {
             throw new RpcHttpError(403, 'host.frames requires a control-plane REPL capability.')
           }
+          if (method === 'llmCall' && !sessionBinding.isControl) {
+            throw new RpcHttpError(403, 'host.llm requires a control-plane REPL capability.')
+          }
           if (
             method === 'agentsCall' &&
             params.op === 'switch' &&
@@ -781,7 +809,12 @@ class NotebookLocalRpcServer {
               frames:
                 Boolean(sessionBinding.isControl) &&
                 allows('framesCall') &&
-                Boolean(this.hostFrames)
+                Boolean(this.hostFrames),
+              llm:
+                sessionBinding.isControl === true &&
+                allows('llmCall') &&
+                Boolean(this.hostLlm) &&
+                (await this.hostLlm!.isAvailable())
             }
           }
           // The request body is agent-controlled. Owner fields always come from the unforgeable,
@@ -815,7 +848,8 @@ class NotebookLocalRpcServer {
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       const result =
-        hostCapabilities ?? (await this.dispatch(method, this.resolveSessionAlias(params)))
+        hostCapabilities ??
+        (await this.dispatch(method, this.resolveSessionAlias(params), requestAbort.signal))
 
       writeJson(response, 200, { result })
     } catch (error) {
@@ -834,12 +868,18 @@ class NotebookLocalRpcServer {
         error: serializedError
       })
     } finally {
+      request.removeListener('aborted', abortRequest)
+      response.removeListener('close', abortClosedResponse)
       releaseArtifactRequest?.()
     }
   }
 
   // Maps the narrow RPC method names to strongly-typed runtime service calls.
-  private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private async dispatch(
+    method: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<unknown> {
     // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
     // save envelope back into the main process, where the Provenance repository owns transactions,
     // immutable Version publication, and idempotency.
@@ -955,6 +995,14 @@ class NotebookLocalRpcServer {
       if (params.op === 'list') return this.hostFrames.list(params.options, context)
       if (params.op === 'get') return this.hostFrames.get(params.frame_id, params.options, context)
       throw new Error('Unknown host Frame operation.')
+    }
+
+    if (method === 'llmCall') {
+      if (!this.hostLlm) throw new Error('host.llm is not configured.')
+      const { sessionId: _sessionId, projectId: _projectId, ...input } = params
+      void _sessionId
+      void _projectId
+      return this.hostLlm.call(input as HostLlmCallInput, signal)
     }
 
     if (method === 'resolveNotebookInput') {
