@@ -148,6 +148,8 @@ const projectResult = (result: RestrictedInferenceResult): HostLlmResult => {
 class HostLlmService {
   private readonly activeCalls = new Set<AbortController>()
   private readonly callDrainWaiters = new Set<() => void>()
+  private readonly runSlotWaiters: Array<() => void> = []
+  private activeRuns = 0
   private shuttingDown = false
 
   constructor(private readonly options: HostLlmServiceOptions) {}
@@ -252,21 +254,67 @@ class HostLlmService {
     })
   }
 
+  private acquireRunSlot(signal: AbortSignal): Promise<() => void> {
+    if (signal.aborted) {
+      return Promise.reject(new RestrictedInferenceError('cancelled', 'Cancelled.'))
+    }
+    if (this.activeRuns < MAX_CONCURRENCY) {
+      this.activeRuns += 1
+      return Promise.resolve(() => this.releaseRunSlot())
+    }
+    return new Promise<() => void>((resolve, reject) => {
+      const start = (): void => {
+        signal.removeEventListener('abort', cancel)
+        if (signal.aborted) {
+          this.releaseRunSlot()
+          reject(new RestrictedInferenceError('cancelled', 'Cancelled.'))
+          return
+        }
+        resolve(() => this.releaseRunSlot())
+      }
+      const cancel = (): void => {
+        const index = this.runSlotWaiters.indexOf(start)
+        if (index >= 0) this.runSlotWaiters.splice(index, 1)
+        reject(new RestrictedInferenceError('cancelled', 'Cancelled.'))
+      }
+      signal.addEventListener('abort', cancel, { once: true })
+      this.runSlotWaiters.push(start)
+    })
+  }
+
+  private releaseRunSlot(): void {
+    const next = this.runSlotWaiters.shift()
+    if (next) next()
+    else this.activeRuns -= 1
+  }
+
+  private async runInference(
+    prompt: string,
+    target: ExplicitAgentBackendTarget,
+    signal: AbortSignal
+  ): Promise<RestrictedInferenceResult> {
+    const release = await this.acquireRunSlot(signal)
+    try {
+      if (signal.aborted) throw new RestrictedInferenceError('cancelled', 'Cancelled.')
+      return await this.options.runner.run({
+        prompt,
+        target,
+        systemPrompt: HOST_LLM_SYSTEM_PROMPT,
+        agentName: 'open-science-host-llm',
+        description: 'One-shot host.llm inference without tools.',
+        signal,
+        outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES
+      })
+    } finally {
+      release()
+    }
+  }
+
   private async runSingle(prompt: string, callerSignal?: AbortSignal): Promise<HostLlmResult> {
     const scope = this.callScope(callerSignal)
     try {
       const target = await this.captureTarget(scope.controller.signal)
-      return projectResult(
-        await this.options.runner.run({
-          prompt,
-          target,
-          systemPrompt: HOST_LLM_SYSTEM_PROMPT,
-          agentName: 'open-science-host-llm',
-          description: 'One-shot host.llm inference without tools.',
-          signal: scope.controller.signal,
-          outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES
-        })
-      )
+      return projectResult(await this.runInference(prompt, target, scope.controller.signal))
     } catch (error) {
       throw new Error(publicError(error))
     } finally {
@@ -299,15 +347,7 @@ class HostLlmService {
           }
           try {
             results[index] = projectResult(
-              await this.options.runner.run({
-                prompt: request.prompt,
-                target,
-                systemPrompt: HOST_LLM_SYSTEM_PROMPT,
-                agentName: 'open-science-host-llm',
-                description: 'One-shot host.llm inference without tools.',
-                signal: scope.controller.signal,
-                outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES
-              })
+              await this.runInference(request.prompt, target, scope.controller.signal)
             )
           } catch (error) {
             if (scope.controller.signal.aborted) throw error

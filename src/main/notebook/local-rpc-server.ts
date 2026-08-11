@@ -739,14 +739,7 @@ class NotebookLocalRpcServer {
         : ''
       let hostCapabilities:
         | Record<
-            | 'mcp'
-            | 'compute'
-            | 'agents'
-            | 'skills'
-            | 'artifacts'
-            | 'lineage'
-            | 'frames'
-            | 'llm',
+            'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage' | 'frames' | 'llm',
             boolean
           >
         | undefined

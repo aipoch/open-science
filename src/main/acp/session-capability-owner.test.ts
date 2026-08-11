@@ -689,7 +689,7 @@ describe('ACP session capability owner', () => {
     ['codex-response', codexFramework, true, false],
     ['codex-bridge', codexFramework, false, true]
   ] as const)(
-    'publishes Host Lineage and Frames through the %s primary control descriptor',
+    'publishes Host Lineage, Frames, and LLM through the %s primary control descriptor',
     async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
       const owner = createOwner()
       const built = await owner.provision({

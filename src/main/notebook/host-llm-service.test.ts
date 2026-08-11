@@ -11,6 +11,7 @@ import {
 import {
   MAX_BATCH_BYTES,
   MAX_BATCH_ITEMS,
+  MAX_CONCURRENCY,
   MAX_PROMPT_BYTES,
   HostLlmService
 } from './host-llm-service'
@@ -159,6 +160,66 @@ describe('HostLlmService', () => {
 
     expect(result).toHaveLength(6)
     expect(maxActive).toBe(expected)
+  })
+
+  it('caps runner concurrency across overlapping public calls', async () => {
+    let active = 0
+    let maxActive = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { service, runner, captureTarget } = makeService(async ({ prompt }) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await gate
+      active -= 1
+      return inferenceResult(prompt)
+    })
+
+    const first = service.call({
+      requests: ['a', 'b', 'c', 'd'],
+      options: { max_concurrency: MAX_CONCURRENCY }
+    })
+    const second = service.call({
+      requests: ['e', 'f', 'g', 'h'],
+      options: { max_concurrency: MAX_CONCURRENCY }
+    })
+
+    await vi.waitFor(() => expect(runner.run.mock.calls.length).toBeGreaterThanOrEqual(4))
+    const activeBeforeRelease = maxActive
+    release()
+    await Promise.all([first, second])
+
+    expect(activeBeforeRelease).toBe(MAX_CONCURRENCY)
+    expect(maxActive).toBe(MAX_CONCURRENCY)
+    expect(captureTarget).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels a public call while it waits for a shared runner slot', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { service, runner, captureTarget } = makeService(async ({ prompt }) => {
+      await gate
+      return inferenceResult(prompt)
+    })
+    const active = service.call({
+      requests: ['a', 'b', 'c', 'd'],
+      options: { max_concurrency: MAX_CONCURRENCY }
+    })
+    await vi.waitFor(() => expect(runner.run).toHaveBeenCalledTimes(MAX_CONCURRENCY))
+
+    const controller = new AbortController()
+    const queued = service.call({ request: 'queued' }, controller.signal)
+    await vi.waitFor(() => expect(captureTarget).toHaveBeenCalledTimes(2))
+    controller.abort()
+
+    await expect(queued).rejects.toThrow('host.llm call was cancelled')
+    expect(runner.run).toHaveBeenCalledTimes(MAX_CONCURRENCY)
+    release()
+    await expect(active).resolves.toHaveLength(MAX_CONCURRENCY)
   })
 
   it('rejects global bounds and returns per-item validation failures before dispatch', async () => {
