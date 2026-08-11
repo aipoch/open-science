@@ -5,6 +5,8 @@ import { appendFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { parseNameStatus } from './classify-pr-changes.mjs'
+
 const allowedTypes = [
   'feat',
   'fix',
@@ -22,6 +24,117 @@ const allowedTypes = [
 const subjectPattern = new RegExp(
   `^(${allowedTypes.join('|')})\\([a-z][A-Za-z0-9-]*\\)!?: [a-z][^\\r\\n]*$`
 )
+
+const databaseSchemaPaths = new Set([
+  'prisma/schema.prisma',
+  'prisma/sqlite-check-constraints.json'
+])
+const migrationDirectory = 'src/main/database/migrations/'
+const migrationServicePath = 'src/main/database/migration-service.ts'
+const migrationPathPattern =
+  /^src\/main\/database\/migrations\/(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.ts$/
+
+const migrationVersion = (path) => Number(path.match(migrationPathPattern)?.[1])
+
+const escapeRegularExpression = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+export function checkDatabaseMigrationPolicy({ changes, baseMigrationPaths, headFiles = {} }) {
+  const violations = []
+  const basePaths = new Set(baseMigrationPaths)
+  const schemaChanged = changes.some(({ path, previousPath }) =>
+    [path, previousPath].some((candidate) => databaseSchemaPaths.has(candidate))
+  )
+  const addedPaths = changes
+    .filter(
+      ({ path, status }) =>
+        path.startsWith(migrationDirectory) &&
+        !basePaths.has(path) &&
+        ['added', 'copied', 'renamed'].includes(status)
+    )
+    .map(({ path }) => path)
+
+  for (const { path, previousPath, status } of changes) {
+    const changedReleasedPath =
+      (basePaths.has(path) && status !== 'copied') ||
+      (basePaths.has(previousPath) && ['deleted', 'renamed'].includes(status))
+    if (changedReleasedPath) {
+      violations.push({
+        kind: 'database-migration',
+        subject: `${previousPath ?? path} is immutable; add a new versioned migration instead`
+      })
+    }
+  }
+
+  if (schemaChanged && addedPaths.length === 0) {
+    violations.push({
+      kind: 'database-migration',
+      subject: `database schema contracts changed without a new migration under ${migrationDirectory}`
+    })
+  }
+
+  const baseVersions = baseMigrationPaths.map(migrationVersion).filter(Number.isInteger)
+  let expectedVersion = Math.max(0, ...baseVersions) + 1
+  const versionedPaths = []
+  for (const path of addedPaths) {
+    const match = path.match(migrationPathPattern)
+    if (!match) {
+      violations.push({
+        kind: 'database-migration',
+        subject: `${path} must use the NNNN-lowercase-description.ts format`
+      })
+      continue
+    }
+    versionedPaths.push({ path, version: Number(match[1]), description: match[2] })
+  }
+
+  const serviceSource = headFiles[migrationServicePath] ?? ''
+  const manifestSource = serviceSource.match(
+    /const MIGRATION_MANIFEST = \[([\s\S]*?)\]\s+as const satisfies/
+  )?.[1]
+  for (const { path, version, description } of versionedPaths.sort(
+    (left, right) => left.version - right.version || left.path.localeCompare(right.path)
+  )) {
+    if (version !== expectedVersion) {
+      violations.push({
+        kind: 'database-migration',
+        subject: `${path} must use the next migration version ${String(expectedVersion).padStart(4, '0')}`
+      })
+    }
+    expectedVersion += 1
+
+    const migrationSource = headFiles[path] ?? ''
+    const declaration = migrationSource.match(
+      /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*\{[^}]*\bid:\s*['"]([^'"]+)['"]/
+    )
+    const expectedId = `${String(version).padStart(4, '0')}_${description.replaceAll('-', '_')}`
+    if (!declaration || declaration[2] !== expectedId) {
+      violations.push({
+        kind: 'database-migration',
+        subject: `${path} must declare migration id ${expectedId}`
+      })
+      continue
+    }
+
+    const migrationName = declaration[1]
+    const moduleName = path.slice(migrationDirectory.length, -3)
+    const importPattern = new RegExp(
+      `import\\s*\\{[^}]*\\b${escapeRegularExpression(migrationName)}\\b[^}]*\\}\\s*from\\s*['"]\\.\\/migrations\\/${escapeRegularExpression(moduleName)}['"]`
+    )
+    const manifestPattern = new RegExp(`\\.\\.\\.${escapeRegularExpression(migrationName)}\\b`)
+    if (
+      !importPattern.test(serviceSource) ||
+      !manifestSource ||
+      !manifestPattern.test(manifestSource)
+    ) {
+      violations.push({
+        kind: 'database-migration',
+        subject: `${path} must be imported and registered in MIGRATION_MANIFEST`
+      })
+    }
+  }
+
+  return violations
+}
 
 export function checkPrPolicy({
   eventName,
@@ -90,21 +203,62 @@ export function runPrPolicyCli(environment = process.env) {
   }
   let commitSubjects = []
   let commitMessages = []
+  let databaseMigrationViolations = []
 
-  if (eventName === 'pull_request' && scope !== 'title') {
+  if (['pull_request', 'merge_group'].includes(eventName) && scope !== 'title') {
     const base = requireCommit(environment.BASE_SHA, 'BASE_SHA')
     const head = requireCommit(environment.HEAD_SHA, 'HEAD_SHA')
-    const commitHashes = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
+    const mergeBase = execFileSync('git', ['merge-base', base, head], {
       encoding: 'utf8'
-    })
+    }).trim()
+    const changes = parseNameStatus(
+      execFileSync('git', ['diff', '--name-status', '-z', mergeBase, head]).toString('utf8')
+    )
+    const baseMigrationPaths = execFileSync(
+      'git',
+      ['ls-tree', '-r', '--name-only', mergeBase, '--', migrationDirectory],
+      { encoding: 'utf8' }
+    )
       .split('\n')
       .filter(Boolean)
-    commitSubjects = commitHashes.map((commit) =>
-      execFileSync('git', ['show', '-s', '--format=%s', commit], { encoding: 'utf8' }).trimEnd()
+    const addedMigrationPaths = changes
+      .filter(
+        ({ path, status }) =>
+          path.startsWith(migrationDirectory) &&
+          !baseMigrationPaths.includes(path) &&
+          ['added', 'copied', 'renamed'].includes(status)
+      )
+      .map(({ path }) => path)
+    const headPaths = new Set(addedMigrationPaths)
+    if (addedMigrationPaths.length > 0) headPaths.add(migrationServicePath)
+    const headFiles = Object.fromEntries(
+      [...headPaths].map((path) => [
+        path,
+        execFileSync('git', ['show', `${head}:${path}`], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore']
+        })
+      ])
     )
-    commitMessages = commitHashes.map((commit) =>
-      execFileSync('git', ['show', '-s', '--format=%B', commit], { encoding: 'utf8' }).trimEnd()
-    )
+    databaseMigrationViolations = checkDatabaseMigrationPolicy({
+      changes,
+      baseMigrationPaths,
+      headFiles
+    })
+
+    if (eventName === 'pull_request') {
+      const commitHashes = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
+        encoding: 'utf8'
+      })
+        .split('\n')
+        .filter(Boolean)
+      commitSubjects = commitHashes.map((commit) =>
+        execFileSync('git', ['show', '-s', '--format=%s', commit], { encoding: 'utf8' }).trimEnd()
+      )
+      commitMessages = commitHashes.map((commit) =>
+        execFileSync('git', ['show', '-s', '--format=%B', commit], { encoding: 'utf8' }).trimEnd()
+      )
+    }
   }
 
   const result = checkPrPolicy({
@@ -114,6 +268,8 @@ export function runPrPolicyCli(environment = process.env) {
     commitMessages,
     scope
   })
+  result.violations.push(...databaseMigrationViolations)
+  result.ok = result.violations.length === 0
   const summary = formatPrPolicySummary(result)
   if (environment.GITHUB_STEP_SUMMARY) appendFileSync(environment.GITHUB_STEP_SUMMARY, summary)
   else process.stdout.write(summary)
