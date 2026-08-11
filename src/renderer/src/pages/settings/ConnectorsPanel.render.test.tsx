@@ -379,6 +379,13 @@ describe('ConnectorsPanel (groups)', () => {
     expect(connectedToggle?.disabled).toBe(false)
     expect(connectedToggle?.getAttribute('aria-disabled')).toBeNull()
     expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
+
+    const connectedStatus = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Connected')
+    expect(connectedStatus?.disabled).toBe(true)
+    act(() => connectedStatus?.click())
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(1)
   })
 
   it('shows an unavailable custom Connector and retries it in place', async () => {
@@ -484,7 +491,12 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
     expect(document.body.textContent).toContain('Sign-in required')
-    await act(async () => clickButtonByText('Sign in'))
+    const expiredToggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Expired OAuth"]'
+    )
+    expect(expiredToggle?.getAttribute('data-state')).toBe('checked')
+    expect(expiredToggle?.getAttribute('aria-disabled')).toBeNull()
+    await act(async () => clickButtonByText('Retry'))
     expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
       id: 'expired-oauth'
     })
@@ -512,12 +524,12 @@ describe('ConnectorsPanel (groups)', () => {
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'anonymous-remote' })
   })
 
-  it('cancels a waiting OAuth sign-in and allows retry', async () => {
-    const rejectAuthentications: Array<(error: Error) => void> = []
+  it('keeps a waiting OAuth sign-in disabled until it settles', async () => {
+    let finishAuthentication!: () => void
     const authenticateCustomServer = vi.fn(
       () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectAuthentications.push(reject)
+        new Promise<void>((resolve) => {
+          finishAuthentication = resolve
         })
     )
     useSettingsStore.setState({
@@ -540,35 +552,28 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     clickButtonByText('Sign in')
-    expect(document.body.textContent).toContain('Cancel')
+    const connecting = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Connecting…'
+    )
+    expect(connecting?.disabled).toBe(true)
+    expect(document.body.textContent).not.toContain('Cancel')
+    act(() => connecting?.click())
+    expect(authenticateCustomServer).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().cancelCustomServerAuthentication).not.toHaveBeenCalled()
 
-    await act(async () => clickButtonByText('Cancel'))
-
-    expect(useSettingsStore.getState().cancelCustomServerAuthentication).toHaveBeenCalledWith({
-      id: 'oauth-mcp'
-    })
-    expect(document.body.textContent).toContain('Sign in')
-
-    clickButtonByText('Sign in')
-    expect(authenticateCustomServer).toHaveBeenCalledTimes(2)
-
-    await act(async () => rejectAuthentications[0](new Error('Authorization denied')))
-    expect(document.body.textContent).not.toContain('Authorization denied')
-    expect(useSettingsStore.getState().loadConnectors).toHaveBeenCalledTimes(2)
+    await act(async () => finishAuthentication())
   })
 
-  it('keeps independent cancel controls for concurrent OAuth sign-ins', async () => {
-    const rejectAuthentications = new Map<string, (error: Error) => void>()
+  it('keeps concurrent OAuth sign-ins independently disabled', async () => {
+    const finishAuthentications = new Map<string, () => void>()
     const authenticateCustomServer = vi.fn(
       ({ id }: { id: string }) =>
-        new Promise<void>((_resolve, reject) => {
-          rejectAuthentications.set(id, reject)
+        new Promise<void>((resolve) => {
+          finishAuthentications.set(id, resolve)
         })
     )
-    const cancelCustomServerAuthentication = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       authenticateCustomServer,
-      cancelCustomServerAuthentication,
       customServers: [
         {
           id: 'oauth-a',
@@ -604,17 +609,14 @@ describe('ConnectorsPanel (groups)', () => {
 
     act(() => clickRowAction('OAuth A', 'Sign in'))
     act(() => clickRowAction('OAuth B', 'Sign in'))
-    expect(row('OAuth A')?.textContent).toContain('Cancel')
-    expect(row('OAuth B')?.textContent).toContain('Cancel')
+    expect(row('OAuth A')?.textContent).toContain('Connecting…')
+    expect(row('OAuth B')?.textContent).toContain('Connecting…')
 
-    await act(async () => clickRowAction('OAuth A', 'Cancel'))
-    expect(cancelCustomServerAuthentication).toHaveBeenCalledWith({ id: 'oauth-a' })
+    await act(async () => finishAuthentications.get('oauth-a')?.())
     expect(row('OAuth A')?.textContent).toContain('Sign in')
-    expect(row('OAuth B')?.textContent).toContain('Cancel')
+    expect(row('OAuth B')?.textContent).toContain('Connecting…')
 
-    await act(async () => rejectAuthentications.get('oauth-a')?.(new Error('cancelled')))
-    await act(async () => clickRowAction('OAuth B', 'Cancel'))
-    await act(async () => rejectAuthentications.get('oauth-b')?.(new Error('cancelled')))
+    await act(async () => finishAuthentications.get('oauth-b')?.())
   })
 
   it('uses the Settings danger banner for OAuth errors', async () => {

@@ -10,7 +10,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type {
@@ -104,9 +104,6 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
-  const cancelCustomServerAuthentication = useSettingsStore(
-    (state) => state.cancelCustomServerAuthentication
-  )
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
@@ -126,7 +123,6 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
-  const authenticationAttempts = useRef(new Map<string, number>())
 
   useEffect(() => {
     void loadConnectors()
@@ -172,35 +168,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   }
 
   const signIn = async (id: string): Promise<void> => {
-    const attempt = (authenticationAttempts.current.get(id) ?? 0) + 1
-    authenticationAttempts.current.set(id, attempt)
     setAuthenticatingIds((current) => new Set(current).add(id))
     setAuthError(null)
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
       await loadConnectors().catch(() => undefined)
-      if (attempt === authenticationAttempts.current.get(id)) {
-        setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
-      }
-    } finally {
-      if (attempt === authenticationAttempts.current.get(id)) {
-        setAuthenticatingIds((current) => {
-          const next = new Set(current)
-          next.delete(id)
-          return next
-        })
-      }
-    }
-  }
-
-  const cancelSignIn = async (id: string): Promise<void> => {
-    authenticationAttempts.current.set(id, (authenticationAttempts.current.get(id) ?? 0) + 1)
-    setAuthError(null)
-    try {
-      await cancelCustomServerAuthentication({ id })
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
+      setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
     } finally {
       setAuthenticatingIds((current) => {
         const next = new Set(current)
@@ -592,17 +566,19 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                               ? 'outline'
                               : 'default'
                           }
-                          onClick={() =>
-                            void (authenticatingIds.has(server.id)
-                              ? cancelSignIn(server.id)
-                              : signIn(server.id))
+                          disabled={
+                            authenticatingIds.has(server.id) ||
+                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
                           }
+                          onClick={() => void signIn(server.id)}
                         >
                           {authenticatingIds.has(server.id)
-                            ? 'Cancel'
+                            ? 'Connecting…'
                             : server.oauth.hasTokens && server.availability !== 'unauthenticated'
                               ? 'Connected'
-                              : 'Sign in'}
+                              : server.availability === 'unauthenticated'
+                                ? 'Retry'
+                                : 'Sign in'}
                         </Button>
                       ) : null}
                       <SettingsToggle
