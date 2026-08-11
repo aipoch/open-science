@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 import logo from '@/assets/logo.png'
 import logoDark from '@/assets/logo-dark.png'
+import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { Button } from '@/components/ui/button'
 import type { DatabaseStartupState } from '../../../shared/database-startup'
 
@@ -48,10 +49,12 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       aria-live="polite"
     >
       <section className="flex w-full max-w-md flex-col items-center text-center">
-        <div className="mb-10">
-          <img src={logo} alt="Open Science" className="h-12 w-auto dark:hidden" />
-          <img src={logoDark} alt="Open Science" className="hidden h-12 w-auto dark:block" />
-        </div>
+        {state.phase === 'blocked' ? (
+          <div className="mb-10">
+            <img src={logo} alt="Open Science" className="h-12 w-auto dark:hidden" />
+            <img src={logoDark} alt="Open Science" className="hidden h-12 w-auto dark:block" />
+          </div>
+        ) : null}
 
         {state.phase === 'blocked' ? (
           <div className="w-full rounded-xl border border-border bg-card p-7 text-left shadow-card">
@@ -75,19 +78,18 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-4">
-            <span
-              className="size-6 animate-spin rounded-full border-2 border-border border-t-primary"
-              aria-hidden="true"
-            />
-            <h1 className="text-base font-medium text-foreground">
-              {state.phase === 'migrating' ? 'Updating database…' : 'Checking database…'}
-            </h1>
-            {state.phase === 'migrating' ? (
-              <p className="text-sm text-muted-foreground">
-                Keep Open Science open while this finishes.
-              </p>
-            ) : null}
+          <div className="flex flex-col items-center gap-14">
+            <OpenScienceLogoLoader />
+            <div className="flex flex-col items-center gap-4">
+              <h1 className="text-base font-medium text-foreground">
+                {state.phase === 'migrating' ? 'Updating database…' : 'Checking database…'}
+              </h1>
+              {state.phase === 'migrating' ? (
+                <p className="text-sm text-muted-foreground">
+                  Keep Open Science open while this finishes.
+                </p>
+              ) : null}
+            </div>
           </div>
         )}
       </section>

@@ -12,9 +12,13 @@ describe('DatabaseStartupGate', () => {
   const retry = vi.fn<() => Promise<DatabaseStartupState>>()
   const quit = vi.fn<() => Promise<void>>()
 
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+  })
 
   beforeEach(() => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
     getState.mockReset().mockResolvedValue({ phase: 'checking' })
     retry.mockReset()
     quit.mockReset().mockResolvedValue()
@@ -29,6 +33,23 @@ describe('DatabaseStartupGate', () => {
         }
       }
     } as unknown as Window['api']
+  })
+
+  it('reuses the branded startup loader while checking and migrating the database', () => {
+    render(
+      <DatabaseStartupGate>
+        <div>Business application</div>
+      </DatabaseStartupGate>
+    )
+
+    const startupLoader = screen.getByTestId('open-science-logo-loader')
+    expect(screen.getByText('Checking database…')).toBeTruthy()
+
+    act(() => publish({ phase: 'migrating', migrationId: '0002_example' }))
+
+    expect(screen.getByText('Updating database…')).toBeTruthy()
+    expect(screen.getByText('Keep Open Science open while this finishes.')).toBeTruthy()
+    expect(screen.getByTestId('open-science-logo-loader')).toBe(startupLoader)
   })
 
   it('keeps the application unmounted until the database and runtime are ready', async () => {
