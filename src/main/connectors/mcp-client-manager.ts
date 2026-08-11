@@ -35,6 +35,15 @@ export type McpClientManagerTool = {
   inputSchema?: unknown
 }
 
+// Marks an MCP server's structured tool-level failure separately from connection/transport errors.
+// Callers can report a safe category without treating a reachable server as physically unavailable.
+export class McpToolCallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'McpToolCallError'
+  }
+}
+
 type McpClientManagerDeps = {
   createClient?: (
     config: CustomMcpServerConfig,
@@ -315,7 +324,7 @@ function unwrapToolResult(result: unknown): unknown {
       : undefined
 
   if (isError) {
-    throw new Error(typeof text === 'string' ? text : 'MCP tool call failed')
+    throw new McpToolCallError(typeof text === 'string' ? text : 'MCP tool call failed')
   }
   if (typeof text === 'string') {
     try {

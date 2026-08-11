@@ -7,7 +7,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
-import { McpClientManager, buildTransport } from './mcp-client-manager'
+import { McpClientManager, McpToolCallError, buildTransport } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
 
@@ -71,8 +71,12 @@ describe('McpClientManager', () => {
   it('throws when the tool result has isError set', async () => {
     const { createClient } = makeTestServer()
     const manager = new McpClientManager({ createClient: () => createClient() })
+    const failure = manager.call(config, 'boom', {})
 
-    await expect(manager.call(config, 'boom', {})).rejects.toThrow(/kaboom/)
+    await expect(failure).rejects.toEqual(
+      expect.objectContaining({ name: 'McpToolCallError', message: 'kaboom' })
+    )
+    await expect(failure).rejects.toBeInstanceOf(McpToolCallError)
   })
 
   it('dedupes concurrent connects for the same server id', async () => {

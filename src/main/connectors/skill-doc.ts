@@ -18,7 +18,8 @@ const SKILL_CONVENTIONS =
 
 const CUSTOM_SKILL_CONVENTIONS =
   `${SKILL_CONVENTIONS} Do not bypass \`host.mcp\` with raw HTTP or calls from Python/R: ` +
-  'the host path enforces approval, tool policy, credentials, and rate limits.'
+  'the host path enforces approval, tool policy, credentials, and rate limits. ' +
+  'If a call reports `connector_unauthenticated` or says sign-in is required, use a login or authentication tool listed in this Skill when one exists, wait for it to complete, then retry the original call. Do not treat an authentication requirement as connector unavailability or invent a login tool; if this Skill lists none, ask the user to sign in from Settings > Connectors.'
 
 // Placeholder value for one JSON-Schema field in a call example: an enum's first choice or the field's
 // own default when present, otherwise a type-keyed stand-in. Rendered as a JSON literal.

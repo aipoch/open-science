@@ -7,7 +7,9 @@ export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
 
 export const classifyCustomMcpFailure = (error: unknown): CustomMcpFailureAvailability =>
   error instanceof Error &&
-  /(?:401|403|unauthoriz|authenticat|forbidden|invalid_token)/i.test(error.message)
+  /(?:401|403|unauthoriz|authenticat|forbidden|invalid_token|(?:log(?:ged)?|sign(?:ed)?)[\s_-]?in)/i.test(
+    error.message
+  )
     ? 'unauthenticated'
     : 'unavailable'
 

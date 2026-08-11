@@ -8,7 +8,7 @@ import {
   toCustomMcpConfig,
   type CustomMcpFailureAvailability
 } from './custom-mcp-bootstrap'
-import type { CustomMcpServerConfig } from './mcp-client-manager'
+import { McpToolCallError, type CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -374,7 +374,11 @@ export class ConnectorService {
       return result
     } catch (error) {
       const availability = classifyCustomMcpFailure(error)
-      this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      // A structured tool error proves the MCP server is reachable. Do not poison the whole
+      // connector: it may expose its own login/authentication tool for recovering this session.
+      if (!(error instanceof McpToolCallError)) {
+        this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      }
       throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
   }

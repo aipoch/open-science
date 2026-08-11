@@ -161,6 +161,19 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('approval')
   })
 
+  it('directs custom connector authentication failures to a listed login tool', () => {
+    const md = renderCustomSkillDoc({ slug: 'content-service', name: 'Content Service' }, [
+      { name: 'login' },
+      { name: 'search' }
+    ])
+
+    expect(md).toContain('`connector_unauthenticated`')
+    expect(md).toContain('use a login or authentication tool listed in this Skill')
+    expect(md).toContain('then retry the original call')
+    expect(md).toContain('Do not treat an authentication requirement as connector unavailability')
+    expect(md).toContain('if this Skill lists none')
+  })
+
   it('keeps the PubMed Skill under a 2.3k-token on-demand budget', () => {
     const md = renderSkillDoc('pubmed')
 
