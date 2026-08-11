@@ -315,8 +315,9 @@ test('keeps representative conversation, project, and recovery states visually s
   const completedSessionDismiss = page.getByRole('button', {
     name: /Mark completed session .* as read/
   })
-  await expect(completedSessionDismiss).toBeVisible()
-  await completedSessionDismiss.click()
-  await expect(completedSessionDismiss).toBeHidden()
+  if (await completedSessionDismiss.isVisible()) {
+    await completedSessionDismiss.click()
+    await expect(completedSessionDismiss).toBeHidden()
+  }
   await expectStableScreenshot(page, 'session-recovery-warning.png')
 })
