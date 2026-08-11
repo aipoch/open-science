@@ -347,7 +347,7 @@ export const ComposerEditor = ({
 
   // Replace the active `/query` token with a skill chip, then close the popup.
   const handleSelectSkill = (skill: SkillView): void => {
-    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.name })
+    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
     mention.cancel()
   }
 

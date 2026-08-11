@@ -68,14 +68,9 @@ describe('validateCreateSpecialistInput', () => {
     expect(errors.some((e) => e.field === 'name')).toBe(true)
   })
 
-  it('rejects invalid public names even when displayName is omitted', () => {
+  it('rejects invalid public names on create', () => {
     expect(
       validateCreateSpecialistInput({ name: '<bad>' }, []).map((error) => error.message)
-    ).toContain('Name may only contain letters, digits, spaces, hyphens, and underscores.')
-    expect(
-      validateUpdateSpecialistInput({ id: 'specialist-1', revision: 1, name: '<bad>' }, []).map(
-        (error) => error.message
-      )
     ).toContain('Name may only contain letters, digits, spaces, hyphens, and underscores.')
   })
 
@@ -87,14 +82,11 @@ describe('validateCreateSpecialistInput', () => {
     ).toContain('Display name is required.')
 
     expect(
-      validateUpdateSpecialistInput(
-        {
-          id: 'specialist-1',
-          revision: 1,
-          displayName: 'x'.repeat(SPECIALIST_DISPLAY_NAME_MAX_LENGTH + 1)
-        },
-        []
-      ).map((error) => error.message)
+      validateUpdateSpecialistInput({
+        id: 'specialist-1',
+        revision: 1,
+        displayName: 'x'.repeat(SPECIALIST_DISPLAY_NAME_MAX_LENGTH + 1)
+      }).map((error) => error.message)
     ).toContain(`Display name must be ${SPECIALIST_DISPLAY_NAME_MAX_LENGTH} characters or fewer.`)
   })
 })
@@ -127,10 +119,11 @@ describe('description validation in create/update inputs', () => {
   })
 
   it('surfaces a description error on update when too long', () => {
-    const errors = validateUpdateSpecialistInput(
-      { id: 'x', revision: 1, description: 'a'.repeat(SPECIALIST_DESCRIPTION_MAX_LENGTH + 1) },
-      []
-    )
+    const errors = validateUpdateSpecialistInput({
+      id: 'x',
+      revision: 1,
+      description: 'a'.repeat(SPECIALIST_DESCRIPTION_MAX_LENGTH + 1)
+    })
     expect(errors.some((e) => e.field === 'description')).toBe(true)
   })
 })
@@ -145,10 +138,11 @@ describe('system prompt validation in create/update inputs', () => {
       )
     ).toBe(true)
     expect(
-      validateUpdateSpecialistInput(
-        { id: 'specialist-1', revision: 1, systemPrompt: oversized },
-        []
-      ).some((error) => error.field === 'systemPrompt')
+      validateUpdateSpecialistInput({
+        id: 'specialist-1',
+        revision: 1,
+        systemPrompt: oversized
+      }).some((error) => error.field === 'systemPrompt')
     ).toBe(true)
   })
 })
@@ -156,13 +150,14 @@ describe('system prompt validation in create/update inputs', () => {
 describe('package version validation in update inputs', () => {
   it('accepts SemVer and rejects a non-SemVer package version', () => {
     expect(
-      validateUpdateSpecialistInput(
-        { id: 'specialist-1', revision: 1, packageVersion: '2.0.0-beta.1+build.7' },
-        []
-      )
+      validateUpdateSpecialistInput({
+        id: 'specialist-1',
+        revision: 1,
+        packageVersion: '2.0.0-beta.1+build.7'
+      })
     ).toEqual([])
     expect(
-      validateUpdateSpecialistInput({ id: 'specialist-1', revision: 1, packageVersion: 'next' }, [])
+      validateUpdateSpecialistInput({ id: 'specialist-1', revision: 1, packageVersion: 'next' })
     ).toEqual([{ field: 'packageVersion', message: 'Package version must be valid SemVer.' }])
   })
 })

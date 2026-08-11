@@ -22,7 +22,6 @@ import type { ProfileService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
 import type { SpecialistProfileView } from '../../shared/specialist'
 import type { StoredConnectors } from '../settings/types'
-import { customConnectorSlug } from '../../shared/custom-connector'
 import {
   isAgentsOpName,
   isAgentsParams,
@@ -85,7 +84,7 @@ export type AgentsServiceDeps = {
   sessionBinding?: SessionBindingService
   persistSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => Promise<void>
   // Invalidates the runtime catalog (Settings/picker/runtime capability resolution) after a successful
-  // privileged mutation (delete). Ordinary mutations (including renames) already invalidate via the
+  // privileged mutation (delete). Ordinary mutations already invalidate via the
   // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
   // dedicated module that calls this only on success. Wired in issue 08.
   invalidateCatalog?: () => Promise<void> | void
@@ -127,6 +126,7 @@ export type ConnectorToolReadModel = {
 
 export type ConnectorReadModel = {
   id: string
+  name: string
   displayName: string
   description: string
   mainEnabled: boolean
@@ -220,8 +220,7 @@ export class AgentsService {
       if (opName === 'get') return await this.get(params)
       if (opName === 'list_skills') return await this.listSkills(params)
       if (opName === 'list_connectors') return await this.listConnectors(params)
-      // Ordinary mutations (issue 03): create, update (including renames — update is an ordinary
-      // chat-reviewed mutation for every field, no approval card), and whole-Skill/whole-Connector
+      // Ordinary mutations (issue 03): create, update of mutable fields, and whole-Skill/whole-Connector
       // attach/detach. Routed to the standalone mutation module, which delegates to ProfileService,
       // resolves name/id references, gates unavailable connectors, and returns a real read-back.
       if (
@@ -367,12 +366,12 @@ export class AgentsService {
   }
 
   // Returns the complete Specialist-visible skill catalog, including Main-disabled installed
-  // Skills. Optional name_or_id filters to one entry via stable ID first, then unique public name.
+  // Skills. Optional name_or_id filters to one entry via stable ID first, then immutable name.
   async listSkills(params: { name_or_id?: unknown }): Promise<SkillCatalogReadModel[]> {
     const catalog = await this.deps.catalog.listSkillCatalog()
     const entries = catalog.map((skill) => ({
       id: skill.id,
-      // Public name: the durable framework-facing name the agent/Skill chip uses.
+      // Immutable framework-facing invocation name; chips render displayName.
       name: skill.frameworkName,
       displayName: skill.displayName,
       source: skill.source,
@@ -416,6 +415,7 @@ export const projectConnectorsFromStored = (
   const disabled = new Set(stored?.disabledConnectorIds ?? [])
   const bundled: ConnectorReadModel[] = (CONNECTOR_CATALOG as ConnectorMeta[]).map((meta) => ({
     id: meta.id,
+    name: meta.id,
     displayName: meta.displayName,
     description: meta.description,
     mainEnabled: !disabled.has(meta.id),
@@ -437,9 +437,10 @@ export const projectConnectorsFromStored = (
         (server.transport !== 'stdio' && !server.url)
       const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
       return {
-        // The slug is the immutable public route; the UUID remains local Settings/OAuth identity.
-        id: customConnectorSlug(server),
-        displayName: server.name,
+        // The name is the immutable public route; the UUID remains local Settings/OAuth identity.
+        id: server.name,
+        name: server.name,
+        displayName: server.displayName,
         description: server.description ?? '',
         mainEnabled: server.enabled && !unauthenticated,
         // Custom MCP servers expose their tools dynamically; we do not enumerate them here (the
@@ -476,15 +477,15 @@ export function applyNameOrIdFilter<T extends Nameable>(
   const byId = entries.filter((entry) => entry.id === ref)
   if (byId.length > 0) return byId
 
-  // 2. Otherwise match a unique public name (name, then display name).
-  const byName = entries.filter((entry) => entry.name === ref || entry.displayName === ref)
+  // 2. Otherwise match a unique immutable public name. Display labels are never references.
+  const byName = entries.filter((entry) => entry.name === ref)
   if (byName.length === 0) {
     throw new Error(
-      `No catalog entry matches "${ref}". Use the stable id from list_skills/list_connectors.`
+      `No catalog entry matches "${ref}". Use the stable id from listSkills()/listConnectors().`
     )
   }
   if (byName.length > 1) {
-    // Ambiguous public name: instruct the caller to use the stable id instead of guessing.
+    // Ambiguous immutable name: instruct the caller to use the stable id instead of guessing.
     const ids = byName.map((entry) => entry.id).join(', ')
     throw new Error(
       `Multiple catalog entries match name "${ref}" (${ids}). Use the stable id from ${method} instead.`

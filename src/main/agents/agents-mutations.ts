@@ -1,15 +1,15 @@
 // host.agents ordinary-mutation operation module (issue 03).
 //
-// This module implements the ORDINARY Profile mutations + read-back: create, non-name update,
+// This module implements ordinary Profile mutations + read-back: create, mutable-field update,
 // enable/disable, and incremental whole-Skill/whole-Connector attach/detach. It is deliberately a
 // standalone module so issue 08 can compose it into the shared dispatcher without changing issues
-// 04/05. The privileged ops (delete, switch, and name-changing update) stay out of scope here — they
+// 04/05. The privileged delete and switch operations stay out of scope here — they
 // require the injected approval gateway.
 //
 // Design rules (design.md §4/§5/§8, PRD §2/§4):
 //  - ProfileService is the SINGLE domain mutation service. This module never writes the repository
 //    directly and never re-implements the Full/Selected collection rules; it only translates the
-//    public snake_case SDK input into ProfileService input and delegates.
+//    private snake_case transport input into ProfileService input and delegates.
 //  - Every successful mutation returns an actual post-write camelCase Profile read-back, never an
 //    echo of the requested input.
 //  - Skill/Connector references resolve an exact catalog ID first, otherwise an unambiguous public
@@ -106,8 +106,7 @@ const optionalStringOrThrow = (value: unknown, label: string): string | undefine
 
 // A string array of non-empty references (skill_names / connector_names). Rejects non-arrays,
 // non-string elements, and empty-string entries. Duplicates are preserved as-is and de-duped later.
-// Exported so the privileged name-changing update path (agents-service.runPrivilegedUpdate) reuses
-// the EXACT validation the ordinary update path uses — no duplicated payload plumbing.
+// Exported so all capability mutations share the same payload validation.
 export const asStringArray = (value: unknown): string[] | undefined => {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || !value.every((item) => isString(item) && item.length > 0)) {
@@ -120,9 +119,7 @@ export const asStringArray = (value: unknown): string[] | undefined => {
 // Catalog resolution (reuses the read slice's projection + name/id filter)
 // ---------------------------------------------------------------------------
 
-// Resolves each public name/id skill reference to its stable id via the read slice's name/id filter
-// (exact id wins, otherwise a unique public name; ambiguity is rejected with a stable-id hint).
-// Exported so the privileged name-changing update path reuses the same resolution.
+// Resolves each immutable name/id Skill reference to its stable id via the read slice's filter.
 export const resolveSkillRefs = async (
   catalog: AgentsMutationCatalog,
   refs: string[],
@@ -143,8 +140,7 @@ export const resolveSkillRefs = async (
 // Resolves each connector reference to its stable id and, when `gateUnavailable` is set (a NEW
 // attachment via create/attach_connector/update connector_names), rejects a missing, unavailable, or
 // unauthenticated custom connector. Existing stale references remain readable and removable via
-// detach (which calls this with gateUnavailable=false). Exported so the privileged name-changing
-// update path reuses the same resolution + gating.
+// detach (which calls this with gateUnavailable=false).
 export const resolveConnectorRefs = async (
   catalog: AgentsMutationCatalog,
   refs: string[],
@@ -170,8 +166,7 @@ export const resolveConnectorRefs = async (
 }
 
 // ---------------------------------------------------------------------------
-// Shared capability projection (used by BOTH the ordinary update path AND the
-// privileged name-changing update path so the two NEVER diverge)
+// Shared capability projection for ordinary updates.
 // ---------------------------------------------------------------------------
 
 // The capability-bearing slice of an UpdateSpecialistInput / SpecialistUpdatePatch. Returned
@@ -192,7 +187,7 @@ export type CapabilityProjection = {
 //     connectorTools is re-read from `current`. fullAccess is left unset.
 //   - neither array present but unrestricted:true -> 'full' (Selected configuration preserved).
 //   - neither -> returns an EMPTY projection (caller leaves capability fields unset; we do NOT
-//     force full-access). This is what lets a rename-only patch leave capabilities untouched.
+//     force full-access). This lets presentation-only patches leave capabilities untouched.
 // `current` is the live profile the patch is being applied against (for preserving omitted
 // collections and connectorTools). `method` scopes error messages.
 export const projectCapabilityFields = async (
@@ -239,6 +234,7 @@ export const projectCapabilityFields = async (
 // unknown fields must not reach the repository).
 const CREATE_ALLOWED_KEYS = new Set([
   'name',
+  'display_name',
   'description',
   'system_prompt',
   'icon_key',
@@ -259,6 +255,7 @@ const handleCreate = async (
   if (!name.trim()) throw new Error('name is required')
 
   const description = optionalStringOrThrow(params.description, 'description')
+  const displayName = optionalStringOrThrow(params.display_name, 'display name')
   const systemPrompt = optionalStringOrThrow(params.system_prompt, 'system prompt')
   const iconKey = optionalStringOrThrow(params.icon_key, 'icon key')
   const colorKey = optionalStringOrThrow(params.color_key, 'color key')
@@ -283,6 +280,7 @@ const handleCreate = async (
 
   const input: CreateSpecialistInput = {
     name,
+    displayName,
     description,
     systemPrompt,
     iconKey,
@@ -324,7 +322,7 @@ const handleCreate = async (
 // The set of update-patch keys the public SDK accepts. Anything else is rejected (cross-cutting:
 // unknown fields must not reach the repository).
 export const UPDATE_ALLOWED_KEYS = new Set([
-  'name',
+  'display_name',
   'revision',
   'description',
   'system_prompt',
@@ -342,9 +340,7 @@ const handleUpdate = async (
 ): Promise<SpecialistProfileView> => {
   const name = isString(params.name) ? params.name : throwShape('name is required')
 
-  // The patch is a NESTED object so a rename (patch.name) never collides with the lookup name
-  // (params.name) on the wire — design.md §4 / customize-skill.md: `update(name, patch)` where the
-  // patch may carry a new `name`. params.name resolves the target; every field in `patch` is a change.
+  // params.name resolves the immutable Specialist name; every field in patch is a change.
   const patch = params.patch
   if (!isRecord(patch)) throw new Error('patch is required and must be an object.')
   rejectUnknownKeys(patch, UPDATE_ALLOWED_KEYS, 'update')
@@ -362,7 +358,7 @@ const handleUpdate = async (
   const input: {
     id: string
     revision: number
-    name?: string
+    displayName?: string
     description?: string
     systemPrompt?: string
     iconKey?: string
@@ -372,12 +368,8 @@ const handleUpdate = async (
     selectedCapabilities?: SpecialistSelectedConfig
   } = { id: current.id, revision }
 
-  // A rename (patch.name) is an ordinary chat-reviewed mutation like every other update field: the
-  // revision guard above plus the atomic single-profile update are the only authority. An
-  // uncustomized displayName follows the rename inside ProfileService.update, keeping the settings
-  // list in sync without a display_name SDK field.
-  const mappedName = optionalStringOrThrow(patch.name, 'name')
-  if (mappedName !== undefined) input.name = mappedName
+  const displayName = optionalStringOrThrow(patch.display_name, 'display name')
+  if (displayName !== undefined) input.displayName = displayName
   const description = optionalStringOrThrow(patch.description, 'description')
   if (description !== undefined) input.description = description
   const systemPrompt = optionalStringOrThrow(patch.system_prompt, 'system prompt')
@@ -391,8 +383,7 @@ const handleUpdate = async (
     throw new Error('enabled must be a boolean.')
   }
 
-  // Capability projection is shared with the privileged name-changing update path so the two NEVER
-  // diverge on the Selected/Full + collection-replacement semantics.
+  // Capability projection centralizes the Selected/Full + collection-replacement semantics.
   const capability = await projectCapabilityFields(patch, current, deps.catalog, 'update')
   if (capability.capabilityMode !== undefined) {
     input.capabilityMode = capability.capabilityMode
@@ -450,7 +441,7 @@ const handleAttachDetach = async (
   // attach resolves the reference to a stable id (and gates unavailable custom connectors). detach is
   // a removal, so an existing STALE reference that no longer appears in the catalog must still be
   // removable (design.md §5: "existing stale references remain readable and removable"). We try to
-  // resolve first (so a public name still works), but on detach we fall back to the literal reference
+  // resolve first (so an immutable name still works), but on detach we fall back to the literal reference
   // as the stable id when nothing matches.
   let stableId: string
   if (op.endsWith('skill')) {
@@ -497,8 +488,7 @@ const resolveOrPassThrough = async <T extends SkillCatalogReadModel | ConnectorR
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Exported so the privileged name-changing update path reuses the EXACT unknown-key rejection the
-// ordinary path uses (defect #5). Throws a sanitized `Unknown field "<key>".` error.
+// Exported so every caller shares the exact unknown-key rejection behavior.
 export function rejectUnknownKeys(
   params: Record<string, unknown>,
   allowed: Set<string>,

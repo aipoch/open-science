@@ -4,10 +4,7 @@ import { ALL_CONNECTOR_IDS } from './registry'
 import { renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
 import type { CustomSkillDocTool } from './skill-doc'
 import type { StoredCustomMcpServer } from '../settings/types'
-import {
-  customConnectorSlug,
-  customConnectorSlugFromSkillName
-} from '../../shared/custom-connector'
+import { customConnectorNameFromSkillName } from '../../shared/custom-connector'
 import { parseFrontmatter } from '../skills/frontmatter'
 
 // Whether an `mcp-<x>` directory's suffix names a bundled connector — CASE-INSENSITIVELY. This
@@ -81,7 +78,7 @@ export async function syncConnectorSkillDocs(
 export type CustomServerListTools = (server: StoredCustomMcpServer) => Promise<CustomSkillDocTool[]>
 
 export type CustomServerSkillSyncResult = {
-  materializedSlugs: string[]
+  materializedNames: string[]
   failures: Array<{ server: StoredCustomMcpServer; error: unknown }>
 }
 
@@ -90,10 +87,10 @@ export type MaterializedCustomSkillDocSyncResult = {
   failures: Array<{ skillName: string; error: unknown }>
 }
 
-const isSafeCustomServerSlug = (slug: string): boolean =>
-  /^[a-z0-9-]+$/.test(slug) && !ALL_CONNECTOR_IDS.includes(slug)
+const isSafeCustomServerName = (name: string): boolean =>
+  /^[a-z0-9-]+$/.test(name) && !ALL_CONNECTOR_IDS.includes(name)
 
-// Writes skills/mcp-<slug>/SKILL.md for enabled custom MCP servers, sourced from the server's
+// Writes skills/mcp-<name>/SKILL.md for enabled custom MCP servers, sourced from the server's
 // live listTools() schema rather than a bundled descriptor table (§3.4). Cleanup mirrors
 // syncConnectorSkillDocs: it only removes ids that are NOT known bundled connector ids, so
 // the two sync passes never delete each other's directories even when run against the same dir.
@@ -101,16 +98,16 @@ export async function syncCustomServerSkillDocs(
   skillsDir: string,
   servers: StoredCustomMcpServer[],
   listTools: CustomServerListTools,
-  cleanupSlugs?: readonly string[]
+  cleanupNames?: readonly string[]
 ): Promise<CustomServerSkillSyncResult> {
   await mkdir(skillsDir, { recursive: true })
   const safeServers = servers
-    .map((server) => ({ server, slug: customConnectorSlug(server) }))
-    .filter(({ slug }) => isSafeCustomServerSlug(slug))
-  const materializedSlugs: string[] = []
+    .map((server) => ({ server, name: server.name }))
+    .filter(({ name }) => isSafeCustomServerName(name))
+  const materializedNames: string[] = []
   const failures: CustomServerSkillSyncResult['failures'] = []
-  for (const { server, slug } of safeServers) {
-    const skillName = `mcp-${slug}`
+  for (const { server, name } of safeServers) {
+    const skillName = `mcp-${name}`
     const dir = join(skillsDir, skillName)
     const caseFoldedAlias = await findCaseFoldedAlias(skillsDir, skillName)
     if (caseFoldedAlias) {
@@ -134,23 +131,23 @@ export async function syncCustomServerSkillDocs(
     }
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'SKILL.md'), renderCustomSkillDoc(server, tools), 'utf8')
-    materializedSlugs.push(slug)
+    materializedNames.push(name)
   }
-  const enabledSlugs = new Set(materializedSlugs)
-  const cleanupScope = cleanupSlugs ? new Set(cleanupSlugs) : undefined
+  const enabledNames = new Set(materializedNames)
+  const cleanupScope = cleanupNames ? new Set(cleanupNames) : undefined
   const existing = await readdir(skillsDir).catch(() => [] as string[])
   for (const entry of existing) {
-    const slug = customConnectorSlugFromSkillName(entry)
+    const name = customConnectorNameFromSkillName(entry)
     // A bundled-connector dir (case-insensitive) belongs to syncConnectorSkillDocs — never delete it
     // here, even a case-variant like mcp-Chemistry that the built-in sync has written its doc into.
     // Invalid/non-canonical names are also unowned and must be preserved.
-    if (!slug || namesBundledConnector(slug)) continue
-    if (cleanupScope && !cleanupScope.has(slug)) continue
-    if (!enabledSlugs.has(slug)) {
+    if (!name || namesBundledConnector(name)) continue
+    if (cleanupScope && !cleanupScope.has(name)) continue
+    if (!enabledNames.has(name)) {
       await rm(join(skillsDir, entry), { recursive: true, force: true })
     }
   }
-  return { materializedSlugs, failures }
+  return { materializedNames, failures }
 }
 
 // Copies only successfully generated custom Connector docs from the canonical app-owned Claude
@@ -166,8 +163,8 @@ export async function syncMaterializedCustomServerSkillDocs(
   const requested = [
     ...new Set(
       skillNames.filter((skillName) => {
-        const slug = customConnectorSlugFromSkillName(skillName)
-        return slug !== undefined && !namesBundledConnector(slug)
+        const name = customConnectorNameFromSkillName(skillName)
+        return name !== undefined && !namesBundledConnector(name)
       })
     )
   ]
@@ -226,8 +223,8 @@ export async function syncMaterializedCustomServerSkillDocs(
 
   const materialized = new Set(materializedSkillNames)
   for (const entry of await readdir(targetSkillsDir).catch(() => [] as string[])) {
-    const slug = customConnectorSlugFromSkillName(entry)
-    if (!slug || namesBundledConnector(slug)) continue
+    const name = customConnectorNameFromSkillName(entry)
+    if (!name || namesBundledConnector(name)) continue
     if (!materialized.has(entry)) {
       await rm(join(targetSkillsDir, entry), { recursive: true, force: true })
     }

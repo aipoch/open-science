@@ -17,7 +17,6 @@ import type { ConnectorPermissionRequest } from '../permission-grants/connector-
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import type { SpecialistProfileView } from '../../shared/specialist'
-import { customConnectorSlug } from '../../shared/custom-connector'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig): Promise<Array<{ name: string }>>
@@ -217,13 +216,11 @@ export class ConnectorService {
     }
 
     const customServers = (await this.currentConnectors())?.customMcpServers ?? []
-    const custom =
-      customServers.find((server) => customConnectorSlug(server) === connector) ??
-      customServers.find((server) => server.name === connector)
+    const custom = customServers.find((server) => server.name === connector)
     const access = await this.resolveAccess(
       connector,
       context,
-      custom ? [customConnectorSlug(custom), custom.name, custom.id] : [connector]
+      custom ? [custom.name] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -300,7 +297,10 @@ export class ConnectorService {
     const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
     if (physicalFailure) throw new ConnectorGateError(physicalFailure)
     if (!access.bypassMainEnablement && !custom.enabled) {
-      throw new ConnectorGateError('connector_disabled', `connector not enabled: ${custom.name}`)
+      throw new ConnectorGateError(
+        'connector_disabled',
+        `connector not enabled: ${custom.displayName}`
+      )
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
@@ -429,7 +429,7 @@ export class ConnectorService {
   }
 
   // The Permission Broker owns Connector policy precedence as well as durable grant matching. This
-  // service supplies only the registered identity, routing aliases, and current settings snapshot.
+  // service supplies only the registered identity and current settings snapshot.
   private async ensureAuthorized(
     connectorLabel: string,
     capabilityServerId: string,
@@ -491,16 +491,19 @@ export class ConnectorService {
       if (!current) throw new ConnectorGateError('connector_unavailable')
       this.assertCustomServerCurrent(current, generation)
       if (!access.bypassMainEnablement && !current.enabled) {
-        throw new ConnectorGateError('connector_disabled', `connector not enabled: ${current.name}`)
+        throw new ConnectorGateError(
+          'connector_disabled',
+          `connector not enabled: ${current.displayName}`
+        )
       }
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
       }
 
       const request = this.authorizationRequest(
-        current.name,
+        current.displayName,
         current.id,
-        [current.id, customConnectorSlug(current), current.name],
+        [current.name],
         method,
         args,
         context,

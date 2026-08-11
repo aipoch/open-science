@@ -6,7 +6,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-1',
-        name: 'My Server',
+        name: 'my-server',
+        displayName: 'My Server',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', 'some-mcp-server'],
@@ -17,7 +18,8 @@ describe('sanitizeCustomMcpServer', () => {
       })
     ).toEqual({
       id: 'srv-1',
-      name: 'My Server',
+      name: 'my-server',
+      displayName: 'My Server',
       transport: 'stdio',
       command: 'npx',
       args: ['-y', 'some-mcp-server'],
@@ -28,26 +30,26 @@ describe('sanitizeCustomMcpServer', () => {
     })
   })
 
-  it('keeps a safe explicit slug and drops an invalid legacy value', () => {
+  it('uses the canonical name and ignores a legacy slug', () => {
     const base = {
       id: 'srv-1',
-      name: 'Example OAuth E2E',
+      name: 'example-oauth-e2e',
+      displayName: 'Example OAuth E2E',
       transport: 'stdio',
       command: 'npx',
       enabled: true
     }
 
-    expect(sanitizeCustomMcpServer({ ...base, slug: 'example-oauth-e2e' })).toMatchObject({
-      slug: 'example-oauth-e2e'
-    })
-    expect(sanitizeCustomMcpServer({ ...base, slug: '../unsafe' })).not.toHaveProperty('slug')
+    expect(sanitizeCustomMcpServer({ ...base, slug: 'different-name' })).toMatchObject(base)
+    expect(sanitizeCustomMcpServer({ ...base, slug: '../unsafe' })).toMatchObject(base)
   })
 
   it('drops a stdio server missing command', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-1',
-        name: 'My Server',
+        name: 'my-server',
+        displayName: 'My Server',
         transport: 'stdio',
         enabled: true
       })
@@ -58,7 +60,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-1',
-        name: 'My Server',
+        name: 'my-server',
+        displayName: 'My Server',
         transport: 'websocket',
         command: 'npx',
         enabled: true
@@ -78,7 +81,8 @@ describe('sanitizeCustomMcpServer', () => {
       })
     ).toEqual({
       id: 'srv-1',
-      name: 'My Server',
+      name: 'my-server',
+      displayName: 'My Server',
       transport: 'stdio',
       command: 'npx',
       env: { FOO: 'bar' },
@@ -90,7 +94,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-remote',
-        name: 'Remote Server',
+        name: 'remote-server',
+        displayName: 'Remote Server',
         transport: 'streamable_http',
         url: 'https://example.com/mcp',
         headers: { Authorization: 'Bearer token' },
@@ -98,7 +103,8 @@ describe('sanitizeCustomMcpServer', () => {
       })
     ).toEqual({
       id: 'srv-remote',
-      name: 'Remote Server',
+      name: 'remote-server',
+      displayName: 'Remote Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer token' },
@@ -110,14 +116,16 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-sse',
-        name: 'SSE Server',
+        name: 'sse-server',
+        displayName: 'SSE Server',
         transport: 'sse',
         url: 'https://example.com/sse',
         enabled: true
       })
     ).toEqual({
       id: 'srv-sse',
-      name: 'SSE Server',
+      name: 'sse-server',
+      displayName: 'SSE Server',
       transport: 'sse',
       url: 'https://example.com/sse',
       enabled: true
@@ -128,7 +136,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-remote',
-        name: 'Remote Server',
+        name: 'remote-server',
+        displayName: 'Remote Server',
         transport: 'streamable_http',
         enabled: true
       })
@@ -136,7 +145,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-sse',
-        name: 'SSE Server',
+        name: 'sse-server',
+        displayName: 'SSE Server',
         transport: 'sse',
         enabled: true
       })
@@ -147,7 +157,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-remote',
-        name: 'Remote Server',
+        name: 'remote-server',
+        displayName: 'Remote Server',
         transport: 'streamable_http',
         url: 'https://example.com/mcp',
         headers: { Authorization: 'Bearer token', BAD: 42 },
@@ -155,7 +166,8 @@ describe('sanitizeCustomMcpServer', () => {
       })
     ).toEqual({
       id: 'srv-remote',
-      name: 'Remote Server',
+      name: 'remote-server',
+      displayName: 'Remote Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer token' },
@@ -167,7 +179,8 @@ describe('sanitizeCustomMcpServer', () => {
     expect(
       sanitizeCustomMcpServer({
         id: 'srv-oauth',
-        name: 'OAuth Server',
+        name: 'oauth-server',
+        displayName: 'OAuth Server',
         transport: 'streamable_http',
         url: 'https://example.com/mcp',
         enabled: true,
@@ -182,7 +195,8 @@ describe('sanitizeCustomMcpServer', () => {
       })
     ).toEqual({
       id: 'srv-oauth',
-      name: 'OAuth Server',
+      name: 'oauth-server',
+      displayName: 'OAuth Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
       enabled: true,
@@ -201,14 +215,28 @@ describe('sanitizeConnectors customMcpServers', () => {
       enabledIds: [],
       autoAllowIds: [],
       customMcpServers: [
-        { id: 'srv-1', name: 'Valid', transport: 'stdio', command: 'npx', enabled: true },
+        {
+          id: 'srv-1',
+          name: 'valid',
+          displayName: 'Valid',
+          transport: 'stdio',
+          command: 'npx',
+          enabled: true
+        },
         { id: 'srv-2', name: 'Missing command', transport: 'stdio', enabled: true },
         { id: '', name: 'No id', transport: 'stdio', command: 'npx', enabled: true }
       ]
     })
 
     expect(result?.customMcpServers).toEqual([
-      { id: 'srv-1', name: 'Valid', transport: 'stdio', command: 'npx', enabled: true }
+      {
+        id: 'srv-1',
+        name: 'valid',
+        displayName: 'Valid',
+        transport: 'stdio',
+        command: 'npx',
+        enabled: true
+      }
     ])
   })
 
@@ -220,5 +248,30 @@ describe('sanitizeConnectors customMcpServers', () => {
     })
 
     expect(result?.customMcpServers).toBeUndefined()
+  })
+
+  it('does not treat a custom server UUID or displayName as a policy identity', () => {
+    const result = sanitizeConnectors({
+      enabledIds: [],
+      autoAllowIds: ['chemistry', 'srv-1'],
+      blockedToolIds: ['chemistry/search', 'srv-1/write'],
+      askToolIds: ['chemistry/lookup', 'srv-1/read'],
+      customMcpServers: [
+        {
+          id: 'srv-1',
+          name: 'custom-chemistry',
+          displayName: 'chemistry',
+          transport: 'stdio',
+          command: 'npx',
+          enabled: true
+        }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      autoAllowIds: ['chemistry', 'srv-1'],
+      blockedToolIds: ['chemistry/search', 'srv-1/write'],
+      askToolIds: ['chemistry/lookup', 'srv-1/read']
+    })
   })
 })

@@ -363,10 +363,10 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     return { service, profileService, gateway, invalidateCatalog }
   }
 
-  it('routes a rename through the ordinary mutation path (real read-back, no echo, no approval)', async () => {
-    // The ProfileService returns the REAL post-write record (new name + bumped revision); the dispatcher
+  it('routes a displayName edit through the ordinary mutation path', async () => {
+    // The ProfileService returns the real post-write record; the dispatcher
     // must surface it verbatim, not echo the request patch.
-    const updated = specialist({ name: 'Biology', description: 'new', revision: 4 })
+    const updated = specialist({ displayName: 'Biology', description: 'new', revision: 4 })
     const { service, profileService, gateway } = buildService({
       profiles: [specialist()]
     })
@@ -374,18 +374,19 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
 
     const result = (await service.dispatch({
       op: 'update',
-      params: { name: 'Bio', patch: { name: 'Biology', description: 'new', revision: 3 } }
+      params: { name: 'Bio', patch: { display_name: 'Biology', description: 'new', revision: 3 } }
     })) as SpecialistProfileView
 
     // Ordinary path returns a projected AgentReadModel (no {status:'updated'} envelope).
-    expect(result.name).toBe('Biology')
+    expect(result.name).toBe('Bio')
+    expect(result.displayName).toBe('Biology')
     expect(result.revision).toBe(4)
     // The ordinary path pinned the re-resolved name -> id and revision before update.
     const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(updateArgs.id).toBe('sp-1')
     expect(updateArgs.revision).toBe(3)
-    expect(updateArgs.name).toBe('Biology')
-    // Renames are chat-reviewed, not privileged: the gateway was never consulted.
+    expect(updateArgs.name).toBeUndefined()
+    expect(updateArgs.displayName).toBe('Biology')
     expect(gateway.decide).not.toHaveBeenCalled()
   })
 
@@ -478,11 +479,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     expect(result).toEqual({ status: 'deleted', name: 'Bio' })
   })
 
-  // Regression (08a review): a name-changing patch that ALSO edits capabilities MUST apply both
-  // atomically. The /customize Skill sends skill_names/connector_names in the same update patch as a
-  // rename (preferAtomicUpdate), and explainNameChange promises to "rename ... and apply the rest of
-  // the reviewed changes in one step". Previously runPrivilegedUpdate projected identity/text fields
-  // only and silently dropped the capability edit.
+  // A display-label patch that also edits capabilities must apply both atomically.
   const skillCatalog = (): AgentsCatalogSource => ({
     listSkillCatalog: vi.fn(async () => [
       {
@@ -531,11 +528,11 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     return { service, profileService, gateway, invalidateCatalog }
   }
 
-  it('a name-changing patch that also edits skill_names applies BOTH atomically (no capability drop)', async () => {
-    // The ProfileService returns the REAL post-write record (renamed, bumped revision, AND the new
+  it('a displayName patch that also edits skill_names applies both atomically', async () => {
+    // The ProfileService returns the real post-write record (new label, bumped revision, and the new
     // selected capability collection). The dispatcher must surface it verbatim, not echo the request.
     const updated: SpecialistProfileView = {
-      ...specialist({ name: 'Biology', revision: 4 }),
+      ...specialist({ displayName: 'Biology', revision: 4 }),
       capabilityMode: 'selected',
       selectedCapabilities: { skillIds: ['sk-reviewer'], connectorIds: [], connectorTools: [] },
       fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] }
@@ -549,31 +546,31 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
       op: 'update',
       params: {
         name: 'Bio',
-        patch: { name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
+        patch: { display_name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
       }
     })) as SpecialistProfileView
 
-    // REAL post-write read-back: BOTH the rename and the capability edit landed.
-    expect(result.name).toBe('Biology')
+    expect(result.name).toBe('Bio')
+    expect(result.displayName).toBe('Biology')
     expect(result.capabilityMode).toBe('selected')
     expect(result.selectedCapabilities.skillIds).toEqual(['sk-reviewer'])
     expect(result.revision).toBe(4)
 
-    // The ordinary path received the COMPLETE patch: name + resolved capability fields. The
+    // The ordinary path received the complete patch: displayName + resolved capability fields. The
     // skill ref was resolved to its stable id and projected onto the patch (not stripped).
     const updateArgs = (profileService.update as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(updateArgs.name).toBe('Biology')
+    expect(updateArgs.name).toBeUndefined()
+    expect(updateArgs.displayName).toBe('Biology')
     expect(updateArgs.capabilityMode).toBe('selected')
     expect(updateArgs.selectedCapabilities).toEqual({
       skillIds: ['sk-reviewer'],
       connectorIds: [],
       connectorTools: []
     })
-    // No approval card for renames.
     expect(gateway.decide).not.toHaveBeenCalled()
   })
 
-  it('a combined name+capability patch with a stale revision fails closed (no mutation)', async () => {
+  it('a combined displayName+capability patch with a stale revision fails closed', async () => {
     // Live revision drifted to 5 while the reviewed revision was 3.
     const { service, profileService, invalidateCatalog } = buildServiceWithSkills({
       profiles: [specialist({ revision: 5 })]
@@ -584,7 +581,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         op: 'update',
         params: {
           name: 'Bio',
-          patch: { name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
+          patch: { display_name: 'Biology', skill_names: ['sk-reviewer'], revision: 3 }
         }
       })
     ).rejects.toThrow(/host\.agents\.update:.*revision/)
@@ -592,26 +589,23 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     expect(invalidateCatalog).not.toHaveBeenCalled()
   })
 
-  // Regression (defect #1): a name-changing patch that ALSO toggles `enabled` must land BOTH. The
+  // A displayName patch that also toggles `enabled` must land both. The
   // ordinary update path applies `enabled` via a separate ProfileService.setEnabled(...) call after
   // the identity/capability update.
-  it('a name-changing patch that also toggles enabled applies BOTH the rename and the enabled change', async () => {
-    // After the atomic rename (revision 3->4), setEnabled flips enabled to false and bumps again
-    // (revision 4->5). The dispatcher must return the REAL post-setEnabled read-back with the new
-    // name AND enabled === false.
-    const renamed = specialist({ name: 'Biology', revision: 4, enabled: true })
-    const afterToggle = specialist({ name: 'Biology', revision: 5, enabled: false })
+  it('a displayName patch that also toggles enabled applies both changes', async () => {
+    const renamed = specialist({ displayName: 'Biology', revision: 4, enabled: true })
+    const afterToggle = specialist({ displayName: 'Biology', revision: 5, enabled: false })
     const { service, profileService } = buildService({ profiles: [specialist()] })
     ;(profileService.update as ReturnType<typeof vi.fn>).mockResolvedValue(renamed)
     ;(profileService.setEnabled as ReturnType<typeof vi.fn>) = vi.fn(async () => afterToggle)
 
     const result = (await service.dispatch({
       op: 'update',
-      params: { name: 'Bio', patch: { name: 'Biology', enabled: false, revision: 3 } }
+      params: { name: 'Bio', patch: { display_name: 'Biology', enabled: false, revision: 3 } }
     })) as SpecialistProfileView
 
-    // REAL post-write read-back carries BOTH the rename and the enabled toggle.
-    expect(result.name).toBe('Biology')
+    expect(result.name).toBe('Bio')
+    expect(result.displayName).toBe('Biology')
     expect(result.enabled).toBe(false)
     expect(result.revision).toBe(5)
     // setEnabled was invoked with the toggled value, after the atomic rename committed.
@@ -621,9 +615,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
     )
   })
 
-  // Regression (defect #5): a rename patch must reject unknown keys the same way every other update
-  // patch does — an unknown field must never be silently ignored.
-  it('rejects a name-changing patch carrying an unknown field with a sanitized error', async () => {
+  it('rejects a displayName patch carrying an unknown field with a sanitized error', async () => {
     const { service, profileService, invalidateCatalog } = buildService({
       profiles: [specialist()]
     })
@@ -633,7 +625,7 @@ describe('AgentsService.dispatch — mutation routing (privileged delete + ordin
         op: 'update',
         params: {
           name: 'Bio',
-          patch: { name: 'Biology', malicious_field: 'x', revision: 3 }
+          patch: { display_name: 'Biology', malicious_field: 'x', revision: 3 }
         }
       })
     ).rejects.toThrow(/host\.agents\.update:.*Unknown field "malicious_field"/)

@@ -253,7 +253,7 @@ describe('SkillCatalogModule', () => {
       })
     ).resolves.toEqual([])
     expect(
-      (await catalog.createSkill({ name: 'My Skill', description: 'Mine.', body: '# Mine' })).map(
+      (await catalog.createSkill({ name: 'my-skill', description: 'Mine.', body: '# Mine' })).map(
         (skill) => skill.id
       )
     ).toEqual(['demo', 'personal-my-skill'])
@@ -261,12 +261,19 @@ describe('SkillCatalogModule', () => {
       (
         await catalog.updateSkill({
           id: 'personal-my-skill',
-          name: 'My Skill',
           description: 'Edited.',
           body: '# Edited'
         })
       ).find((skill) => skill.id === 'personal-my-skill')
     ).toMatchObject({ description: 'Edited.' })
+    await expect(
+      catalog.updateSkill({
+        id: 'personal-my-skill',
+        name: 'Renamed Skill',
+        description: 'Edited.',
+        body: '# Edited'
+      } as never)
+    ).rejects.toThrow('Skill name is immutable.')
     expect(
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
@@ -323,7 +330,7 @@ describe('SkillCatalogModule', () => {
   it('exports a personal Skill as a portable ZIP archive', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({
-      name: 'My Skill',
+      name: 'my-skill',
       description: 'Mine.',
       body: '# Mine',
       references: [

@@ -6,7 +6,7 @@ import type {
   ValidationCategory
 } from '../../shared/settings'
 import { isCodexSubscriptionProvider } from '../../shared/settings'
-import { isCustomConnectorSlug } from '../../shared/custom-connector'
+import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
 import { isOfficialVendorId } from '../../shared/provider-registry'
 import {
@@ -214,12 +214,24 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
 export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer | undefined => {
   if (!isRecord(value)) return undefined
   const id = asString(value.id)
-  const name = asString(value.name)
+  const storedName = asString(value.name)
+  const storedDisplayName = asString(value.displayName)
+  const legacySlug = asString(value.slug)
+  const name = storedDisplayName
+    ? storedName
+    : legacySlug && isCustomConnectorName(legacySlug)
+      ? legacySlug
+      : storedName
+        ? toCustomConnectorName(storedName)
+        : undefined
+  const displayName = storedDisplayName ?? storedName
   const transport = asString(value.transport) as StoredCustomMcpServer['transport'] | undefined
   const enabled = asBoolean(value.enabled)
   if (
     !id ||
     !name ||
+    !displayName ||
+    !isCustomConnectorName(name) ||
     !transport ||
     !CUSTOM_MCP_TRANSPORTS.has(transport) ||
     enabled === undefined
@@ -231,9 +243,7 @@ export const sanitizeCustomMcpServer = (value: unknown): StoredCustomMcpServer |
   if (transport === 'stdio' && !command) return undefined
   if ((transport === 'streamable_http' || transport === 'sse') && !url) return undefined
 
-  const storedSlug = asString(value.slug)
-  const server: StoredCustomMcpServer = { id, name, transport, enabled }
-  if (storedSlug && isCustomConnectorSlug(storedSlug)) server.slug = storedSlug
+  const server: StoredCustomMcpServer = { id, name, displayName, transport, enabled }
   if (command) server.command = command
   const args = asStringArray(value.args)
   if (args.length) server.args = args
@@ -305,7 +315,9 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
         .map(sanitizeCustomMcpServer)
         .filter((server): server is StoredCustomMcpServer => !!server)
     : []
-  if (customMcpServers.length) connectors.customMcpServers = customMcpServers
+  if (customMcpServers.length) {
+    connectors.customMcpServers = customMcpServers
+  }
   return connectors
 }
 

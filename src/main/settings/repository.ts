@@ -20,7 +20,6 @@ import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
-import { customConnectorSlug } from '../../shared/custom-connector'
 import {
   type StoredComputeGrant,
   type StoredConnectors,
@@ -552,14 +551,14 @@ class SettingsRepository {
     })
   }
 
-  // Removes a custom MCP server by id and every policy alias owned by its local id/public identity.
+  // Removes a custom MCP server by id and policy entries owned by its public name.
   async removeCustomServer(id: string): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
       const removed = (connectors.customMcpServers ?? []).find((s) => s.id === id)
       connectors.customMcpServers = (connectors.customMcpServers ?? []).filter((s) => s.id !== id)
       if (!removed) return
 
-      const aliases = new Set([removed.id, customConnectorSlug(removed), removed.name])
+      const aliases = new Set([removed.name])
       connectors.autoAllowIds = connectors.autoAllowIds.filter((entry) => !aliases.has(entry))
       const withoutToolAliases = (entries: string[] | undefined): string[] | undefined => {
         const kept = (entries ?? []).filter(

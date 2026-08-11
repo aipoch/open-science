@@ -56,8 +56,8 @@ const seedConnectors = [
 const seedCustomServers = [
   {
     id: 'custom-server-uuid',
-    slug: 'my-mcp',
-    name: 'My MCP',
+    name: 'my-mcp',
+    displayName: 'My MCP',
     description: 'A local tool server',
     transport: 'stdio' as const,
     enabled: true,
@@ -295,10 +295,8 @@ describe('ConnectorsPanel (groups)', () => {
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('This Connector is used by 4 Specialists')
-    expect(document.body.textContent).toContain('Selected by legacy UUID')
+    expect(document.body.textContent).toContain('This Connector is used by 2 Specialists')
     expect(document.body.textContent).toContain('Selected by ID')
-    expect(document.body.textContent).toContain('Selected by legacy name')
     expect(document.body.textContent).toContain('Full access')
 
     const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -330,8 +328,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',
@@ -362,8 +360,8 @@ describe('ConnectorsPanel (groups)', () => {
         customServers: [
           {
             id: 'oauth-mcp',
-            slug: 'oauth-mcp',
-            name: 'OAuth MCP',
+            name: 'oauth-mcp',
+            displayName: 'OAuth MCP',
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',
@@ -401,8 +399,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'offline-mcp',
-          slug: 'offline-mcp',
-          name: 'Offline MCP',
+          name: 'offline-mcp',
+          displayName: 'Offline MCP',
           transport: 'stdio',
           enabled: true,
           command: 'mcp',
@@ -430,8 +428,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'invalid-mcp',
-          slug: 'invalid-mcp',
-          name: 'Invalid MCP',
+          name: 'invalid-mcp',
+          displayName: 'Invalid MCP',
           transport: 'stdio',
           enabled: false,
           availability: 'unavailable'
@@ -457,8 +455,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'checking-mcp',
-          slug: 'checking-mcp',
-          name: 'Checking MCP',
+          name: 'checking-mcp',
+          displayName: 'Checking MCP',
           transport: 'stdio',
           enabled: true,
           command: 'mcp',
@@ -478,8 +476,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'expired-oauth',
-          slug: 'expired-oauth',
-          name: 'Expired OAuth',
+          name: 'expired-oauth',
+          displayName: 'Expired OAuth',
           transport: 'streamable_http',
           enabled: true,
           url: 'https://mcp.example.test',
@@ -508,8 +506,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'anonymous-remote',
-          slug: 'anonymous-remote',
-          name: 'Anonymous Remote',
+          name: 'anonymous-remote',
+          displayName: 'Anonymous Remote',
           transport: 'streamable_http',
           enabled: true,
           url: 'https://mcp.example.test',
@@ -538,8 +536,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',
@@ -577,8 +575,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-a',
-          slug: 'oauth-a',
-          name: 'OAuth A',
+          name: 'oauth-a',
+          displayName: 'OAuth A',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://a.example.test',
@@ -586,8 +584,8 @@ describe('ConnectorsPanel (groups)', () => {
         },
         {
           id: 'oauth-b',
-          slug: 'oauth-b',
-          name: 'OAuth B',
+          name: 'oauth-b',
+          displayName: 'OAuth B',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://b.example.test',
@@ -625,8 +623,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',

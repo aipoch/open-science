@@ -9,8 +9,11 @@ const validateSkillDocument = (content, expectedName) => {
     entry[2].trim().replace(/^['"]|['"]$/g, '')
   ])
   const names = fields.map(([name]) => name).sort()
-  if (names.join(',') !== 'description,name') {
-    return { valid: false, error: 'Frontmatter must contain exactly name and description.' }
+  if (!['description,name', 'description,displayname,name'].includes(names.join(','))) {
+    return {
+      valid: false,
+      error: 'Frontmatter may only contain name, displayName, and description.'
+    }
   }
   const values = Object.fromEntries(fields)
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values.name) || values.name.length > 64) {
@@ -25,7 +28,12 @@ const validateSkillDocument = (content, expectedName) => {
   if (!values.description || values.description.length > 1024 || /[<>]/.test(values.description)) {
     return { valid: false, error: 'Description must be 1-1024 characters without angle brackets.' }
   }
-  return { valid: true, name: values.name, description: values.description }
+  return {
+    valid: true,
+    name: values.name,
+    ...(values.displayname ? { displayName: values.displayname } : {}),
+    description: values.description
+  }
 }
 
 const quickValidate = async (hostSkills, name) => {

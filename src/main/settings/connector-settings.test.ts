@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { AddCustomServerRequest, ConnectorsSnapshot } from '../../shared/settings'
+
 const keychain = vi.hoisted(() => ({ available: true }))
 
 // Reversible fake safeStorage so secrets can be encrypted without an OS keychain.
@@ -30,6 +32,10 @@ describe('ConnectorSettingsModule', () => {
   let dir: string
   let service: InstanceType<typeof ConnectorSettingsModule>
   let repository: InstanceType<typeof SettingsRepository>
+  const addCustomServer = (
+    request: Omit<AddCustomServerRequest, 'displayName'> & { displayName?: string }
+  ): Promise<ConnectorsSnapshot> =>
+    service.addCustomServer({ ...request, displayName: request.displayName ?? request.name })
 
   beforeEach(async () => {
     keychain.available = true
@@ -138,7 +144,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('adds, toggles, and removes a local (stdio) custom server', async () => {
-    let snapshot = await service.addCustomServer({
+    let snapshot = await addCustomServer({
       name: 'my-mem',
       transport: 'stdio',
       command: 'npx',
@@ -148,8 +154,8 @@ describe('ConnectorSettingsModule', () => {
     expect(snapshot.customServers).toHaveLength(1)
     const added = snapshot.customServers[0]
     expect(added).toMatchObject({
-      slug: 'my-mem',
       name: 'my-mem',
+      displayName: 'my-mem',
       transport: 'stdio',
       command: 'npx',
       enabled: true,
@@ -160,17 +166,17 @@ describe('ConnectorSettingsModule', () => {
     snapshot = await service.setCustomServerEnabled({ id: added.id, enabled: false })
     expect(snapshot.customServers[0].enabled).toBe(false)
 
-    await repository.setConnectorAutoAllow(added.slug, true)
-    await repository.setToolPolicy(`${added.slug}/lookup`, true, false)
+    await repository.setConnectorAutoAllow(added.name, true)
+    await repository.setToolPolicy(`${added.name}/lookup`, true, false)
     snapshot = await service.removeCustomServer({ id: added.id })
     expect(snapshot.customServers).toEqual([])
     const afterRemoval = (await repository.getSettings()).connectors
-    expect(afterRemoval?.autoAllowIds).not.toContain(added.slug)
-    expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
+    expect(afterRemoval?.autoAllowIds).not.toContain(added.name)
+    expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.name}/lookup`)
   })
 
   it('advertises only safe custom Connector Skills from the successful materialization projection', async () => {
-    await service.addCustomServer({
+    await addCustomServer({
       name: 'custom-catalog',
       transport: 'stdio',
       command: 'example-mcp'
@@ -212,7 +218,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('projects runtime availability separately from logical enablement', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'offline-server',
       transport: 'stdio',
       command: 'example-mcp'
@@ -234,7 +240,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('does not block listing while the current runtime refresh is still pending', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'late-offline-server',
       transport: 'stdio',
       command: 'example-mcp'
@@ -255,12 +261,14 @@ describe('ConnectorSettingsModule', () => {
   it('projects checking only for the custom server currently being refreshed', async () => {
     const first = await service.addCustomServer({
       name: 'refreshing-server',
+      displayName: 'Refreshing server',
       transport: 'stdio',
       command: 'example-mcp'
     })
     const refreshingId = first.customServers[0].id
     const second = await service.addCustomServer({
       name: 'settled-server',
+      displayName: 'Settled server',
       transport: 'stdio',
       command: 'example-mcp'
     })
@@ -278,78 +286,66 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {
-    await service.addCustomServer({
+    await addCustomServer({
       name: 'example-server',
       transport: 'stdio',
       command: 'example-mcp'
     })
 
     await expect(
-      service.addCustomServer({
-        name: ' Example-Server ',
+      addCustomServer({
+        name: 'example-server',
+        displayName: 'Another label',
         transport: 'stdio',
         command: 'another-mcp'
       })
     ).rejects.toThrow('already exists')
     await expect(
-      service.addCustomServer({ name: 'Chemistry', transport: 'stdio', command: 'example-mcp' })
+      addCustomServer({ name: 'chemistry', transport: 'stdio', command: 'example-mcp' })
     ).rejects.toThrow('reserved by a built-in connector')
   })
 
   it('separates the display name from the immutable host.mcp Connector ID', async () => {
-    const snapshot = await service.addCustomServer({
-      name: 'Example OAuth E2E',
+    const snapshot = await addCustomServer({
+      name: 'example-oauth-e2e',
+      displayName: 'Example OAuth E2E',
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
       oauth: {}
     })
 
     expect(snapshot.customServers[0]).toMatchObject({
-      name: 'Example OAuth E2E',
-      slug: 'example-oauth-e2e'
+      name: 'example-oauth-e2e',
+      displayName: 'Example OAuth E2E'
     })
     await expect(
-      service.addCustomServer({
-        name: 'Another display name',
-        slug: 'example-oauth-e2e',
+      addCustomServer({
+        name: 'example-oauth-e2e',
+        displayName: 'Another display name',
         transport: 'stdio',
         command: 'example-mcp'
       })
     ).rejects.toThrow('already exists')
   })
 
-  it('rejects IDs and names that overlap an installed Connector legacy alias', async () => {
-    const existing = await service.addCustomServer({
-      name: 'legacy-route',
-      slug: 'stable-route',
+  it('does not reserve display labels or UUIDs as routing aliases', async () => {
+    const existing = await addCustomServer({
+      name: 'stable-route',
+      displayName: 'legacy-route',
       transport: 'stdio',
       command: 'example-mcp'
     })
 
-    await expect(
-      service.addCustomServer({
-        name: 'Different name',
-        slug: 'legacy-route',
-        transport: 'stdio',
-        command: 'example-mcp'
-      })
-    ).rejects.toThrow('conflicts with an existing Connector alias')
-    await expect(
-      service.addCustomServer({
-        name: 'Another name',
-        slug: existing.customServers[0].id,
-        transport: 'stdio',
-        command: 'example-mcp'
-      })
-    ).rejects.toThrow('conflicts with an existing Connector alias')
-    await expect(
-      service.addCustomServer({
-        name: 'stable-route',
-        slug: 'new-route',
-        transport: 'stdio',
-        command: 'example-mcp'
-      })
-    ).rejects.toThrow('conflicts with an existing Connector identity')
+    const added = await addCustomServer({
+      name: 'legacy-route',
+      displayName: existing.customServers[0].id,
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    expect(added.customServers.map((server) => server.name)).toEqual([
+      'legacy-route',
+      'stable-route'
+    ])
   })
 
   it('fails closed when a legacy Connector derives a bundled route', async () => {
@@ -359,11 +355,12 @@ describe('ConnectorSettingsModule', () => {
       transport: 'stdio',
       enabled: true,
       command: 'legacy-command'
-    })
+    } as never)
 
     const snapshot = await service.listConnectors()
     expect(snapshot.customServers[0]).toMatchObject({
-      slug: 'chemistry',
+      name: 'chemistry',
+      displayName: 'Chemistry!',
       enabled: false,
       availability: 'unavailable'
     })
@@ -376,14 +373,14 @@ describe('ConnectorSettingsModule', () => {
       transport: 'stdio',
       enabled: true,
       command: 'first-command'
-    })
+    } as never)
     await repository.addCustomServer({
       id: 'legacy-duplicate-b',
       name: 'Duplicate-MCP!',
       transport: 'stdio',
       enabled: true,
       command: 'second-command'
-    })
+    } as never)
 
     const snapshot = await service.listConnectors()
     expect(snapshot.customServers).toHaveLength(2)
@@ -396,7 +393,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('exports only credential names and validates imports against installed connectors', async () => {
-    const snapshot = await service.addCustomServer({
+    const snapshot = await addCustomServer({
       name: 'example-export',
       transport: 'stdio',
       command: 'npx',
@@ -418,7 +415,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('adds a remote (streamable_http) custom server with a url', async () => {
-    const snapshot = await service.addCustomServer({
+    const snapshot = await addCustomServer({
       name: 'remote-x',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
@@ -432,7 +429,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('stores OAuth configuration publicly and OAuth state encrypted', async () => {
-    const snapshot = await service.addCustomServer({
+    const snapshot = await addCustomServer({
       name: 'oauth-x',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
@@ -470,7 +467,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('clears OAuth credentials when the remote endpoint changes', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'oauth-endpoint',
       transport: 'streamable_http',
       url: 'https://one.example/mcp',
@@ -499,7 +496,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('clears OAuth when switching a remote Connector to local transport', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'oauth-to-local',
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
@@ -528,7 +525,7 @@ describe('ConnectorSettingsModule', () => {
 
   it('keeps OAuth and static-header authentication mutually exclusive', async () => {
     await expect(
-      service.addCustomServer({
+      addCustomServer({
         name: 'invalid-auth',
         transport: 'streamable_http',
         url: 'https://example.com/mcp',
@@ -537,7 +534,7 @@ describe('ConnectorSettingsModule', () => {
       })
     ).rejects.toThrow('OAuth and static headers cannot be configured together')
 
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'switch-auth',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
@@ -558,13 +555,13 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('rejects an invalid custom server (stdio without a command)', async () => {
-    await expect(service.addCustomServer({ name: 'bad', transport: 'stdio' })).rejects.toThrow(
+    await expect(addCustomServer({ name: 'bad', transport: 'stdio' })).rejects.toThrow(
       /Invalid custom connector/
     )
   })
 
   it('does not expose custom-server env or header secrets in the view', async () => {
-    const snapshot = await service.addCustomServer({
+    const snapshot = await addCustomServer({
       name: 'secretful',
       transport: 'stdio',
       command: 'run',
@@ -581,6 +578,7 @@ describe('ConnectorSettingsModule', () => {
     await repository.addCustomServer({
       id: 'legacy',
       name: 'legacy',
+      displayName: 'Legacy',
       transport: 'streamable_http',
       enabled: true,
       url: 'https://example.test/mcp',
@@ -603,6 +601,7 @@ describe('ConnectorSettingsModule', () => {
     await repository.addCustomServer({
       id: 'legacy',
       name: 'legacy',
+      displayName: 'Legacy',
       transport: 'stdio',
       enabled: true,
       command: 'old-command',
@@ -619,7 +618,7 @@ describe('ConnectorSettingsModule', () => {
       command: 'new-command'
     })
     await expect(
-      service.addCustomServer({
+      addCustomServer({
         name: 'new-secret',
         transport: 'stdio',
         command: 'run',
@@ -634,7 +633,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('edits a custom server, keeping its name and preserving omitted env', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'my-mem',
       transport: 'stdio',
       command: 'npx',
@@ -660,7 +659,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('invalidates remembered authority before persisting a security-sensitive server edit', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'mutable-endpoint',
       transport: 'stdio',
       command: 'old-command',
@@ -700,7 +699,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('keeps grants for display-only edits and fails closed when invalidation fails', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'stable-endpoint',
       description: 'Before',
       transport: 'stdio',
@@ -741,7 +740,7 @@ describe('ConnectorSettingsModule', () => {
   })
 
   it('rolls back the custom-server security barrier when persistence fails', async () => {
-    const added = await service.addCustomServer({
+    const added = await addCustomServer({
       name: 'rollback-endpoint',
       transport: 'stdio',
       command: 'old-command'

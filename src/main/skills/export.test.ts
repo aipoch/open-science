@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { unzipSync } from 'fflate'
+import { strFromU8, unzipSync } from 'fflate'
 
 import { buildSkillExportArchive, saveSkillExport, skillExportFileName } from './export'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
@@ -66,6 +66,7 @@ describe('Skill ZIP export', () => {
       buildSkillExportArchive({
         id: 'personal-safe',
         name: 'Safe',
+        displayName: 'Safe',
         description: '',
         source: 'personal',
         updatedAt: '2026-08-07T00:00:00.000Z',
@@ -84,6 +85,7 @@ describe('Skill ZIP export', () => {
       buildSkillExportArchive({
         id: 'personal-large',
         name: 'Large',
+        displayName: 'Large',
         description: '',
         source: 'personal',
         updatedAt: '2026-08-07T00:00:00.000Z',
@@ -92,22 +94,29 @@ describe('Skill ZIP export', () => {
     ).rejects.toThrow('Skill file exceeds the export size limit.')
   })
 
-  it('omits Specialist ownership metadata from a portable archive', async () => {
+  it('omits app-only metadata and displayName from a portable archive', async () => {
     const root = await mkdtemp(join(tmpdir(), 'skill-export-metadata-'))
     roots.push(root)
-    await writeFile(join(root, 'SKILL.md'), '# Portable')
+    await writeFile(
+      join(root, 'SKILL.md'),
+      '---\nname: portable-skill\ndisplayName: >\n  Portable Skill\ndescription: Portable.\n---\nBody.'
+    )
     await writeFile(join(root, '.specialist-package.json'), '{"ownerIds":["specialist"]}')
 
     const exported = await buildSkillExportArchive({
       id: 'portable-skill',
       name: 'Portable',
+      displayName: 'Portable',
       description: '',
       source: 'personal',
       updatedAt: '2026-08-07T00:00:00.000Z',
       sourceDir: root
     })
 
-    expect(Object.keys(unzipSync(exported.archiveBytes))).toEqual(['SKILL.md'])
+    const archive = unzipSync(exported.archiveBytes)
+    expect(Object.keys(archive)).toEqual(['SKILL.md'])
+    expect(strFromU8(archive['SKILL.md']!)).not.toContain('displayName')
+    expect(strFromU8(archive['SKILL.md']!)).toContain('Body.')
   })
 
   it.each(['.hidden', '__MACOSX/metadata'])(
@@ -123,6 +132,7 @@ describe('Skill ZIP export', () => {
         buildSkillExportArchive({
           id: 'personal-portable',
           name: 'Portable',
+          displayName: 'Portable',
           description: '',
           source: 'personal',
           updatedAt: '2026-08-07T00:00:00.000Z',
@@ -144,6 +154,7 @@ describe('Skill ZIP export', () => {
         buildSkillExportArchive({
           id: 'personal-portable',
           name: 'Portable',
+          displayName: 'Portable',
           description: '',
           source: 'personal',
           updatedAt: '2026-08-07T00:00:00.000Z',

@@ -2233,8 +2233,8 @@ async function computeRpc(params) {
   return body.result
 }
 
-// host.agents: control-plane Specialist management SDK (issue 02). Read-only in this slice
-// (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
+// host.agents: control-plane Specialist management SDK. Reads, ordinary mutations, and privileged
+// delete/switch operations are routed over the SAME
 // app-local RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
 // host.mcp(). Uses the captured RPC endpoint/token + client for the same token-isolation reasons. The
 // trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
@@ -2262,10 +2262,17 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
     // (auth, unknown method) are not method-scoped, so prefix them with the op the caller invoked so
     // the agent always sees a host.agents.* namespaced, secret-free message.
     const serverMessage = body.error || 'host.agents HTTP ' + res.status
-    const prefixed = /^host\.agents\./.test(serverMessage)
-      ? serverMessage
-      : `host.agents.${op}: ${serverMessage}`
-    throw new Error(prefixed)
+    const publicMethod =
+      {
+        list_skills: 'listSkills',
+        list_connectors: 'listConnectors',
+        attach_skill: 'attachSkill',
+        detach_skill: 'detachSkill',
+        attach_connector: 'attachConnector',
+        detach_connector: 'detachConnector'
+      }[op] || op
+    const detail = String(serverMessage).replace(/^host\.agents\.[^:]+:\s*/, '')
+    throw new Error(`host.agents.${publicMethod}: ${detail}`)
   }
   return body.result
 }
@@ -2465,12 +2472,27 @@ async function delegatedMessageRpc(op, params) {
   return body.result
 }
 
-// host.agents namespace. Methods and filter/write fields are snake_case; returned records are
-// camelCase. list_skills/list_connectors accept an optional stable id or unique public name.
-// create/update/attach_*/detach_* are the ordinary-mutation surface (issue 03); they return a real
+// host.agents namespace. JavaScript methods, inputs, and returned records use camelCase. The private
+// RPC operation names remain transport details.
+// create/update/attachSkill/detachSkill/attachConnector/detachConnector are the ordinary-mutation
+// surface (issue 03); they return a real
 // post-write camelCase Profile read-back and never echo requested input. switch/delete are the
 // privileged surface (issue 04/05): authorized this milestone by the /customize Skill's chat-text
 // confirmation + the pass-through SDK approval gateway (design.md §7/§14), not the standard card.
+function agentsWriteParams(value) {
+  const names = {
+    displayName: 'display_name',
+    systemPrompt: 'system_prompt',
+    iconKey: 'icon_key',
+    colorKey: 'color_key',
+    skillNames: 'skill_names',
+    connectorNames: 'connector_names'
+  }
+  return Object.fromEntries(
+    Object.entries(value || {}).map(([key, entry]) => [names[key] || key, entry])
+  )
+}
+
 const hostAgents = {
   async list() {
     return agentsRpc('list')
@@ -2478,30 +2500,28 @@ const hostAgents = {
   async get(name) {
     return agentsRpc('get', { name })
   },
-  async list_skills(nameOrId = undefined) {
+  async listSkills(nameOrId = undefined) {
     return agentsRpc('list_skills', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
   },
-  async list_connectors(nameOrId = undefined) {
+  async listConnectors(nameOrId = undefined) {
     return agentsRpc('list_connectors', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
   },
   async create(input) {
-    return agentsRpc('create', input || {})
+    return agentsRpc('create', agentsWriteParams(input))
   },
   async update(name, patch) {
-    // Nest the patch so a rename (patch.name) never collides with the lookup name on the wire —
-    // design.md §4 / customize-skill.md: update(name, patch) where patch may carry a new `name`.
-    return agentsRpc('update', { name, patch: patch || {} })
+    return agentsRpc('update', { name, patch: agentsWriteParams(patch) })
   },
-  async attach_skill(name, skillRef, options) {
+  async attachSkill(name, skillRef, options) {
     return agentsRpc('attach_skill', { name, skill_ref: skillRef, ...(options || {}) })
   },
-  async detach_skill(name, skillRef, options) {
+  async detachSkill(name, skillRef, options) {
     return agentsRpc('detach_skill', { name, skill_ref: skillRef, ...(options || {}) })
   },
-  async attach_connector(name, connectorRef, options) {
+  async attachConnector(name, connectorRef, options) {
     return agentsRpc('attach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
   },
-  async detach_connector(name, connectorRef, options) {
+  async detachConnector(name, connectorRef, options) {
     return agentsRpc('detach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
   },
   // Privileged: switch binds only the trusted calling session (server-captured). After approval the

@@ -1,6 +1,5 @@
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
-import { customConnectorAliasKey, customConnectorAliases } from '../../shared/custom-connector'
 import { ALL_CONNECTOR_IDS } from './registry'
 
 export type CustomMcpFailureAvailability = 'unavailable' | 'unauthenticated'
@@ -49,23 +48,15 @@ const SUPPORTED_CUSTOM_MCP_TRANSPORTS = new Set<StoredCustomMcpServer['transport
   'sse'
 ])
 
-// Legacy records derive their public route from the display name. A derived route that is already
-// owned by a bundled Connector or another custom record must remain visible in Settings but cannot
-// be exposed or dispatched.
+// A name already owned by a bundled Connector or another custom record remains visible in Settings
+// but cannot be exposed or dispatched.
 export const isCustomMcpServerRouteSafe = (
   server: StoredCustomMcpServer,
   allServers: readonly StoredCustomMcpServer[]
 ): boolean => {
-  const aliases = new Set(customConnectorAliases(server).map(customConnectorAliasKey))
-  if (ALL_CONNECTOR_IDS.some((id) => aliases.has(customConnectorAliasKey(id)))) return false
+  if (ALL_CONNECTOR_IDS.includes(server.name)) return false
 
-  return allServers.every(
-    (candidate) =>
-      candidate === server ||
-      customConnectorAliases(candidate).every(
-        (alias) => !aliases.has(customConnectorAliasKey(alias))
-      )
-  )
+  return allServers.every((candidate) => candidate === server || candidate.name !== server.name)
 }
 
 // Selects runnable custom servers for discovery and skill-doc sync. OAuth Connectors remain absent

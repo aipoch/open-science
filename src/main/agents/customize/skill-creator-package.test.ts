@@ -104,7 +104,16 @@ describe('skill-creator bundled package', () => {
         '---\nname: data-helper\ndescription: Analyze data.\ncompatibility: node\n---\nBody.\n',
         'data-helper'
       )
-    ).toEqual({ valid: false, error: 'Frontmatter must contain exactly name and description.' })
+    ).toEqual({
+      valid: false,
+      error: 'Frontmatter may only contain name, displayName, and description.'
+    })
+    expect(
+      validateSkillDocument(
+        '---\nname: data-helper\ndisplayName: Data Helper\ndescription: Analyze data.\n---\nBody.\n',
+        'data-helper'
+      )
+    ).toMatchObject({ valid: true, name: 'data-helper', displayName: 'Data Helper' })
   })
 
   it('gates evaluation behind the app-owned host.skills.evals capability', async () => {

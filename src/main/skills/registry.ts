@@ -15,7 +15,9 @@ const log = createLogger('skills')
 // tooling needs a compute backend this app does not provide.
 export type BundledSkill = {
   id: string
+  // Stable invocation name from SKILL.md. Presentation must use displayName instead.
   name: string
+  displayName: string
   description: string
   source: SkillSource
   updatedAt: string
@@ -123,7 +125,8 @@ class SkillRegistry {
 
         skills.push({
           id: entry.id,
-          name: entry.name,
+          name: fields.name || entry.id,
+          displayName: fields.displayname || entry.name || fields.name || entry.id,
           description: fields.description ?? '',
           source: entry.source,
           updatedAt: entry.updatedAt,
@@ -142,8 +145,8 @@ class SkillRegistry {
       }
     }
 
-    // Featured skills always display alphabetically by name; the manifest order is not significant.
-    return skills.sort((a, b) => a.name.localeCompare(b.name))
+    // Featured skills always display alphabetically by presentation label; manifest order is not significant.
+    return skills.sort((a, b) => a.displayName.localeCompare(b.displayName))
   }
 
   async body(id: string): Promise<string> {

@@ -59,6 +59,7 @@ const installApi = (): void => {
         {
           id: 'alpha',
           name: 'Alpha',
+          displayName: 'Alpha',
           description: 'First',
           source: 'featured',
           updatedAt: '2026-07-08T00:00:00.000Z',
@@ -68,6 +69,7 @@ const installApi = (): void => {
       getSkillDetail: vi.fn().mockResolvedValue({
         id: 'alpha',
         name: 'Alpha',
+        displayName: 'Alpha',
         description: 'First',
         source: 'featured',
         updatedAt: '2026-07-08T00:00:00.000Z',
@@ -1859,10 +1861,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    // Landed on the specialist's editor (name input prefilled with the public name), not the
+    // Landed on the specialist's editor (display name prefilled), not the
     // default Model panel.
     const name = document.body.querySelector<HTMLInputElement>('#sp-name')
-    expect(name?.value).toBe('RESEARCHER')
+    expect(name?.value).toBe('Researcher')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
     // The pending id is consumed so a later normal open won't jump back to it.
     expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()

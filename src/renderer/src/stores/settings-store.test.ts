@@ -119,6 +119,7 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
 const skillView = (id: string, name: string): SkillView => ({
   id,
   name,
+  displayName: name,
   description: '',
   source: 'personal',
   updatedAt: '',
@@ -1125,7 +1126,7 @@ describe('settings store: refreshProviderModels', () => {
 
     await useSettingsStore
       .getState()
-      .updateSkill({ id: created.id, name: 'Updated demo', description: '', body: '# Demo' })
+      .updateSkill({ id: created.id, description: '', body: '# Demo' })
     expect(useSettingsStore.getState().skills).toEqual([updated])
 
     await useSettingsStore.getState().deleteSkill(created.id)
@@ -1410,11 +1411,15 @@ describe('settings store: connectors slice', () => {
       ncbi: { hasApiKey: false }
     })
 
-    await useSettingsStore
-      .getState()
-      .addCustomServer({ name: 'my-mem', transport: 'stdio', command: 'npx' })
+    await useSettingsStore.getState().addCustomServer({
+      name: 'my-mem',
+      displayName: 'My Memory',
+      transport: 'stdio',
+      command: 'npx'
+    })
     expect(api.addCustomServer).toHaveBeenCalledWith({
       name: 'my-mem',
+      displayName: 'My Memory',
       transport: 'stdio',
       command: 'npx'
     })
@@ -1428,8 +1433,8 @@ describe('settings store: connectors slice', () => {
   it('authenticateCustomServer reconciles the OAuth status from main', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
-      slug: 'oauth-server',
-      name: 'OAuth server',
+      name: 'oauth-server',
+      displayName: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,
       url: 'https://mcp.example.test',
@@ -1450,8 +1455,8 @@ describe('settings store: connectors slice', () => {
   it('refreshes OAuth status after authenticateCustomServer fails', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
-      slug: 'oauth-server',
-      name: 'OAuth server',
+      name: 'oauth-server',
+      displayName: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,
       url: 'https://mcp.example.test',

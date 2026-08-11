@@ -1,39 +1,20 @@
-export const CUSTOM_CONNECTOR_SLUG_MAX_LENGTH = 64
-export const CUSTOM_CONNECTOR_SLUG_PATTERN = /^[a-z0-9-]+$/
+export const CUSTOM_CONNECTOR_NAME_MAX_LENGTH = 64
+export const CUSTOM_CONNECTOR_NAME_PATTERN = /^[a-z0-9-]+$/
 
-export const toCustomConnectorSlug = (name: string): string =>
-  name
+export const toCustomConnectorName = (displayName: string): string =>
+  displayName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, CUSTOM_CONNECTOR_SLUG_MAX_LENGTH) || 'connector'
+    .slice(0, CUSTOM_CONNECTOR_NAME_MAX_LENGTH) || 'connector'
 
-export const isCustomConnectorSlug = (value: string): boolean =>
-  value.length <= CUSTOM_CONNECTOR_SLUG_MAX_LENGTH && CUSTOM_CONNECTOR_SLUG_PATTERN.test(value)
+export const isCustomConnectorName = (value: string): boolean =>
+  value.length <= CUSTOM_CONNECTOR_NAME_MAX_LENGTH && CUSTOM_CONNECTOR_NAME_PATTERN.test(value)
 
-export const customConnectorSkillName = (slug: string): string => `mcp-${slug}`
+export const customConnectorSkillName = (name: string): string => `mcp-${name}`
 
-export const customConnectorSlugFromSkillName = (name: string): string | undefined => {
+export const customConnectorNameFromSkillName = (name: string): string | undefined => {
   if (!name.startsWith('mcp-')) return undefined
-  const slug = name.slice('mcp-'.length)
-  return isCustomConnectorSlug(slug) ? slug : undefined
+  const connectorName = name.slice('mcp-'.length)
+  return isCustomConnectorName(connectorName) ? connectorName : undefined
 }
-
-export const customConnectorSlug = (server: { name: string; slug?: string }): string =>
-  server.slug && isCustomConnectorSlug(server.slug)
-    ? server.slug
-    : toCustomConnectorSlug(server.name)
-
-export const customConnectorAliases = (server: {
-  id?: string
-  name: string
-  slug?: string
-}): string[] => [
-  ...new Set([
-    customConnectorSlug(server),
-    server.name,
-    ...(server.id === undefined ? [] : [server.id])
-  ])
-]
-
-export const customConnectorAliasKey = (value: string): string => value.trim().toLowerCase()

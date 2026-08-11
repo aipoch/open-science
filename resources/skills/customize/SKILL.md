@@ -42,22 +42,23 @@ The Skill never uses the following, and you must not invent them:
 
 ## The `host.agents` SDK surface
 
-The SDK is name-first and lives in the trusted calling session. Read methods and returned records use
-camelCase; write-side fields use snake_case. Methods:
+The SDK is name-first and lives in the trusted calling session. JavaScript methods, inputs, and
+returned records all use camelCase. Methods:
 
 - `host.agents.list()` — custom Specialists only.
-- `host.agents.get(name)` — one Specialist by public name (returns stable `id` and `revision`, but you
+- `host.agents.get(name)` — one Specialist by immutable name (returns stable `id` and `revision`, but you
   do not show those to the user).
 - `host.agents.create(input)` — object form (see below).
-- `host.agents.update(name, patch)` — may include a new `name`; renames are ordinary chat-reviewed
-  updates, not privileged.
+- `host.agents.update(name, patch)` — `name` selects the Specialist and is immutable; use
+  `patch.displayName` to change its presentation label.
 - `host.agents.switch(nameOrNull)` — switches the **current conversation** only; `null` returns to Main
   Agent. Does not accept a caller-supplied session id.
 - `host.agents.delete(name, { revision })`.
-- `host.agents.attach_skill(name, skillRef, { revision })` / `host.agents.detach_skill(...)`.
-- `host.agents.attach_connector(name, connectorRef, { revision })` / `host.agents.detach_connector(...)`.
-- `host.agents.list_skills(nameOrId?)` — complete Skill catalog, including Main-disabled Skills.
-- `host.agents.list_connectors(nameOrId?)` — public Connector information; never credentials, headers,
+- `host.agents.attachSkill(name, skillRef, { revision })` / `host.agents.detachSkill(...)`.
+- `host.agents.attachConnector(name, connectorRef, { revision })` /
+  `host.agents.detachConnector(...)`.
+- `host.agents.listSkills(nameOrId?)` — complete Skill catalog, including Main-disabled Skills.
+- `host.agents.listConnectors(nameOrId?)` — public Connector information; never credentials, headers,
   environment values, Connector arguments, or tokens.
 
 `create` takes an object:
@@ -65,28 +66,29 @@ camelCase; write-side fields use snake_case. Methods:
 ```js
 host.agents.create({
   name,
+  displayName,
   description,
-  system_prompt,
-  icon_key,
-  color_key,
+  systemPrompt,
+  iconKey,
+  colorKey,
   enabled,
   unrestricted,
-  skill_names,
-  connector_names
+  skillNames,
+  connectorNames
 })
 ```
 
-Skill/Connector references resolve an exact stable catalog id first, otherwise a unique public name. An
-ambiguous name is rejected — tell the user to use the stable id from `list_skills`/`list_connectors`.
+Skill/Connector references resolve an exact stable catalog id first, otherwise a unique immutable name. An
+ambiguous name is rejected — tell the user to use the stable id from `listSkills`/`listConnectors`.
 
 Errors are sanitized and prefixed `host.agents.<method>:`; they never contain system instructions,
 credentials, headers, environment values, Connector arguments, or the RPC token.
 
 ## Specialist identity and composition
 
-Treat `system_prompt` as the Specialist's identity override while the application's safety, tool, and
-workflow rules remain in force. Lead with `You are {display_name}.`, replacing `{display_name}` with
-the proposed public name. State the Specialist's one focused job, what it handles, and what the
+Treat `systemPrompt` as the Specialist's identity override while the application's safety, tool, and
+workflow rules remain in force. Lead with `You are {displayName}.`, replacing `{displayName}` with
+the proposed display name. State the Specialist's one focused job, what it handles, and what the
 Specialist does not do. Keep the identity concise; the heavy how-to lives in Skills, not in the system
 prompt. Reuse or create Skills for recurring procedures instead of copying those procedures into the
 identity.
@@ -101,7 +103,7 @@ Follow this order for every mutation. Do not skip the live read, and do not snap
 into a profile or session (resolution is always live):
 
 1. **Understand scope.** What does the user want to create/change/delete/switch?
-2. **Live read.** Call `get`/`list` plus `list_skills`/`list_connectors` to read the current state and
+2. **Live read.** Call `get`/`list` plus `listSkills`/`listConnectors` to read the current state and
    the catalogs before proposing anything.
 3. **Complete draft.** Build the full target state, not a partial edit.
 4. **Review.** Show the complete target state to the user.
@@ -118,13 +120,14 @@ request such as "full access" or "same capabilities as Main."
 
 Capability semantics:
 
-- `create` with neither `skill_names` nor `connector_names` → Full access. But only use this after the
+- `create` with neither `skillNames` nor `connectorNames` → Full access. But only use this after the
   user explicitly chose Full.
 - Supplying either array on `create` → Selected; an omitted other array becomes empty.
 - `update({ unrestricted: true })` → Full, preserving the stored Selected configuration.
-- Supplying `skill_names` or `connector_names` to `update` exactly replaces the supplied collection and
+- Supplying `skillNames` or `connectorNames` to `update` exactly replaces the supplied collection and
   switches to Selected; an omitted collection is preserved.
-- `attach_*`/`detach_*` mutate the current mode without changing it (Selected: add/remove an inclusion;
+- `attachSkill`/`detachSkill` and `attachConnector`/`detachConnector` mutate the current mode without
+  changing it (Selected: add/remove an inclusion;
   Full: remove/add an exclusion).
 - Selected mode with zero Skills and zero Connectors is valid.
 
@@ -153,10 +156,11 @@ move.
 
 ## Confirmation boundaries
 
-- **Create and update (including renames):** show the complete target state and wait for the user's
+- **Create and update:** show the complete target state and wait for the user's
   explicit confirmation (for example "yes", "confirm", "ok") before executing. The initial `/customize`
-  entry and the composer prefill are **not** confirmation. A rename is an ordinary update field: the
-  whole patch is applied atomically by the service, and a stale revision fails without merge or retry.
+  entry and the composer prefill are **not** confirmation. `name` is immutable; `displayName` is an
+  ordinary update field. The whole patch is applied atomically, and a stale revision fails without
+  merge or retry.
 - **Delete, switch:** describe the impending action, then execute it directly. These operations are
   privileged and pass through the app's approval card.
 

@@ -510,8 +510,8 @@ class SettingsService {
     return this.skills.withHostSkillRead(id, read)
   }
 
-  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
-    return this.skills.publishHostSkill(slug, sourcePath, overwrite)
+  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.skills.publishHostSkill(name, sourcePath, overwrite)
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {

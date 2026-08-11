@@ -97,7 +97,14 @@ const stubCatalog: AgentsCatalogSource = {
     autoAllowIds: [],
     disabledConnectorIds: ['chemistry'],
     customMcpServers: [
-      { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' }
+      {
+        id: 'cust-1',
+        name: 'my-server',
+        displayName: 'My Server',
+        transport: 'stdio',
+        enabled: true,
+        command: 'run'
+      }
     ]
   })
 }
@@ -196,13 +203,13 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('host.agents.list_skills() returns the full catalog including Main-disabled skills', async () => {
+  it('host.agents.listSkills() returns the full catalog including Main-disabled skills', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: token
     })
     try {
-      const r = await send('return JSON.stringify(await host.agents.list_skills())')
+      const r = await send('return JSON.stringify(await host.agents.listSkills())')
       expect(r.error).toBeNull()
       const skills = JSON.parse(r.result ?? '[]')
       expect(skills.find((s: { id: string }) => s.id === 'personal-foo').mainEnabled).toBe(false)
@@ -212,13 +219,13 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('host.agents.list_skills() filters by exact stable id', async () => {
+  it('host.agents.listSkills() filters by exact stable id', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: token
     })
     try {
-      const r = await send("return JSON.stringify(await host.agents.list_skills('personal-foo'))")
+      const r = await send("return JSON.stringify(await host.agents.listSkills('personal-foo'))")
       expect(r.error).toBeNull()
       const skills = JSON.parse(r.result ?? '[]')
       expect(skills).toHaveLength(1)
@@ -228,14 +235,14 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('host.agents.list_skills() rejects an ambiguous public name with a stable-id hint', async () => {
+  it('host.agents.listSkills() rejects an ambiguous immutable name with a stable-id hint', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: token
     })
     try {
       const r = await send(
-        "try { await host.agents.list_skills('dup'); return 'no-throw' } catch (e) { return e.message }"
+        "try { await host.agents.listSkills('dup'); return 'no-throw' } catch (e) { return e.message }"
       )
       expect(r.result).toMatch(/stable id/)
     } finally {
@@ -243,13 +250,13 @@ gate('host.agents repl integration', () => {
     }
   }, 60_000)
 
-  it('host.agents.list_connectors() projects connectors without secrets', async () => {
+  it('host.agents.listConnectors() projects connectors without secrets', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: token
     })
     try {
-      const r = await send('return JSON.stringify(await host.agents.list_connectors())')
+      const r = await send('return JSON.stringify(await host.agents.listConnectors())')
       expect(r.error).toBeNull()
       const text = r.result ?? ''
       // No secret material leaks.

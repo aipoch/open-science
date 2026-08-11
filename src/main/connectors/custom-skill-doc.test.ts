@@ -18,8 +18,8 @@ const FAKE_TOOLS = [
 function makeServer(overrides: Partial<StoredCustomMcpServer> = {}): StoredCustomMcpServer {
   return {
     id: 'srv-1',
-    slug: 'myserver',
     name: 'myserver',
+    displayName: 'My server',
     transport: 'stdio',
     command: 'npx',
     enabled: true,
@@ -28,9 +28,9 @@ function makeServer(overrides: Partial<StoredCustomMcpServer> = {}): StoredCusto
 }
 
 describe('renderCustomSkillDoc', () => {
-  it('uses the immutable slug for skill identity and routing while keeping the display name in prose', () => {
+  it('uses the immutable name for skill identity and routing while keeping displayName in prose', () => {
     const md = renderCustomSkillDoc(
-      { slug: 'example-oauth-e2e', name: 'Example OAuth E2E' },
+      { name: 'example-oauth-e2e', displayName: 'Example OAuth E2E' },
       FAKE_TOOLS
     )
     expect(md).toContain('name: mcp-example-oauth-e2e')
@@ -46,9 +46,31 @@ describe('renderCustomSkillDoc', () => {
     expect(md).toContain('host.mcp("example-oauth-e2e", "fetch")')
   })
 
+  it('changes generated prose without changing Skill or host.mcp identity', () => {
+    const before = renderCustomSkillDoc(
+      { name: 'stable-connector', displayName: 'Before Label' },
+      FAKE_TOOLS
+    )
+    const after = renderCustomSkillDoc(
+      { name: 'stable-connector', displayName: 'After Label' },
+      FAKE_TOOLS
+    )
+
+    expect(before).toContain('Before Label MCP server')
+    expect(after).toContain('After Label MCP server')
+    for (const doc of [before, after]) {
+      expect(doc).toContain('name: mcp-stable-connector')
+      expect(doc).toContain('host.mcp("stable-connector", "search")')
+    }
+  })
+
   it('uses the server-provided description verbatim when present', () => {
     const md = renderCustomSkillDoc(
-      { slug: 'myserver', name: 'myserver', description: 'Use when the user asks about widgets.' },
+      {
+        name: 'myserver',
+        displayName: 'My server',
+        description: 'Use when the user asks about widgets.'
+      },
       FAKE_TOOLS
     )
     const frontmatter = md.slice(0, md.indexOf('---', 3))
@@ -56,7 +78,7 @@ describe('renderCustomSkillDoc', () => {
   })
 
   it('renders a concrete dict example from a custom tool inputSchema', () => {
-    const md = renderCustomSkillDoc({ slug: 'myserver', name: 'myserver' }, [
+    const md = renderCustomSkillDoc({ name: 'myserver', displayName: 'My server' }, [
       {
         name: 'lookup',
         description: 'Look up a record',
@@ -74,7 +96,7 @@ describe('renderCustomSkillDoc', () => {
 })
 
 describe('syncCustomServerSkillDocs', () => {
-  it('writes mcp-<slug>/SKILL.md for an enabled server and removes it once disabled', async () => {
+  it('writes mcp-<name>/SKILL.md for an enabled server and removes it once disabled', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-'))
     const server = makeServer()
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
@@ -95,8 +117,12 @@ describe('syncCustomServerSkillDocs', () => {
 
   it('refreshes one server without validating or deleting unrelated server Skills', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-targeted-'))
-    const target = makeServer({ id: 'target', slug: 'target', name: 'Target' })
-    const unrelated = makeServer({ id: 'unrelated', slug: 'unrelated', name: 'Unrelated' })
+    const target = makeServer({ id: 'target', name: 'target', displayName: 'Target' })
+    const unrelated = makeServer({
+      id: 'unrelated',
+      name: 'unrelated',
+      displayName: 'Unrelated'
+    })
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
 
     await syncCustomServerSkillDocs(dir, [target, unrelated], listTools)
@@ -107,8 +133,8 @@ describe('syncCustomServerSkillDocs', () => {
 
   it('isolates an unavailable server while materializing the remaining enabled servers', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-unavailable-'))
-    const unavailable = makeServer({ id: 'unavailable', slug: 'unavailable' })
-    const healthy = makeServer({ id: 'healthy', slug: 'healthy', name: 'Healthy server' })
+    const unavailable = makeServer({ id: 'unavailable', name: 'unavailable' })
+    const healthy = makeServer({ id: 'healthy', name: 'healthy', displayName: 'Healthy server' })
     await mkdir(join(dir, 'mcp-unavailable'), { recursive: true })
     await writeFile(join(dir, 'mcp-unavailable', 'SKILL.md'), 'stale')
 
@@ -119,7 +145,7 @@ describe('syncCustomServerSkillDocs', () => {
       return FAKE_TOOLS
     })
 
-    expect(result.materializedSlugs).toEqual(['healthy'])
+    expect(result.materializedNames).toEqual(['healthy'])
     expect(result.failures).toEqual([
       {
         server: unavailable,
@@ -134,45 +160,45 @@ describe('syncCustomServerSkillDocs', () => {
     const dir = join(root, 'skills')
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
 
-    // Display names never become paths. Explicit safe slugs remain the only directory identities.
-    const traversal = makeServer({ slug: 'safe-escape', name: '../escape' })
-    const collision = makeServer({ slug: 'custom-chemistry', name: 'chemistry' })
+    // Display names never become paths. Explicit safe names remain the only directory identities.
+    const traversal = makeServer({ name: 'safe-escape', displayName: '../escape' })
+    const collision = makeServer({ name: 'custom-chemistry', displayName: 'chemistry' })
 
     await syncCustomServerSkillDocs(dir, [traversal, collision], listTools)
 
     // Nothing was written outside the skills dir.
     expect((await readdir(root)).sort()).toEqual(['skills'])
-    // Both servers materialized under their slug, and no `mcp-chemistry` directory was produced.
+    // Both servers materialized under their name, and no `mcp-chemistry` directory was produced.
     const entries = (await readdir(dir)).sort()
     expect(entries).toEqual(['mcp-custom-chemistry', 'mcp-safe-escape'])
   })
 
-  it('normalizes an unsafe legacy slug and skips a built-in collision', async () => {
+  it('skips an unsafe name and a built-in collision', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'custom-skills-tampered-'))
     const listTools = async (): Promise<typeof FAKE_TOOLS> => FAKE_TOOLS
 
-    const badPath = makeServer({ slug: '../../evil', name: 'Evil server' })
-    const bundledId = makeServer({ slug: 'chemistry', name: 'Other server' })
+    const badPath = makeServer({ name: '../../evil', displayName: 'Evil server' })
+    const bundledId = makeServer({ name: 'chemistry', displayName: 'Other server' })
 
     await syncCustomServerSkillDocs(dir, [badPath, bundledId], listTools)
 
-    expect((await readdir(dir)).sort()).toEqual(['mcp-evil-server'])
+    expect((await readdir(dir)).sort()).toEqual([])
   })
 
-  it('does not overwrite a built-in connector with a case-variant slug', async () => {
+  it('does not overwrite a built-in connector with a case-variant name', async () => {
     // On a case-insensitive filesystem `mcp-Chemistry` and `mcp-chemistry` are the same directory, so
-    // a tampered mixed-case slug must be normalized away from the built-in identity.
+    // a tampered mixed-case name must be rejected.
     const dir = await mkdtemp(join(tmpdir(), 'connector-case-'))
     await syncConnectorSkillDocs(dir, ['chemistry'])
     const builtinDoc = join(dir, 'mcp-chemistry', 'SKILL.md')
     const before = await readFile(builtinDoc, 'utf8')
 
-    const tampered = makeServer({ slug: 'Chemistry', name: 'tampered' })
+    const tampered = makeServer({ name: 'Chemistry', displayName: 'Tampered' })
     await syncCustomServerSkillDocs(dir, [tampered], async () => [])
 
     // The built-in doc is untouched, and no case-variant directory was created.
     expect(await readFile(builtinDoc, 'utf8')).toBe(before)
-    expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry', 'mcp-tampered'])
+    expect((await readdir(dir)).sort()).toEqual(['mcp-chemistry'])
   })
 
   it('does not delete the built-in doc when an upgrade left a case-variant directory', async () => {
@@ -206,11 +232,11 @@ describe('syncCustomServerSkillDocs', () => {
 
     const result = await syncCustomServerSkillDocs(
       dir,
-      [makeServer({ slug: 'xt', name: 'XT' })],
+      [makeServer({ name: 'xt', displayName: 'XT' })],
       async () => FAKE_TOOLS
     )
 
-    expect(result.materializedSlugs).toEqual([])
+    expect(result.materializedNames).toEqual([])
     expect(result.failures).toHaveLength(1)
     const entries = await readdir(dir)
     expect(entries).toEqual(['mcp-XT'])

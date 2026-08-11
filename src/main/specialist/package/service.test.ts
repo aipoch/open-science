@@ -428,7 +428,7 @@ describe('SpecialistPackageService', () => {
               {
                 path: 'SKILL.md',
                 bytes: encoder.encode(
-                  '---\nname: document-reader\ndescription: Read documents\nversion: 9.9.9\n---\nRead documents.'
+                  '---\nname: document-reader\ndisplayName: Document Reader\ndescription: Read documents\nversion: 9.9.9\n---\nRead documents.'
                 )
               }
             ]
@@ -450,7 +450,7 @@ describe('SpecialistPackageService', () => {
               {
                 path: 'SKILL.md',
                 bytes: encoder.encode(
-                  '---\nname: analysis-tools\ndescription: Analyze data\n---\nUse the tools.'
+                  '---\nname: analysis-tools\ndisplayName: Analysis Tools\ndescription: Analyze data\n---\nUse the tools.'
                 )
               }
             ]
@@ -481,6 +481,8 @@ describe('SpecialistPackageService', () => {
     expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
     expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
     expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('version: 9.9.9')
+    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('displayName')
+    expect(strFromU8(archive['skills/analysis-tools/SKILL.md']!)).not.toContain('displayName')
   })
 
   it('exports a personal Skill under its portable ID without the personal source prefix', async () => {

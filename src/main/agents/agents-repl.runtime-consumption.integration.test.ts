@@ -100,7 +100,14 @@ const stubCatalog: AgentsCatalogSource = {
     autoAllowIds: [],
     disabledConnectorIds: [],
     customMcpServers: [
-      { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' }
+      {
+        id: 'cust-1',
+        name: 'my-server',
+        displayName: 'My Server',
+        transport: 'stdio',
+        enabled: true,
+        command: 'run'
+      }
     ]
   })
 }
@@ -175,7 +182,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'SKILL_SET', skill_names: ['demo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'SKILL_SET', skillNames: ['demo'] }))"
           )
         ).result ?? '{}'
       )
@@ -198,7 +205,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'MAIN_DIS_SKILL', skill_names: ['foo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'MAIN_DIS_SKILL', skillNames: ['foo'] }))"
           )
         ).result ?? '{}'
       )
@@ -213,19 +220,19 @@ gate('host.agents repl runtime whitelist consumption', () => {
     })
   })
 
-  it('attach_skill changes the consumed whitelist without switching mode (Selected inclusion grows)', async () => {
+  it('attachSkill changes the consumed whitelist without switching mode (Selected inclusion grows)', async () => {
     await withLoop(async (send) => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'ATTACH_RT', skill_names: ['demo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'ATTACH_RT', skillNames: ['demo'] }))"
           )
         ).result ?? '{}'
       )
       const after = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.attach_skill('ATTACH_RT', 'foo', { revision: ${created.revision} }))`
+            `return JSON.stringify(await host.agents.attachSkill('ATTACH_RT', 'foo', { revision: ${created.revision} }))`
           )
         ).result ?? '{}'
       )
@@ -245,7 +252,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'CONN_SET', connector_names: ['cust-1'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'CONN_SET', connectorNames: ['cust-1'] }))"
           )
         ).result ?? '{}'
       )
@@ -266,7 +273,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'TO_FULL', skill_names: ['demo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'TO_FULL', skillNames: ['demo'] }))"
           )
         ).result ?? '{}'
       )
@@ -288,19 +295,19 @@ gate('host.agents repl runtime whitelist consumption', () => {
     })
   })
 
-  it('detach_skill shrinks the consumed whitelist without switching mode', async () => {
+  it('detachSkill shrinks the consumed whitelist without switching mode', async () => {
     await withLoop(async (send) => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'DETACH_RT', skill_names: ['demo', 'foo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'DETACH_RT', skillNames: ['demo', 'foo'] }))"
           )
         ).result ?? '{}'
       )
       const after = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.detach_skill('DETACH_RT', 'demo', { revision: ${created.revision} }))`
+            `return JSON.stringify(await host.agents.detachSkill('DETACH_RT', 'demo', { revision: ${created.revision} }))`
           )
         ).result ?? '{}'
       )
@@ -312,13 +319,13 @@ gate('host.agents repl runtime whitelist consumption', () => {
     })
   })
 
-  it('snake_case writes produce camelCase read-back the runtime consumes unchanged', async () => {
+  it('camelCase writes produce camelCase read-back the runtime consumes unchanged', async () => {
     await withLoop(async (send) => {
-      // snake_case write fields on create.
+      // camelCase write fields on create.
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'CASE_MAP', description: 'd', system_prompt: 'p', icon_key: 'beaker', color_key: 'green', skill_names: ['demo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'CASE_MAP', description: 'd', systemPrompt: 'p', iconKey: 'beaker', colorKey: 'green', skillNames: ['demo'] }))"
           )
         ).result ?? '{}'
       )

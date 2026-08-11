@@ -99,9 +99,10 @@ export type StoredCustomMcpOAuthState = {
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
   id: string
-  // Added after custom Connectors shipped. Older records derive it from immutable `name` on read.
-  slug?: string
+  // Immutable public invocation name used by host.mcp, Specialists, policy, and generated Skills.
   name: string
+  // Presentation-only label. It may enter context but never participates in identity resolution.
+  displayName: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   command?: string
   args?: string[]

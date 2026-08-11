@@ -46,7 +46,8 @@ describe('SkillRegistry', () => {
     expect(skills).toHaveLength(1)
     expect(skills[0]).toMatchObject({
       id: 'demo',
-      name: 'Demo',
+      name: 'demo',
+      displayName: 'Demo',
       description: 'A demo skill.',
       source: 'featured',
       author: 'Test Author',
@@ -57,6 +58,51 @@ describe('SkillRegistry', () => {
       // materializer only substring-matches gpu/compute, so this stays equivalent.
       requirements: 'gpu'
     })
+  })
+
+  it('uses an optional SKILL.md displayName instead of the manifest presentation name', async () => {
+    const root = await seedRoot()
+    await writeFile(
+      join(root, 'demo', 'SKILL.md'),
+      [
+        '---',
+        'name: demo',
+        'displayName: Demo Skill',
+        'description: A demo skill.',
+        '---',
+        '',
+        '# Demo body'
+      ].join('\n'),
+      'utf8'
+    )
+
+    expect((await new SkillRegistry(root).list())[0]?.displayName).toBe('Demo Skill')
+  })
+
+  it('sorts bundled skills by presentation name instead of invocation name', async () => {
+    const root = await seedRoot()
+    await mkdir(join(root, 'alpha'), { recursive: true })
+    await writeFile(
+      join(root, 'alpha', 'SKILL.md'),
+      '---\nname: zebra\ndescription: Another skill.\n---\nBody.',
+      'utf8'
+    )
+    await writeFile(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        version: 1,
+        skills: [
+          { id: 'demo', name: 'Zebra', source: 'featured', updatedAt: '2026-01-01' },
+          { id: 'alpha', name: 'Alpha', source: 'featured', updatedAt: '2026-01-01' }
+        ]
+      }),
+      'utf8'
+    )
+
+    expect((await new SkillRegistry(root).list()).map((skill) => skill.id)).toEqual([
+      'alpha',
+      'demo'
+    ])
   })
 
   it('returns the SKILL.md body via body(id)', async () => {

@@ -14,7 +14,8 @@ describe('self-awareness bundled Skill', () => {
 
     expect(skill).toMatchObject({
       id: 'self-awareness',
-      name: 'Self-awareness',
+      name: 'self-awareness',
+      displayName: 'Self-awareness',
       source: 'featured',
       exposure: 'internal'
     })

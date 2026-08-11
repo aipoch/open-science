@@ -1,6 +1,5 @@
 import { CONNECTOR_CATALOG } from './catalog'
 import { getConnectorTools } from './registry'
-import { customConnectorSlug } from '../../shared/custom-connector'
 
 const CONVENTIONS = [
   'Reach this service ONLY from the REPL control-plane kernel: call it inside the `repl_execute` tool as `const result = await host.mcp(server, method, {...})`. host.mcp is async — always `await` it. The python and r DATA cells have NO connector access; do not call host.mcp (or urllib / requests / fetch) from them — it will fail.',
@@ -129,7 +128,7 @@ export function renderConnectorInstructions(skillNames: string[]): string {
 
 export type CustomSkillDocServer = {
   name: string
-  slug?: string
+  displayName: string
   description?: string
   oauth?: unknown
 }
@@ -138,13 +137,12 @@ export type CustomSkillDocTool = { name: string; description?: string; inputSche
 // Same shape as renderSkillDoc, but for a user-added custom MCP server: schema comes from
 // McpClientManager.listTools() at runtime rather than a bundled descriptor table, and the
 // trigger-style description falls back to a composed one when the server has no useWhen text.
-// The skill name and host.mcp route both use the immutable safe slug. The display name remains free
+// The skill name and host.mcp route both use the immutable safe name. The display name remains free
 // to contain spaces and punctuation and is used only in user-facing prose.
 export function renderCustomSkillDoc(
   server: CustomSkillDocServer,
   tools: CustomSkillDocTool[]
 ): string {
-  const slug = customConnectorSlug(server)
   const authenticationConvention = server.oauth
     ? ' If a call reports `connector_unauthenticated` or says sign-in is required, ask the user to sign in from Settings > Connectors, wait for sign-in to complete, then retry the original call. Do not treat an authentication requirement as connector unavailability or call a connector-managed login tool; this connector uses host-managed OAuth.'
     : tools.some((tool) =>
@@ -156,13 +154,13 @@ export function renderCustomSkillDoc(
       : ''
   const useWhen =
     server.description ??
-    `Use when you need tools from the ${server.name} MCP server — ${tools.map((t) => t.name).join(', ')}.`
-  const header = `---\nname: mcp-${slug}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
+    `Use when you need tools from the ${server.displayName} MCP server — ${tools.map((t) => t.name).join(', ')}.`
+  const header = `---\nname: mcp-${server.name}\ndescription: ${JSON.stringify(useWhen)}\nsource: connector\n---\n`
   const methods = tools
     .map(
       (t) =>
         `### ${t.name}\n\n${t.description ?? ''}\n\n**Input:** ${inlineCode(JSON.stringify(t.inputSchema ?? {}))}\n\n` +
-        renderExample(slug, t.name, t.inputSchema)
+        renderExample(server.name, t.name, t.inputSchema)
     )
     .join('\n')
   return (

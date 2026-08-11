@@ -105,7 +105,7 @@ describe('renderSkillDoc', () => {
   it('falls back to a schema-built call example for tools without an authored example', () => {
     // Custom MCP servers ship no `example`, so the doc must still render a concrete, copyable call.
     const md = renderCustomSkillDoc(
-      { slug: 'acme', name: 'Acme', description: 'Use when you need acme tools.' },
+      { name: 'acme', displayName: 'Acme', description: 'Use when you need acme tools.' },
       [
         {
           name: 'do_thing',
@@ -122,7 +122,7 @@ describe('renderSkillDoc', () => {
   it('renders a no-arg tool without a third argument (never a literal ...)', () => {
     // A literal `...` as the args positional reaches the bridge as Ellipsis and raises; a no-arg tool
     // must render as host.mcp(server, method) so the example is copy-runnable.
-    const md = renderCustomSkillDoc({ slug: 'acme', name: 'Acme' }, [
+    const md = renderCustomSkillDoc({ name: 'acme', displayName: 'Acme' }, [
       { name: 'ping', inputSchema: { type: 'object', properties: {} } }
     ])
     expect(md).toContain('const result = await host.mcp("acme", "ping")')
@@ -152,7 +152,7 @@ describe('renderSkillDoc', () => {
     // Custom servers do not always receive the bundled connector baseline, so their compact Skill
     // still carries the minimum persistence rule without copying the full shared conventions.
     const md = renderCustomSkillDoc(
-      { slug: 'acme', name: 'Acme', description: 'Use when you need acme tools.' },
+      { name: 'acme', displayName: 'Acme', description: 'Use when you need acme tools.' },
       [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
     )
     expect(md).toContain('persistent')
@@ -162,7 +162,7 @@ describe('renderSkillDoc', () => {
   })
 
   it('directs custom connector authentication failures to a listed login tool', () => {
-    const md = renderCustomSkillDoc({ slug: 'content-service', name: 'Content Service' }, [
+    const md = renderCustomSkillDoc({ name: 'content-service', displayName: 'Content Service' }, [
       { name: 'content_login' },
       { name: 'search' }
     ])
@@ -176,7 +176,7 @@ describe('renderSkillDoc', () => {
 
   it('directs host-managed OAuth authentication to Connector settings', () => {
     const md = renderCustomSkillDoc(
-      { slug: 'content-service', name: 'Content Service', oauth: {} },
+      { name: 'content-service', displayName: 'Content Service', oauth: {} },
       [{ name: 'content_login' }, { name: 'search' }]
     )
 
@@ -187,7 +187,7 @@ describe('renderSkillDoc', () => {
   })
 
   it('omits authentication recovery guidance when the connector declares neither mode', () => {
-    const md = renderCustomSkillDoc({ slug: 'content-service', name: 'Content Service' }, [
+    const md = renderCustomSkillDoc({ name: 'content-service', displayName: 'Content Service' }, [
       { name: 'search' }
     ])
 

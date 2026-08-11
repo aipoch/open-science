@@ -38,8 +38,8 @@ const connector = (
 
 const server = (id: string, enabled = true): CustomServerView => ({
   id,
-  slug: id,
   name: id,
+  displayName: id,
   transport: 'stdio',
   enabled,
   command: 'npx'
@@ -283,7 +283,12 @@ describe('settings Connectors slice', () => {
       .setNcbiCredentials({ contactEmail: 'science@example.test', apiKey: 'secret' })
     expect(store.getState().ncbi).toEqual(withCredentials.ncbi)
 
-    await store.getState().addCustomServer({ name: 'Created', transport: 'stdio', command: 'npx' })
+    await store.getState().addCustomServer({
+      name: 'created',
+      displayName: 'Created',
+      transport: 'stdio',
+      command: 'npx'
+    })
     expect(store.getState().customServers).toEqual([created])
 
     await store.getState().updateCustomServer({

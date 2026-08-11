@@ -6,13 +6,13 @@ import type { TrustedCallingSession } from '../../shared/agents-contract'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
-import { SAFE_SLUG, assertUsableSlug, parseUserSkillId } from './user-skill-repository'
+import { SAFE_SKILL_NAME, assertUsableSkillName, parseUserSkillId } from './user-skill-repository'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
 export type HostSkillsCatalog = {
   list(): Promise<BundledSkill[]>
   withSkillRead<T>(id: string, read: (skill: BundledSkill) => Promise<T>): Promise<T | undefined>
-  publishPersonalDirectory(slug: string, sourcePath: string, overwrite: boolean): Promise<string>
+  publishPersonalDirectory(name: string, sourcePath: string, overwrite: boolean): Promise<string>
   deletePublished(id: string): Promise<void>
 }
 
@@ -67,12 +67,13 @@ const readPackageText = async (root: string, relativePath: string): Promise<stri
   return readBoundedText(current)
 }
 
-const publicSlug = (skill: BundledSkill): string | undefined => parseUserSkillId(skill.id)?.slug
+const personalDirectoryName = (skill: BundledSkill): string | undefined =>
+  parseUserSkillId(skill.id)?.slug
 
-const explicitDraftSlug = (reference: string): string | undefined => {
+const explicitDraftName = (reference: string): string | undefined => {
   if (!reference.startsWith('draft-')) return undefined
-  const slug = reference.slice('draft-'.length)
-  return SAFE_SLUG.test(slug) ? slug : undefined
+  const name = reference.slice('draft-'.length)
+  return SAFE_SKILL_NAME.test(name) ? name : undefined
 }
 
 class HostSkillsCallError extends Error {
@@ -133,14 +134,14 @@ export class HostSkillsService {
     }
   }
 
-  private draftDir(slug: string): string {
-    return join(this.draftsRoot, slug)
+  private draftDir(name: string): string {
+    return join(this.draftsRoot, name)
   }
 
-  private async draftSlugs(): Promise<string[]> {
+  private async draftNames(): Promise<string[]> {
     try {
       return (await readdir(this.draftsRoot, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory() && SAFE_SLUG.test(entry.name))
+        .filter((entry) => entry.isDirectory() && SAFE_SKILL_NAME.test(entry.name))
         .map((entry) => entry.name)
     } catch {
       return []
@@ -151,22 +152,34 @@ export class HostSkillsService {
     const installed = (await this.options.catalog.list()).map((skill) => ({
       id: skill.id,
       name: skill.name,
+      displayName: skill.displayName,
       description: skill.description,
       origin: skill.source,
       editable: skill.source === 'personal'
     }))
     const drafts = await Promise.all(
-      (await this.draftSlugs()).map(async (slug) => {
-        let name = slug
+      (await this.draftNames()).map(async (draftName) => {
+        let name = draftName
+        let displayName = draftName
         let description = ''
         try {
-          const parsed = parseSkillDocument(await readPackageText(this.draftDir(slug), 'SKILL.md'))
-          name = parsed.name?.trim() || slug
+          const parsed = parseSkillDocument(
+            await readPackageText(this.draftDir(draftName), 'SKILL.md')
+          )
+          name = parsed.name?.trim() || draftName
+          displayName = parsed.metadata.displayname?.trim() || name
           description = parsed.description ?? ''
         } catch {
-          // An incomplete draft remains visible and editable under its stable slug.
+          // An incomplete draft remains visible and editable under its stable name.
         }
-        return { id: `draft-${slug}`, name, description, origin: 'draft', editable: true }
+        return {
+          id: `draft-${draftName}`,
+          name,
+          displayName,
+          description,
+          origin: 'draft',
+          editable: true
+        }
       })
     )
     return [...installed, ...drafts].sort((left, right) => left.name.localeCompare(right.name))
@@ -177,7 +190,7 @@ export class HostSkillsService {
     const exactIds = skills.filter((skill) => skill.id === name)
     if (exactIds.length > 1) throw new Error(`Skill id "${name}" is duplicated`)
     if (exactIds[0]) return exactIds[0]
-    const matches = skills.filter((skill) => skill.name === name || publicSlug(skill) === name)
+    const matches = skills.filter((skill) => skill.name === name)
     if (matches.length > 1) throw new Error(`Skill reference "${name}" is ambiguous`)
     return matches[0]
   }
@@ -186,14 +199,14 @@ export class HostSkillsService {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const relativePath = safeRelativePath(params.path, 'SKILL.md')
-    const draftSlug =
-      explicitDraftSlug(requestedName) ??
-      (SAFE_SLUG.test(requestedName) ? requestedName : undefined)
-    if (draftSlug && (await exists(this.draftDir(draftSlug)))) {
+    const draftName =
+      explicitDraftName(requestedName) ??
+      (SAFE_SKILL_NAME.test(requestedName) ? requestedName : undefined)
+    if (draftName && (await exists(this.draftDir(draftName)))) {
       return {
-        name: draftSlug,
+        name: draftName,
         path: relativePath,
-        content: await readPackageText(this.draftDir(draftSlug), relativePath),
+        content: await readPackageText(this.draftDir(draftName), relativePath),
         origin: 'draft'
       }
     }
@@ -217,23 +230,28 @@ export class HostSkillsService {
       throw new Error('SKILL.md requires name and description frontmatter')
     }
     const fieldNames = frontmatterFieldNames(skillDocument).sort()
-    if (fieldNames.length !== 2 || fieldNames[0] !== 'description' || fieldNames[1] !== 'name') {
-      throw new Error('SKILL.md frontmatter must contain exactly name and description')
+    if (
+      (fieldNames.length !== 2 && fieldNames.length !== 3) ||
+      fieldNames[0] !== 'description' ||
+      (fieldNames.length === 3 && fieldNames[1] !== 'displayname') ||
+      fieldNames.at(-1) !== 'name'
+    ) {
+      throw new Error('SKILL.md frontmatter may only contain name, displayName, and description')
     }
     const name = parsed.name.trim()
     if (expectedName && name !== expectedName)
-      throw new Error('SKILL.md name must match the draft slug')
+      throw new Error('SKILL.md name must match the draft name')
     return name
   }
 
   private async validate(params: Params): Promise<unknown> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
-    const draftSlug =
-      explicitDraftSlug(requestedName) ??
-      (SAFE_SLUG.test(requestedName) ? requestedName : undefined)
-    if (draftSlug && (await exists(this.draftDir(draftSlug)))) {
-      const name = await this.validatePackage(this.draftDir(draftSlug), draftSlug)
+    const draftName =
+      explicitDraftName(requestedName) ??
+      (SAFE_SKILL_NAME.test(requestedName) ? requestedName : undefined)
+    if (draftName && (await exists(this.draftDir(draftName)))) {
+      const name = await this.validatePackage(this.draftDir(draftName), draftName)
       return { valid: true, name, origin: 'draft' }
     }
 
@@ -246,38 +264,38 @@ export class HostSkillsService {
     return { valid: true, name, origin: published.source }
   }
 
-  private async ensureDraft(name: string): Promise<{ slug: string; path: string }> {
-    if (!SAFE_SLUG.test(name)) {
+  private async ensureDraft(name: string): Promise<{ name: string; path: string }> {
+    if (!SAFE_SKILL_NAME.test(name)) {
       const existing = await this.resolvePublished(name)
-      if (!existing) throw new Error('new Skill names must be lowercase hyphenated slugs')
+      if (!existing) throw new Error('new Skill names must be lowercase hyphenated names')
       if (existing.source !== 'personal')
         throw new Error('built-in and imported Skills are read-only')
-      const slug = publicSlug(existing)
-      if (!slug) throw new Error('personal Skill has no editable slug')
-      return this.seedPersonalDraft(existing, slug)
+      const directoryName = personalDirectoryName(existing)
+      if (!directoryName) throw new Error('personal Skill has no editable package name')
+      return this.seedPersonalDraft(existing, directoryName)
     }
 
     const path = this.draftDir(name)
-    if (await exists(path)) return { slug: name, path }
+    if (await exists(path)) return { name, path }
     const existing = await this.resolvePublished(name)
     if (existing) {
       if (existing.source !== 'personal')
         throw new Error('built-in and imported Skills are read-only')
-      return this.seedPersonalDraft(existing, publicSlug(existing) ?? name)
+      return this.seedPersonalDraft(existing, personalDirectoryName(existing) ?? name)
     }
-    assertUsableSlug(name)
+    assertUsableSkillName(name)
     await mkdir(path, { recursive: true })
-    return { slug: name, path }
+    return { name, path }
   }
 
   private async seedPersonalDraft(
     skill: BundledSkill,
-    slug: string
-  ): Promise<{ slug: string; path: string }> {
-    const destination = this.draftDir(slug)
-    if (await exists(destination)) return { slug, path: destination }
+    name: string
+  ): Promise<{ name: string; path: string }> {
+    const destination = this.draftDir(name)
+    if (await exists(destination)) return { name, path: destination }
     await mkdir(this.draftsRoot, { recursive: true })
-    const staging = join(this.draftsRoot, `.${slug}.seed-${randomUUID()}`)
+    const staging = join(this.draftsRoot, `.${name}.seed-${randomUUID()}`)
     try {
       const seeded = await this.options.catalog.withSkillRead(skill.id, async (lockedSkill) => {
         await cp(lockedSkill.sourceDir, staging, {
@@ -295,7 +313,7 @@ export class HostSkillsService {
         return true
       })
       if (!seeded) throw new Error(`Unknown Skill: ${skill.id}`)
-      return { slug, path: destination }
+      return { name, path: destination }
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined)
       throw error
@@ -359,7 +377,7 @@ export class HostSkillsService {
       throw new Error('content is too large')
     }
     const relativePath = safeRelativePath(params.path)
-    const explicitDraft = explicitDraftSlug(requestedName)
+    const explicitDraft = explicitDraftName(requestedName)
     const existingExplicitDraft =
       explicitDraft && (await exists(this.draftDir(explicitDraft))) ? explicitDraft : undefined
     const draft = await this.ensureDraft(existingExplicitDraft ?? requestedName)
@@ -391,12 +409,12 @@ export class HostSkillsService {
       await rm(temporary, { force: true }).catch(() => undefined)
       throw error
     }
-    return { status: 'edited', name: draft.slug, path: relativePath, origin: 'draft' }
+    return { status: 'edited', name: draft.name, path: relativePath, origin: 'draft' }
   }
 
   private async publish(params: Params): Promise<unknown> {
     const name = asString(params.name)?.trim()
-    if (!name || !SAFE_SLUG.test(name)) throw new Error('a draft slug is required')
+    if (!name || !SAFE_SKILL_NAME.test(name)) throw new Error('a draft name is required')
     const overwrite = params.overwrite === true
     if (params.overwrite !== undefined && typeof params.overwrite !== 'boolean') {
       throw new Error('overwrite must be a boolean')
@@ -415,7 +433,7 @@ export class HostSkillsService {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
 
-    const requestedDraft = explicitDraftSlug(requestedName)
+    const requestedDraft = explicitDraftName(requestedName)
     if (requestedDraft) {
       if (!(await exists(this.draftDir(requestedDraft)))) {
         throw new Error(`Unknown draft: ${requestedDraft}`)
@@ -431,7 +449,7 @@ export class HostSkillsService {
 
     const published = await this.resolvePublished(requestedName)
     const unqualifiedDraft =
-      SAFE_SLUG.test(requestedName) && (await exists(this.draftDir(requestedName)))
+      SAFE_SKILL_NAME.test(requestedName) && (await exists(this.draftDir(requestedName)))
     if (published && published.id !== requestedName && unqualifiedDraft) {
       throw new Error(
         `ambiguous Skill name; use draft-${requestedName} or ${published.id} to choose what to delete`

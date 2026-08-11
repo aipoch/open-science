@@ -2,8 +2,8 @@
 //
 // The real SDK lives in the control-plane REPL and is wired by issue 08. This fake implements the
 // FULL public surface from design.md §4 / PRD §2 against in-memory state, so the customize Skill's
-// workflow tests can exercise create/read/ordinary-update/capability-update/name-changing-update/
-// delete/switch with the snake_case-write / camelCase-return contract, the monotonic revision, the
+// workflow tests can exercise create/read/update/capability-update/delete/switch with the camelCase
+// JavaScript contract, the monotonic revision, the
 // structured decline result, and the sanitized `host.agents.<method>:` errors — without depending on
 // the not-yet-built mutation modules (issues 03/04/05).
 //
@@ -14,12 +14,13 @@
 import type { AgentReadModel, ConnectorReadModel, SkillCatalogReadModel } from '../agents-service'
 
 // ---------------------------------------------------------------------------
-// Internal fake state (snake_case write side; camelCase read models mirror the real SDK)
+// Internal fake state
 // ---------------------------------------------------------------------------
 
 export type FakeProfileRecord = {
   id: string
   name: string
+  displayName: string
   description: string
   systemPrompt: string
   iconKey?: string
@@ -42,7 +43,7 @@ export type FakeHostAgentsOptions = {
   // real ACP broker; the customize Skill tests wire a recording fake.
   approvalGateway?: {
     decide: (request: {
-      operation: 'update' | 'delete' | 'switch'
+      operation: 'delete' | 'switch'
       summary: { name?: string; newName?: string; target?: string | null }
     }) => Promise<{ status: 'approved' | 'declined'; reason?: string }>
   }
@@ -94,7 +95,7 @@ export class FakeHostAgents {
   // ----- read models (camelCase) -------------------------------------------------
 
   // Validates that every supplied Skill/Connector reference resolves against the live catalog
-  // (exact stable id first, otherwise unique public name). Mirrors the real catalog resolution so
+  // (exact stable id first, otherwise unique immutable name). Mirrors the real catalog resolution so
   // the customize Skill's review reflects only attachable references. design.md §4.
   private validateCatalogRefs(
     skillNames: string[],
@@ -102,12 +103,12 @@ export class FakeHostAgents {
     method: string
   ): void {
     for (const ref of skillNames) {
-      if (!this.skills.some((s) => s.id === ref || s.name === ref || s.displayName === ref)) {
+      if (!this.skills.some((s) => s.id === ref || s.name === ref)) {
         throw agentsError(method, `Unknown skill reference "${ref}"`)
       }
     }
     for (const ref of connectorNames) {
-      if (!this.connectors.some((c) => c.id === ref || c.displayName === ref)) {
+      if (!this.connectors.some((c) => c.id === ref || c.name === ref)) {
         throw agentsError(method, `Unknown connector reference "${ref}"`)
       }
     }
@@ -117,7 +118,7 @@ export class FakeHostAgents {
     return {
       id: profile.id,
       name: profile.name,
-      displayName: profile.name,
+      displayName: profile.displayName,
       description: profile.description,
       systemPrompt: profile.systemPrompt,
       iconKey: profile.iconKey,
@@ -152,51 +153,53 @@ export class FakeHostAgents {
     return this.project(profile)
   }
 
-  async list_skills(nameOrId?: string): Promise<FakeSkillCatalogEntry[]> {
+  async listSkills(nameOrId?: string): Promise<FakeSkillCatalogEntry[]> {
     if (!nameOrId) return clone(this.skills)
-    return applyNameOrIdFilter(this.skills, nameOrId, 'list_skills')
+    return applyNameOrIdFilter(this.skills, nameOrId, 'listSkills')
   }
 
-  async list_connectors(nameOrId?: string): Promise<FakeConnectorCatalogEntry[]> {
+  async listConnectors(nameOrId?: string): Promise<FakeConnectorCatalogEntry[]> {
     if (!nameOrId) return clone(this.connectors)
-    return applyNameOrIdFilter(this.connectors, nameOrId, 'list_connectors')
+    return applyNameOrIdFilter(this.connectors, nameOrId, 'listConnectors')
   }
 
   // ----- create ------------------------------------------------------------------
 
   async create(input: {
     name: string
+    displayName?: string
     description?: string
-    system_prompt?: string
-    icon_key?: string
-    color_key?: string
+    systemPrompt?: string
+    iconKey?: string
+    colorKey?: string
     enabled?: boolean
     unrestricted?: boolean
-    skill_names?: string[]
-    connector_names?: string[]
+    skillNames?: string[]
+    connectorNames?: string[]
   }): Promise<AgentReadModel> {
     const method = 'create'
     const name = input.name
     if (!name || typeof name !== 'string') throw agentsError(method, 'name is required')
     if (this.profiles.has(name)) throw agentsError(method, `Specialist "${name}" already exists`)
 
-    const hasSkillNames = input.skill_names !== undefined
-    const hasConnectorNames = input.connector_names !== undefined
+    const hasSkillNames = input.skillNames !== undefined
+    const hasConnectorNames = input.connectorNames !== undefined
     // design.md §5: omit both arrays => Full; supply either => Selected (omitted other => empty).
     const unrestricted =
       (input.unrestricted ?? !(hasSkillNames || hasConnectorNames)) ? true : false
 
-    const skillNames = input.skill_names ?? (unrestricted ? [] : [])
-    const connectorNames = input.connector_names ?? (unrestricted ? [] : [])
+    const skillNames = input.skillNames ?? (unrestricted ? [] : [])
+    const connectorNames = input.connectorNames ?? (unrestricted ? [] : [])
     this.validateCatalogRefs(skillNames, connectorNames, method)
 
     const record: FakeProfileRecord = {
       id: `sp-${this.nextId++}`,
       name,
+      displayName: input.displayName ?? name,
       description: input.description ?? '',
-      systemPrompt: input.system_prompt ?? '',
-      iconKey: input.icon_key,
-      colorKey: input.color_key,
+      systemPrompt: input.systemPrompt ?? '',
+      iconKey: input.iconKey,
+      colorKey: input.colorKey,
       enabled: input.enabled ?? true,
       unrestricted,
       skillIds: skillNames,
@@ -207,20 +210,20 @@ export class FakeHostAgents {
     return this.project(record)
   }
 
-  // ----- ordinary + name-changing update -----------------------------------------
+  // ----- update ------------------------------------------------------------------
 
   async update(
     name: string,
     patch: {
-      name?: string
+      displayName?: string
       description?: string
-      system_prompt?: string
-      icon_key?: string
-      color_key?: string
+      systemPrompt?: string
+      iconKey?: string
+      colorKey?: string
       enabled?: boolean
       unrestricted?: boolean
-      skill_names?: string[]
-      connector_names?: string[]
+      skillNames?: string[]
+      connectorNames?: string[]
       revision?: number
     }
   ): Promise<AgentReadModel> {
@@ -233,57 +236,33 @@ export class FakeHostAgents {
       throw agentsError(method, 'stale revision — re-read and review again')
     }
 
-    const isNameChange = patch.name !== undefined && patch.name !== name
-    if (isNameChange) {
-      // design.md §4/§7: a name change makes the WHOLE patch privileged. The standard permission card
-      // is the single authorization point; approve => apply atomically, decline => no change.
-      const decision = await this.approvalGateway?.decide({
-        operation: 'update',
-        summary: { name, newName: patch.name }
-      })
-      if (decision?.status === 'declined') {
-        return {
-          status: 'declined',
-          operation: 'update',
-          reason: decision.reason
-        } as unknown as AgentReadModel
-      }
-      // Re-resolve target name + revision after approval (design.md §8).
-      if (this.profiles.has(patch.name!)) {
-        throw agentsError(method, `Specialist "${patch.name}" already exists`)
-      }
-    }
-
     const next: FakeProfileRecord = { ...existing }
-    next.name = patch.name ?? next.name
+    next.displayName = patch.displayName ?? next.displayName
     next.description = patch.description ?? next.description
-    next.systemPrompt = patch.system_prompt ?? next.systemPrompt
-    next.iconKey = patch.icon_key ?? next.iconKey
-    next.colorKey = patch.color_key ?? next.colorKey
+    next.systemPrompt = patch.systemPrompt ?? next.systemPrompt
+    next.iconKey = patch.iconKey ?? next.iconKey
+    next.colorKey = patch.colorKey ?? next.colorKey
     next.enabled = patch.enabled ?? next.enabled
 
     // design.md §5 capability semantics for update.
     if (patch.unrestricted === true) {
       next.unrestricted = true // switch to Full, preserve stored Selected config
-    } else if (patch.skill_names !== undefined || patch.connector_names !== undefined) {
+    } else if (patch.skillNames !== undefined || patch.connectorNames !== undefined) {
       // Supplying a collection exactly replaces it and switches to Selected; omitted is preserved.
       next.unrestricted = false
-      next.skillIds = patch.skill_names ?? next.skillIds
-      next.connectorIds = patch.connector_names ?? next.connectorIds
+      next.skillIds = patch.skillNames ?? next.skillIds
+      next.connectorIds = patch.connectorNames ?? next.connectorIds
     }
     this.validateCatalogRefs(next.skillIds, next.connectorIds, method)
 
     next.revision = existing.revision + 1
-    if (isNameChange) {
-      this.profiles.delete(name)
-    }
     this.profiles.set(next.name, next)
     return this.project(next)
   }
 
   // ----- incremental attach/detach (single-collection, does not change mode) -----
 
-  async attach_skill(
+  async attachSkill(
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
@@ -291,7 +270,7 @@ export class FakeHostAgents {
     return this.mutateCollection(name, 'skill', skillRef, 'attach', options.revision)
   }
 
-  async detach_skill(
+  async detachSkill(
     name: string,
     skillRef: string,
     options: { revision?: number } = {}
@@ -299,7 +278,7 @@ export class FakeHostAgents {
     return this.mutateCollection(name, 'skill', skillRef, 'detach', options.revision)
   }
 
-  async attach_connector(
+  async attachConnector(
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
@@ -307,7 +286,7 @@ export class FakeHostAgents {
     return this.mutateCollection(name, 'connector', connectorRef, 'attach', options.revision)
   }
 
-  async detach_connector(
+  async detachConnector(
     name: string,
     connectorRef: string,
     options: { revision?: number } = {}
@@ -322,7 +301,7 @@ export class FakeHostAgents {
     action: 'attach' | 'detach',
     revision: number | undefined
   ): AgentReadModel {
-    const method = `${action}_${kind}`
+    const method = `${action}${kind[0].toUpperCase()}${kind.slice(1)}`
     const existing = this.profiles.get(name)
     if (!existing) throw agentsError(method, `Specialist "${name}" not found.`)
     if (revision !== undefined && revision !== existing.revision) {
@@ -416,7 +395,7 @@ function applyNameOrIdFilter<T extends { id: string; name?: string; displayName?
 ): T[] {
   const byId = entries.filter((entry) => entry.id === ref)
   if (byId.length > 0) return clone(byId)
-  const byName = entries.filter((entry) => entry.name === ref || entry.displayName === ref)
+  const byName = entries.filter((entry) => entry.name === ref)
   if (byName.length === 0) {
     throw agentsError(method, `No catalog entry matches "${ref}".`)
   }

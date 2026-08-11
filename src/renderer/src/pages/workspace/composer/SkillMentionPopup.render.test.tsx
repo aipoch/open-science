@@ -13,6 +13,7 @@ const seedSkills = [
   {
     id: 'lit',
     name: 'Literature Review',
+    displayName: 'Literature Review',
     description: 'Find, verify, and synthesize scientific papers',
     source: 'featured' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -21,6 +22,7 @@ const seedSkills = [
   {
     id: 'mpnn',
     name: 'ProteinMPNN',
+    displayName: 'ProteinMPNN',
     description: 'Inverse-fold a protein backbone into sequence',
     source: 'personal' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -29,6 +31,7 @@ const seedSkills = [
   {
     id: 'imp',
     name: 'Imported Helper',
+    displayName: 'Imported Helper',
     description: 'A literature-adjacent skill from GitHub',
     source: 'imported' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',

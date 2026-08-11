@@ -16,14 +16,16 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       customMcpServers: [
         {
           id: 'server-id',
-          name: 'Enabled',
+          name: 'enabled',
+          displayName: 'Enabled',
           transport: 'stdio',
           command: 'mcp',
           enabled: true
         },
         {
           id: 'disabled-id',
-          name: 'Disabled',
+          name: 'disabled',
+          displayName: 'Disabled',
           transport: 'stdio',
           command: 'mcp',
           enabled: false
@@ -34,7 +36,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     const syncBundledSkillDocs = vi.fn().mockResolvedValue(undefined)
     const syncCustomSkillDocs = vi.fn(async (_dir, servers, loadTools) => {
       await loadTools(servers[0])
-      return { materializedSlugs: ['enabled'], failures: [] }
+      return { materializedNames: ['enabled'], failures: [] }
     })
     const projection = new ConnectorRuntimeSettingsProjection({
       readConnectors: vi.fn().mockResolvedValue(stored),
@@ -65,27 +67,27 @@ describe('ConnectorRuntimeSettingsProjection', () => {
   it('refreshes and reports checking for only the requested custom server', async () => {
     const target = {
       id: 'target-id',
-      slug: 'target',
-      name: 'Target',
+      name: 'target',
+      displayName: 'Target',
       transport: 'stdio' as const,
       command: 'mcp',
       enabled: true
     }
     const unrelated = {
       id: 'unrelated-id',
-      slug: 'unrelated',
-      name: 'Unrelated',
+      name: 'unrelated',
+      displayName: 'Unrelated',
       transport: 'stdio' as const,
       command: 'mcp',
       enabled: true
     }
     let finishTargetedSync: (() => void) | undefined
-    const targetedSync = new Promise<{ materializedSlugs: string[]; failures: [] }>((resolve) => {
-      finishTargetedSync = () => resolve({ materializedSlugs: ['target'], failures: [] })
+    const targetedSync = new Promise<{ materializedNames: string[]; failures: [] }>((resolve) => {
+      finishTargetedSync = () => resolve({ materializedNames: ['target'], failures: [] })
     })
     const syncCustomSkillDocs = vi
       .fn()
-      .mockResolvedValueOnce({ materializedSlugs: ['target', 'unrelated'], failures: [] })
+      .mockResolvedValueOnce({ materializedNames: ['target', 'unrelated'], failures: [] })
       .mockReturnValueOnce(targetedSync)
     const projection = new ConnectorRuntimeSettingsProjection({
       readConnectors: vi.fn().mockResolvedValue(
@@ -122,16 +124,16 @@ describe('ConnectorRuntimeSettingsProjection', () => {
   it('advertises only custom Skills that materialized when one enabled server is unavailable', async () => {
     const unavailable = {
       id: 'unavailable-id',
-      slug: 'unavailable',
-      name: 'Unavailable',
+      name: 'unavailable',
+      displayName: 'Unavailable',
       transport: 'stdio' as const,
       command: 'node',
       enabled: true
     }
     const healthy = {
       id: 'healthy-id',
-      slug: 'healthy',
-      name: 'Healthy',
+      name: 'healthy',
+      displayName: 'Healthy',
       transport: 'stdio' as const,
       command: 'node',
       enabled: true
@@ -148,7 +150,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
       syncCustomSkillDocs: vi.fn().mockResolvedValue({
-        materializedSlugs: ['healthy'],
+        materializedNames: ['healthy'],
         failures: [{ server: unavailable, error: failure }]
       }),
       reportError
@@ -168,8 +170,8 @@ describe('ConnectorRuntimeSettingsProjection', () => {
   it('classifies authentication discovery failures without exposing transport details', async () => {
     const server = {
       id: 'oauth-id',
-      slug: 'oauth',
-      name: 'OAuth',
+      name: 'oauth',
+      displayName: 'OAuth',
       transport: 'streamable_http' as const,
       url: 'https://mcp.example.test',
       enabled: true
@@ -180,7 +182,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
       syncCustomSkillDocs: vi.fn().mockResolvedValue({
-        materializedSlugs: [],
+        materializedNames: [],
         failures: [{ server, error: new Error('401 invalid_token for a secret endpoint') }]
       }),
       reportError: vi.fn()
@@ -194,8 +196,8 @@ describe('ConnectorRuntimeSettingsProjection', () => {
   it('clears a runtime failure after a successful retry refresh', async () => {
     const server = {
       id: 'recovering-id',
-      slug: 'recovering',
-      name: 'Recovering',
+      name: 'recovering',
+      displayName: 'Recovering',
       transport: 'stdio' as const,
       command: 'node',
       enabled: true
@@ -203,10 +205,10 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     const syncCustomSkillDocs = vi
       .fn()
       .mockResolvedValueOnce({
-        materializedSlugs: [],
+        materializedNames: [],
         failures: [{ server, error: new Error('Connection closed') }]
       })
-      .mockResolvedValueOnce({ materializedSlugs: ['recovering'], failures: [] })
+      .mockResolvedValueOnce({ materializedNames: ['recovering'], failures: [] })
     const projection = new ConnectorRuntimeSettingsProjection({
       readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
       skillsDir: '/config/skills',
@@ -226,8 +228,8 @@ describe('ConnectorRuntimeSettingsProjection', () => {
 
   it('publishes checking and settled states without blocking snapshot reads', async () => {
     let finishSync: (() => void) | undefined
-    const sync = new Promise<{ materializedSlugs: string[]; failures: [] }>((resolve) => {
-      finishSync = () => resolve({ materializedSlugs: ['checking'], failures: [] })
+    const sync = new Promise<{ materializedNames: string[]; failures: [] }>((resolve) => {
+      finishSync = () => resolve({ materializedNames: ['checking'], failures: [] })
     })
     const notifyStatusChanged = vi.fn()
     const projection = new ConnectorRuntimeSettingsProjection({
@@ -253,7 +255,8 @@ describe('ConnectorRuntimeSettingsProjection', () => {
   it('keeps discovery status when a newer dispatch failure is cleared', async () => {
     const server = {
       id: 'server-id',
-      name: 'Server',
+      name: 'server',
+      displayName: 'Server',
       transport: 'stdio' as const,
       command: 'mcp',
       enabled: true
@@ -265,7 +268,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
       syncCustomSkillDocs: vi.fn().mockResolvedValue({
-        materializedSlugs: [],
+        materializedNames: [],
         failures: [{ server, error: new Error('Connection closed') }]
       }),
       notifyStatusChanged
@@ -298,7 +301,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       skillsDir: '/config/skills',
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs,
-      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] }),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedNames: [], failures: [] }),
       reportError
     })
 
@@ -341,7 +344,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       skillsDir: '/config/skills',
       mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) },
       syncBundledSkillDocs,
-      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] })
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedNames: [], failures: [] })
     })
 
     const olderRefresh = projection.refresh()
@@ -384,7 +387,7 @@ describe('ConnectorRuntimeSettingsProjection', () => {
         .fn()
         .mockRejectedValueOnce(new Error('older sync failed'))
         .mockResolvedValueOnce(undefined),
-      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedSlugs: [], failures: [] }),
+      syncCustomSkillDocs: vi.fn().mockResolvedValue({ materializedNames: [], failures: [] }),
       reportError
     })
 

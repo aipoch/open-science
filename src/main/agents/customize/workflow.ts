@@ -7,9 +7,9 @@
 // The Skill is WORKFLOW GUIDANCE, not a security boundary (design.md §11, PRD §10). It never merges
 // or auto-retries; it never treats the chat entry as authorization; it never exposes UUIDs/revisions
 // in ordinary prose. Confirmation boundaries (design.md §7):
-//  - ordinary mutations (create, non-name update): chat review + explicit textual confirmation; no
+//  - ordinary mutations (create and update): chat review + explicit textual confirmation; no
 //    second system permission card;
-//  - privileged mutations (name-changing update, delete, switch): explain the impending action, then
+//  - privileged mutations (delete and switch): explain the impending action, then
 //    invoke the SDK — the standard permission card is the single authorization point.
 
 import type { AgentReadModel } from '../agents-service'
@@ -24,11 +24,11 @@ export type CapabilityScope = 'full' | 'selected' | 'unspecified'
 
 export const resolveCreateScope = (input: {
   unrestricted?: boolean
-  skill_names?: unknown
-  connector_names?: unknown
+  skillNames?: unknown
+  connectorNames?: unknown
 }): CapabilityScope => {
   if (input.unrestricted === true) return 'full'
-  if (input.skill_names !== undefined || input.connector_names !== undefined) return 'selected'
+  if (input.skillNames !== undefined || input.connectorNames !== undefined) return 'selected'
   return 'unspecified'
 }
 
@@ -48,6 +48,7 @@ export const SCOPE_CLARIFICATION =
 // live Profiles plus Skill/Connector catalogs before proposing this.
 export type ReviewedTargetState = {
   name: string
+  displayName: string
   description: string
   systemPrompt: string
   iconKey?: string
@@ -61,6 +62,7 @@ export type ReviewedTargetState = {
 
 export const buildReviewedTarget = (profile: AgentReadModel): ReviewedTargetState => ({
   name: profile.name,
+  displayName: profile.displayName,
   description: profile.description,
   systemPrompt: profile.systemPrompt,
   iconKey: profile.iconKey,
@@ -82,6 +84,7 @@ export const renderOrdinaryReview = (
 ): string => {
   const lines: string[] = []
   lines.push(`Name: ${target.name}`)
+  lines.push(`Display name: ${target.displayName}`)
   lines.push(`Description: ${target.description}`)
   lines.push('Full system instructions:')
   lines.push(target.systemPrompt)
@@ -104,14 +107,13 @@ export const renderOrdinaryReview = (
 // Confirmation boundaries (design.md §7)
 // ---------------------------------------------------------------------------
 
-export type OperationKind =
-  'create' | 'ordinary-update' | 'name-changing-update' | 'delete' | 'switch'
+export type OperationKind = 'create' | 'ordinary-update' | 'delete' | 'switch'
 
 // Ordinary mutations use chat review + explicit textual confirmation and do NOT request a second
 // system permission card. Name-changing update, delete, and switch explain the impending action and
 // invoke the SDK directly; the standard card is the only authorization point.
 export const requiresSystemPermissionCard = (kind: OperationKind): boolean =>
-  kind === 'name-changing-update' || kind === 'delete' || kind === 'switch'
+  kind === 'delete' || kind === 'switch'
 
 // Whether the operation waits for an explicit textual confirmation in chat BEFORE mutating (ordinary
 // path). Privileged ops do not require a separate preceding "yes": the card is the authorization.
@@ -150,14 +152,14 @@ export const draftChangedSinceConfirmation = <T>(
 export type OrdinaryChangePlan = {
   kind: 'atomic-update'
   patch: {
-    name?: string
+    displayName?: string
     description?: string
-    system_prompt?: string
-    icon_key?: string
-    color_key?: string
+    systemPrompt?: string
+    iconKey?: string
+    colorKey?: string
     enabled?: boolean
-    skill_names?: string[]
-    connector_names?: string[]
+    skillNames?: string[]
+    connectorNames?: string[]
   }
 }
 
@@ -166,15 +168,16 @@ export const preferAtomicUpdate = (
   live: ReviewedTargetState
 ): OrdinaryChangePlan => {
   const patch: OrdinaryChangePlan['patch'] = {}
+  if (target.displayName !== live.displayName) patch.displayName = target.displayName
   if (target.description !== live.description) patch.description = target.description
-  if (target.systemPrompt !== live.systemPrompt) patch.system_prompt = target.systemPrompt
-  if ((target.iconKey ?? '') !== (live.iconKey ?? '')) patch.icon_key = target.iconKey
-  if ((target.colorKey ?? '') !== (live.colorKey ?? '')) patch.color_key = target.colorKey
+  if (target.systemPrompt !== live.systemPrompt) patch.systemPrompt = target.systemPrompt
+  if ((target.iconKey ?? '') !== (live.iconKey ?? '')) patch.iconKey = target.iconKey
+  if ((target.colorKey ?? '') !== (live.colorKey ?? '')) patch.colorKey = target.colorKey
   if (target.enabled !== live.enabled) patch.enabled = target.enabled
   const skillChanged = JSON.stringify(target.skillIds) !== JSON.stringify(live.skillIds)
   const connectorChanged = JSON.stringify(target.connectorIds) !== JSON.stringify(live.connectorIds)
-  if (skillChanged) patch.skill_names = target.skillIds
-  if (connectorChanged) patch.connector_names = target.connectorIds
+  if (skillChanged) patch.skillNames = target.skillIds
+  if (connectorChanged) patch.connectorNames = target.connectorIds
   return { kind: 'atomic-update', patch }
 }
 
@@ -188,10 +191,6 @@ export const explainSwitch = (currentName: string | null, targetName: string | n
   `About to switch this conversation from ${currentName ?? 'Main Agent'} to ${
     targetName ?? 'Main Agent'
   }. If approved, the current control tool finishes and the conversation continues automatically under the approved identity.`
-
-export const explainNameChange = (oldName: string, newName: string): string =>
-  `About to rename "${oldName}" to "${newName}" and apply the rest of the reviewed changes in one ` +
-  'step. Stable conversation bindings do not change.'
 
 export const explainDelete = (name: string): string =>
   `About to delete "${name}". Conversations still bound to it become unavailable; they are not ` +

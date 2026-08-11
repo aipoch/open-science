@@ -60,7 +60,7 @@ export const SkillMentionPopup = ({
     return (
       visibleSkills
         .map((skill) => {
-          const nameMatch = fuzzyScore(needle, skill.name)
+          const nameMatch = fuzzyScore(needle, skill.displayName)
           if (nameMatch) {
             return {
               skill,
@@ -153,7 +153,7 @@ export const SkillMentionPopup = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium text-sm">
-                    <HighlightedText text={skill.name} positions={positions} />
+                    <HighlightedText text={skill.displayName} positions={positions} />
                   </span>
                   <div className="flex-1" />
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground">

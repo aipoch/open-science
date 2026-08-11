@@ -830,7 +830,10 @@ export type SkillSource = 'featured' | 'imported' | 'personal'
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
   id: string
+  // Stable invocation name from SKILL.md.
   name: string
+  // Presentation label supplied by the catalog source, falling back to name.
+  displayName: string
   description: string
   source: SkillSource
   updatedAt: string
@@ -870,21 +873,19 @@ export type SkillReference = {
   dataBase64?: string
 }
 
-// Create a personal (user-authored) skill from the in-app editor. `slug` is the user-chosen Skill ID
-// (without the `personal-` prefix); when omitted, it is derived from the name.
+// Create a personal (user-authored) skill from the in-app editor. `name` is the immutable invocation
+// identity and the package directory name.
 export type CreateSkillRequest = {
   name: string
   description: string
   body: string
   metadata?: Record<string, string>
-  slug?: string
   references?: SkillReference[]
 }
 
 // Update an existing personal skill in place.
 export type UpdateSkillRequest = {
   id: string
-  name: string
   description: string
   body: string
   metadata?: Record<string, string>
@@ -1160,10 +1161,10 @@ export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 // Renderer-safe view of one user-added custom MCP server (no secret env/header values).
 export type CustomServerView = {
   id: string
-  // Immutable agent-facing route used by host.mcp, Specialists, and generated MCP skills.
-  slug: string
-  // User-facing label; spaces and punctuation are allowed.
+  // Immutable agent-facing name used by host.mcp, Specialists, and generated MCP skills.
   name: string
+  // User-facing label; spaces, punctuation, and duplicates are allowed.
+  displayName: string
   description?: string
   transport: CustomServerTransport
   enabled: boolean
@@ -1201,7 +1202,7 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   name: string
-  slug?: string
+  displayName: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1227,7 +1228,7 @@ export type ConnectorTemplateDefinition = {
   schemaVersion: 1
   kind: 'open-science.connector'
   name: string
-  slug: string
+  displayName: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1274,11 +1275,11 @@ export type SelectCustomServerTemplateRequest = {
 export type ExportCustomServerTemplateRequest = { id: string; expectedDigest: string }
 export type ExportCustomServerTemplateResult = { saved: boolean }
 
-// Edit an existing custom MCP server. The name is immutable (it is the server's identity — host.mcp
-// routing, skill-doc name, and per-tool policy keys all depend on it). Omitted env/headers keep the
-// stored values; providing them replaces the set.
+// Edit an existing custom MCP server. `name` is deliberately absent because it is immutable.
+// Omitted env/headers keep the stored values; providing them replaces the set.
 export type UpdateCustomServerRequest = {
   id: string
+  displayName?: string
   description?: string
   transport: CustomServerTransport
   command?: string

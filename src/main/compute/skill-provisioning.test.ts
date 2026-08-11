@@ -82,6 +82,7 @@ describe('SSH Compute Skill provisioning lifecycle', () => {
     const bundledSkill: BundledSkill = {
       id: 'remote-compute-ssh',
       name: 'Remote Compute (SSH)',
+      displayName: 'Remote Compute (SSH)',
       description: 'Discover SSH compute hosts.',
       source: 'featured',
       updatedAt: 'v1',

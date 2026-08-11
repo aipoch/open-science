@@ -61,7 +61,8 @@ user's technical comfort.
 
 1. Call `host.skills.list()` before editing. Read every existing file you intend to change.
 2. For Built-in or Imported Skills, create a Personal fork under a new lowercase hyphenated name.
-3. Use frontmatter with exactly `name` and `description`; the name must equal the draft slug.
+3. Use frontmatter with `name` and `description`, plus optional `displayName`; `name` must equal the
+   immutable draft slug and defaults as the presentation label when `displayName` is omitted.
 4. Put stable procedures in `SKILL.md`, detailed knowledge in `references/`, deterministic automation
    in `scripts/`, and output templates in `assets/`.
 5. Prefer imperative instructions and explain why constraints matter. Avoid brittle lists of MUSTs.
@@ -128,4 +129,4 @@ replace an existing Personal Skill. Read the published `SKILL.md` back and repor
 origin.
 
 If the user asks to attach it to a Specialist, read the live Specialist and Skill catalogs first,
-then call `host.agents.attach_skill(...)` and report the returned read-back. Never attach automatically.
+then call `host.agents.attachSkill(...)` and report the returned read-back. Never attach automatically.

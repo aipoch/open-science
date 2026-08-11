@@ -64,9 +64,8 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'id' | 'name' | 'slug'>
+  server: Pick<CustomServerView, 'name'>
 ): string[] => {
-  const aliases = new Set([server.slug, server.name, server.id])
   return items
     .flatMap((item) => {
       if (item.kind === 'reviewer') return []
@@ -75,9 +74,7 @@ const specialistNamesUsingConnector = (
           ? item.fullAccess.excludedConnectorIds
           : item.selectedCapabilities.connectorIds
       const usesConnector =
-        item.capabilityMode === 'full'
-          ? !ids.some((id) => aliases.has(id))
-          : ids.some((id) => aliases.has(id))
+        item.capabilityMode === 'full' ? !ids.includes(server.name) : ids.includes(server.name)
       return usesConnector ? [item.displayName?.trim() || item.name] : []
     })
     .sort((a, b) => a.localeCompare(b))
@@ -143,6 +140,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     if (!term) return customServers
     return customServers.filter(
       (server) =>
+        server.displayName.toLowerCase().includes(term) ||
         server.name.toLowerCase().includes(term) ||
         (server.description?.toLowerCase().includes(term) ?? false)
     )
@@ -492,13 +490,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <ConnectorGlyph size={24} />
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-foreground">
-                          {server.name}
+                          {server.displayName}
                         </span>
-                        {server.description ? (
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {server.description}
-                          </span>
-                        ) : null}
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {server.name}
+                          {server.description ? ` · ${server.description}` : ''}
+                        </span>
                         <span
                           className={`block truncate text-xs ${
                             server.availability && !server.checking && !retryingIds.has(server.id)
@@ -520,17 +517,17 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         </span>
                       </div>
                       <SettingsIconAction
-                        label={`Export ${server.name}`}
+                        label={`Export ${server.displayName}`}
                         icon={Download}
                         onClick={() => onNavigate({ kind: 'export', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Edit ${server.name}`}
+                        label={`Edit ${server.displayName}`}
                         icon={Pencil}
                         onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Remove ${server.name}`}
+                        label={`Remove ${server.displayName}`}
                         icon={Trash2}
                         onClick={() => void requestRemoval(server)}
                         danger
@@ -583,7 +580,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       ) : null}
                       <SettingsToggle
                         enabled={server.enabled}
-                        aria-label={server.name}
+                        aria-label={server.displayName}
                         aria-disabled={requiresSignInBeforeEnable(server) || undefined}
                         className={
                           requiresSignInBeforeEnable(server)
@@ -626,7 +623,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              Remove “{removal?.server.name}”?
+              Remove “{removal?.server.displayName}”?
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
               This removes the Connector configuration and credentials from this app. Existing

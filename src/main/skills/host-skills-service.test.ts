@@ -33,6 +33,7 @@ const makeFixture = async (): Promise<{
   const featured: BundledSkill = {
     id: 'literature-review',
     name: 'literature-review',
+    displayName: 'Literature Review',
     description: 'Review literature.',
     source: 'featured',
     updatedAt: '2026-08-09',
@@ -45,8 +46,8 @@ const makeFixture = async (): Promise<{
       if (id === featured.id) return read(featured)
       return userSkills.withSkillReadLock(id, read)
     },
-    publishPersonalDirectory: (slug, sourcePath, overwrite) =>
-      userSkills.publishPersonalDirectory(slug, sourcePath, overwrite),
+    publishPersonalDirectory: (name, sourcePath, overwrite) =>
+      userSkills.publishPersonalDirectory(name, sourcePath, overwrite),
     deletePublished: (id) => userSkills.delete(id)
   }
   const approveDelete = vi.fn(async () => true)
@@ -155,6 +156,7 @@ describe('HostSkillsService', () => {
       {
         id: 'literature-review',
         name: 'literature-review',
+        displayName: 'Literature Review',
         description: 'Review literature.',
         origin: 'featured',
         editable: false
@@ -162,6 +164,7 @@ describe('HostSkillsService', () => {
       {
         id: 'draft-new-skill',
         name: 'new-skill',
+        displayName: 'new-skill',
         description: 'New skill.',
         origin: 'draft',
         editable: true
@@ -256,14 +259,14 @@ describe('HostSkillsService', () => {
 
     await expect(
       service.dispatch({ op: 'publish', params: { name: 'extra-metadata' } })
-    ).rejects.toThrow('frontmatter must contain exactly name and description')
+    ).rejects.toThrow('frontmatter may only contain name, displayName, and description')
     expect(await userSkills.list()).toHaveLength(0)
   })
 
   it('deletes an explicit draft without deleting its published Personal Skill', async () => {
     const { service, root, userSkills, approveDelete, reload } = await makeFixture()
     await userSkills.createPersonal({
-      name: 'Disposable',
+      name: 'disposable',
       description: 'Delete me.',
       body: 'Published body.'
     })
@@ -305,7 +308,7 @@ describe('HostSkillsService', () => {
   it('edits a draft by the stable id returned from list', async () => {
     const { service, userSkills } = await makeFixture()
     await userSkills.createPersonal({
-      name: 'Editable',
+      name: 'editable',
       description: 'Edit me.',
       body: 'Published body.'
     })
@@ -339,7 +342,7 @@ describe('HostSkillsService', () => {
     ).resolves.toMatchObject({ content: expect.stringContaining('Second draft.') })
   })
 
-  it('allows a new Skill slug to start with the draft prefix', async () => {
+  it('allows a new Skill name to start with the draft prefix', async () => {
     const { service } = await makeFixture()
 
     await expect(
@@ -357,21 +360,21 @@ describe('HostSkillsService', () => {
     )
   })
 
-  it('resolves an exact published stable id before colliding public slugs', async () => {
+  it('resolves an exact published stable id before a colliding immutable name', async () => {
     const { service, userSkills } = await makeFixture()
-    await userSkills.createPersonal({ name: 'Foo', description: 'Exact id.', body: 'Exact body.' })
+    await userSkills.createPersonal({ name: 'foo', description: 'Exact id.', body: 'Exact body.' })
     await userSkills.createPersonal({
-      name: 'Personal Foo',
-      description: 'Colliding slug.',
+      name: 'personal-foo',
+      description: 'Colliding name.',
       body: 'Collision body.'
     })
 
     await expect(
       service.dispatch({ op: 'read', params: { name: 'personal-foo' } })
-    ).resolves.toMatchObject({ name: 'Foo', content: expect.stringContaining('Exact body.') })
+    ).resolves.toMatchObject({ name: 'foo', content: expect.stringContaining('Exact body.') })
   })
 
-  it('rejects an unqualified delete when a published display name matches a draft slug', async () => {
+  it('rejects an unqualified delete when a published display name matches a draft name', async () => {
     const { service, catalog, root, approveDelete } = await makeFixture()
     await service.dispatch({
       op: 'edit',
@@ -387,6 +390,7 @@ describe('HostSkillsService', () => {
       {
         id: 'custom-package-id',
         name: 'shared-name',
+        displayName: 'Shared name',
         description: 'Published alias.',
         source: 'imported',
         updatedAt: '2026-08-09',
@@ -403,7 +407,7 @@ describe('HostSkillsService', () => {
     expect(approveDelete).not.toHaveBeenCalled()
   })
 
-  it('rejects reserved Skill slugs before creating a draft', async () => {
+  it('rejects reserved Skill names before creating a draft', async () => {
     const { service } = await makeFixture()
 
     for (const name of ['os-review', 'mcp-review']) {
@@ -424,7 +428,7 @@ describe('HostSkillsService', () => {
   it('requires approval for delete and reports a decline as a normal result', async () => {
     const { service, userSkills, approveDelete, reload } = await makeFixture()
     await userSkills.createPersonal({
-      name: 'Disposable',
+      name: 'disposable',
       description: 'Delete me.',
       body: 'Body.'
     })
@@ -444,7 +448,7 @@ describe('HostSkillsService', () => {
         { op: 'delete', params: { name: 'personal-disposable' } },
         { sessionId: 'session-1' }
       )
-    ).resolves.toEqual({ status: 'deleted', operation: 'delete', name: 'Disposable' })
+    ).resolves.toEqual({ status: 'deleted', operation: 'delete', name: 'disposable' })
     expect(await userSkills.list()).toHaveLength(0)
     expect(reload).toHaveBeenCalledTimes(1)
   })

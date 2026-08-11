@@ -17,6 +17,7 @@ const seedSkills = [
   {
     id: 'a',
     name: 'Alpha',
+    displayName: 'Alpha',
     description: 'First',
     source: 'featured' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -25,6 +26,7 @@ const seedSkills = [
   {
     id: 'b',
     name: 'Beta',
+    displayName: 'Beta',
     description: 'Second',
     source: 'featured' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -33,6 +35,7 @@ const seedSkills = [
   {
     id: 'personal-mine',
     name: 'Mine',
+    displayName: 'Mine',
     description: 'Custom',
     source: 'personal' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -302,6 +305,7 @@ describe('SkillsPanel (list view)', () => {
         {
           id: 'imported-shared',
           name: 'Shared',
+          displayName: 'Shared',
           description: 'Imported',
           source: 'imported',
           updatedAt: '2026-07-08T00:00:00.000Z',
@@ -484,6 +488,11 @@ describe('SkillsPanel (sub-views)', () => {
       await Promise.resolve()
     })
 
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Skill name"]')?.disabled
+    ).toBe(true)
+    expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
+
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Save'
     )
@@ -494,7 +503,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# Body',
       metadata: { author: 'Ada', license: 'MIT', category: 'research' },
@@ -549,7 +557,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Grace', tags: 'analysis, writing' },
@@ -591,7 +598,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Ada', license: 'MIT' },
@@ -640,7 +646,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# Plain replacement',
       metadata: { author: 'Old author', license: 'MIT' },
@@ -693,11 +698,11 @@ describe('SkillsPanel (sub-views)', () => {
     })
     pasteValue(
       'Skill body',
-      ['---', 'name: Original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
+      ['---', 'name: original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
     )
     setValue(
       'Skill body',
-      ['---', 'name: Revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
+      ['---', 'name: revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
     )
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -706,11 +711,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'Revised',
+      name: 'revised',
       description: 'After',
       body: '# Body',
       metadata: { author: 'Ada' },
-      slug: 'revised',
       references: []
     })
   })
@@ -719,7 +723,7 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
     })
-    setValue('Skill name', 'YAML Example')
+    setValue('Skill name', 'yaml-example')
     const body = ['---', 'example: literal documentation', '---', '# Instructions'].join('\n')
     setValue('Skill body', body)
 
@@ -729,11 +733,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'YAML Example',
+      name: 'yaml-example',
       description: '',
       body,
       metadata: undefined,
-      slug: 'yaml-example',
       references: []
     })
   })
@@ -751,7 +754,8 @@ describe('SkillsPanel (sub-views)', () => {
     expect(
       document.body.querySelector('[aria-label="Skill body"]')?.getAttribute('data-slot')
     ).toBe('textarea')
-    setValue('Skill name', 'My New Skill')
+    expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
+    setValue('Skill name', 'my-new-skill')
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -760,12 +764,28 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'My New Skill',
+      name: 'my-new-skill',
       description: '',
       body: '# Body',
-      slug: 'my-new-skill',
       references: []
     })
+  })
+
+  it('requires the personal skill name to be the immutable lowercase identity', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+    setValue('Skill name', 'My New Skill')
+    setValue('Skill body', '# Body')
+
+    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Publish'
+    )
+    expect(document.body.textContent).toContain(
+      'Use up to 64 lowercase letters, numbers, and single hyphens.'
+    )
+    expect(publish?.disabled).toBe(true)
+    expect(useSettingsStore.getState().createSkill).not.toHaveBeenCalled()
   })
 
   it('preserves frontmatter metadata pasted into the create editor', () => {
@@ -775,7 +795,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     const pasted = [
       '---',
-      'name: Pasted Skill',
+      'name: pasted-skill',
       'description: Pasted description',
       'author: Ada',
       'category: research',
@@ -792,11 +812,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'Pasted Skill',
+      name: 'pasted-skill',
       description: 'Pasted description',
       body: '# Body',
       metadata: { author: 'Ada', category: 'research' },
-      slug: 'pasted-skill',
       references: []
     })
   })

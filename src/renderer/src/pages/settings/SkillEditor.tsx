@@ -17,13 +17,15 @@ export type SkillDraft = {
   description: string
   body: string
   metadata?: Record<string, string>
-  slug?: string
   references?: SkillReference[]
 }
 
-// Reserved id namespaces a user-authored skill may not claim (mirrors the main-process rule):
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const SKILL_NAME_MAX_LENGTH = 64
+
+// Reserved name namespaces a user-authored skill may not claim (mirrors the main-process rule):
 // `os-` is the app's own materialized prefix, `mcp-` is reserved for MCP-provided skills.
-const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-']
+const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-']
 
 // Reads a File as base64 (for binary-safe reference transport to the main process).
 const fileToBase64 = (file: File): Promise<string> =>
@@ -34,21 +36,13 @@ const fileToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file)
   })
 
-// Renderer-side slug preview mirroring the main-process slug rule (lowercase a–z, 0–9, hyphens).
-const toSlug = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64)
-
 type SkillEditorProps = {
   initial: SkillDraft
   onCancel: () => void
   onSave: (draft: SkillDraft) => Promise<void>
 }
 
-// Create/edit form for a personal skill: Identity (name/id/description) + Content (SKILL.md body).
+// Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
 const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
   const isCreate = !initial.id
@@ -62,35 +56,32 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
     (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
   )
-  const [slug, setSlug] = useState('')
-  const [slugTouched, setSlugTouched] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // The effective id: the user's typed value once they edit it, otherwise derived from the name.
-  const currentSlug = isCreate && !slugTouched ? toSlug(name) : slug
+  const currentName = name.trim()
 
-  // Validates the chosen id against the same rules the main process enforces, plus a live
+  // Validates the immutable name against the same rules the main process enforces, plus a live
   // collision check against already-loaded personal skills. Only meaningful when creating.
-  const slugError = useMemo((): string | null => {
+  const nameError = useMemo((): string | null => {
     if (!isCreate) return null
-    if (!currentSlug) return 'Skill ID is required.'
-    if (!/^[a-z0-9-]+$/.test(currentSlug)) {
-      return 'Only lowercase letters, numbers, and hyphens.'
+    if (!currentName) return 'Name is required.'
+    if (!SKILL_NAME_PATTERN.test(currentName) || currentName.length > SKILL_NAME_MAX_LENGTH) {
+      return 'Use up to 64 lowercase letters, numbers, and single hyphens.'
     }
-    if (RESERVED_SLUG_PREFIXES.some((prefix) => currentSlug.startsWith(prefix))) {
-      return `Can't start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`
+    if (RESERVED_SKILL_NAME_PREFIXES.some((prefix) => currentName.startsWith(prefix))) {
+      return `Can't start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`
     }
-    if (skills.some((entry) => entry.id === `personal-${currentSlug}`)) {
-      return 'A skill with this ID already exists.'
+    if (skills.some((entry) => entry.id === `personal-${currentName}`)) {
+      return 'A skill with this name already exists.'
     }
     return null
-  }, [isCreate, currentSlug, skills])
+  }, [isCreate, currentName, skills])
 
   const importedContent = frontmatterImportMode ? parseSkillDocument(body) : undefined
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
   const persistedMetadata = importedContent?.hasFrontmatter ? importedContent.metadata : metadata
   const metadataEntries = Object.entries(persistedMetadata ?? {})
-  const canSave = name.trim().length > 0 && persistedBody.trim().length > 0 && !slugError && !saving
+  const canSave = currentName.length > 0 && persistedBody.trim().length > 0 && !nameError && !saving
 
   // Plain textarea edits are always literal body content and keep the separately displayed metadata.
   // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
@@ -98,7 +89,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (frontmatterImportMode) {
       const parsed = parseSkillDocument(value)
       if (parsed.hasFrontmatter) {
-        if (parsed.name !== undefined) setName(parsed.name)
+        if (isCreate && parsed.name !== undefined) setName(parsed.name)
         if (parsed.description !== undefined) setDescription(parsed.description)
         setMetadata(parsed.metadata)
       } else {
@@ -114,7 +105,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const importContent = (value: string): void => {
     const parsed = parseSkillDocument(value)
     if (parsed.hasFrontmatter) {
-      if (parsed.name && !name.trim()) setName(parsed.name)
+      if (isCreate && parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
       setMetadata(parsed.metadata)
       setFrontmatterImportMode(true)
@@ -187,11 +178,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     try {
       await onSave({
         id: initial.id,
-        name: name.trim(),
+        name: currentName,
         description: description.trim(),
         body: persistedBody,
         metadata: persistedMetadata,
-        slug: isCreate ? currentSlug : undefined,
         references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })
     } finally {
@@ -214,42 +204,12 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 <Input
                   aria-label="Skill name"
                   value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="e.g. Changelog style"
+                  onChange={isCreate ? (event) => setName(event.target.value) : undefined}
+                  disabled={!isCreate}
+                  aria-invalid={nameError ? true : undefined}
+                  placeholder="e.g. changelog-style"
                 />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Skill ID</span>
-                <Input
-                  aria-label="Skill ID"
-                  value={isCreate ? currentSlug : (initial.id ?? '').replace(/^personal-/, '')}
-                  onChange={
-                    isCreate
-                      ? (event) => {
-                          setSlugTouched(true)
-                          setSlug(event.target.value.toLowerCase())
-                        }
-                      : undefined
-                  }
-                  readOnly={!isCreate}
-                  aria-invalid={slugError ? true : undefined}
-                  className={`font-mono ${
-                    isCreate
-                      ? slugError
-                        ? 'border-danger-000 text-foreground'
-                        : 'text-foreground'
-                      : 'text-muted-foreground'
-                  }`}
-                />
-                {slugError ? (
-                  <span className="text-xs text-danger-000">{slugError}</span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    {isCreate
-                      ? 'Used as the folder name — lowercase a–z, 0–9, hyphens. Locked after creation.'
-                      : 'The skill ID is fixed after creation.'}
-                  </span>
-                )}
+                {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
               </label>
               <label className="flex flex-col gap-1.5">
                 <span className="text-sm font-medium text-foreground">Description</span>
@@ -480,7 +440,6 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       onSave={async (next) => {
         await updateSkill({
           id: next.id ?? skillId,
-          name: next.name,
           description: next.description,
           body: next.body,
           metadata: next.metadata,

@@ -662,6 +662,16 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Select fields use `Select`, with a `32px` trigger height.
 - A visible Settings search or filter field owns the platform search shortcut: `Cmd+K` on macOS and `Ctrl+K` on Windows/Linux focus it without selecting or clearing its value. The topmost nested Settings dialog wins over a search behind it; hidden or disabled searches do not intercept the shortcut. Persistent list-toolbars show the shortcut as right-aligned keycaps inside the field, while transient searches such as runtime-package and Specialist capability filters expose the same behavior through `aria-keyshortcuts` without repeating the visual hint.
 
+#### Resource identity and display names
+
+- Connector, Skill, and Specialist `name` values are stable invocation identities. They are fixed after creation and are used by host APIs, generated Skill documents, package references, and policy routing. Editing a presentation label must never change these references.
+- `displayName` is presentation-only and may appear in lists, search results, prompts, and approval UI. Connector and Specialist editors may change it freely. A Skill may read an optional `displayName` from external `SKILL.md` frontmatter and falls back to `name`; built-in Skills and app-generated Skill exports omit that non-standard field, and the app does not maintain a separate Skill display-name field outside the manifest.
+- Connector context follows a distinct derived path: after live tool discovery the app generates an on-demand `mcp-<name>/SKILL.md`. Its frontmatter identity and every `host.mcp` example use immutable `name`; `displayName` may appear only in generated prose (or through an explicit `listConnectors()` result). Updating a Connector regenerates this document and reloads Skills without creating an invocation alias. Auth-recovery guidance derived from Connector configuration and discovered login tools remains part of the generated document.
+- A custom Connector also has an internal UUID `id`. Runtime calls and Specialist capability references use its immutable lowercase-hyphenated `name`; durable permission grants use the UUID. The UI shows `displayName` and exposes the immutable Connector ID separately. Display names and UUIDs are not invocation aliases.
+- Connector template schema v1 stores both `name` and `displayName` directly. Export never includes secrets, and import does not synthesize compatibility aliases from a display name.
+- Specialist package schema v1 remains byte-for-byte compatible in field shape: package `name` stays the immutable invocation identity and `displayName` stays editable presentation metadata.
+- Public JavaScript host APIs and their object fields use camelCase (`listSkills`, `listConnectors`, `attachSkill`, `displayName`, `systemPrompt`, and related fields). Internal transport operation names may remain snake_case behind that boundary.
+
 #### Skills panel
 
 - Panel navigation is breadcrumb-driven: the list, detail, create, edit, import, and upload screens are second-level pages reached through the settings header's back / forward history and maximize control, not separate dialogs.

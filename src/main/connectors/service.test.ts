@@ -419,8 +419,8 @@ describe('ConnectorService', () => {
           customMcpServers: [
             {
               id: 'srv-1',
-              slug: 'example-oauth-e2e',
-              name: 'Example OAuth E2E',
+              name: 'example-oauth-e2e',
+              displayName: 'Example OAuth E2E',
               transport: 'stdio',
               command: 'npx',
               args: ['-y', '@example/server'],
@@ -436,7 +436,7 @@ describe('ConnectorService', () => {
       expect(call).toHaveBeenCalledWith(
         {
           id: 'srv-1',
-          name: 'Example OAuth E2E',
+          name: 'example-oauth-e2e',
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],
@@ -449,7 +449,7 @@ describe('ConnectorService', () => {
       )
     })
 
-    it('fails closed when a legacy custom route collides with a bundled connector', async () => {
+    it('does not dispatch a custom name that collides with a bundled connector', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
@@ -460,7 +460,8 @@ describe('ConnectorService', () => {
           customMcpServers: [
             {
               id: 'srv-reserved',
-              name: 'Chemistry!',
+              name: 'chemistry',
+              displayName: 'Other Chemistry',
               transport: 'stdio',
               command: 'npx',
               enabled: true
@@ -470,12 +471,12 @@ describe('ConnectorService', () => {
         resolveApiKey: () => undefined
       })
 
-      await expect(svc.call('Chemistry!', 'do_thing', {}, internal)).rejects.toThrow(/unavailable/)
+      await expect(svc.call('chemistry', 'do_thing', {}, internal)).rejects.toThrow(/unknown tool/)
       expect(mcpClientManager.listTools).not.toHaveBeenCalled()
       expect(call).not.toHaveBeenCalled()
     })
 
-    it('fails closed when legacy custom Connectors derive the same route', async () => {
+    it('fails closed when custom Connectors have the same name', async () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
@@ -486,14 +487,16 @@ describe('ConnectorService', () => {
           customMcpServers: [
             {
               id: 'srv-duplicate-a',
-              name: 'Duplicate MCP',
+              name: 'duplicate-mcp',
+              displayName: 'Duplicate A',
               transport: 'stdio',
               command: 'first-command',
               enabled: true
             },
             {
               id: 'srv-duplicate-b',
-              name: 'Duplicate-MCP!',
+              name: 'duplicate-mcp',
+              displayName: 'Duplicate B',
               transport: 'stdio',
               command: 'second-command',
               enabled: true
@@ -522,6 +525,7 @@ describe('ConnectorService', () => {
           {
             id: '11111111-1111-4111-8111-111111111111',
             name: 'myserver',
+            displayName: 'My server',
             transport: 'stdio' as const,
             command: 'server-command',
             enabled: true
@@ -560,6 +564,7 @@ describe('ConnectorService', () => {
         {
           id: '11111111-1111-4111-8111-111111111111',
           name: 'myserver',
+          displayName: 'My server',
           transport: 'stdio' as const,
           command: 'server-command',
           enabled: true
@@ -601,6 +606,7 @@ describe('ConnectorService', () => {
           {
             id: '11111111-1111-4111-8111-111111111111',
             name: 'myserver',
+            displayName: 'My server',
             transport: 'stdio' as const,
             command: 'server-command',
             enabled: true
@@ -634,6 +640,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-remote',
               name: 'remoteserver',
+              displayName: 'Remote server',
               transport: 'streamable_http',
               url: 'https://example.com/mcp',
               headers: { Authorization: 'Bearer token' },
@@ -669,7 +676,14 @@ describe('ConnectorService', () => {
           enabledIds: [],
           autoAllowIds: [],
           customMcpServers: [
-            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: false }
+            {
+              id: 'srv-1',
+              name: 'myserver',
+              displayName: 'My server',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: false
+            }
           ]
         }),
         resolveApiKey: () => undefined
@@ -694,7 +708,14 @@ describe('ConnectorService', () => {
           askToolIds: ['myserver/dangerous'],
           blockedToolIds: ['myserver/dangerous'],
           customMcpServers: [
-            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
+            {
+              id: 'srv-1',
+              name: 'myserver',
+              displayName: 'My server',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
           ]
         }),
         resolveApiKey: () => undefined,
@@ -728,7 +749,14 @@ describe('ConnectorService', () => {
           autoAllowIds: [],
           askToolIds: ['myserver/do_thing'],
           customMcpServers: [
-            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
+            {
+              id: 'srv-1',
+              name: 'myserver',
+              displayName: 'My server',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
           ]
         }),
         resolveApiKey: () => undefined,
@@ -743,7 +771,7 @@ describe('ConnectorService', () => {
       )
 
       expect(requestApproval).toHaveBeenCalledWith({
-        connector: 'myserver',
+        connector: 'My server',
         method: 'do_thing',
         args: { x: 1 },
         sessionId: 'session-99',
@@ -765,6 +793,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-1',
               name: 'myserver',
+              displayName: 'My server',
               transport: 'streamable_http',
               url: 'https://private.example/mcp',
               headers: { Authorization: 'Bearer secret' },
@@ -811,6 +840,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-stable',
               name: 'myserver',
+              displayName: 'My server',
               transport: 'stdio',
               command: 'npx',
               enabled: true
@@ -842,6 +872,7 @@ describe('ConnectorService', () => {
       const original = {
         id: 'srv-stable',
         name: 'myserver',
+        displayName: 'My server',
         transport: 'stdio' as const,
         command: 'old-command',
         enabled: true
@@ -922,6 +953,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-1',
               name: 'secured-server',
+              displayName: 'Secured server',
               transport: 'streamable_http',
               url: 'https://private.example/mcp',
               enabled: true
@@ -981,6 +1013,7 @@ describe('ConnectorService', () => {
             {
               id: 'oauth-1',
               name: 'oauth-server',
+              displayName: 'OAuth server',
               transport: 'streamable_http',
               url: 'https://mcp.example.test',
               oauth: {},
@@ -1010,6 +1043,7 @@ describe('ConnectorService', () => {
             {
               id: 'oauth-1',
               name: 'oauth-server',
+              displayName: 'OAuth server',
               transport: 'streamable_http',
               url: 'https://mcp.example.test',
               oauth: {},
@@ -1046,6 +1080,7 @@ describe('ConnectorService', () => {
             {
               id: 'content-service-id',
               name: 'content-service',
+              displayName: 'Content service',
               transport: 'stdio',
               command: 'content-service-mcp',
               enabled: true
@@ -1079,6 +1114,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-1',
               name: 'secured-server',
+              displayName: 'Secured server',
               transport: 'streamable_http',
               url: 'https://mcp.example.test',
               enabled: true
@@ -1134,6 +1170,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-1',
               name: 'concurrent-server',
+              displayName: 'Concurrent server',
               transport: 'stdio',
               command: 'mcp',
               enabled: true
@@ -1180,6 +1217,7 @@ describe('ConnectorService', () => {
             {
               id: 'srv-1',
               name: 'secured-server',
+              displayName: 'Secured server',
               transport: 'streamable_http',
               url: 'https://mcp.example.test',
               enabled: true
@@ -1203,7 +1241,7 @@ describe('ConnectorService', () => {
       expect(call).toHaveBeenCalledOnce()
     })
 
-    it('resolves remembered grants by immutable custom server id after a rename', async () => {
+    it('resolves remembered grants by immutable custom server id after a display-name edit', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const requestApproval = vi.fn().mockResolvedValue('once')
       const resolve = vi.fn().mockResolvedValue({ matchedScope: 'session' })
@@ -1212,12 +1250,12 @@ describe('ConnectorService', () => {
         getConnectors: () => ({
           enabledIds: [],
           autoAllowIds: [],
-          // The editable name remains a supported policy alias while the grant uses immutable id.
-          askToolIds: ['renamed-server/do_thing'],
+          askToolIds: ['stable-server/do_thing'],
           customMcpServers: [
             {
               id: 'srv-stable',
-              name: 'renamed-server',
+              name: 'stable-server',
+              displayName: 'Renamed server',
               transport: 'stdio',
               command: 'npx',
               enabled: true
@@ -1230,7 +1268,7 @@ describe('ConnectorService', () => {
       })
 
       await svc.call(
-        'renamed-server',
+        'stable-server',
         'do_thing',
         { x: 1 },
         { origin: 'internal', sessionId: 'session-1', projectId: 'project-1' }
@@ -1258,7 +1296,14 @@ describe('ConnectorService', () => {
           autoAllowIds: [],
           askToolIds: ['myserver/future_method'],
           customMcpServers: [
-            { id: 'srv-1', name: 'myserver', transport: 'stdio', command: 'npx', enabled: true }
+            {
+              id: 'srv-1',
+              name: 'myserver',
+              displayName: 'My server',
+              transport: 'stdio',
+              command: 'npx',
+              enabled: true
+            }
           ]
         }),
         resolveApiKey: () => undefined,
@@ -1364,7 +1409,7 @@ describe('ConnectorService specialist capability gate', () => {
     expect(localHandler).toHaveBeenCalledTimes(3)
   })
 
-  it('accepts a legacy custom Connector UUID as a Specialist capability alias', async () => {
+  it('accepts only the custom Connector name as a Specialist capability reference', async () => {
     const call = vi.fn().mockResolvedValue({ ok: true })
     const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
     let current = specialist({
@@ -1383,8 +1428,8 @@ describe('ConnectorService specialist capability gate', () => {
         customMcpServers: [
           {
             id: 'custom-server-uuid',
-            slug: 'public-route',
-            name: 'Public Route',
+            name: 'public-route',
+            displayName: 'Public Route',
             transport: 'stdio',
             command: 'npx',
             enabled: true
@@ -1400,13 +1445,26 @@ describe('ConnectorService specialist capability gate', () => {
       specialistId: current.id
     }
 
+    await expect(svc.call('public-route', 'do_thing', {}, context)).rejects.toThrow(
+      'specialist_capability_denied'
+    )
+    expect(call).not.toHaveBeenCalled()
+
+    current = specialist({
+      capabilityMode: 'selected',
+      selectedCapabilities: {
+        skillIds: [],
+        connectorIds: ['public-route'],
+        connectorTools: []
+      }
+    })
     await expect(svc.call('public-route', 'do_thing', {}, context)).resolves.toEqual({ ok: true })
 
     current = specialist({
       capabilityMode: 'full',
       fullAccess: {
         excludedSkillIds: [],
-        excludedConnectorIds: ['custom-server-uuid'],
+        excludedConnectorIds: ['public-route'],
         connectorTools: []
       }
     })

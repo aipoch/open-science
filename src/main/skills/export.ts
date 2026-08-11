@@ -2,6 +2,7 @@ import { lstat, readFile, readdir } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 
 import { zipSync, type Zippable } from 'fflate'
+import { dump as dumpYaml, load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
@@ -9,6 +10,23 @@ import { isUnsafeSkillArchivePath } from './zip-extract'
 
 const INTERNAL_SKILL_FILES = new Set(['.source.json', '.specialist-package.json'])
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+const withoutDisplayName = (raw: string): string => {
+  const normalized = raw.replace(/\r\n?/g, '\n')
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
+  if (!match) return raw
+
+  const parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+  const fields = Object.entries(parsed as Record<string, unknown>)
+  if (!fields.some(([key]) => key.toLowerCase() === 'displayname')) return raw
+
+  const frontmatter = Object.fromEntries(
+    fields.filter(([key]) => key.toLowerCase() !== 'displayname')
+  )
+  const separator = match[0].endsWith('\n') ? '\n' : ''
+  return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---${separator}${normalized.slice(match[0].length)}`
+}
 
 export type SkillExportArchive = {
   fileName: string
@@ -84,7 +102,12 @@ const collectFiles = async (
       if (state.totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
         throw new Error('Skill tree exceeds the total export size limit.')
       }
-      const bytes = new Uint8Array(await readFile(absolutePath))
+      let bytes = new Uint8Array(await readFile(absolutePath))
+      if (relativePath === 'SKILL.md') {
+        bytes = new TextEncoder().encode(
+          withoutDisplayName(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+        )
+      }
       state.totalBytes += bytes.byteLength - metadata.size
       if (bytes.byteLength > SKILL_IMPORT_LIMITS.maxFileBytes) {
         throw new Error('Skill file exceeds the export size limit.')
@@ -104,7 +127,7 @@ const collectFiles = async (
 export const buildSkillExportArchive = async (
   skill: BundledSkill
 ): Promise<SkillExportArchive> => ({
-  fileName: skillExportFileName(skill.name, basename(skill.sourceDir) || skill.id),
+  fileName: skillExportFileName(skill.displayName, basename(skill.sourceDir) || skill.id),
   archiveBytes: zipSync(await collectFiles(skill.sourceDir), { level: 6 })
 })
 

@@ -6,7 +6,7 @@ import {
 } from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
-import { customConnectorSkillName, customConnectorSlug } from '../../shared/custom-connector'
+import { customConnectorSkillName } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 
@@ -131,7 +131,7 @@ class ConnectorRuntimeSettingsProjection {
         customServers,
         (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
-      this.materializedCustomSkills = customSync.materializedSlugs.map(customConnectorSkillName)
+      this.materializedCustomSkills = customSync.materializedNames.map(customConnectorSkillName)
       this.discoveryAvailabilities = new Map(
         customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
       )
@@ -148,7 +148,7 @@ class ConnectorRuntimeSettingsProjection {
     const server = connectors?.customMcpServers?.find((candidate) => candidate.id === serverId)
     if (!server) return
 
-    const slug = customConnectorSlug(server)
+    const name = server.name
     const enabledServer = selectEnabledCustomServers(connectors).find(
       (candidate) => candidate.id === serverId
     )
@@ -156,11 +156,11 @@ class ConnectorRuntimeSettingsProjection {
       this.options.skillsDir,
       enabledServer ? [enabledServer] : [],
       (candidate) => this.options.mcpClientManager.listTools(toCustomMcpConfig(candidate)),
-      [slug]
+      [name]
     )
-    const skillName = customConnectorSkillName(slug)
+    const skillName = customConnectorSkillName(name)
     const materialized = new Set(this.materializedCustomSkills)
-    if (customSync.materializedSlugs.includes(slug)) materialized.add(skillName)
+    if (customSync.materializedNames.includes(name)) materialized.add(skillName)
     else materialized.delete(skillName)
     this.materializedCustomSkills = [...materialized]
 
@@ -177,7 +177,7 @@ class ConnectorRuntimeSettingsProjection {
   ): void {
     for (const { server, error } of failures) {
       this.reportError(
-        new Error(`Failed to sync custom MCP server "${customConnectorSlug(server)}" skill docs`, {
+        new Error(`Failed to sync custom MCP server "${server.name}" skill docs`, {
           cause: error
         })
       )

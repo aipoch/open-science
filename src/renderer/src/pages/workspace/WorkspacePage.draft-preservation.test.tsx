@@ -520,6 +520,7 @@ describe('WorkspacePage draft preservation', () => {
         {
           id: 'lit',
           name: 'Literature',
+          displayName: 'Literature',
           description: 'Search papers',
           source: 'featured',
           enabled: true,

@@ -25,15 +25,17 @@ export type UserSkillSource = (typeof USER_SOURCES)[number]
 // Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
 export const SAFE_SLUG = /^[a-z0-9-]+$/
 
-const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-'] as const
+export const SAFE_SKILL_NAME = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/
+const SKILL_NAME_MAX_LENGTH = 64
+const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-'] as const
 
-export const assertUsableSlug = (slug: string): void => {
-  if (!slug) throw new Error('Skill ID is required.')
-  if (!SAFE_SLUG.test(slug)) {
-    throw new Error('Skill ID may only contain lowercase letters, numbers, and hyphens.')
+export const assertUsableSkillName = (name: string): void => {
+  if (!name) throw new Error('Skill name is required.')
+  if (!SAFE_SKILL_NAME.test(name) || name.length > SKILL_NAME_MAX_LENGTH) {
+    throw new Error('Skill name must use up to 64 lowercase letters, numbers, and single hyphens.')
   }
-  if (RESERVED_SLUG_PREFIXES.some((prefix) => slug.startsWith(prefix))) {
-    throw new Error(`Skill ID may not start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`)
+  if (RESERVED_SKILL_NAME_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+    throw new Error(`Skill name may not start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`)
   }
 }
 
@@ -123,6 +125,7 @@ export class UserSkillStore {
           skills.push({
             id: packageMetadata?.id ?? `${source}-${slug}`,
             name: fields.name || slug,
+            displayName: fields.displayname || fields.name || slug,
             description: fields.description ?? '',
             source,
             updatedAt,
@@ -159,39 +162,33 @@ export class UserSkillStore {
     })
   }
 
-  async createPersonal(input: WriteSkillInput, requestedSlug?: string): Promise<string> {
+  async createPersonal(input: WriteSkillInput): Promise<string> {
     return this.transactions.runExclusive(async () => {
-      if (requestedSlug !== undefined) {
-        const slug = requestedSlug.trim()
-        assertUsableSlug(slug)
-        if (await this.slugTaken('personal', slug)) {
-          throw new Error(`A skill with ID "${slug}" already exists.`)
-        }
-        await this.writeSkill('personal', slug, input)
-        return `personal-${slug}`
+      const name = input.name.trim()
+      assertUsableSkillName(name)
+      if (await this.slugTaken('personal', name)) {
+        throw new Error(`A skill named "${name}" already exists.`)
       }
-
-      const slug = await this.uniqueSlug('personal', toSlug(input.name) || 'skill')
-      await this.writeSkill('personal', slug, input)
-      return `personal-${slug}`
+      await this.writeSkill('personal', name, { ...input, name })
+      return `personal-${name}`
     })
   }
 
   async publishPersonalDirectory(
-    requestedSlug: string,
+    name: string,
     sourcePath: string,
     overwrite: boolean,
     validatePackage: ValidatePackage
   ): Promise<string> {
-    const slug = requestedSlug.trim()
-    assertUsableSlug(slug)
+    const normalizedName = name.trim()
+    assertUsableSkillName(normalizedName)
 
     return this.transactions.runRecovered(async () => {
-      if (!overwrite && (await this.slugTaken('personal', slug))) {
-        throw new Error(`A skill with ID "${slug}" already exists.`)
+      if (!overwrite && (await this.slugTaken('personal', normalizedName))) {
+        throw new Error(`A skill named "${normalizedName}" already exists.`)
       }
 
-      const staged = await this.transactions.stage('personal', slug, async (staging) => {
+      const staged = await this.transactions.stage('personal', normalizedName, async (staging) => {
         await cp(sourcePath, staging, {
           recursive: true,
           force: false,
@@ -209,7 +206,7 @@ export class UserSkillStore {
         await validatePackage(staging)
       })
       await this.transactions.promote(staged)
-      return `personal-${slug}`
+      return `personal-${normalizedName}`
     }, ['personal'])
   }
 
@@ -263,9 +260,12 @@ export class UserSkillStore {
           typeof value === 'string'
       )
     )
+    const displayName = metadata.displayname
+    delete metadata.displayname
     const frontmatter = `---\n${frontmatterBlock({
       name: input.name,
       description: input.description,
+      ...(displayName ? { displayName } : {}),
       ...metadata
     })}---`
     await writeFile(join(dir, 'SKILL.md'), `${frontmatter}\n\n${input.body.trimStart()}`, 'utf8')

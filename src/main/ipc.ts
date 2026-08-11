@@ -1,7 +1,6 @@
 import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
-import { customConnectorSlug } from '../shared/custom-connector'
 
 import {
   app,
@@ -874,19 +873,8 @@ const createApplicationModules = async (
             ...ALL_CONNECTOR_IDS,
             ...customMcpServers
               .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-              .map(customConnectorSlug)
+              .map((server) => server.name)
           ])
-        ),
-        connectorAliases: Object.fromEntries(
-          customMcpServers
-            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-            .flatMap((server) => {
-              const slug = customConnectorSlug(server)
-              return [
-                [server.name, slug],
-                [server.id, slug]
-              ]
-            })
         ),
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
@@ -1476,8 +1464,8 @@ const createApplicationModules = async (
   const hostSkillsCatalog: HostSkillsCatalog = {
     list: () => settingsService.listHostSkills(),
     withSkillRead: (id, read) => settingsService.withHostSkillRead(id, read),
-    publishPersonalDirectory: (slug, sourcePath, overwrite) =>
-      settingsService.publishHostSkill(slug, sourcePath, overwrite),
+    publishPersonalDirectory: (name, sourcePath, overwrite) =>
+      settingsService.publishHostSkill(name, sourcePath, overwrite),
     deletePublished: async (id) => {
       await settingsService.deleteSkill({ id })
     }

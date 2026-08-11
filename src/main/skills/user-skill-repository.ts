@@ -20,8 +20,9 @@ import {
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import {
   SAFE_SLUG,
+  SAFE_SKILL_NAME,
   UserSkillStore,
-  assertUsableSlug,
+  assertUsableSkillName,
   frontmatterBlock,
   parseUserSkillId,
   toSlug,
@@ -67,11 +68,9 @@ class UserSkillRepository {
     return this.store.body(id)
   }
 
-  // Creates a personal skill, returning its new id. With an explicit `requestedSlug`, that slug is
-  // used verbatim (validated, and rejected if already taken); otherwise a slug is derived from the
-  // name and collisions get a numeric suffix.
-  async createPersonal(input: WriteSkillInput, requestedSlug?: string): Promise<string> {
-    return this.store.createPersonal(input, requestedSlug)
+  // Creates a personal skill whose immutable name is also its package directory name.
+  async createPersonal(input: WriteSkillInput): Promise<string> {
+    return this.store.createPersonal(input)
   }
 
   // Publishes an app-authored draft as a complete Personal Skill package. Unlike the form editor,
@@ -79,11 +78,11 @@ class UserSkillRepository {
   // The source is validated and copied into a sibling staging directory before the live package is
   // swapped, so a failed copy or replace never exposes a partial Skill.
   async publishPersonalDirectory(
-    requestedSlug: string,
+    name: string,
     sourcePath: string,
     overwrite = false
   ): Promise<string> {
-    return this.store.publishPersonalDirectory(requestedSlug, sourcePath, overwrite, (staging) =>
+    return this.store.publishPersonalDirectory(name, sourcePath, overwrite, (staging) =>
       this.agentHomeSkills.validatePublishedSkillPackage(staging)
     )
   }
@@ -159,8 +158,9 @@ class UserSkillRepository {
 
 export {
   SAFE_SLUG,
+  SAFE_SKILL_NAME,
   UserSkillRepository,
-  assertUsableSlug,
+  assertUsableSkillName,
   frontmatterBlock,
   parseUserSkillId,
   toSlug

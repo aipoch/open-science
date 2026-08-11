@@ -555,6 +555,24 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     expect(refreshConnectorSkillDocs).toHaveBeenCalledWith('server-1')
   })
 
+  it('regenerates Connector Skill docs after a displayName update', async () => {
+    const { store, capability } = fakeStore()
+    const refreshConnectorSkillDocs = vi.fn(async () => undefined)
+    store.updateCustomServer.mockResolvedValue({ connectors: [] })
+
+    await createSettingsWorkflows(
+      capability,
+      testEffects({ refreshConnectorSkillDocs })
+    ).connectors.updateCustomServer({
+      id: 'server-1',
+      displayName: 'Updated label',
+      transport: 'stdio',
+      command: 'mcp'
+    })
+
+    expect(refreshConnectorSkillDocs).toHaveBeenCalledOnce()
+  })
+
   it('refreshes Connector projections after OAuth authentication', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()

@@ -97,8 +97,8 @@ describe('ConnectorAddForm (local command)', () => {
 
     expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: 'Memory',
-        slug: 'memory',
+        name: 'memory',
+        displayName: 'Memory',
         transport: 'stdio',
         command: 'npx'
       })
@@ -126,7 +126,7 @@ describe('ConnectorAddForm (local command)', () => {
             schemaVersion: 1,
             kind: 'open-science.connector',
             name: 'example-research',
-            slug: 'example-research',
+            displayName: 'Example Research',
             transport: 'stdio',
             command: 'npx',
             args: ['-y', '@example/research-mcp', '--label', 'two words'],
@@ -140,7 +140,7 @@ describe('ConnectorAddForm (local command)', () => {
 
     expect(
       document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value
-    ).toBe('example-research')
+    ).toBe('Example Research')
     expect(
       document.body.querySelector<HTMLTextAreaElement>('[aria-label="Environment variables"]')
         ?.value
@@ -155,7 +155,7 @@ describe('ConnectorAddForm (local command)', () => {
     expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'example-research',
-        slug: 'example-research',
+        displayName: 'Example Research',
         command: 'npx',
         args: ['-y', '@example/research-mcp', '--label', 'two words'],
         env: { API_TOKEN: 'local-secret' }
@@ -208,8 +208,8 @@ describe('ConnectorAddForm (remote server)', () => {
     })
 
     expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith({
-      name: 'OAuth MCP',
-      slug: 'oauth-mcp',
+      name: 'oauth-mcp',
+      displayName: 'OAuth MCP',
       description: undefined,
       transport: 'streamable_http',
       url: 'https://mcp.example.test',
@@ -225,8 +225,8 @@ describe('ConnectorAddForm (remote server)', () => {
 describe('ConnectorAddForm (edit)', () => {
   const editServer = {
     id: 'srv-1',
-    slug: 'my-mem',
     name: 'my-mem',
+    displayName: 'my-mem',
     description: 'Memory server',
     transport: 'stdio' as const,
     enabled: true,
@@ -244,13 +244,19 @@ describe('ConnectorAddForm (edit)', () => {
       root.render(<ConnectorAddForm editServer={editServer} onDone={onDone} onCancel={vi.fn()} />)
     })
 
-    const nameInput = document.body.querySelector<HTMLInputElement>('[aria-label="Display name"]')
+    const nameInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
     expect(nameInput?.value).toBe('my-mem')
-    expect(nameInput?.disabled).toBe(true) // name is immutable
+    expect(nameInput?.disabled).toBe(true) // name is immutable and visibly disabled
+    const displayNameInput = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Display name"]'
+    )
+    expect(displayNameInput?.value).toBe('my-mem')
+    expect(displayNameInput?.readOnly).toBe(false)
     // The command Select shows the pre-filled runtime.
     expect(document.body.querySelector('[aria-label="Command"]')?.textContent).toContain('npx')
 
     // Edit a non-secret field.
+    setValue('Display name', 'My Memory')
     setValue('Description', 'Updated memory')
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (b) => b.textContent?.trim() === 'Save changes'
@@ -264,6 +270,7 @@ describe('ConnectorAddForm (edit)', () => {
     expect(useSettingsStore.getState().updateCustomServer).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'srv-1',
+        displayName: 'My Memory',
         transport: 'stdio',
         command: 'npx',
         description: 'Updated memory'
@@ -284,8 +291,8 @@ describe('ConnectorAddForm (edit)', () => {
         <ConnectorAddForm
           editServer={{
             id: 'remote-1',
-            slug: 'remote',
-            name: 'Remote',
+            name: 'remote',
+            displayName: 'Remote',
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',
@@ -316,8 +323,8 @@ describe('ConnectorAddForm (edit)', () => {
         <ConnectorAddForm
           editServer={{
             id: 'remote-1',
-            slug: 'remote',
-            name: 'Remote',
+            name: 'remote',
+            displayName: 'Remote',
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',
@@ -351,8 +358,8 @@ describe('ConnectorAddForm (edit)', () => {
         <ConnectorAddForm
           editServer={{
             id: 'remote-1',
-            slug: 'remote',
-            name: 'Remote',
+            name: 'remote',
+            displayName: 'Remote',
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',

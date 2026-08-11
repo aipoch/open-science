@@ -317,7 +317,9 @@ describe('Settings integration application commands', () => {
     )
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.addCustomServer,
-      invocation([{ name: 'custom', transport: 'stdio', command: 'custom-mcp' }] as const)
+      invocation([
+        { name: 'custom', displayName: 'Custom', transport: 'stdio', command: 'custom-mcp' }
+      ] as const)
     )
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.setCustomServerEnabled,
@@ -357,6 +359,7 @@ describe('Settings integration application commands', () => {
     })
     expect(connectorMethod('addCustomServer')).toHaveBeenCalledWith({
       name: 'custom',
+      displayName: 'Custom',
       transport: 'stdio',
       command: 'custom-mcp'
     })

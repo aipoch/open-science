@@ -45,6 +45,7 @@ describe('SpecialistEditor', () => {
         {
           id: 'main-disabled',
           name: 'Main disabled',
+          displayName: 'Main disabled',
           description: '',
           source: 'featured',
           enabled: false,
@@ -53,6 +54,7 @@ describe('SpecialistEditor', () => {
         {
           id: 'included',
           name: 'Included',
+          displayName: 'Included',
           description: '',
           source: 'featured',
           enabled: true,
@@ -160,8 +162,8 @@ describe('SpecialistEditor', () => {
       customServers: [
         {
           id: 'broken-server-uuid',
-          slug: 'broken-server',
-          name: 'Broken Server',
+          name: 'broken-server',
+          displayName: 'Broken Server',
           transport: 'stdio',
           enabled: true,
           availability: 'unavailable'
@@ -186,7 +188,7 @@ describe('SpecialistEditor', () => {
             },
             selectedCapabilities: {
               skillIds: [],
-              connectorIds: ['broken-server-uuid'],
+              connectorIds: ['broken-server'],
               connectorTools: []
             },
             revision: 1
@@ -308,6 +310,7 @@ describe('SpecialistEditor', () => {
         {
           id: 'literature-review',
           name: 'Literature Review',
+          displayName: 'Literature Review',
           description: '',
           source: 'featured',
           enabled: true,
@@ -406,7 +409,7 @@ describe('SpecialistEditor', () => {
       expect.objectContaining({
         id: 'rna-reviewer',
         revision: 3,
-        name: 'RNA Reviewer'
+        displayName: 'RNA Reviewer'
       })
     )
     // Create path is not used in edit mode.

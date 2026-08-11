@@ -129,7 +129,9 @@ const SkillsPanel = ({
       if (filter !== 'all' && skill.source !== filter) return false
       if (!term) return true
       return (
-        skill.name.toLowerCase().includes(term) || skill.description.toLowerCase().includes(term)
+        skill.displayName.toLowerCase().includes(term) ||
+        skill.name.toLowerCase().includes(term) ||
+        skill.description.toLowerCase().includes(term)
       )
     })
   }, [skills, filter, query])
@@ -148,7 +150,6 @@ const SkillsPanel = ({
             description: draft.description,
             body: draft.body,
             ...(draft.metadata === undefined ? {} : { metadata: draft.metadata }),
-            slug: draft.slug,
             references: draft.references
           })
           onNavigate({ kind: 'list' })
@@ -347,7 +348,7 @@ const SkillsPanel = ({
                           className="min-w-0 flex-1 text-left"
                         >
                           <span className="block truncate text-sm text-foreground">
-                            {skill.name}
+                            {skill.displayName}
                           </span>
                           <span className="block truncate text-xs text-muted-foreground">
                             {skill.description}
@@ -360,22 +361,22 @@ const SkillsPanel = ({
                         ) : null}
                         {skill.source !== 'featured' && canExportSkills ? (
                           <SettingsIconAction
-                            label={`Export ${skill.name}`}
+                            label={`Export ${skill.displayName}`}
                             icon={Download}
                             disabled={exportingId !== undefined}
-                            onClick={() => void exportSkill(skill.id, skill.name)}
+                            onClick={() => void exportSkill(skill.id, skill.displayName)}
                           />
                         ) : null}
                         {skill.source === 'personal' ? (
                           <SettingsIconAction
-                            label={`Edit ${skill.name}`}
+                            label={`Edit ${skill.displayName}`}
                             icon={Pencil}
                             onClick={() => onNavigate({ kind: 'edit', id: skill.id })}
                           />
                         ) : null}
                         {skill.source !== 'featured' ? (
                           <SettingsIconAction
-                            label={`Delete ${skill.name}`}
+                            label={`Delete ${skill.displayName}`}
                             icon={Trash2}
                             onClick={() => {
                               setDeleteError(undefined)
@@ -392,7 +393,7 @@ const SkillsPanel = ({
                         ) : null}
                         <SettingsToggle
                           enabled={skill.enabled}
-                          aria-label={`Toggle ${skill.name}`}
+                          aria-label={`Toggle ${skill.displayName}`}
                           onToggle={() => void setSkillEnabled(skill.id, !skill.enabled)}
                         />
                       </li>

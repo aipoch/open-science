@@ -9,12 +9,12 @@ import type {
   CustomServerTransport
 } from '../../shared/settings'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
-import { isCustomConnectorSlug, toCustomConnectorSlug } from '../../shared/custom-connector'
+import { isCustomConnectorName } from '../../shared/custom-connector'
 
 export type ConnectorTemplateSource = {
   id: string
-  slug: string
   name: string
+  displayName: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -26,9 +26,7 @@ export type ConnectorTemplateSource = {
 }
 
 type ParseOptions = {
-  existingIds?: readonly string[]
   existingNames?: readonly string[]
-  existingSlugs?: readonly string[]
   bundledIds?: readonly string[]
 }
 
@@ -36,7 +34,7 @@ const ROOT_FIELDS = new Set([
   'schemaVersion',
   'kind',
   'name',
-  'slug',
+  'displayName',
   'description',
   'transport',
   'command',
@@ -408,16 +406,18 @@ export const parseConnectorTemplate = (
     )
   }
 
-  const name = readString(parsed.name, diagnostics, 'name', { required: true, max: 128 })
-  const requestedSlug = readString(parsed.slug, diagnostics, 'slug', { max: 64 })
-  const slug = requestedSlug ?? (name ? toCustomConnectorSlug(name) : undefined)
-  if (requestedSlug && !isCustomConnectorSlug(requestedSlug)) {
+  const name = readString(parsed.name, diagnostics, 'name', { required: true, max: 64 })
+  const displayName = readString(parsed.displayName, diagnostics, 'displayName', {
+    required: true,
+    max: 128
+  })
+  if (name && !isCustomConnectorName(name)) {
     diagnostic(
       diagnostics,
       'error',
-      'connector-template.slug',
-      'slug must use only lowercase letters, numbers, and hyphens.',
-      'slug'
+      'connector-template.name',
+      'name must use only lowercase letters, numbers, and hyphens.',
+      'name'
     )
   }
   const description = readString(parsed.description, diagnostics, 'description', { max: 2_000 })
@@ -502,77 +502,34 @@ export const parseConnectorTemplate = (
   validateArgs(args, diagnostics)
 
   if (name) {
-    const normalizedName = name.toLowerCase()
-    if (options.bundledIds?.some((id) => id.toLowerCase() === normalizedName)) {
+    if (options.bundledIds?.includes(name)) {
       diagnostic(
         diagnostics,
         'error',
         'connector-template.reserved-name',
-        `Connector name "${name}" is reserved by a built-in connector.`,
+        `Connector ID "${name}" is reserved by a built-in connector.`,
         'name'
       )
     }
-    if (options.existingNames?.some((item) => item.toLowerCase() === normalizedName)) {
+    if (options.existingNames?.includes(name)) {
       diagnostic(
         diagnostics,
         'error',
         'connector-template.duplicate-name',
-        `A custom Connector named "${name}" is already installed.`,
+        `A custom Connector with ID "${name}" is already installed.`,
         'name'
-      )
-    } else if (
-      [...(options.existingSlugs ?? []), ...(options.existingIds ?? [])].some(
-        (item) => item.toLowerCase() === normalizedName
-      )
-    ) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.identity-conflict',
-        `Connector name "${name}" conflicts with an installed Connector identity.`,
-        'name'
-      )
-    }
-  }
-  if (slug) {
-    if (options.bundledIds?.includes(slug)) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.reserved-slug',
-        `Connector ID "${slug}" is reserved by a built-in connector.`,
-        'slug'
-      )
-    }
-    if (options.existingSlugs?.includes(slug)) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.duplicate-slug',
-        `A custom Connector with ID "${slug}" is already installed.`,
-        'slug'
-      )
-    } else if (
-      [...(options.existingNames ?? []), ...(options.existingIds ?? [])].some(
-        (item) => item.toLowerCase() === slug
-      )
-    ) {
-      diagnostic(
-        diagnostics,
-        'error',
-        'connector-template.identity-conflict',
-        `Connector ID "${slug}" conflicts with an installed Connector alias.`,
-        'slug'
       )
     }
   }
 
-  if (hasErrors(diagnostics) || !name || !slug || !transport) return { diagnostics, ready: false }
+  if (hasErrors(diagnostics) || !name || !displayName || !transport) {
+    return { diagnostics, ready: false }
+  }
   const definition: ConnectorTemplateDefinition = {
     schemaVersion: 1,
     kind: 'open-science.connector',
     name,
-    slug,
+    displayName,
     transport,
     ...(description ? { description } : {}),
     ...(command ? { command } : {}),
@@ -594,7 +551,7 @@ export const buildConnectorTemplateExport = (
     schemaVersion: 1,
     kind: 'open-science.connector',
     name: source.name,
-    slug: source.slug,
+    displayName: source.displayName,
     transport: source.transport,
     ...(source.description ? { description: source.description } : {}),
     ...(source.command ? { command: source.command } : {}),
@@ -619,7 +576,7 @@ export const buildConnectorTemplateExport = (
     preview: {
       ...parsed,
       connectorId: source.id,
-      ...(digest ? { digest, suggestedFileName: `open-science-connector-${source.slug}.json` } : {})
+      ...(digest ? { digest, suggestedFileName: `open-science-connector-${source.name}.json` } : {})
     },
     ...(parsed.ready ? { contents } : {})
   }

@@ -12,12 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
-import {
-  customConnectorAliasKey,
-  customConnectorAliases,
-  isCustomConnectorSlug,
-  toCustomConnectorSlug
-} from '../../../../shared/custom-connector'
+import { isCustomConnectorName, toCustomConnectorName } from '../../../../shared/custom-connector'
 import { SettingsRow } from './SettingsLayout'
 
 // Which kind of custom connector is being added: a local stdio command or a remote HTTP/SSE server.
@@ -88,7 +83,7 @@ const COMMAND_OPTIONS: { value: string; label: string }[] = [
 type ConnectorAddFormProps = {
   initialTransport?: ConnectorMode
   initialTemplate?: ConnectorTemplateDefinition
-  // When set, the form edits this custom server instead of adding a new one. The name is immutable.
+  // When set, the form edits this custom server instead of adding a new one. Its name is immutable.
   editServer?: CustomServerView
   // Called after the custom server has been added/updated successfully.
   onDone: () => void
@@ -121,34 +116,30 @@ export function ConnectorAddForm({
         ? modeForTransport(initialTemplate.transport)
         : (initialTransport ?? 'local')
   )
+  const [displayName, setDisplayName] = useState(
+    editServer?.displayName ?? initialTemplate?.displayName ?? ''
+  )
   const [name, setName] = useState(editServer?.name ?? initialTemplate?.name ?? '')
-  const [slug, setSlug] = useState(editServer?.slug ?? initialTemplate?.slug ?? '')
-  const [slugTouched, setSlugTouched] = useState(initialTemplate !== undefined)
-  const currentSlug = isEdit
-    ? (editServer?.slug ?? '')
-    : slugTouched
-      ? slug
-      : toCustomConnectorSlug(name)
-  const slugError = useMemo((): string | null => {
-    if (!currentSlug || !isCustomConnectorSlug(currentSlug)) {
+  const [nameTouched, setNameTouched] = useState(initialTemplate !== undefined)
+  const currentName = isEdit
+    ? (editServer?.name ?? '')
+    : nameTouched
+      ? name
+      : toCustomConnectorName(displayName)
+  const nameError = useMemo((): string | null => {
+    if (!currentName || !isCustomConnectorName(currentName)) {
       return 'Use only lowercase letters, numbers, and hyphens.'
     }
-    if (connectors.some((connector) => connector.id === currentSlug)) {
+    if (connectors.some((connector) => connector.id === currentName)) {
       return 'This ID is reserved by a built-in Connector.'
     }
     if (
-      customServers.some(
-        (server) =>
-          server.id !== editServer?.id &&
-          customConnectorAliases(server)
-            .map(customConnectorAliasKey)
-            .includes(customConnectorAliasKey(currentSlug))
-      )
+      customServers.some((server) => server.id !== editServer?.id && server.name === currentName)
     ) {
       return 'A custom Connector with this ID already exists.'
     }
     return null
-  }, [connectors, currentSlug, customServers, editServer?.id])
+  }, [connectors, currentName, customServers, editServer?.id])
   const [description, setDescription] = useState(
     editServer?.description ?? initialTemplate?.description ?? ''
   )
@@ -222,8 +213,8 @@ export function ConnectorAddForm({
         requiredHeaders.every((header) => (parsedHeaders[header] ?? '').trim().length > 0)))
 
   const requiredFilled =
-    name.trim().length > 0 &&
-    !slugError &&
+    displayName.trim().length > 0 &&
+    !nameError &&
     (mode === 'local' ? command.trim().length > 0 : url.trim().length > 0) &&
     requiredSecretValuesFilled
   const canSubmit = requiredFilled && trusted && !submitting
@@ -249,6 +240,7 @@ export function ConnectorAddForm({
       const hasHeaders = headersText.trim().length > 0
       const transport: CustomServerTransport = mode === 'local' ? 'stdio' : remoteTransport
       const shared = {
+        displayName: displayName.trim(),
         description: description.trim() || undefined,
         transport,
         ...(mode === 'local'
@@ -288,8 +280,7 @@ export function ConnectorAddForm({
         await updateCustomServer(request)
       } else {
         const request: AddCustomServerRequest = {
-          name: name.trim(),
-          slug: currentSlug,
+          name: currentName,
           ...shared,
           ...(mode === 'local' && Object.keys(env).length > 0 ? { env } : {}),
           ...(mode === 'remote' && remoteAuth === 'headers' && Object.keys(headers).length > 0
@@ -350,21 +341,15 @@ export function ConnectorAddForm({
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="connector-name">
             Display name
-            {isEdit ? null : <RequiredMark />}
+            <RequiredMark />
           </label>
           <Input
             id="connector-name"
             aria-label="Display name"
-            value={name}
-            disabled={isEdit}
+            value={displayName}
             placeholder="e.g. Memory server"
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => setDisplayName(event.target.value)}
           />
-          {isEdit ? (
-            <p className="text-xs text-muted-foreground">
-              The display name is fixed after creation.
-            </p>
-          ) : null}
         </div>
 
         <SettingsRow
@@ -375,25 +360,25 @@ export function ConnectorAddForm({
             </>
           }
           description={
-            <span className={slugError ? 'text-destructive' : undefined}>
-              {slugError ??
-                `Used by host.mcp("${currentSlug}", …), Specialists, and the generated MCP skill.`}
+            <span className={nameError ? 'text-destructive' : undefined}>
+              {nameError ??
+                `Used by host.mcp("${currentName}", …), Specialists, and the generated MCP skill.`}
             </span>
           }
         >
           <Input
-            id="connector-slug"
+            id="connector-name-id"
             aria-label="Connector ID"
-            value={currentSlug}
-            readOnly={isEdit}
-            aria-invalid={slugError ? true : undefined}
+            value={currentName}
+            disabled={isEdit}
+            aria-invalid={nameError ? true : undefined}
             className="font-mono"
             onChange={
               isEdit
                 ? undefined
                 : (event) => {
-                    setSlugTouched(true)
-                    setSlug(event.target.value.toLowerCase())
+                    setNameTouched(true)
+                    setName(event.target.value.toLowerCase())
                   }
             }
           />

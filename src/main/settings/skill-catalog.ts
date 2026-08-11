@@ -170,8 +170,8 @@ class SkillCatalogModule {
     return bundled ? read(bundled) : this.userSkills.withSkillReadLock(id, read)
   }
 
-  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
-    return this.userSkills.publishPersonalDirectory(slug, sourcePath, overwrite)
+  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.userSkills.publishPersonalDirectory(name, sourcePath, overwrite)
   }
 
   async listSkills(): Promise<SkillView[]> {
@@ -201,8 +201,8 @@ class SkillCatalogModule {
     const disabled = new Set(settings.disabledSkillIds ?? [])
     return skills.map((skill) => ({
       id: skill.id,
-      frameworkName: skill.source === 'featured' ? skill.id : skill.name,
-      displayName: skill.name,
+      frameworkName: skill.name,
+      displayName: skill.displayName,
       source: skill.source,
       mainEnabled: !disabled.has(skill.id),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
@@ -218,12 +218,7 @@ class SkillCatalogModule {
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
-    const nameById = new Map(
-      (await this.managedCatalog()).map((skill) => [
-        skill.id,
-        skill.source === 'featured' ? skill.id : skill.name
-      ])
-    )
+    const nameById = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill.name]))
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
 
@@ -246,7 +241,7 @@ class SkillCatalogModule {
       const realFile = await realpath(filePath).catch(() => undefined)
       if (!realFile || !realFile.startsWith(rootWithSep)) continue
       descriptors.push({
-        name: skill.source === 'featured' ? skill.id : skill.name,
+        name: skill.name,
         path: filePath
       })
     }
@@ -277,7 +272,7 @@ class SkillCatalogModule {
         .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
         .map((skill) => ({
           directory: `${OS_SKILL_PREFIX}${skill.id}`,
-          name: skill.source === 'featured' ? skill.id : skill.name,
+          name: skill.name,
           description: skill.description
         })),
       ...extensions
@@ -346,13 +341,18 @@ class SkillCatalogModule {
   }
 
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
-    await this.userSkills.createPersonal(request, request.slug)
+    await this.userSkills.createPersonal(request)
     return this.listSkills()
   }
 
   async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
+    if ('name' in request) throw new Error('Skill name is immutable.')
+    const skill = (await this.managedCatalog()).find((entry) => entry.id === request.id)
+    if (!skill || skill.source !== 'personal') {
+      throw new Error(`Not a personal skill id: ${request.id}`)
+    }
     await this.userSkills.updatePersonal(request.id, {
-      name: request.name,
+      name: skill.name,
       description: request.description,
       body: request.body,
       metadata: request.metadata,
@@ -816,6 +816,7 @@ class SkillCatalogModule {
     return {
       id: skill.id,
       name: skill.name,
+      displayName: skill.displayName,
       description: skill.description,
       source: skill.source,
       updatedAt: skill.updatedAt,
