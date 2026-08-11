@@ -33,6 +33,7 @@ import {
   validateArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
 import { sha256 } from './provenance-canonical'
+import { validateArtifactCoreEvidence } from './provenance-core-evidence'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
 
@@ -248,6 +249,7 @@ class ArtifactProvenanceReadModel {
       `Artifact Version evidence is corrupt: ${versionId}`
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
+    validateArtifactCoreEvidence(evidence, version)
     const contentPath = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
     const contentStatus: ArtifactVersionProvenance['contentStatus'] = await readFile(contentPath)
       .then((content) =>

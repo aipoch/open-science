@@ -23,6 +23,7 @@ import {
   customConnectorAliasKey,
   customConnectorAliases,
   customConnectorSlug,
+  customConnectorSlugFromSkillName,
   isCustomConnectorSlug,
   toCustomConnectorSlug
 } from '../../shared/custom-connector'
@@ -37,6 +38,12 @@ import { buildConnectorTemplateExport, parseConnectorTemplate } from './connecto
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
+}
+
+type CustomServerRuntimeProjectionProvider = {
+  materializedSkillNames: () => readonly string[]
+  availability: (id: string) => CustomServerView['availability']
+  isRefreshing: () => boolean
 }
 
 const normalizeOAuthConfig = (
@@ -54,12 +61,16 @@ const normalizeOAuthConfig = (
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
 class ConnectorSettingsModule {
-  private materializedCustomSkillNamesProvider: () => readonly string[] = () => []
+  private customServerRuntimeProjectionProvider: CustomServerRuntimeProjectionProvider = {
+    materializedSkillNames: () => [],
+    availability: () => undefined,
+    isRefreshing: () => false
+  }
 
   constructor(private readonly repository: SettingsRepository) {}
 
-  setMaterializedCustomSkillNamesProvider(provider: () => readonly string[]): void {
-    this.materializedCustomSkillNamesProvider = provider
+  setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
+    this.customServerRuntimeProjectionProvider = provider
   }
 
   // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
@@ -68,6 +79,46 @@ class ConnectorSettingsModule {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
 
     return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
+  }
+
+  materializedCustomSkillNames(): string[] {
+    const bundled = new Set(CONNECTOR_CATALOG.map((connector) => connector.id))
+    return [
+      ...new Set(
+        this.customServerRuntimeProjectionProvider.materializedSkillNames().filter((skillName) => {
+          const slug = customConnectorSlugFromSkillName(skillName)
+          return slug !== undefined && !bundled.has(slug)
+        })
+      )
+    ]
+  }
+
+  connectorSkillNames(connectors: StoredConnectors | undefined): string[] {
+    const bundled = this.enabledConnectorIds(connectors).map((id) => `mcp-${id}`)
+    return [...new Set([...bundled, ...this.materializedCustomSkillNames()])]
+  }
+
+  connectorSkillCatalogEntries(connectors: StoredConnectors | undefined): Array<{
+    directory: string
+    name: string
+    description?: string
+    source: 'connector'
+  }> {
+    const bundled = this.enabledConnectorIds(connectors).map((id) => {
+      const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)!
+      return {
+        directory: `mcp-${id}`,
+        name: `mcp-${id}`,
+        description: connector.useWhen,
+        source: 'connector' as const
+      }
+    })
+    const custom = this.materializedCustomSkillNames().map((name) => ({
+      directory: name,
+      name,
+      source: 'connector' as const
+    }))
+    return [...bundled, ...custom]
   }
 
   // Called from SettingsService's existing whole-settings migration path so the trigger timing and
@@ -120,8 +171,7 @@ class ConnectorSettingsModule {
 
   async provisionedConnectorSkillNames(): Promise<string[]> {
     const connectors = await this.getConnectors()
-    const bundled = this.enabledConnectorIds(connectors).map((id) => `mcp-${id}`)
-    return Array.from(new Set([...bundled, ...this.materializedCustomSkillNamesProvider()]))
+    return this.connectorSkillNames(connectors)
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {
@@ -486,6 +536,21 @@ class ConnectorSettingsModule {
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
+        const configurationAvailability = unavailable
+          ? ('unavailable' as const)
+          : unauthenticated
+            ? ('unauthenticated' as const)
+            : undefined
+        const runtimeAvailability = server.enabled
+          ? this.customServerRuntimeProjectionProvider.availability(server.id)
+          : undefined
+        const availability = configurationAvailability ?? runtimeAvailability
+        const checking = Boolean(
+          server.enabled &&
+          !configurationAvailability &&
+          !runtimeAvailability &&
+          this.customServerRuntimeProjectionProvider.isRefreshing()
+        )
         return {
           id: server.id,
           slug: customConnectorSlug(server),
@@ -515,11 +580,8 @@ class ConnectorSettingsModule {
                 }
               }
             : {}),
-          ...(unavailable
-            ? { availability: 'unavailable' as const }
-            : unauthenticated
-              ? { availability: 'unauthenticated' as const }
-              : {})
+          ...(availability ? { availability } : {}),
+          ...(checking ? { checking: true } : {})
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -537,4 +599,4 @@ class ConnectorSettingsModule {
 }
 
 export { ConnectorSettingsModule }
-export type { CustomServerSecurityChangeGuard }
+export type { CustomServerRuntimeProjectionProvider, CustomServerSecurityChangeGuard }

@@ -272,6 +272,54 @@ describe('SkillCatalogModule', () => {
     ).toEqual(['demo'])
   })
 
+  it('reads authorized Connector descriptions from generated frontmatter and rejects invalid docs', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-connector-catalog-'))
+    const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-connector-bundle-'))
+    roots.push(storageRoot, bundleRoot)
+    await writeFile(join(bundleRoot, 'manifest.json'), JSON.stringify({ version: 1, skills: [] }))
+    const skillsRoot = join(storageRoot, 'codex', 'skills')
+    const docs = new Map([
+      [
+        'mcp-xt',
+        '---\nname: mcp-xt\ndescription: Use XT records.\nsource: connector\n---\n\n# XT\n'
+      ],
+      [
+        'mcp-wrong-name',
+        '---\nname: mcp-another\ndescription: Wrong identity.\nsource: connector\n---\n'
+      ],
+      ['mcp-missing-description', '---\nname: mcp-missing-description\nsource: connector\n---\n'],
+      [
+        'mcp-wrong-source',
+        '---\nname: mcp-wrong-source\ndescription: Wrong source.\nsource: featured\n---\n'
+      ]
+    ])
+    await Promise.all(
+      [...docs].map(async ([name, contents]) => {
+        await mkdir(join(skillsRoot, name), { recursive: true })
+        await writeFile(join(skillsRoot, name, 'SKILL.md'), contents)
+      })
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: new SkillRegistry(bundleRoot)
+    })
+
+    await expect(
+      catalog.codexSkillCatalog(
+        join(storageRoot, 'codex'),
+        [...docs.keys()].map((name) => ({ directory: name, name, source: 'connector' as const }))
+      )
+    ).resolves.toEqual([
+      {
+        name: 'mcp-xt',
+        description: 'Use XT records.',
+        path: join(skillsRoot, 'mcp-xt', 'SKILL.md'),
+        source: 'connector'
+      }
+    ])
+  })
+
   it('exports a personal Skill as a portable ZIP archive', async () => {
     const catalog = await createCatalog()
     await catalog.createSkill({

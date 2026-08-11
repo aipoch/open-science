@@ -169,7 +169,7 @@ describe('ConnectorSettingsModule', () => {
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.slug}/lookup`)
   })
 
-  it('advertises custom Connector Skills only from the successful materialization projection', async () => {
+  it('advertises only safe custom Connector Skills from the successful materialization projection', async () => {
     await service.addCustomServer({
       name: 'custom-catalog',
       transport: 'stdio',
@@ -178,9 +178,78 @@ describe('ConnectorSettingsModule', () => {
 
     expect(await service.provisionedConnectorSkillNames()).not.toContain('mcp-custom-catalog')
 
-    service.setMaterializedCustomSkillNamesProvider(() => ['mcp-custom-catalog'])
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [
+        'mcp-custom-catalog',
+        'mcp-custom-catalog',
+        'mcp-second',
+        'mcp-pubmed',
+        'mcp-../../escape',
+        'mcp-UPPER'
+      ],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
 
     expect(await service.provisionedConnectorSkillNames()).toContain('mcp-custom-catalog')
+    expect(
+      service.connectorSkillNames({
+        enabledIds: [],
+        autoAllowIds: [],
+        disabledConnectorIds: [...ALL_CONNECTOR_IDS]
+      })
+    ).toEqual(['mcp-custom-catalog', 'mcp-second'])
+    expect(
+      service.connectorSkillCatalogEntries({
+        enabledIds: [],
+        autoAllowIds: [],
+        disabledConnectorIds: [...ALL_CONNECTOR_IDS]
+      })
+    ).toEqual([
+      { directory: 'mcp-custom-catalog', name: 'mcp-custom-catalog', source: 'connector' },
+      { directory: 'mcp-second', name: 'mcp-second', source: 'connector' }
+    ])
+  })
+
+  it('projects runtime availability separately from logical enablement', async () => {
+    const added = await service.addCustomServer({
+      name: 'offline-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    const id = added.customServers[0].id
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [],
+      availability: (serverId) => (serverId === id ? 'unavailable' : undefined),
+      isRefreshing: () => false
+    })
+
+    const [server] = (await service.listConnectors()).customServers
+
+    expect(server).toMatchObject({ id, enabled: true, availability: 'unavailable' })
+
+    const [disabled] = (await service.setCustomServerEnabled({ id, enabled: false })).customServers
+    expect(disabled).toMatchObject({ id, enabled: false })
+    expect(disabled.availability).toBeUndefined()
+  })
+
+  it('does not block listing while the current runtime refresh is still pending', async () => {
+    const added = await service.addCustomServer({
+      name: 'late-offline-server',
+      transport: 'stdio',
+      command: 'example-mcp'
+    })
+    const id = added.customServers[0].id
+    const runtimeProjection = {
+      materializedSkillNames: () => [],
+      availability: () => undefined,
+      isRefreshing: () => true
+    }
+    service.setCustomServerRuntimeProjectionProvider(runtimeProjection)
+
+    const [server] = (await service.listConnectors()).customServers
+
+    expect(server).toMatchObject({ id, enabled: true, checking: true })
   })
 
   it('rejects duplicate and built-in custom connector names', async () => {

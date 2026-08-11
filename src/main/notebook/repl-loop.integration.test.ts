@@ -101,8 +101,22 @@ describe('repl_loop local RPC transport', () => {
         requests.push(JSON.parse(body))
         const result =
           requests.length === 3
-            ? { mcp: 'yes', compute: true, agents: true, skills: true, artifacts: true }
-            : { mcp: true, compute: true, agents: true, skills: true, artifacts: true }
+            ? {
+                mcp: 'yes',
+                compute: true,
+                agents: true,
+                skills: true,
+                artifacts: true,
+                lineage: true
+              }
+            : {
+                mcp: true,
+                compute: true,
+                agents: true,
+                skills: true,
+                artifacts: true,
+                lineage: true
+              }
         response
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ result }))
@@ -126,8 +140,22 @@ describe('repl_loop local RPC transport', () => {
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toEqual({
-        first: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
-        second: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
+        first: {
+          mcp: true,
+          compute: true,
+          agents: true,
+          skills: true,
+          artifacts: true,
+          lineage: true
+        },
+        second: {
+          mcp: true,
+          compute: true,
+          agents: true,
+          skills: true,
+          artifacts: true,
+          lineage: true
+        },
         frozen: true,
         same: false
       })
@@ -151,6 +179,274 @@ describe('repl_loop local RPC transport', () => {
         'host.capabilities returned an invalid capability projection'
       )
       expect(requests).toHaveLength(3)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('validates, freezes, and freshly reads host.lineage graph and core provenance', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const graphResult = (versionId: string): Record<string, unknown> => ({
+      project_id: 'project-a',
+      root_version_id: versionId,
+      direction: 'up',
+      truncated: false,
+      nodes: [
+        {
+          file_id: 'artifact-1',
+          version_id: versionId,
+          filename: 'result.csv',
+          version_number: 1,
+          session_id: 'session-other',
+          root_frame_id: 'root-1',
+          agent_frame_id: 'agent-1',
+          created_at: '2026-08-01T00:00:00.000Z',
+          content_type: 'text/csv',
+          size_bytes: 12,
+          checksum: 'a'.repeat(64),
+          is_user_upload: false
+        }
+      ],
+      edges: []
+    })
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(parsed)
+        const versionId = String(parsed.params?.version_id)
+        let result: Record<string, unknown>
+        if (parsed.params?.op === 'get') {
+          const environment = {
+            capture_kind: 'completed-run',
+            environment_name: 'science',
+            kernel_kind: 'python',
+            runtime_source: 'managed',
+            runtime_version: '3.13.5',
+            platform: 'darwin',
+            architecture: 'arm64',
+            packages: [
+              {
+                name: 'numpy',
+                version: '2.0.0',
+                version_status: 'known',
+                ecosystem: 'python',
+                evidence_sources: ['python-importlib-metadata'],
+                loaded_state: 'loaded',
+                library_rank: 0,
+                library_scope: 'environment',
+                built_for_runtime: '3.13',
+                priority: 'other'
+              }
+            ],
+            python_version: '3.13.5',
+            inventory_sources: ['kernel-native', 'operation-log'],
+            installed_inventory: {
+              captured_at: '2026-08-01T00:00:00.000Z',
+              source: 'full-scan',
+              validation: 'full-scan'
+            },
+            op_log: [
+              {
+                operation_id: 'operation-1',
+                timestamp: '2026-08-01T00:00:00.000Z',
+                operation: 'install',
+                packages: ['numpy'],
+                result: 'success',
+                attempts: [
+                  {
+                    group_ordinal: 0,
+                    installer: 'pip',
+                    packages: ['numpy'],
+                    status: 'succeeded',
+                    mutation_risk: 'confirmed',
+                    reason: 'unknown'
+                  }
+                ],
+                fallback_used: false,
+                inventory_refresh: 'published',
+                inventory_refresh_attempts: [
+                  {
+                    attempt: 1,
+                    trigger: 'terminal',
+                    timestamp: '2026-08-01T00:00:01.000Z',
+                    result: 'published'
+                  }
+                ],
+                package_changes: [
+                  {
+                    name: 'numpy',
+                    ecosystem: 'python',
+                    relationship: 'requested',
+                    change: 'installed',
+                    after_version: '2.0.0',
+                    library_rank: 0,
+                    library_scope: 'environment'
+                  }
+                ]
+              }
+            ],
+            op_log_truncation: {
+              omitted_count: 2,
+              earliest_retained_at: '2026-07-31T23:59:00.000Z'
+            },
+            captured_at: '2026-08-01T00:00:00.000Z',
+            source_manifest_checksum: 'b'.repeat(64),
+            complete: true,
+            capture_status: 'complete',
+            warnings: ['capture warning']
+          }
+          if (versionId === 'invalid-environment-reason') {
+            environment.op_log[0].attempts[0].reason = 'secret-reason'
+          }
+          if (versionId === 'unknown-environment-key') {
+            Object.assign(environment.packages[0], { storage_key: 'secret' })
+          }
+          if (versionId === 'invalid-environment-truncation') {
+            environment.op_log_truncation.omitted_count = 0
+          }
+          result = {
+            project_id: 'project-a',
+            artifact_id: 'artifact-1',
+            version_id: versionId,
+            filename: 'result.csv',
+            version_number: 1,
+            session_id: 'session-other',
+            root_frame_id: 'root-1',
+            agent_frame_id: 'agent-1',
+            message_branch_id: 'branch-1',
+            runtime_segment_id: 'runtime-1',
+            prompt_message_id: 'prompt-1',
+            created_at: '2026-08-01T00:00:00.000Z',
+            content_type: 'text/csv',
+            size_bytes: 12,
+            checksum: 'a'.repeat(64),
+            content_status: { state: 'available' },
+            reproduction_code: 'print(1)',
+            execution_status: { state: 'available' },
+            producer: {
+              state: 'available',
+              notebook_session_id: 'notebook-1',
+              producer_run_id: 'run-1',
+              run_index: 0,
+              kernel_kind: 'python',
+              association_method: 'agent-declared-and-session-validated',
+              environment_manifest_checksum: 'b'.repeat(64)
+            },
+            environment_status: { state: 'available' },
+            environment,
+            inputs: []
+          }
+        } else {
+          result = graphResult(versionId)
+          if (versionId === 'invalid-v1') {
+            result.nodes = [{ ...(result.nodes as object[])[0], storage_key: 'secret' }]
+          }
+        }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-lineage-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        "const first = await host.lineage.graph('artifact-v1', { max_depth: 0 }); " +
+          "const second = await host.lineage.graph('artifact-v1', { max_depth: 0 }); " +
+          "const core = await host.lineage.get('artifact-v1'); " +
+          'return JSON.stringify({ firstFrozen: Object.isFrozen(first), ' +
+          'nodesFrozen: Object.isFrozen(first.nodes), nodeFrozen: Object.isFrozen(first.nodes[0]), ' +
+          'fresh: first !== second, coreFrozen: Object.isFrozen(core), ' +
+          'inputsFrozen: Object.isFrozen(core.inputs), producerFrozen: Object.isFrozen(core.producer), ' +
+          'environmentFrozen: Object.isFrozen(core.environment), ' +
+          'packagesFrozen: Object.isFrozen(core.environment.packages), ' +
+          'packageFrozen: Object.isFrozen(core.environment.packages[0]), ' +
+          'opLogFrozen: Object.isFrozen(core.environment.op_log), ' +
+          'attemptFrozen: Object.isFrozen(core.environment.op_log[0].attempts[0]) })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toEqual({
+        firstFrozen: true,
+        nodesFrozen: true,
+        nodeFrozen: true,
+        fresh: true,
+        coreFrozen: true,
+        inputsFrozen: true,
+        producerFrozen: true,
+        environmentFrozen: true,
+        packagesFrozen: true,
+        packageFrozen: true,
+        opLogFrozen: true,
+        attemptFrozen: true
+      })
+      expect(requests).toEqual([
+        {
+          method: 'lineageCall',
+          params: { op: 'graph', version_id: 'artifact-v1', options: { max_depth: 0 } }
+        },
+        {
+          method: 'lineageCall',
+          params: { op: 'graph', version_id: 'artifact-v1', options: { max_depth: 0 } }
+        },
+        { method: 'lineageCall', params: { op: 'get', version_id: 'artifact-v1' } }
+      ])
+
+      const extraArgument = await send(
+        "try { await host.lineage.get('artifact-v1', {}); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(extraArgument.result).toBe('TypeError: host.lineage.get accepts one version_id')
+      expect(requests).toHaveLength(3)
+
+      const invalidProjection = await send(
+        "try { await host.lineage.graph('invalid-v1'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidProjection.result).toBe('host.lineage.graph returned an invalid node')
+      expect(requests).toHaveLength(4)
+
+      const invalidEnvironmentReason = await send(
+        "try { await host.lineage.get('invalid-environment-reason'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidEnvironmentReason.result).toBe(
+        'host.lineage.get returned an invalid environment attempt'
+      )
+      expect(requests).toHaveLength(5)
+
+      const unknownEnvironmentKey = await send(
+        "try { await host.lineage.get('unknown-environment-key'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(unknownEnvironmentKey.result).toBe(
+        'host.lineage.get returned an invalid environment package'
+      )
+      expect(requests).toHaveLength(6)
+
+      const invalidEnvironmentTruncation = await send(
+        "try { await host.lineage.get('invalid-environment-truncation'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidEnvironmentTruncation.result).toBe(
+        'host.lineage.get returned an invalid operation-log truncation'
+      )
+      expect(requests).toHaveLength(7)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

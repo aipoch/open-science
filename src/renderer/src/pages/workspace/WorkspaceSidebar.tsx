@@ -186,12 +186,12 @@ const getNextSessionSectionRefreshAt = (sessions: ChatSession[], now: number): n
 const sidebarInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const sessionRowClassName = cn(
-  'group mx-1.5 select-none rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300',
+  'group relative mx-1.5 select-none rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300',
   sidebarInteractiveTransitionClassName
 )
 
 const sessionRowActionClassName =
-  'relative -mr-1 rounded p-0.5 text-text-100 opacity-0 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+  'absolute right-1.5 top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-text-100 opacity-0 transition-[opacity,color,background-color] duration-200 ease-out hover:!opacity-100 hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
 
 // Shared icon wrapper inside each menu item row.
 const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-center'
@@ -289,7 +289,7 @@ const WorkspaceSidebarView = ({
               {/* Project action menu: mirrors the session row menu chrome below. */}
               <DropdownMenuContent
                 aria-label="Project actions"
-                className="min-w-[11rem]"
+                className={cn('min-w-[11rem]', mobileMode && 'z-[80]')}
                 side="bottom"
                 align="start"
                 sideOffset={6}
@@ -436,7 +436,7 @@ const WorkspaceSidebarView = ({
                       className={cn(sessionRowClassName, isActive && 'bg-bg-300 text-text-000')}
                       title={session.title}
                     >
-                      <div className="flex w-full min-w-0 items-center gap-1.5">
+                      <div className="flex w-full min-w-0 items-center">
                         <button
                           type="button"
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
@@ -462,22 +462,39 @@ const WorkspaceSidebarView = ({
                           <span className="sr-only">
                             Session status: {sessionStatusLabel[session.status]}
                           </span>
-                          <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                          <span
+                            className={cn(
+                              'min-w-0 flex-1 overflow-hidden whitespace-nowrap',
+                              section.label === 'Active' &&
+                                session.status !== 'idle' &&
+                                'font-semibold'
+                            )}
+                          >
+                            {session.title}
+                          </span>
                           {showSessionShortcuts && shortcutNumber ? (
                             <kbd
                               aria-hidden="true"
-                              className="shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
+                              className="relative z-[2] mr-5 shrink-0 rounded-full bg-bg-300 px-1.5 py-0.5 font-sans text-[11px] font-medium leading-none tabular-nums text-text-100"
                             >
                               {isMac ? `⌘${shortcutNumber}` : `Ctrl+${shortcutNumber}`}
                             </kbd>
                           ) : null}
                         </button>
 
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'pointer-events-none absolute inset-y-0 right-0 z-[1] w-12 rounded-r-md bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg group-hover:via-bg-300 group-hover:to-bg-300',
+                            isActive && 'via-bg-300 to-bg-300'
+                          )}
+                        />
+
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className={cn(sessionRowActionClassName, isActive && 'opacity-100')}
+                              className={cn(sessionRowActionClassName, mobileMode && 'opacity-100')}
                               aria-label={`Open actions for ${session.title}`}
                             >
                               <span
@@ -491,7 +508,7 @@ const WorkspaceSidebarView = ({
                           {/* Session action menu: uses shadcn default light-surface tokens. */}
                           <DropdownMenuContent
                             aria-label="Session actions"
-                            className="min-w-[9rem]"
+                            className={cn('min-w-[9rem]', mobileMode && 'z-[80]')}
                             side="right"
                             align="start"
                             sideOffset={6}
@@ -557,7 +574,10 @@ const WorkspaceSidebarView = ({
                                   </span>
                                   <span className="flex-1">Export conversation</span>
                                 </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent aria-label="Export conversation formats">
+                                <DropdownMenuSubContent
+                                  aria-label="Export conversation formats"
+                                  className={mobileMode ? 'z-[80]' : undefined}
+                                >
                                   <DropdownMenuItem
                                     className="gap-2"
                                     onSelect={() => onExportSession(session, 'markdown')}

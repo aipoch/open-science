@@ -1173,6 +1173,20 @@ describe('SettingsService: providers', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
+    const customSkillName = 'mcp-xt'
+    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    await mkdir(customSkillSource, { recursive: true })
+    await writeFile(
+      join(customSkillSource, 'SKILL.md'),
+      '---\nname: mcp-xt\ndescription: "Use XT records."\nsource: connector\n---\n\n# XT\n',
+      'utf8'
+    )
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [customSkillName],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
+
     const backend = await resolveActiveBackend(service, {
       systemPromptAppends: ['Stable Open Science app guidance.']
     })
@@ -1192,6 +1206,9 @@ describe('SettingsService: providers', () => {
     expect(baseline).toContain('mcp-*')
     expect(baseline).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(baseline).toContain('Never guess a connector server or method name')
+    expect(baseline).toContain('`mcp-xt`')
+    expect(baseline).not.toContain('Use XT records.')
+    expect(baseline).not.toContain('host.mcp("xt"')
     expect(baseline).not.toContain('pubchem_get_compounds')
     expect(baseline).not.toContain('search_articles')
     expect(baseline).not.toContain('```json')
@@ -1204,6 +1221,12 @@ describe('SettingsService: providers', () => {
     expect(chemistrySkill).toContain('pubchem_get_compounds')
     expect(chemistrySkill).toContain('**Input:**')
     expect(chemistrySkill).not.toContain('```json')
+    await expect(
+      readFile(
+        join(storageRoot, 'opencode', 'config', 'opencode', 'skills', customSkillName, 'SKILL.md'),
+        'utf8'
+      )
+    ).resolves.toContain('Use XT records.')
   })
 
   it('rejects an invalid custom context window when IPC bypasses the form', async () => {
@@ -3881,6 +3904,20 @@ describe('SettingsService: skills', () => {
     ).providers[0]
     await service.setActiveProvider(provider.id)
 
+    const customSkillName = 'mcp-xt'
+    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    await mkdir(customSkillSource, { recursive: true })
+    await writeFile(
+      join(customSkillSource, 'SKILL.md'),
+      '---\nname: mcp-xt\ndescription: "Use XT records."\nsource: connector\n---\n\n# XT\n',
+      'utf8'
+    )
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [customSkillName],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
+
     await resolveActiveBackend(service)
 
     const materializedDir = join(storageRoot, 'codex', 'skills', 'os-demo')
@@ -3890,10 +3927,19 @@ describe('SettingsService: skills', () => {
       await expect(
         service.codexSkillDescriptorsForIds(['demo', 'missing'], join(storageRoot, 'codex'))
       ).resolves.toEqual([{ name: 'demo', path: materializedFile }])
+      await expect(
+        readFile(join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'), 'utf8')
+      ).resolves.toContain('Use XT records.')
       const selectorCatalog = await service.codexSkillCatalog(join(storageRoot, 'codex'))
       expect(selectorCatalog).toEqual(
         expect.arrayContaining([
           { name: 'demo', description: 'A demo skill.', path: materializedFile },
+          {
+            name: customSkillName,
+            description: 'Use XT records.',
+            path: join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'),
+            source: 'connector'
+          },
           expect.objectContaining({
             name: 'mcp-pubmed',
             description: expect.stringContaining('biomedical literature'),
@@ -3956,7 +4002,7 @@ describe('SettingsService: skills', () => {
     expect(getSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('migrates legacy shared Codex skills into the app-owned subscription home only', async () => {
+  it('materializes ordinary and custom Connector Skills into the subscription home only', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
@@ -3984,6 +4030,19 @@ describe('SettingsService: skills', () => {
       nativeVersion: '0.144.6'
     })
     await repository.setAgentFramework('codex')
+    const customSkillName = 'mcp-xt'
+    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    await mkdir(customSkillSource, { recursive: true })
+    await writeFile(
+      join(customSkillSource, 'SKILL.md'),
+      '---\nname: mcp-xt\ndescription: Use XT records.\nsource: connector\n---\n\n# XT\n',
+      'utf8'
+    )
+    service.setCustomServerRuntimeProjectionProvider({
+      materializedSkillNames: () => [customSkillName],
+      availability: () => undefined,
+      isRefreshing: () => false
+    })
     await repository.upsertProvider({
       id: CODEX_SHARED_PROVIDER_ID,
       type: 'codex-shared',
@@ -4002,7 +4061,16 @@ describe('SettingsService: skills', () => {
       )
     ).toContain('demo body')
     await expect(
+      readFile(
+        join(storageRoot, 'codex-subscription', 'skills', customSkillName, 'SKILL.md'),
+        'utf8'
+      )
+    ).resolves.toContain('Use XT records.')
+    await expect(
       readFile(join(storageRoot, 'workspace', '.agents', 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo', 'SKILL.md'), 0o644)
     await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo'), 0o755)

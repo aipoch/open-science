@@ -13,7 +13,10 @@
 //  - The ProfileService and catalog services remain authoritative; nothing is copied here.
 
 import { CONNECTOR_CATALOG, type ConnectorMeta } from '../connectors/catalog'
-import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
+import {
+  isCustomMcpServerRouteSafe,
+  type CustomMcpFailureAvailability
+} from '../connectors/custom-mcp-bootstrap'
 import { getConnectorTools } from '../connectors/registry'
 import type { ProfileService } from '../specialist/service'
 import type { SessionBindingService } from '../specialist/session-binding'
@@ -61,6 +64,10 @@ export type AgentsCatalogSource = {
 export type AgentsServiceDeps = {
   profileService: ProfileService
   catalog: AgentsCatalogSource
+  // Runtime failures are projected separately from durable Settings. Keeping this as a narrow,
+  // optional resolver lets host.agents share the authoritative custom MCP status without owning
+  // the connector runtime or forcing read-only tests to construct it.
+  customServerAvailability?: (id: string) => CustomMcpFailureAvailability | undefined
   // Injected (fake-able) seams consumed by the future privileged-mutation and switch slices
   // (issues 04/05). The read slice leaves these unset; the dispatcher routes privileged ops through
   // `approvalGateway` and signals approved switches via `switchNotifier`. They are SERVER-supplied
@@ -382,7 +389,7 @@ export class AgentsService {
   // the mutation module never duplicates the connector catalog rules. Exported via the standalone
   // `projectConnectorsFromStored` below.
   private projectConnectors(stored: StoredConnectors | undefined): ConnectorReadModel[] {
-    return projectConnectorsFromStored(stored)
+    return projectConnectorsFromStored(stored, this.deps.customServerAvailability)
   }
 }
 
@@ -397,7 +404,9 @@ export class AgentsService {
 // Projects the stored connectors document into public read models. Never returns credentials,
 // headers, environment values, or connector arguments.
 export const projectConnectorsFromStored = (
-  stored: StoredConnectors | undefined
+  stored: StoredConnectors | undefined,
+  customServerAvailability: (id: string) => CustomMcpFailureAvailability | undefined = () =>
+    undefined
 ): ConnectorReadModel[] => {
   const disabled = new Set(stored?.disabledConnectorIds ?? [])
   const bundled: ConnectorReadModel[] = (CONNECTOR_CATALOG as ConnectorMeta[]).map((meta) => ({
@@ -417,6 +426,7 @@ export const projectConnectorsFromStored = (
   const custom: ConnectorReadModel[] = customServers
     .filter((server) => isCustomMcpServerRouteSafe(server, customServers))
     .map((server) => {
+      const runtimeAvailability = customServerAvailability(server.id)
       const unreachable =
         (server.transport === 'stdio' && !server.command) ||
         (server.transport !== 'stdio' && !server.url)
@@ -434,7 +444,7 @@ export const projectConnectorsFromStored = (
           ? 'unavailable'
           : unauthenticated
             ? 'unauthenticated'
-            : 'available',
+            : (runtimeAvailability ?? 'available'),
         source: 'custom',
         tools: []
       }

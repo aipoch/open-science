@@ -28,6 +28,8 @@ import { describe, expect, it } from 'vitest'
 
 const productionFiles = [
   'provenance-canonical.ts',
+  'provenance-core-evidence.ts',
+  'provenance-dependency-reader.ts',
   'provenance-execution-evidence.ts',
   'provenance-finalization-recovery.ts',
   'provenance-message-finalization.ts',
@@ -228,6 +230,7 @@ describe('Artifact Provenance repository architecture', () => {
         'finalizeRun',
         'getLineage',
         'getVersionCore',
+        'readDependencyRelations',
         'getVersionExecution',
         'getVersionMessages',
         'getVersionProvenance',
@@ -251,6 +254,7 @@ describe('Artifact Provenance repository architecture', () => {
 
   it('composes each state owner exactly once without mutable facade fields', () => {
     for (const owner of [
+      'ArtifactProvenanceDependencyReader',
       'ArtifactProvenanceFinalizationRecovery',
       'ArtifactProvenanceMessageFinalizer',
       'ArtifactProvenanceProducerCapture',
@@ -266,6 +270,7 @@ describe('Artifact Provenance repository architecture', () => {
         'compatibilityRepository',
         'createId',
         'durability',
+        'dependencyReader',
         'finalizationRecovery',
         'messageFinalizer',
         'now',
@@ -296,6 +301,7 @@ describe('Artifact Provenance repository architecture', () => {
           'finalizeRun',
           'getLineage',
           'getVersionCore',
+          'readDependencyRelations',
           'getVersionExecution',
           'getVersionMessages',
           'getVersionProvenance',
@@ -310,6 +316,7 @@ describe('Artifact Provenance repository architecture', () => {
       finalizeRun: 'this.messageFinalizer.finalizeRun',
       getLineage: 'this.readModel.getLineage',
       getVersionCore: 'this.readModel.getVersionCore',
+      readDependencyRelations: 'this.dependencyReader.readDependencyRelations',
       getVersionExecution: 'this.readModel.getVersionExecution',
       getVersionMessages: 'this.readModel.getVersionMessages',
       getVersionProvenance: 'this.readModel.getVersionProvenance',
@@ -352,6 +359,7 @@ describe('Artifact Provenance repository architecture', () => {
     expect(module.testFiles.owner).toEqual(
       [
         'src/main/artifacts/provenance-lifecycle-contract.test.ts',
+        'src/main/artifacts/provenance-dependency-read.test.ts',
         'src/main/artifacts/provenance-message-snapshot.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',

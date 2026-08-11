@@ -46,6 +46,8 @@ import { ArtifactProvenanceUnindexedRecovery } from './provenance-unindexed-reco
 import { resolveStorageKey, storageKey } from './provenance-storage'
 import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
+import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -114,6 +116,7 @@ class ArtifactProvenanceRepository {
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly durability: ArtifactDurability
+  private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
   private readonly messageFinalizer: ArtifactProvenanceMessageFinalizer
   private readonly producerCapture: ArtifactProvenanceProducerCapture
@@ -136,6 +139,7 @@ class ArtifactProvenanceRepository {
         storageRoot: options.storageRoot,
         getClient: options.getClient
       })
+    this.dependencyReader = new ArtifactProvenanceDependencyReader(options.getClient)
     this.readModel = new ArtifactProvenanceReadModel({
       storageRoot: options.storageRoot,
       getClient: options.getClient,
@@ -472,6 +476,14 @@ class ArtifactProvenanceRepository {
     request: GetArtifactVersionProvenanceRequest
   ): Promise<ArtifactVersionProvenance> {
     return this.readModel.getVersionCore(request)
+  }
+
+  async readDependencyRelations(request: {
+    projectId: string
+    versionId: string
+    direction: HostLineageDirection
+  }): Promise<HostLineageDependencyRelation[]> {
+    return this.dependencyReader.readDependencyRelations(request)
   }
 
   async getVersionExecution(

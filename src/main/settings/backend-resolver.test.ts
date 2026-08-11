@@ -148,6 +148,7 @@ type HarnessOptions = {
   frameworkOverride?: string
   connectorIds?: string[]
   connectorSkillNames?: string[]
+  materializedConnectorSkillNames?: string[]
   rejectRequiredModels?: ReadonlySet<string>
   targetOverride?: (
     provider: StoredProvider,
@@ -236,7 +237,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
     provisionClaudeRuntimeConfig: vi.fn(async () => '/storage/claude-config'),
-    materializeAgentSkills: vi.fn(async () => undefined),
+    materializeAgentSkills: vi.fn(
+      async () =>
+        options.materializedConnectorSkillNames ??
+        options.connectorSkillNames ??
+        (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+    ),
     materializeAgentConfigFiles: vi.fn(async (files?: AgentConfigFile[]) => {
       void files
     }),
@@ -244,8 +250,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexProxyEnvironment: vi.fn(async () => undefined)
   } satisfies AgentBackendRuntimePort
   const connectors = {
-    enabledConnectorIds: vi.fn(() => options.connectorIds ?? []),
-    provisionedConnectorSkillNames: vi.fn(async () => options.connectorSkillNames ?? [])
+    connectorSkillNames: vi.fn(
+      () => options.connectorSkillNames ?? (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+    )
   } satisfies AgentBackendConnectorPort
 
   const responsesBridges: ResponsesBridgeDouble[] = []
@@ -344,8 +351,7 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.readFrameworkOverride).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeReasoningEffortProfile).not.toHaveBeenCalled()
-    expect(harness.connectors.enabledConnectorIds).not.toHaveBeenCalled()
-    expect(harness.connectors.provisionedConnectorSkillNames).not.toHaveBeenCalled()
+    expect(harness.connectors.connectorSkillNames).not.toHaveBeenCalled()
     expect(harness.createResponsesBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
     expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
@@ -1190,19 +1196,54 @@ describe('AgentBackendResolver bridge predicates', () => {
         : backend.persistentSystemPrompt
 
     expect(instructions).toContain(
-      testCase.frameworkId === 'claude-code'
-        ? 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
-        : 'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.'
+      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
     )
     expect(instructions).toContain('Allowed Specialist Skills for this session')
-    if (testCase.frameworkId !== 'claude-code') {
-      expect(instructions).not.toContain('`mcp-custom-chemistry`')
-    }
+    expect(instructions).not.toContain('host.mcp("custom-chemistry"')
     expect(instructions).not.toContain('`mcp-openalex`')
     await backend.anthropicBridgeLease?.release()
     await backend.responsesBridgeLease?.release()
     await backend.providerTransportLease?.release()
   })
+
+  it.each([
+    { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },
+    {
+      name: 'Codex Responses',
+      frameworkId: 'codex' as const,
+      target: { provider: { apiEndpoints: ['responses'] as const } }
+    },
+    {
+      name: 'Codex bridge',
+      frameworkId: 'codex' as const,
+      target: {
+        needsChatResponsesBridge: true,
+        provider: { apiEndpoints: ['openai'] as const }
+      }
+    }
+  ])(
+    'does not advertise a custom Skill whose doc failed to materialize for $name',
+    async (testCase) => {
+      const harness = makeHarness({
+        connectorSkillNames: ['mcp-pubmed', 'mcp-xt'],
+        materializedConnectorSkillNames: ['mcp-pubmed'],
+        targetOverride: () => testCase.target
+      })
+
+      const backend = await harness.resolver.resolveExplicitTarget({
+        frameworkId: testCase.frameworkId,
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+
+      expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
+      expect(backend.persistentSystemPrompt).not.toContain('`mcp-xt`')
+      await backend.anthropicBridgeLease?.release()
+      await backend.responsesBridgeLease?.release()
+      await backend.providerTransportLease?.release()
+    }
+  )
 
   it.each([
     { name: 'direct Responses', chat: false, native: false, apiEndpoints: ['responses'] as const },

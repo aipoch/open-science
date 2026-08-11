@@ -315,9 +315,13 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.authenticateCustomServer', request),
     cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) =>
       electronRendererContracts.invoke('settings.cancelCustomServerAuthentication', request),
+    retryCustomServer: (request: AuthenticateCustomServerRequest) =>
+      electronRendererContracts.invoke('settings.retryCustomServer', request),
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
+    onConnectorRuntimeChanged: (listener) =>
+      electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
     onSkillImportApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onSkillImportApprovalRequest', listener),
     onSkillImportApprovalSettled: (listener) =>

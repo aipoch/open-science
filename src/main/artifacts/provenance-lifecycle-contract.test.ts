@@ -4,6 +4,7 @@ import { basename, join, sep } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type {
+  ArtifactVersionEvidence,
   CreateArtifactVersionRequest,
   FinalizeArtifactVersionsRequest
 } from '../../shared/artifact-provenance'
@@ -16,6 +17,7 @@ import {
   ArtifactOwnershipPersistenceRaceError,
   ArtifactProvenanceRepository
 } from './provenance-repository'
+import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import { ProvenanceMessageSnapshotRepository } from './provenance-message-snapshot'
 import {
   createArtifactVersionRequest,
@@ -271,5 +273,128 @@ describe('artifact provenance durable lifecycle contract', () => {
     await expect(repository.getVersionMessages(firstIdentity)).resolves.toEqual({
       messages: { state: 'unavailable', reason: 'message-snapshot-corrupt' }
     })
+
+    const coreRow = await value.client.artifactVersion.findUniqueOrThrow({
+      where: { id: first.versionId }
+    })
+    const corruptEvidence = JSON.parse(coreRow.evidenceJson) as ArtifactVersionEvidence
+    const persistCorruptEvidence = async (): Promise<void> => {
+      const corruptEvidenceJson = canonicalJson(corruptEvidence as unknown as CanonicalJson)
+      await value.client.artifactVersion.update({
+        where: { id: first.versionId },
+        data: {
+          evidenceJson: corruptEvidenceJson,
+          evidenceChecksum: sha256(corruptEvidenceJson)
+        }
+      })
+      await writeFile(
+        join(value.storageRoot, ...coreRow.evidenceStorageKey.split('/')),
+        corruptEvidenceJson,
+        'utf8'
+      )
+    }
+
+    if (corruptEvidence.producer.state !== 'unavailable') {
+      throw new Error('Expected the lifecycle fixture producer to be unavailable.')
+    }
+    corruptEvidence.environment_status = {
+      state: 'unavailable',
+      reason: 'environment-capture-failed'
+    }
+    await persistCorruptEvidence()
+    await expect(repository.getVersionCore(firstIdentity)).rejects.toThrow(
+      'Artifact Version core evidence metadata mismatch'
+    )
+
+    corruptEvidence.environment_status = {
+      state: 'unavailable',
+      reason: corruptEvidence.producer.reason
+    }
+    corruptEvidence.conversation.message_branch_id = 'self-consistent-but-wrong-branch'
+    await persistCorruptEvidence()
+    await expect(repository.getVersionCore(firstIdentity)).rejects.toThrow(
+      'Artifact Version core evidence metadata mismatch'
+    )
+  })
+
+  it('rejects a self-consistent checksum when an available producer uses a producer-only environment reason', async () => {
+    const value = await fixture()
+    const session = durableSession(value.storageRoot)
+    const request = versionRequest(session)
+    await value.notebookRepository.loadOrCreate({
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: join(value.storageRoot, 'workspace')
+    })
+    await value.notebookRepository.appendRun({
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      run: {
+        runId: 'producer-run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        kernelKind: 'python',
+        status: 'completed',
+        startedAt: 1,
+        endedAt: 2,
+        script: 'save_plot()',
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: [],
+        inputFiles: [],
+        environmentCapture: {
+          state: 'unavailable',
+          reason: 'environment-capture-failed'
+        },
+        rootFrameId: request.rootFrameId,
+        agentFrameId: request.agentFrameId,
+        messageBranchId: request.messageBranchId,
+        runtimeSegmentId: request.runtimeSegmentId,
+        promptMessageId: request.promptMessageId
+      }
+    })
+    await value.stagePng('producer bytes')
+    const version = await value.repository.createVersion({
+      ...request,
+      notebookSessionId: 'session-1',
+      producerRunId: 'producer-run-1',
+      sourceKind: 'inline'
+    })
+    const identity = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactId: version.artifactId,
+      versionId: version.versionId
+    }
+    const row = await value.client.artifactVersion.findUniqueOrThrow({
+      where: { id: version.versionId }
+    })
+    const corruptEvidence = JSON.parse(row.evidenceJson) as ArtifactVersionEvidence
+    expect(corruptEvidence).toMatchObject({
+      producer: { state: 'available' },
+      environment_status: { state: 'unavailable', reason: 'environment-capture-failed' }
+    })
+    corruptEvidence.environment_status = {
+      state: 'unavailable',
+      reason: 'producer-not-supplied'
+    }
+    const corruptEvidenceJson = canonicalJson(corruptEvidence as unknown as CanonicalJson)
+    await value.client.artifactVersion.update({
+      where: { id: version.versionId },
+      data: {
+        evidenceJson: corruptEvidenceJson,
+        evidenceChecksum: sha256(corruptEvidenceJson)
+      }
+    })
+    await writeFile(
+      join(value.storageRoot, ...row.evidenceStorageKey.split('/')),
+      corruptEvidenceJson,
+      'utf8'
+    )
+
+    await expect(value.repository.getVersionCore(identity)).rejects.toThrow(
+      'Artifact Version core evidence metadata mismatch'
+    )
   })
 })

@@ -237,6 +237,36 @@ const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileServi
   return service
 }
 
+describe('AgentsService connector runtime availability', () => {
+  it('reports a runtime-unavailable custom connector and rejects a new attachment', async () => {
+    const stored: StoredConnectors = {
+      enabledIds: [],
+      autoAllowIds: [],
+      customMcpServers: [
+        { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' }
+      ]
+    }
+    const profiles = mutatingProfileService([profile()])
+    const attachConnector = vi.fn(async () => profile())
+    profiles.attachConnector = attachConnector
+    const service = new AgentsService({
+      profileService: profiles,
+      catalog: catalog({ getConnectors: vi.fn(async () => stored) }),
+      customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
+    })
+
+    const connector = (await service.listConnectors({})).find((item) => item.id === 'my-server')
+    expect(connector).toMatchObject({ availability: 'unavailable', mainEnabled: true })
+    await expect(
+      service.dispatch({
+        op: 'attach_connector',
+        params: { name: 'Bio Expert', connector_ref: 'my-server', revision: 3 }
+      })
+    ).rejects.toThrow(/host\.agents\.attach_connector:.*unavailable/)
+    expect(attachConnector).not.toHaveBeenCalled()
+  })
+})
+
 describe('AgentsService privileged dispatch — trusted session threading', () => {
   it('threads the trusted calling session into the delete approval request', async () => {
     const seenSessions: unknown[] = []

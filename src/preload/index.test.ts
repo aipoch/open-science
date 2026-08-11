@@ -464,6 +464,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.logoutSharedClaude',
       'settings.markOnboardingComplete',
       'settings.onConnectorApprovalRequest',
+      'settings.onConnectorRuntimeChanged',
       'settings.onInstallLog',
       'settings.onSkillImportApprovalRequest',
       'settings.onSkillImportApprovalSettled',
@@ -478,6 +479,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.replayPendingSkillImportApprovals',
       'settings.respondConnectorApproval',
       'settings.respondSkillImportApproval',
+      'settings.retryCustomServer',
       'settings.saveGitHubToken',
       'settings.scanRepoSkills',
       'settings.selectCustomServerTemplate',
@@ -596,10 +598,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 187 owned methods through their cataloged Electron channels', async () => {
+  it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(188)
+    expect(runtimeContracts).toHaveLength(190)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

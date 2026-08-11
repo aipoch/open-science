@@ -38,7 +38,8 @@ describe('capabilitiesCall RPC', () => {
       computeService: {} as never,
       agentsService: {} as never,
       skillsService: {} as never,
-      hostArtifacts: {} as never
+      hostArtifacts: {} as never,
+      hostLineage: {} as never
     })
     const connection = await server.issueControlConnection('trusted-session', 'trusted-project')
 
@@ -50,7 +51,14 @@ describe('capabilitiesCall RPC', () => {
 
     expect(response.status).toBe(200)
     expect(payload).toEqual({
-      result: { mcp: true, compute: true, agents: true, skills: true, artifacts: true }
+      result: {
+        mcp: true,
+        compute: true,
+        agents: true,
+        skills: true,
+        artifacts: true,
+        lineage: true
+      }
     })
   })
 
@@ -63,7 +71,14 @@ describe('capabilitiesCall RPC', () => {
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: {
-        result: { mcp: true, compute: false, agents: false, skills: false, artifacts: false }
+        result: {
+          mcp: true,
+          compute: false,
+          agents: false,
+          skills: false,
+          artifacts: false,
+          lineage: false
+        }
       }
     })
   })

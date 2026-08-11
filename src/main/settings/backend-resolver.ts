@@ -79,10 +79,7 @@ export type AgentBackendProviderPort = Pick<
   'resolveRuntimeTarget' | 'resolveRuntimeModelCatalog' | 'resolveRuntimeReasoningEffortProfile'
 >
 
-export type AgentBackendConnectorPort = Pick<
-  ConnectorSettingsModule,
-  'enabledConnectorIds' | 'provisionedConnectorSkillNames'
->
+export type AgentBackendConnectorPort = Pick<ConnectorSettingsModule, 'connectorSkillNames'>
 
 export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
   readSettings: () => Promise<StoredSettings>
@@ -269,11 +266,10 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
-    const connectorSkillNames =
+    let connectorInstructions =
       framework.id === 'claude-code'
-        ? await this.connectors.provisionedConnectorSkillNames()
-        : this.connectors.enabledConnectorIds(settings.connectors).map((id) => `mcp-${id}`)
-    const connectorInstructions = renderConnectorInstructions(connectorSkillNames)
+        ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
+        : ''
     const executablePath =
       framework.id === 'claude-code'
         ? await this.runtime.resolveClaudeExecutable(settings.claude?.resolvedPath)
@@ -348,7 +344,12 @@ export class AgentBackendResolver {
           ? codexSubscriptionStorageDir(this.storageRoot)
           : codexStorageDir(this.storageRoot)
         : opencodeConfigDir(this.storageRoot)
-    await this.runtime.materializeAgentSkills(settings, skillsRoot, forcedSkillIds)
+    const materializedConnectorSkillNames = await this.runtime.materializeAgentSkills(
+      settings,
+      skillsRoot,
+      forcedSkillIds
+    )
+    connectorInstructions = renderConnectorInstructions(materializedConnectorSkillNames)
 
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider

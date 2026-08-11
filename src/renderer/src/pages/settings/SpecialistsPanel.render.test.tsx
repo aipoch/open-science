@@ -99,6 +99,7 @@ beforeEach(() => {
     },
     settings: {
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: null }),
+      onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
       listSkills: vi.fn().mockResolvedValue([])
     }
   } as unknown as Window['api']

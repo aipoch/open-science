@@ -255,7 +255,7 @@ const FileTypePreview = ({ artifact }: { artifact: MessageArtifact }): React.JSX
   return (
     <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-bg-200 text-text-300">
       <ArtifactFileIcon className={iconClassName} kind={getArtifactIconKind(artifact)} />
-      <span className="text-[10px] font-semibold text-text-100">
+      <span className="text-[10px] font-semibold text-text-000">
         {getArtifactExtensionLabel(artifact)}
       </span>
     </div>

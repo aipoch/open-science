@@ -17,17 +17,17 @@ describe('renderer contract catalog', () => {
     const projection = projectRendererContractMaps(RENDERER_CONTRACT_CATALOG)
 
     expect(RENDERER_CONTRACT_GROUPS).toHaveLength(33)
-    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(344)
+    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(346)
     expect(projection.invoke).toEqual(WEB_INVOKE_CHANNELS)
     expect(projection.event).toEqual(WEB_EVENT_CHANNELS)
-    expect(Object.keys(projection.invoke)).toHaveLength(249)
-    expect(Object.keys(projection.event)).toHaveLength(33)
+    expect(Object.keys(projection.invoke)).toHaveLength(250)
+    expect(Object.keys(projection.event)).toHaveLength(34)
   })
 
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb !== 'unavailable')
-    ).toHaveLength(277)
+    ).toHaveLength(279)
 
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
@@ -61,7 +61,7 @@ describe('renderer contract catalog', () => {
     ).toHaveLength(67)
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
-    ).toHaveLength(67)
+    ).toHaveLength(68)
 
     expect(
       paths(({ eventDeliverability }) =>

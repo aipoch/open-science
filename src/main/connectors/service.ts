@@ -2,7 +2,12 @@ import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
-import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './custom-mcp-bootstrap'
+import {
+  classifyCustomMcpFailure,
+  isCustomMcpServerRouteSafe,
+  toCustomMcpConfig,
+  type CustomMcpFailureAvailability
+} from './custom-mcp-bootstrap'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
@@ -57,6 +62,10 @@ type ConnectorServiceDeps = {
   // a function (rather than a session-start snapshot) so edited/deleted profiles take effect on the
   // next connector call.
   resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistProfileView | undefined>
+  onCustomServerAvailabilityChanged?: (
+    serverId: string,
+    availability: CustomMcpFailureAvailability | undefined
+  ) => void
 }
 
 // Optional routing context for a connector call. Present for calls that originate inside a session
@@ -82,6 +91,10 @@ type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
 }
+
+const customMcpFailureCategory = (
+  availability: CustomMcpFailureAvailability
+): 'connector_unavailable' | 'connector_unauthenticated' => `connector_${availability}`
 
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
@@ -185,7 +198,9 @@ export class ConnectorService {
       serverId,
       (this.customServerFailureEpochs.get(serverId) ?? 0) + 1
     )
-    this.unavailableCustomConnectors.delete(serverId)
+    if (this.unavailableCustomConnectors.delete(serverId)) {
+      this.deps.onCustomServerAvailabilityChanged?.(serverId, undefined)
+    }
   }
 
   async call(
@@ -315,13 +330,9 @@ export class ConnectorService {
       // Never relay a transport error: custom server URLs, headers, or server-provided diagnostics
       // can contain credentials. Record only the availability category for subsequent fail-closed
       // dispatches; a successful connection clears the transient state.
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
-      this.recordCustomServerFailure(custom.id, failureEpoch, category)
-      throw new ConnectorGateError(category)
+      const availability = classifyCustomMcpFailure(error)
+      this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
 
     if (!tools.some((tool) => tool.name === method)) {
@@ -356,27 +367,26 @@ export class ConnectorService {
     try {
       const result = await this.deps.mcpClientManager.call(config, method, args)
       if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
-        this.unavailableCustomConnectors.delete(custom.id)
+        if (this.unavailableCustomConnectors.delete(custom.id)) {
+          this.deps.onCustomServerAvailabilityChanged?.(custom.id, undefined)
+        }
       }
       return result
     } catch (error) {
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
-      this.recordCustomServerFailure(custom.id, failureEpoch, category)
-      throw new ConnectorGateError(category)
+      const availability = classifyCustomMcpFailure(error)
+      this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
   }
 
   private recordCustomServerFailure(
     serverId: string,
     expectedEpoch: number,
-    category: 'connector_unavailable' | 'connector_unauthenticated'
+    availability: CustomMcpFailureAvailability
   ): void {
     if ((this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch) {
-      this.unavailableCustomConnectors.set(serverId, category)
+      this.unavailableCustomConnectors.set(serverId, customMcpFailureCategory(availability))
+      this.deps.onCustomServerAvailabilityChanged?.(serverId, availability)
     }
   }
 

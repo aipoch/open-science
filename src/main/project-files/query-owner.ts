@@ -296,6 +296,7 @@ class ProjectFilesQueryOwner {
             source: 'artifact',
             sourceFileId: artifactVersion.artifactId,
             versionId: artifactVersion.id,
+            versionNumber: artifactVersion.versionNumber,
             checksum: artifactVersion.checksum,
             projectId: artifactVersion.artifact.projectId,
             sessionId: artifactVersion.artifact.sessionId,
@@ -303,7 +304,10 @@ class ProjectFilesQueryOwner {
             contentType: artifactVersion.contentType ?? undefined,
             sizeBytes: toSafeCount(artifactVersion.sizeBytes, 'host Artifact size'),
             sortAtMs: artifactVersion.createdAt.getTime(),
-            rootFrameId: artifactVersion.rootFrameId
+            createdAt: artifactVersion.createdAt.toISOString(),
+            sourceCreatedAt: artifactVersion.createdAt.toISOString(),
+            rootFrameId: artifactVersion.rootFrameId,
+            agentFrameId: artifactVersion.agentFrameId
           }
         ]
       }
@@ -315,6 +319,7 @@ class ProjectFilesQueryOwner {
               source: 'upload',
               sourceFileId: uploadVersion.uploadFileId,
               versionId: uploadVersion.id,
+              versionNumber: uploadVersion.versionNumber,
               checksum: uploadVersion.checksum,
               projectId: uploadVersion.uploadFile.projectId,
               sessionId: uploadVersion.uploadFile.sessionId,
@@ -322,7 +327,12 @@ class ProjectFilesQueryOwner {
               contentType: uploadVersion.contentType ?? undefined,
               sizeBytes: toSafeCount(uploadVersion.sizeBytes, 'host Upload size'),
               sortAtMs: uploadTime.getTime(),
-              rootFrameId: null
+              createdAt: uploadTime.toISOString(),
+              ...(uploadVersion.createdAt
+                ? { sourceCreatedAt: uploadVersion.createdAt.toISOString() }
+                : {}),
+              rootFrameId: null,
+              agentFrameId: null
             }
           ]
         : []

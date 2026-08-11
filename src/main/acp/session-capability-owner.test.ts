@@ -663,6 +663,7 @@ describe('ACP session capability owner', () => {
     ])
     expect(primary.descriptor.controlRpcMethods).toEqual([
       'capabilitiesCall',
+      'lineageCall',
       'mcpCall',
       'computeCall',
       'agentsCall',
@@ -684,7 +685,7 @@ describe('ACP session capability owner', () => {
     ['codex-response', codexFramework, true, false],
     ['codex-bridge', codexFramework, false, true]
   ] as const)(
-    'publishes capabilitiesCall through the %s primary control descriptor',
+    'publishes host capability and lineage reads through the %s primary control descriptor',
     async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
       const owner = createOwner()
       const built = await owner.provision({
@@ -698,6 +699,7 @@ describe('ACP session capability owner', () => {
       })
 
       expect(built.descriptor.controlRpcMethods).toContain('capabilitiesCall')
+      expect(built.descriptor.controlRpcMethods).toContain('lineageCall')
     }
   )
 

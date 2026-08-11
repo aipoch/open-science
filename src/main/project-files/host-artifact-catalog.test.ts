@@ -89,7 +89,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     projectId: string,
     sessionId: string,
     uploadId: string,
-    versionId: string
+    versionId: string,
+    createdAt: Date | null = new Date('2026-08-03T00:00:00.000Z')
   ): Promise<void> => {
     await client.uploadFile.create({
       data: {
@@ -109,7 +110,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
             contentType: 'application/pdf',
             sizeBytes: 12n,
             checksum: checksum(versionId),
-            createdAt: new Date('2026-08-03T00:00:00.000Z')
+            createdAt,
+            registeredAt: new Date('2026-08-04T00:00:00.000Z')
           }
         }
       }
@@ -189,12 +191,35 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       expect.objectContaining({
         sourceFileId: 'artifact-a',
         versionId: 'history-v1',
-        rootFrameId: 'root-history-v1'
+        versionNumber: 1,
+        createdAt: '2026-08-01T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+        rootFrameId: 'root-history-v1',
+        agentFrameId: 'agent-frame'
       })
     ])
     await expect(
       repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'other-project-v1' })
     ).resolves.toEqual([])
+
+    await createUploadVersion(
+      'project-a',
+      'session-b',
+      'upload-null-created-at',
+      'upload-null-created-at-v1',
+      null
+    )
+    const nullableUpload = await repository.readHostArtifactCatalog({
+      projectId: 'project-a',
+      versionId: 'upload-null-created-at-v1'
+    })
+    expect(nullableUpload).toEqual([
+      expect.objectContaining({
+        versionId: 'upload-null-created-at-v1',
+        createdAt: '2026-08-04T00:00:00.000Z'
+      })
+    ])
+    expect(nullableUpload[0]).not.toHaveProperty('sourceCreatedAt')
 
     await createArtifactVersion('project-a', 'session-a', 'collision-artifact', 'collision')
     await createUploadVersion('project-a', 'session-b', 'collision-upload', 'collision')

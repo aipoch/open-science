@@ -83,6 +83,13 @@ const specialistNamesUsingConnector = (
     .sort((a, b) => a.localeCompare(b))
 }
 
+const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
+  Boolean(
+    server.oauth &&
+    (!server.oauth.hasTokens || server.availability === 'unauthenticated') &&
+    !server.enabled
+  )
+
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
 }
@@ -94,6 +101,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
+  const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
   const cancelCustomServerAuthentication = useSettingsStore(
@@ -110,6 +118,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
   const [authenticatingIds, setAuthenticatingIds] = useState<Set<string>>(() => new Set())
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
   const [authError, setAuthError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
@@ -194,6 +203,22 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
     } finally {
       setAuthenticatingIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
+  const retry = async (id: string): Promise<void> => {
+    setRetryingIds((current) => new Set(current).add(id))
+    setAuthError(null)
+    try {
+      await retryCustomServer(id)
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Could not reconnect this Connector.')
+    } finally {
+      setRetryingIds((current) => {
         const next = new Set(current)
         next.delete(id)
         return next
@@ -500,6 +525,25 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                             {server.description}
                           </span>
                         ) : null}
+                        <span
+                          className={`block truncate text-xs ${
+                            server.availability && !server.checking && !retryingIds.has(server.id)
+                              ? 'text-destructive'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          {retryingIds.has(server.id)
+                            ? 'Checking…'
+                            : server.checking
+                              ? 'Checking…'
+                              : server.availability === 'unavailable'
+                                ? 'Unavailable'
+                                : server.availability === 'unauthenticated'
+                                  ? 'Sign-in required'
+                                  : server.enabled
+                                    ? 'Connected'
+                                    : 'Disabled'}
+                        </span>
                       </div>
                       <SettingsIconAction
                         label={`Export ${server.name}`}
@@ -517,12 +561,34 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         onClick={() => void requestRemoval(server)}
                         danger
                       />
+                      {server.availability === 'unavailable' && server.enabled ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={retryingIds.has(server.id)}
+                          onClick={() => void retry(server.id)}
+                        >
+                          {retryingIds.has(server.id) ? 'Checking…' : 'Retry'}
+                        </Button>
+                      ) : null}
+                      {server.availability === 'unauthenticated' && !server.oauth ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                        >
+                          Configure
+                        </Button>
+                      ) : null}
                       {server.oauth ? (
                         <Button
                           type="button"
                           size="sm"
                           variant={
-                            authenticatingIds.has(server.id) || server.oauth.hasTokens
+                            authenticatingIds.has(server.id) ||
+                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
                               ? 'outline'
                               : 'default'
                           }
@@ -534,7 +600,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         >
                           {authenticatingIds.has(server.id)
                             ? 'Cancel'
-                            : server.oauth.hasTokens
+                            : server.oauth.hasTokens && server.availability !== 'unauthenticated'
                               ? 'Connected'
                               : 'Sign in'}
                         </Button>
@@ -542,13 +608,21 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <SettingsToggle
                         enabled={server.enabled}
                         aria-label={server.name}
-                        disabled={Boolean(server.oauth && !server.oauth.hasTokens)}
+                        aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                        className={
+                          requiresSignInBeforeEnable(server)
+                            ? 'cursor-not-allowed opacity-50'
+                            : undefined
+                        }
                         title={
-                          server.oauth && !server.oauth.hasTokens
+                          requiresSignInBeforeEnable(server)
                             ? 'Sign in before enabling this Connector'
                             : undefined
                         }
-                        onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
+                        onToggle={() => {
+                          if (requiresSignInBeforeEnable(server)) return
+                          void setCustomServerEnabled(server.id, !server.enabled)
+                        }}
                       />
                     </li>
                   ))}

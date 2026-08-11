@@ -911,6 +911,7 @@ describe('ConnectorService', () => {
         .mockRejectedValue(
           new Error('401 Unauthorized for https://private.example with Bearer SECRET')
         )
+      const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
@@ -927,6 +928,7 @@ describe('ConnectorService', () => {
           ]
         }),
         resolveApiKey: () => undefined,
+        onCustomServerAvailabilityChanged,
         resolveSpecialistProfile: async () => ({
           id: 'specialist-1',
           name: 'Secured Server Bot',
@@ -955,6 +957,8 @@ describe('ConnectorService', () => {
         svc.call('secured-server', 'lookup', { token: 'ARG_SECRET' }, context)
       ).rejects.toThrow('connector_unauthenticated')
       expect(call).toHaveBeenCalledTimes(1)
+      expect(onCustomServerAvailabilityChanged).toHaveBeenCalledOnce()
+      expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('srv-1', 'unauthenticated')
       await svc
         .call('secured-server', 'lookup', { token: 'ARG_SECRET' }, context)
         .catch((error: Error) => {
@@ -998,6 +1002,7 @@ describe('ConnectorService', () => {
         .fn()
         .mockRejectedValueOnce(new Error('401 Unauthorized'))
         .mockResolvedValueOnce({ ok: true })
+      const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
@@ -1013,7 +1018,8 @@ describe('ConnectorService', () => {
             }
           ]
         }),
-        resolveApiKey: () => undefined
+        resolveApiKey: () => undefined,
+        onCustomServerAvailabilityChanged
       })
 
       await expect(svc.call('secured-server', 'lookup', {}, internal)).rejects.toThrow(
@@ -1026,10 +1032,64 @@ describe('ConnectorService', () => {
 
       svc.clearCustomServerFailure('srv-1')
 
+      expect(onCustomServerAvailabilityChanged).toHaveBeenLastCalledWith('srv-1', undefined)
+
       await expect(svc.call('secured-server', 'lookup', {}, internal)).resolves.toEqual({
         ok: true
       })
       expect(call).toHaveBeenCalledTimes(2)
+    })
+
+    it('publishes recovery when a concurrent custom Connector call succeeds', async () => {
+      let rejectFirst: ((error: Error) => void) | undefined
+      let resolveSecond: ((value: unknown) => void) | undefined
+      const call = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectFirst = reject
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveSecond = resolve
+            })
+        )
+      const onCustomServerAvailabilityChanged = vi.fn()
+      const svc = new ConnectorService({
+        mcpClientManager: manager(call, ['lookup']),
+        getConnectors: () => ({
+          enabledIds: [],
+          autoAllowIds: [],
+          customMcpServers: [
+            {
+              id: 'srv-1',
+              name: 'concurrent-server',
+              transport: 'stdio',
+              command: 'mcp',
+              enabled: true
+            }
+          ]
+        }),
+        resolveApiKey: () => undefined,
+        onCustomServerAvailabilityChanged
+      })
+
+      const first = expect(svc.call('concurrent-server', 'lookup', {}, internal)).rejects.toThrow(
+        'connector_unavailable'
+      )
+      const second = svc.call('concurrent-server', 'lookup', {}, internal)
+      await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(2))
+
+      rejectFirst?.(new Error('Connection closed'))
+      await first
+      expect(onCustomServerAvailabilityChanged).toHaveBeenLastCalledWith('srv-1', 'unavailable')
+
+      resolveSecond?.({ ok: true })
+      await expect(second).resolves.toEqual({ ok: true })
+      expect(onCustomServerAvailabilityChanged).toHaveBeenLastCalledWith('srv-1', undefined)
     })
 
     it('does not restore a cached failure from a request started before sign-in', async () => {

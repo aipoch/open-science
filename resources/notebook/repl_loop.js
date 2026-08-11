@@ -976,7 +976,7 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
-const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills', 'artifacts']
+const HOST_CAPABILITY_NAMES = ['mcp', 'compute', 'agents', 'skills', 'artifacts', 'lineage']
 
 async function hostCapabilities(...args) {
   if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
@@ -1108,6 +1108,690 @@ async function hostArtifactPath(versionId) {
   }
   return result
 }
+
+async function lineageRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error('host.lineage is unavailable: RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'lineageCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.lineage.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+const isHostLineageRecord = (value) =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const hasHostLineageKeys = (value, required, optional = []) => {
+  if (!isHostLineageRecord(value)) return false
+  const allowed = new Set([...required, ...optional])
+  const keys = Object.keys(value)
+  return required.every((key) => keys.includes(key)) && keys.every((key) => allowed.has(key))
+}
+
+const validatedHostLineageNode = (value) => {
+  const required = [
+    'file_id',
+    'version_id',
+    'filename',
+    'version_number',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'created_at',
+    'size_bytes',
+    'checksum',
+    'is_user_upload'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, ['content_type']) ||
+    ![
+      value.file_id,
+      value.version_id,
+      value.filename,
+      value.session_id,
+      value.created_at,
+      value.checksum
+    ].every((entry) => typeof entry === 'string' && entry.length > 0) ||
+    !Number.isSafeInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
+    (value.agent_frame_id !== null && typeof value.agent_frame_id !== 'string') ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
+    typeof value.is_user_upload !== 'boolean'
+  ) {
+    throw new Error('host.lineage.graph returned an invalid node')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, 'content_type']
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageEdge = (value) => {
+  const required = [
+    'version_id',
+    'depends_on_version_id',
+    'ordinal',
+    'source_kind',
+    'input_filename',
+    'association'
+  ]
+  if (
+    !hasHostLineageKeys(value, required) ||
+    ![value.version_id, value.depends_on_version_id, value.input_filename].every(
+      (entry) => typeof entry === 'string' && entry.length > 0
+    ) ||
+    !Number.isSafeInteger(value.ordinal) ||
+    value.ordinal < 0 ||
+    !['artifact-version', 'upload-version'].includes(value.source_kind) ||
+    !['turn-attached', 'resolver-accessed'].includes(value.association)
+  ) {
+    throw new Error('host.lineage.graph returned an invalid edge')
+  }
+  return Object.freeze(Object.fromEntries(required.map((key) => [key, value[key]])))
+}
+
+const validatedHostLineageGraph = (value) => {
+  const required = ['project_id', 'root_version_id', 'direction', 'truncated', 'nodes', 'edges']
+  const optional = ['truncation_reason', 'frontier_version_ids']
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    typeof value.project_id !== 'string' ||
+    typeof value.root_version_id !== 'string' ||
+    !['up', 'down'].includes(value.direction) ||
+    typeof value.truncated !== 'boolean' ||
+    !Array.isArray(value.nodes) ||
+    !Array.isArray(value.edges) ||
+    (value.truncated
+      ? !['max_depth', 'max_nodes'].includes(value.truncation_reason) ||
+        !Array.isArray(value.frontier_version_ids) ||
+        value.frontier_version_ids.length === 0 ||
+        value.frontier_version_ids.some((entry) => typeof entry !== 'string' || !entry)
+      : value.truncation_reason !== undefined || value.frontier_version_ids !== undefined)
+  ) {
+    throw new Error('host.lineage.graph returned an invalid result')
+  }
+  const nodes = Object.freeze(value.nodes.map(validatedHostLineageNode))
+  const edges = Object.freeze(value.edges.map(validatedHostLineageEdge))
+  const frontier = value.frontier_version_ids
+    ? Object.freeze([...value.frontier_version_ids])
+    : undefined
+  return Object.freeze({
+    project_id: value.project_id,
+    root_version_id: value.root_version_id,
+    direction: value.direction,
+    truncated: value.truncated,
+    ...(value.truncation_reason ? { truncation_reason: value.truncation_reason } : {}),
+    ...(frontier ? { frontier_version_ids: frontier } : {}),
+    nodes,
+    edges
+  })
+}
+
+const HOST_LINEAGE_UNAVAILABLE_REASONS = [
+  'producer-not-supplied',
+  'producer-source-unverifiable',
+  'environment-not-supported',
+  'environment-capture-failed',
+  'environment-manifest-publication-failed',
+  'legacy-environment-reference-unavailable'
+]
+const HOST_LINEAGE_ATTEMPT_REASONS = [
+  'package-not-found',
+  'solver-failed',
+  'installer-unavailable',
+  'permission',
+  'network',
+  'authentication',
+  'tls-policy',
+  'validation',
+  'cancelled',
+  'process-unconfirmed',
+  'recovery-blocked',
+  'unknown'
+]
+
+const validatedHostLineageAvailability = (value) => {
+  if (
+    !isHostLineageRecord(value) ||
+    (value.state === 'unavailable'
+      ? !hasHostLineageKeys(value, ['state', 'reason']) ||
+        !HOST_LINEAGE_UNAVAILABLE_REASONS.includes(value.reason)
+      : !hasHostLineageKeys(value, ['state']) || !['available', 'partial'].includes(value.state))
+  ) {
+    throw new Error('host.lineage.get returned an invalid availability projection')
+  }
+  return Object.freeze(
+    value.state === 'unavailable'
+      ? { state: value.state, reason: value.reason }
+      : { state: value.state }
+  )
+}
+
+const validatedHostLineageProducer = (value) => {
+  if (value?.state === 'unavailable') {
+    if (
+      !hasHostLineageKeys(value, ['state', 'reason']) ||
+      !['producer-not-supplied', 'producer-source-unverifiable'].includes(value.reason)
+    ) {
+      throw new Error('host.lineage.get returned an invalid producer projection')
+    }
+    return Object.freeze({ state: value.state, reason: value.reason })
+  }
+  const required = [
+    'state',
+    'notebook_session_id',
+    'producer_run_id',
+    'run_index',
+    'kernel_kind',
+    'association_method'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, ['environment_manifest_checksum']) ||
+    value.state !== 'available' ||
+    typeof value.notebook_session_id !== 'string' ||
+    typeof value.producer_run_id !== 'string' ||
+    !Number.isSafeInteger(value.run_index) ||
+    value.run_index < 0 ||
+    !['python', 'r', 'repl', 'bash'].includes(value.kernel_kind) ||
+    !['agent-declared-and-session-validated', 'server-inferred-file-observation'].includes(
+      value.association_method
+    ) ||
+    (value.environment_manifest_checksum !== undefined &&
+      typeof value.environment_manifest_checksum !== 'string')
+  ) {
+    throw new Error('host.lineage.get returned an invalid producer projection')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, 'environment_manifest_checksum']
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageEnvironment = (value) => {
+  const required = [
+    'capture_kind',
+    'environment_name',
+    'kernel_kind',
+    'runtime_source',
+    'packages',
+    'inventory_sources',
+    'installed_inventory',
+    'captured_at',
+    'source_manifest_checksum',
+    'complete',
+    'capture_status'
+  ]
+  const optional = [
+    'runtime_version',
+    'platform',
+    'architecture',
+    'python_version',
+    'r_version',
+    'op_log',
+    'op_log_truncation',
+    'warnings'
+  ]
+  const optionalStrings = [
+    'runtime_version',
+    'platform',
+    'architecture',
+    'python_version',
+    'r_version'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    value.capture_kind !== 'completed-run' ||
+    typeof value.environment_name !== 'string' ||
+    !['python', 'r'].includes(value.kernel_kind) ||
+    !['managed', 'external'].includes(value.runtime_source) ||
+    optionalStrings.some((key) => value[key] !== undefined && typeof value[key] !== 'string') ||
+    !Array.isArray(value.packages) ||
+    !Array.isArray(value.inventory_sources) ||
+    value.inventory_sources.some(
+      (entry) => !['kernel-native', 'interpreter-native', 'operation-log'].includes(entry)
+    ) ||
+    !hasHostLineageKeys(value.installed_inventory, ['captured_at', 'source', 'validation']) ||
+    typeof value.installed_inventory.captured_at !== 'string' ||
+    !['full-scan', 'cache-reused'].includes(value.installed_inventory.source) ||
+    !['full-scan', 'best-effort'].includes(value.installed_inventory.validation) ||
+    typeof value.captured_at !== 'string' ||
+    typeof value.source_manifest_checksum !== 'string' ||
+    typeof value.complete !== 'boolean' ||
+    !['complete', 'partial'].includes(value.capture_status) ||
+    (value.warnings !== undefined &&
+      (!Array.isArray(value.warnings) || value.warnings.some((entry) => typeof entry !== 'string')))
+  ) {
+    throw new Error('host.lineage.get returned an invalid environment projection')
+  }
+  const packages = Object.freeze(
+    value.packages.map((entry) => {
+      const packageRequired = [
+        'name',
+        'version_status',
+        'ecosystem',
+        'evidence_sources',
+        'loaded_state'
+      ]
+      const packageOptional = [
+        'version',
+        'library_rank',
+        'library_scope',
+        'built_for_runtime',
+        'priority'
+      ]
+      if (
+        !hasHostLineageKeys(entry, packageRequired, packageOptional) ||
+        typeof entry.name !== 'string' ||
+        (entry.version !== undefined && typeof entry.version !== 'string') ||
+        !['known', 'unavailable'].includes(entry.version_status) ||
+        !['python', 'r', 'native', 'unknown'].includes(entry.ecosystem) ||
+        !Array.isArray(entry.evidence_sources) ||
+        entry.evidence_sources.some(
+          (source) =>
+            ![
+              'python-importlib-metadata',
+              'python-kernel-modules',
+              'r-installed-packages',
+              'r-session-info'
+            ].includes(source)
+        ) ||
+        !['attached', 'loaded', 'installed-only', 'unknown'].includes(entry.loaded_state) ||
+        (entry.library_rank !== undefined && !Number.isSafeInteger(entry.library_rank)) ||
+        (entry.library_scope !== undefined &&
+          !['environment', 'user', 'system', 'unknown'].includes(entry.library_scope)) ||
+        (entry.built_for_runtime !== undefined && typeof entry.built_for_runtime !== 'string') ||
+        (entry.priority !== undefined && !['base', 'recommended', 'other'].includes(entry.priority))
+      ) {
+        throw new Error('host.lineage.get returned an invalid environment package')
+      }
+      return Object.freeze({
+        name: entry.name,
+        ...(entry.version !== undefined ? { version: entry.version } : {}),
+        version_status: entry.version_status,
+        ecosystem: entry.ecosystem,
+        evidence_sources: Object.freeze([...entry.evidence_sources]),
+        loaded_state: entry.loaded_state,
+        ...(entry.library_rank !== undefined ? { library_rank: entry.library_rank } : {}),
+        ...(entry.library_scope !== undefined ? { library_scope: entry.library_scope } : {}),
+        ...(entry.built_for_runtime !== undefined
+          ? { built_for_runtime: entry.built_for_runtime }
+          : {}),
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {})
+      })
+    })
+  )
+  if (value.op_log !== undefined && !Array.isArray(value.op_log)) {
+    throw new Error('host.lineage.get returned an invalid environment operation log')
+  }
+  const opLog = value.op_log
+    ? Object.freeze(
+        value.op_log.map((entry) => {
+          const operationRequired = [
+            'operation_id',
+            'timestamp',
+            'operation',
+            'packages',
+            'result',
+            'attempts',
+            'fallback_used',
+            'inventory_refresh',
+            'inventory_refresh_attempts'
+          ]
+          if (
+            !hasHostLineageKeys(entry, operationRequired, ['package_changes']) ||
+            typeof entry.operation_id !== 'string' ||
+            typeof entry.timestamp !== 'string' ||
+            !['create', 'install', 'uninstall', 'update'].includes(entry.operation) ||
+            !Array.isArray(entry.packages) ||
+            entry.packages.some((item) => typeof item !== 'string') ||
+            !['success', 'failure'].includes(entry.result) ||
+            !Array.isArray(entry.attempts) ||
+            typeof entry.fallback_used !== 'boolean' ||
+            !['published', 'unchanged', 'failed'].includes(entry.inventory_refresh) ||
+            !Array.isArray(entry.inventory_refresh_attempts) ||
+            (entry.package_changes !== undefined && !Array.isArray(entry.package_changes))
+          ) {
+            throw new Error('host.lineage.get returned an invalid environment operation')
+          }
+          const attempts = Object.freeze(
+            entry.attempts.map((attempt) => {
+              const attemptRequired = [
+                'group_ordinal',
+                'installer',
+                'packages',
+                'status',
+                'mutation_risk'
+              ]
+              if (
+                !hasHostLineageKeys(attempt, attemptRequired, ['reason']) ||
+                !Number.isSafeInteger(attempt.group_ordinal) ||
+                ![
+                  'conda',
+                  'pip',
+                  'uv',
+                  'poetry',
+                  'r-install-packages',
+                  'renv',
+                  'pak',
+                  'biocmanager',
+                  'unknown'
+                ].includes(attempt.installer) ||
+                !Array.isArray(attempt.packages) ||
+                attempt.packages.some((item) => typeof item !== 'string') ||
+                !['succeeded', 'failed', 'skipped'].includes(attempt.status) ||
+                !['none', 'possible', 'confirmed', 'unknown'].includes(attempt.mutation_risk) ||
+                (attempt.reason !== undefined &&
+                  !HOST_LINEAGE_ATTEMPT_REASONS.includes(attempt.reason))
+              ) {
+                throw new Error('host.lineage.get returned an invalid environment attempt')
+              }
+              return Object.freeze({
+                group_ordinal: attempt.group_ordinal,
+                installer: attempt.installer,
+                packages: Object.freeze([...attempt.packages]),
+                status: attempt.status,
+                mutation_risk: attempt.mutation_risk,
+                ...(attempt.reason !== undefined ? { reason: attempt.reason } : {})
+              })
+            })
+          )
+          const refreshAttempts = Object.freeze(
+            entry.inventory_refresh_attempts.map((attempt) => {
+              if (
+                !hasHostLineageKeys(
+                  attempt,
+                  ['attempt', 'trigger', 'timestamp', 'result'],
+                  ['error']
+                ) ||
+                !Number.isSafeInteger(attempt.attempt) ||
+                !['terminal', 'recovery'].includes(attempt.trigger) ||
+                typeof attempt.timestamp !== 'string' ||
+                !['published', 'unchanged', 'failed'].includes(attempt.result) ||
+                (attempt.error !== undefined && typeof attempt.error !== 'string')
+              ) {
+                throw new Error('host.lineage.get returned an invalid inventory refresh attempt')
+              }
+              return Object.freeze({
+                attempt: attempt.attempt,
+                trigger: attempt.trigger,
+                timestamp: attempt.timestamp,
+                result: attempt.result,
+                ...(attempt.error !== undefined ? { error: attempt.error } : {})
+              })
+            })
+          )
+          const packageChanges = entry.package_changes
+            ? Object.freeze(
+                entry.package_changes.map((change) => {
+                  const changeRequired = ['name', 'ecosystem', 'relationship', 'change']
+                  const changeOptional = [
+                    'before_version',
+                    'after_version',
+                    'library_rank',
+                    'library_scope'
+                  ]
+                  if (
+                    !hasHostLineageKeys(change, changeRequired, changeOptional) ||
+                    typeof change.name !== 'string' ||
+                    !['python', 'r', 'native', 'unknown'].includes(change.ecosystem) ||
+                    !['requested', 'dependency', 'unattributed'].includes(change.relationship) ||
+                    !['installed', 'updated', 'removed', 'unchanged', 'observed'].includes(
+                      change.change
+                    ) ||
+                    (change.before_version !== undefined &&
+                      typeof change.before_version !== 'string') ||
+                    (change.after_version !== undefined &&
+                      typeof change.after_version !== 'string') ||
+                    (change.library_rank !== undefined &&
+                      !Number.isSafeInteger(change.library_rank)) ||
+                    (change.library_scope !== undefined &&
+                      !['environment', 'user', 'system', 'unknown'].includes(change.library_scope))
+                  ) {
+                    throw new Error('host.lineage.get returned an invalid package change')
+                  }
+                  return Object.freeze(
+                    Object.fromEntries(
+                      [...changeRequired, ...changeOptional]
+                        .filter((key) => change[key] !== undefined)
+                        .map((key) => [key, change[key]])
+                    )
+                  )
+                })
+              )
+            : undefined
+          return Object.freeze({
+            operation_id: entry.operation_id,
+            timestamp: entry.timestamp,
+            operation: entry.operation,
+            packages: Object.freeze([...entry.packages]),
+            result: entry.result,
+            attempts,
+            fallback_used: entry.fallback_used,
+            inventory_refresh: entry.inventory_refresh,
+            inventory_refresh_attempts: refreshAttempts,
+            ...(packageChanges ? { package_changes: packageChanges } : {})
+          })
+        })
+      )
+    : undefined
+  let opLogTruncation
+  if (value.op_log_truncation !== undefined) {
+    if (
+      !hasHostLineageKeys(value.op_log_truncation, ['omitted_count'], ['earliest_retained_at']) ||
+      !Number.isSafeInteger(value.op_log_truncation.omitted_count) ||
+      value.op_log_truncation.omitted_count <= 0 ||
+      (value.op_log_truncation.earliest_retained_at !== undefined &&
+        typeof value.op_log_truncation.earliest_retained_at !== 'string')
+    ) {
+      throw new Error('host.lineage.get returned an invalid operation-log truncation')
+    }
+    opLogTruncation = Object.freeze({
+      omitted_count: value.op_log_truncation.omitted_count,
+      ...(value.op_log_truncation.earliest_retained_at
+        ? { earliest_retained_at: value.op_log_truncation.earliest_retained_at }
+        : {})
+    })
+  }
+  return Object.freeze({
+    capture_kind: value.capture_kind,
+    environment_name: value.environment_name,
+    kernel_kind: value.kernel_kind,
+    runtime_source: value.runtime_source,
+    ...Object.fromEntries(
+      optionalStrings.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])
+    ),
+    packages,
+    inventory_sources: Object.freeze([...value.inventory_sources]),
+    installed_inventory: Object.freeze({
+      captured_at: value.installed_inventory.captured_at,
+      source: value.installed_inventory.source,
+      validation: value.installed_inventory.validation
+    }),
+    ...(opLog ? { op_log: opLog } : {}),
+    ...(opLogTruncation ? { op_log_truncation: opLogTruncation } : {}),
+    captured_at: value.captured_at,
+    source_manifest_checksum: value.source_manifest_checksum,
+    complete: value.complete,
+    capture_status: value.capture_status,
+    ...(value.warnings ? { warnings: Object.freeze([...value.warnings]) } : {})
+  })
+}
+
+const validatedHostLineageInput = (value) => {
+  const required = [
+    'ordinal',
+    'version_id',
+    'file_id',
+    'source_kind',
+    'session_id',
+    'filename',
+    'size_bytes',
+    'checksum',
+    'association'
+  ]
+  const optional = ['version_number', 'created_at', 'content_type']
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    !Number.isSafeInteger(value.ordinal) ||
+    value.ordinal < 0 ||
+    ![value.version_id, value.file_id, value.session_id, value.filename, value.checksum].every(
+      (entry) => typeof entry === 'string' && entry.length > 0
+    ) ||
+    !['artifact-version', 'upload-version'].includes(value.source_kind) ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    !['turn-attached', 'resolver-accessed'].includes(value.association) ||
+    (value.version_number !== undefined &&
+      (!Number.isSafeInteger(value.version_number) || value.version_number < 1)) ||
+    (value.created_at !== undefined && typeof value.created_at !== 'string') ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string')
+  ) {
+    throw new Error('host.lineage.get returned an invalid input')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, ...optional]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageVersion = (value) => {
+  const required = [
+    'project_id',
+    'artifact_id',
+    'version_id',
+    'filename',
+    'version_number',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'message_branch_id',
+    'runtime_segment_id',
+    'prompt_message_id',
+    'created_at',
+    'size_bytes',
+    'checksum',
+    'content_status',
+    'execution_status',
+    'producer',
+    'environment_status',
+    'inputs'
+  ]
+  const optional = ['content_type', 'agent_name', 'reproduction_code', 'environment']
+  const stringKeys = [
+    'project_id',
+    'artifact_id',
+    'version_id',
+    'filename',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'message_branch_id',
+    'runtime_segment_id',
+    'prompt_message_id',
+    'created_at',
+    'checksum'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    stringKeys.some((key) => typeof value[key] !== 'string' || !value[key]) ||
+    !Number.isSafeInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    ['content_type', 'agent_name', 'reproduction_code'].some(
+      (key) => value[key] !== undefined && typeof value[key] !== 'string'
+    ) ||
+    !Array.isArray(value.inputs)
+  ) {
+    throw new Error('host.lineage.get returned an invalid result')
+  }
+  let contentStatus
+  if (
+    value.content_status?.state === 'available' &&
+    hasHostLineageKeys(value.content_status, ['state'])
+  ) {
+    contentStatus = Object.freeze({ state: 'available' })
+  } else if (
+    value.content_status?.state === 'unavailable' &&
+    hasHostLineageKeys(value.content_status, ['state', 'reason']) &&
+    ['missing', 'checksum-mismatch'].includes(value.content_status.reason)
+  ) {
+    contentStatus = Object.freeze({
+      state: 'unavailable',
+      reason: value.content_status.reason
+    })
+  } else {
+    throw new Error('host.lineage.get returned an invalid content status')
+  }
+  const inputs = Object.freeze(value.inputs.map(validatedHostLineageInput))
+  const environment = value.environment
+    ? validatedHostLineageEnvironment(value.environment)
+    : undefined
+  return Object.freeze({
+    ...Object.fromEntries(
+      [
+        'project_id',
+        'artifact_id',
+        'version_id',
+        'filename',
+        'version_number',
+        'session_id',
+        'root_frame_id',
+        'agent_frame_id',
+        'message_branch_id',
+        'runtime_segment_id',
+        'prompt_message_id',
+        'created_at',
+        'content_type',
+        'size_bytes',
+        'checksum',
+        'agent_name'
+      ]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    ),
+    content_status: contentStatus,
+    ...(value.reproduction_code !== undefined
+      ? { reproduction_code: value.reproduction_code }
+      : {}),
+    execution_status: validatedHostLineageAvailability(value.execution_status),
+    producer: validatedHostLineageProducer(value.producer),
+    environment_status: validatedHostLineageAvailability(value.environment_status),
+    ...(environment ? { environment } : {}),
+    inputs
+  })
+}
+
+async function hostLineageGraph(versionId, options = {}) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.lineage.graph accepts version_id and at most one options object')
+  }
+  return validatedHostLineageGraph(await lineageRpc('graph', { version_id: versionId, options }))
+}
+
+async function hostLineageGet(versionId) {
+  if (arguments.length !== 1) throw new TypeError('host.lineage.get accepts one version_id')
+  return validatedHostLineageVersion(await lineageRpc('get', { version_id: versionId }))
+}
+
+const hostLineage = Object.freeze({ graph: hostLineageGraph, get: hostLineageGet })
 
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
@@ -1409,6 +2093,7 @@ const sandbox = {
     capabilities: hostCapabilities,
     artifacts: hostArtifacts,
     artifact_path: hostArtifactPath,
+    lineage: hostLineage,
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,

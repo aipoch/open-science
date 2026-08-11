@@ -14,6 +14,7 @@ import type { SettingsService } from '../service'
 
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
+  | 'listConnectors'
   | 'getConnectors'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
@@ -34,6 +35,7 @@ type ConnectorSettingsWorkflowEffects = {
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
   clearCustomServerFailure: (serverId: string) => void
+  resetCustomServerClient: (serverId: string) => Promise<void>
 }
 
 type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promise<
@@ -117,6 +119,16 @@ class ConnectorSettingsWorkflows {
     return this.settings.cancelCustomServerAuthentication(request.id)
   }
 
+  async retryCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'listConnectors'> {
+    await this.effects.resetCustomServerClient(request.id)
+    this.effects.clearCustomServerFailure(request.id)
+    this.effects.invalidatePermissionProjection()
+    await this.refreshConnectorProjection()
+    return this.settings.listConnectors()
+  }
+
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
     const result = await mutation()
     this.connectorsChanged()
@@ -125,7 +137,11 @@ class ConnectorSettingsWorkflows {
 
   private connectorsChanged(): void {
     this.effects.invalidatePermissionProjection()
-    void wireConnectorReload(
+    void this.refreshConnectorProjection()
+  }
+
+  private refreshConnectorProjection(): Promise<unknown> {
+    return wireConnectorReload(
       this.effects.refreshConnectorSkillDocs,
       this.effects.requestSkillsReload
     )

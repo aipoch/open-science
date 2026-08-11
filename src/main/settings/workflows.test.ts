@@ -36,7 +36,8 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
     pruneCustomServerPermissions: effects.pruneCustomServerPermissions ?? (async () => undefined),
     beginCustomServerSecurityChange: effects.beginCustomServerSecurityChange ?? (() => undefined),
-    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined)
+    clearCustomServerFailure: effects.clearCustomServerFailure ?? (() => undefined),
+    resetCustomServerClient: effects.resetCustomServerClient ?? (async () => undefined)
   },
   appearance: { applyAppIconVariant: effects.applyAppIconVariant ?? (() => undefined) }
 })
@@ -95,6 +96,7 @@ const fakeStore = () => {
     setConnectorAutoAllow: vi.fn().mockResolvedValue({ connectors: [] }),
     setToolPermission: vi.fn().mockResolvedValue({ id: 'tool' }),
     setNcbiCredentials: vi.fn().mockResolvedValue({ connectors: [] }),
+    listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: {} }),
     addCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
     setCustomServerEnabled: vi.fn().mockResolvedValue({ connectors: [] }),
     removeCustomServer: vi.fn().mockResolvedValue({ connectors: [] }),
@@ -559,7 +561,9 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ).connectors
 
     await workflows.authenticateCustomServer({ id: 'server-1' })
-    expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
+    await vi.waitFor(() =>
+      expect(calls).toEqual(['authenticate', 'clear:server-1', 'invalidate', 'refresh'])
+    )
   })
 
   it('cancels OAuth authentication without refreshing Connector projections', async () => {
@@ -572,6 +576,40 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
 
     expect(store.cancelCustomServerAuthentication).toHaveBeenCalledWith('server-1')
     expect(refreshConnectorSkillDocs).not.toHaveBeenCalled()
+  })
+
+  it('waits for a custom Connector retry before returning its refreshed status', async () => {
+    const calls: string[] = []
+    const { store, capability } = fakeStore()
+    store.listConnectors.mockImplementation(async () => {
+      calls.push('snapshot')
+      return { connectors: [], customServers: [], ncbi: { hasApiKey: false } }
+    })
+    const workflows = createSettingsWorkflows(
+      capability,
+      testEffects({
+        resetCustomServerClient: async (id) => {
+          calls.push(`reset:${id}`)
+        },
+        clearCustomServerFailure: (id) => calls.push(`clear:${id}`),
+        invalidatePermissionProjection: () => calls.push('invalidate'),
+        refreshConnectorSkillDocs: async () => {
+          calls.push('refresh')
+        },
+        requestSkillsReload: () => calls.push('reload')
+      })
+    ).connectors
+
+    await workflows.retryCustomServer({ id: 'server-1' })
+
+    expect(calls).toEqual([
+      'reset:server-1',
+      'clear:server-1',
+      'invalidate',
+      'refresh',
+      'reload',
+      'snapshot'
+    ])
   })
 
   it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {

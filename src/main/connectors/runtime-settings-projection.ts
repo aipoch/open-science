@@ -1,7 +1,12 @@
-import { toCustomMcpConfig, selectEnabledCustomServers } from './custom-mcp-bootstrap'
+import {
+  classifyCustomMcpFailure,
+  toCustomMcpConfig,
+  selectEnabledCustomServers,
+  type CustomMcpFailureAvailability
+} from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
-import { customConnectorSlug } from '../../shared/custom-connector'
+import { customConnectorSkillName, customConnectorSlug } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import type { StoredConnectors } from '../settings/types'
 
@@ -12,6 +17,7 @@ type ConnectorRuntimeSettingsProjectionOptions = {
   syncBundledSkillDocs?: typeof syncConnectorSkillDocs
   syncCustomSkillDocs?: typeof syncCustomServerSkillDocs
   reportError?: (error: unknown) => void
+  notifyStatusChanged?: () => void
 }
 
 // Owns the live, derived Connector snapshot consumed by dispatch and the corresponding generated
@@ -20,6 +26,9 @@ type ConnectorRuntimeSettingsProjectionOptions = {
 class ConnectorRuntimeSettingsProjection {
   private snapshot: StoredConnectors | undefined
   private materializedCustomSkills: string[] = []
+  private discoveryAvailabilities = new Map<string, CustomMcpFailureAvailability>()
+  private dispatchAvailabilities = new Map<string, CustomMcpFailureAvailability>()
+  private pendingRefreshes = 0
   private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
@@ -43,8 +52,33 @@ class ConnectorRuntimeSettingsProjection {
     return [...this.materializedCustomSkills]
   }
 
+  customServerAvailability(id: string): CustomMcpFailureAvailability | undefined {
+    return this.dispatchAvailabilities.get(id) ?? this.discoveryAvailabilities.get(id)
+  }
+
+  isRefreshing(): boolean {
+    return this.pendingRefreshes > 0
+  }
+
+  setCustomServerDispatchAvailability(
+    id: string,
+    availability: CustomMcpFailureAvailability | undefined
+  ): void {
+    const current = this.dispatchAvailabilities.get(id)
+    if (current === availability) return
+    if (availability) this.dispatchAvailabilities.set(id, availability)
+    else this.dispatchAvailabilities.delete(id)
+    this.options.notifyStatusChanged?.()
+  }
+
   async refresh(): Promise<void> {
-    const queued = this.refreshQueue.then(() => this.refreshOnce())
+    if (this.pendingRefreshes++ === 0) this.options.notifyStatusChanged?.()
+    const queued = this.refreshQueue
+      .then(() => this.refreshOnce())
+      .finally(() => {
+        this.pendingRefreshes--
+        if (this.pendingRefreshes === 0) this.options.notifyStatusChanged?.()
+      })
     this.refreshQueue = queued
     return queued
   }
@@ -65,7 +99,10 @@ class ConnectorRuntimeSettingsProjection {
         customServers,
         (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
-      this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
+      this.materializedCustomSkills = customSync.materializedSlugs.map(customConnectorSkillName)
+      this.discoveryAvailabilities = new Map(
+        customSync.failures.map(({ server, error }) => [server.id, classifyCustomMcpFailure(error)])
+      )
       for (const { server, error } of customSync.failures) {
         this.reportError(
           new Error(

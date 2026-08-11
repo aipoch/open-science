@@ -35,7 +35,7 @@ const createMessage = (): ChatSession['messages'][number] => ({
   updatedAt: 1
 })
 
-const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
+const renderSidebar = async (sessions: ChatSession[], mobileMode = false): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
   return renderToStaticMarkup(
@@ -63,6 +63,9 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onNewProject={vi.fn()}
       canDownloadProjectArtifacts
       onDownloadProjectArtifacts={vi.fn()}
+      mobileMode={mobileMode}
+      isMobileOpen={mobileMode}
+      onMobileClose={vi.fn()}
     />
   )
 }
@@ -409,6 +412,67 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('aria-label="Open actions for Notebook review"')
     expect(html).toContain('aria-label="Open actions for Dataset cleanup"')
+  })
+
+  it('reveals session actions on interaction without keeping the selected row action visible', async () => {
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const desktop = document.createElement('div')
+    desktop.innerHTML = await renderSidebar([session])
+    const desktopTrigger = desktop.querySelector<HTMLButtonElement>(
+      '[aria-label="Open actions for Notebook review"]'
+    )
+
+    expect(desktopTrigger?.classList).toContain('opacity-0')
+    expect(desktopTrigger?.classList).not.toContain('opacity-100')
+    expect(desktopTrigger?.classList).toContain('group-hover:opacity-100')
+    expect(desktopTrigger?.classList).toContain('focus-visible:opacity-100')
+    expect(desktopTrigger?.classList).toContain('data-[state=open]:opacity-100')
+
+    const mobile = document.createElement('div')
+    mobile.innerHTML = await renderSidebar([session], true)
+    const mobileTrigger = mobile.querySelector<HTMLButtonElement>(
+      '[aria-label="Open actions for Notebook review"]'
+    )
+    expect(mobileTrigger?.classList).toContain('opacity-100')
+  })
+
+  it('fades overflowing titles and emphasizes only live sessions in Active', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+
+    try {
+      const runningTitle = 'Running session with a title that reaches the row action'
+      const completedTitle = 'Recently completed session'
+      const container = document.createElement('div')
+      container.innerHTML = await renderSidebar([
+        createSession({ id: 'running', title: runningTitle, status: 'running', updatedAt: now }),
+        createSession({
+          id: 'completed',
+          title: completedTitle,
+          status: 'idle',
+          updatedAt: now - 60_000
+        })
+      ])
+      const titleSpans = Array.from(container.querySelectorAll('span'))
+      const running = titleSpans.find((element) => element.textContent === runningTitle)
+      const completed = titleSpans.find((element) => element.textContent === completedTitle)
+      const fade = container.querySelector<HTMLElement>('.bg-gradient-to-r')
+
+      expect(running?.classList).toContain('overflow-hidden')
+      expect(running?.classList).toContain('whitespace-nowrap')
+      expect(running?.classList).not.toContain('truncate')
+      expect(running?.classList).toContain('font-semibold')
+      expect(completed?.classList).not.toContain('font-semibold')
+      expect(fade?.classList).toContain('w-12')
+      expect(fade?.classList).toContain('from-transparent')
+      expect(fade?.classList).toContain('via-rail-card-bg')
+      expect(fade?.classList).toContain('to-rail-card-bg')
+      expect(fade?.classList).toContain('group-hover:via-bg-300')
+      expect(fade?.classList).toContain('group-hover:to-bg-300')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('wires session open and row menu actions to the matching session', async () => {

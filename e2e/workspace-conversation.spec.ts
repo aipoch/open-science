@@ -155,7 +155,7 @@ test('shows context compaction loading and completion inside the Session transcr
   }
 })
 
-test('archives a completed session from its sidebar actions', async ({ app }) => {
+test('archives a completed session from its mobile sidebar actions', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await createProject(page)
@@ -164,7 +164,20 @@ test('archives a completed session from its sidebar actions', async ({ app }) =>
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
+  await page.setViewportSize({ width: 375, height: 900 })
+  await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: `Open actions for ${USER_MESSAGE}` }).click()
+  await page.getByRole('menuitem', { name: 'Export conversation' }).click()
+  const exportFormats = page.locator(
+    '[data-slot="dropdown-menu-sub-content"][aria-label="Export conversation formats"]'
+  )
+  const markdownExport = page.getByRole('menuitem', { name: 'Markdown' })
+  await expect(exportFormats).toBeVisible()
+  expect(await exportFormats.evaluate((element) => Number(getComputedStyle(element).zIndex))).toBe(
+    80
+  )
+  await expect(markdownExport).toBeVisible()
+  await markdownExport.click({ trial: true })
   const archive = page.getByRole('menuitem', { name: 'Archive' })
   await expect(archive).toBeEnabled()
   await archive.click()
