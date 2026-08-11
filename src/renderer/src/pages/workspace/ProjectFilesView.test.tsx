@@ -4267,6 +4267,24 @@ describe('ProjectFilesView — granted local folders', () => {
     expect(useGrantedFoldersStore.getState().roots).toEqual([])
   })
 
+  it('opens the manage submenu when the row itself is hovered', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    act(() => {
+      row?.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    })
+
+    // The submenu opens after the hover-intent delay, without touching the manage button.
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Allow writes')
+      },
+      { timeout: 1000 }
+    )
+  })
+
   it('switches to the local browser at the granted path when a folder row is clicked', async () => {
     await renderFilesView()
     await openFilterMenu()

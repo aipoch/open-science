@@ -14,7 +14,7 @@ import {
   Server,
   Trash2
 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -426,15 +426,26 @@ const GrantedRootMenuRow = ({
 }): React.JSX.Element => {
   const setAccess = useGrantedFoldersStore((state) => state.setAccess)
   const remove = useGrantedFoldersStore((state) => state.remove)
+  // The submenu is controlled so hovering anywhere on the row opens it, not just the manage
+  // button. A short intent delay keeps the submenu from flickering open when the pointer is
+  // only passing through on its way to another row.
+  const [subOpen, setSubOpen] = useState(false)
+  const hoverIntentRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(hoverIntentRef.current), [])
 
   return (
-    <DropdownMenuSub>
+    <DropdownMenuSub open={subOpen} onOpenChange={setSubOpen}>
       <DropdownMenuItem
         role="menuitemradio"
         aria-checked={isSelected}
         className="gap-2"
         data-testid={`granted-root-${root.id}`}
         onSelect={() => onSelect(root)}
+        onPointerEnter={() => {
+          clearTimeout(hoverIntentRef.current)
+          hoverIntentRef.current = setTimeout(() => setSubOpen(true), 150)
+        }}
+        onPointerLeave={() => clearTimeout(hoverIntentRef.current)}
       >
         <Folder
           className="mt-0.5 size-4 shrink-0 self-start text-text-300"
@@ -447,27 +458,30 @@ const GrantedRootMenuRow = ({
             {root.path}
           </span>
         </span>
-        <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
-        {isSelected ? (
-          <Check
-            className="size-4 shrink-0 text-primary"
-            strokeWidth={2}
-            aria-hidden="true"
-            data-testid={`granted-root-check-${root.id}`}
-          />
-        ) : null}
-        <DropdownMenuSubTrigger asChild>
-          <button
-            type="button"
-            aria-label={`Manage ${root.name}`}
-            data-testid={`granted-root-manage-${root.id}`}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000"
-          >
-            <MoreHorizontal className="size-4" strokeWidth={2} aria-hidden="true" />
-          </button>
-        </DropdownMenuSubTrigger>
+        {/* Trailing cluster: badge / check / manage affordance sit 2px apart. */}
+        <span className="flex shrink-0 items-center gap-0.5">
+          <span className={grantedRootAccessBadgeClassName(root.access)}>{root.access}</span>
+          {isSelected ? (
+            <Check
+              className="size-4 shrink-0 text-primary"
+              strokeWidth={2}
+              aria-hidden="true"
+              data-testid={`granted-root-check-${root.id}`}
+            />
+          ) : null}
+          <DropdownMenuSubTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Manage ${root.name}`}
+              data-testid={`granted-root-manage-${root.id}`}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-text-100 hover:bg-bg-300 hover:text-text-000"
+            >
+              <MoreHorizontal className="size-4" strokeWidth={2} aria-hidden="true" />
+            </button>
+          </DropdownMenuSubTrigger>
+        </span>
       </DropdownMenuItem>
       <DropdownMenuSubContent className="z-[70] w-[220px]">
         <DropdownMenuLabel
