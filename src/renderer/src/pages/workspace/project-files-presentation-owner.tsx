@@ -410,10 +410,6 @@ const FilterMenuItem = ({
   </DropdownMenuItem>
 )
 
-// One granted local folder in the "This computer" section: two-line row (name + truncated path)
-// with an ro/rw badge. Clicking the row browses the folder; the trailing "…" opens a submenu with
-// the access-level toggle and removal. The "…" stops propagation so it never selects the row.
-// A selected row shows the same trailing Check as the machine row.
 const GrantedRootMenuRow = ({
   root,
   isSelected,

@@ -81,7 +81,10 @@ const deferred = <T>(): {
 // Preference writes accumulate like the real settings.json: a later command's snapshot still
 // carries earlier writes, so reconcile never clobbers a sibling preference back to its default.
 const createCommands = (persisted: Partial<SettingsSnapshot>): CommandMocks => {
-  const save = <K extends keyof SettingsSnapshot>(key: K, value: SettingsSnapshot[K]) =>
+  const save = <K extends keyof SettingsSnapshot>(
+    key: K,
+    value: SettingsSnapshot[K]
+  ): Promise<SettingsSnapshot> =>
     Promise.resolve(snapshot({ ...persisted, [key]: (persisted[key] = value) }))
 
   return {
