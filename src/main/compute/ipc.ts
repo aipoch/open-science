@@ -339,14 +339,19 @@ const createComputeHandlers = (
         }
         await broker.invalidateProvider(providerId)
         try {
-          const deleteProvider = async (): Promise<void> => {
-            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-            await repository.delete(providerId)
-          }
+          const deleteProvider = (): Promise<void> => repository.delete(providerId)
           if (hostLifecycle) {
             await hostLifecycle.pruneSessionEnabledHosts(providerId, deleteProvider)
           } else {
             await deleteProvider()
+          }
+          try {
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+          } catch (error) {
+            log.warn(
+              'compute permission grant cleanup after host deletion failed',
+              errorLogFields(error)
+            )
           }
           try {
             await syncComputeSkillDocument?.()

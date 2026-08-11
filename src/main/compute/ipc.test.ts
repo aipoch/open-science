@@ -516,6 +516,59 @@ describe('host delete guard', () => {
     expect(pruneSessionEnabledHosts).toHaveBeenCalledWith('ssh:biowulf', expect.any(Function))
   })
 
+  it('preserves provider permission grants when host deletion fails', async () => {
+    const del = vi.fn().mockRejectedValue(new Error('Host delete failed'))
+    const prune = vi.fn().mockResolvedValue([])
+    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, deleteProvider?: () => Promise<void>) => deleteProvider?.()
+    )
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('Host delete failed')
+
+    expect(prune).not.toHaveBeenCalled()
+  })
+
+  it('treats permission grant cleanup as repairable after host deletion', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const prune = vi.fn().mockRejectedValue(new Error('Grant cleanup failed'))
+    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).resolves.toBeUndefined()
+
+    expect(del).toHaveBeenCalledOnce()
+    expect(prune).toHaveBeenCalledOnce()
+    expect(del.mock.invocationCallOrder[0]).toBeLessThan(prune.mock.invocationCallOrder[0])
+  })
+
   it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
     let releaseDeletePrune: (() => void) | undefined
     let pruneCalls = 0
