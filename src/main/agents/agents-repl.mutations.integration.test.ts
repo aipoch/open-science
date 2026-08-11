@@ -137,7 +137,11 @@ gate('host.agents repl mutation integration', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.issueControlConnection('mutation-session', 'default-project')
+    const connection = await rpcServer.issueControlConnection(
+      'mutation-session',
+      'default-project',
+      'root-frame-mutation-session'
+    )
     endpoint = connection.endpoint
     token = connection.token
     releaseControl = connection.release

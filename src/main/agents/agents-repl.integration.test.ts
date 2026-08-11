@@ -152,7 +152,11 @@ gate('host.agents repl integration', () => {
         }
       }
     })
-    const connection = await rpcServer.issueControlConnection('session-trusted', 'default-project')
+    const connection = await rpcServer.issueControlConnection(
+      'session-trusted',
+      'default-project',
+      'root-frame-session-trusted'
+    )
     endpoint = connection.endpoint
     token = connection.token
     releaseControl = connection.release

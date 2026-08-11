@@ -151,7 +151,11 @@ gate('host.agents repl runtime whitelist consumption', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.issueControlConnection('runtime-session', 'default-project')
+    const connection = await rpcServer.issueControlConnection(
+      'runtime-session',
+      'default-project',
+      'root-frame-runtime-session'
+    )
     endpoint = connection.endpoint
     token = connection.token
     releaseControl = connection.release
