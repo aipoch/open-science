@@ -20,9 +20,12 @@ vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): JSX.Element => <div>{children}</div>
   const Item = ({
     children,
+    disableContainment,
     messageId
-  }: PropsWithChildren<{ messageId?: string }>): JSX.Element => (
-    <div data-message-id={messageId}>{children}</div>
+  }: PropsWithChildren<{ disableContainment?: boolean; messageId?: string }>): JSX.Element => (
+    <div data-message-id={messageId} data-disable-containment={disableContainment || undefined}>
+      {children}
+    </div>
   )
   const Button = (): JSX.Element => <button type="button">Scroll to end</button>
 
@@ -176,6 +179,62 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
+
+describe('WorkspaceMessageScroller structured input render', () => {
+  it('renders a completed custom answer as a standalone transcript card', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            title: 'AskUserQuestion',
+            elicitation: {
+              message: 'What kind of skill are you trying to create?',
+              fields: [{ id: 'question_0_custom', label: 'Other', kind: 'text' }],
+              state: 'answered',
+              answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="elicitation-card"')
+    expect(html).toContain('What kind of skill are you trying to create?')
+    expect(html).toContain('A literature review skill')
+    expect(html).not.toContain('data-testid="tool-group"')
+  })
+
+  it('renders the selected option label instead of its protocol value', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            elicitation: {
+              message: 'Choose an approach',
+              fields: [
+                {
+                  id: 'approach',
+                  label: 'Approach',
+                  kind: 'single-select',
+                  options: [{ value: 'minimal', label: 'Minimal change' }]
+                }
+              ],
+              state: 'answered',
+              answers: [{ fieldId: 'approach', value: 'minimal' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Minimal change')
+    expect(html).not.toContain('>minimal<')
+  })
+})
 
 describe('WorkspaceMessageScroller loading render', () => {
   it('renders elapsed time beside the activity step count', async () => {
@@ -478,7 +537,100 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
-  it('shows tool interaction during permission waits and hides it without an active run', async () => {
+  it('does not present an interrupted tool turn as completed before its final activity', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'error',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', interrupted: true, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'I will search PubMed now.',
+            responseToMessageId: 'prompt-1',
+            completedAt: 1710000007000,
+            sortIndex: 2
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            status: 'failed',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3,
+            createdAt: 1710000008000,
+            updatedAt: 1710000008000
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('This turn was interrupted.')
+    expect(html).not.toContain('Completed ')
+    expect(html).not.toContain('data-slot="assistant-message-footer"')
+  })
+
+  it('keeps a user clarification before its streamed mixed Chinese Markdown response', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-2',
+          startedAt: 1710000000300
+        },
+        messages: [
+          createMessage({
+            id: 'prompt-1',
+            content: '找一篇疾病的生信文章',
+            sortIndex: 1,
+            createdAt: 1710000000000
+          }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: '请选择疾病和分析类型。',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2,
+            createdAt: 1710000000100
+          }),
+          createMessage({
+            id: 'prompt-2',
+            content: '癌症，转录组分析',
+            sortIndex: 3,
+            createdAt: 1710000000200
+          }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: '明白：聚焦**癌症**，使用转录组分析。',
+            status: 'streaming',
+            streamId: 'stream-2',
+            responseToMessageId: 'prompt-2',
+            sortIndex: 4,
+            createdAt: 1710000000300
+          })
+        ]
+      })
+    )
+
+    const timelineContent = [
+      '找一篇疾病的生信文章',
+      '请选择疾病和分析类型。',
+      '癌症，转录组分析',
+      '明白：聚焦**癌症**，使用转录组分析。'
+    ]
+    const timelinePositions = timelineContent.map((content) => html.indexOf(content))
+
+    expect(timelinePositions.every((position) => position >= 0)).toBe(true)
+    expect(timelinePositions).toEqual([...timelinePositions].sort((left, right) => left - right))
+    expect(html).toContain('data-message-id="reply-2" data-disable-containment="true"')
+  })
+
+  it('shows an approval wait during permission requests and hides ordinary loading without a run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -487,10 +639,10 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // Permission remains a tool interaction before and after visible assistant output.
+    // Permission remains a user-facing approval wait before and after visible assistant output.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({
         ...runningSession,
@@ -507,11 +659,30 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
   })
+
+  it.each([
+    ['waiting-for-user', 'Waiting for your response'],
+    ['waiting-plan-approval', 'Waiting for your approval']
+  ] as const)(
+    'shows the user wait for a %s session without an active run',
+    async (status, label) => {
+      await expect(
+        renderScroller(
+          createSession({
+            status,
+            activeRun: undefined,
+            agentPromptInFlight: false,
+            messages: [createMessage({ id: 'prompt-1' })]
+          })
+        )
+      ).resolves.toContain(`>${label}</span>`)
+    }
+  )
 
   it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
     const html = await renderScroller(

@@ -158,8 +158,31 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
 }))
 
 vi.mock('./WorkspaceSidebar', () => ({
-  WorkspaceSidebar: ({ isMobileOpen }: { isMobileOpen?: boolean }): React.JSX.Element => (
-    <aside data-mobile-open={isMobileOpen ? 'true' : 'false'} />
+  WorkspaceSidebar: ({
+    isMobileOpen,
+    sidebarToggle,
+    sidebarToggleButtonRef
+  }: {
+    isMobileOpen?: boolean
+    sidebarToggle?: {
+      state: 'open' | 'collapsed'
+      onToggle: () => void
+    }
+    sidebarToggleButtonRef?: React.Ref<HTMLButtonElement>
+  }): React.JSX.Element => (
+    <aside data-mobile-open={isMobileOpen ? 'true' : 'false'}>
+      {sidebarToggle && sidebarToggle.state !== 'collapsed' ? (
+        // Structural stand-in only: style-class coverage lives in WorkspaceSidebar.render.test
+        // against the real component, so this mock deliberately does not replicate the styles.
+        <button
+          ref={sidebarToggleButtonRef}
+          type="button"
+          data-testid="workspace-sidebar-toggle"
+          aria-expanded="true"
+          onClick={sidebarToggle.onToggle}
+        />
+      ) : null}
+    </aside>
   )
 }))
 
@@ -278,6 +301,7 @@ describe('WorkspacePage preview panel resize sync', () => {
       dispatchEvent: vi.fn()
     }))
     window.api = {
+      platform: 'linux',
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
         getReference: vi.fn(() => Promise.resolve(null))
@@ -345,16 +369,35 @@ describe('WorkspacePage preview panel resize sync', () => {
     return toggleButton
   }
 
-  it('keeps the sidebar toggle outside collapsible sidebar content', async () => {
+  it('hosts the sidebar toggle inside the expanded sidebar header', async () => {
     await renderPage()
 
     const toggleButton = getSidebarToggle()
     const sidebarPanel = container.querySelector('[data-testid="left-panel"]')
     const resizeHandle = container.querySelector('[data-testid="resize-handle"]')
 
+    expect(sidebarPanel?.contains(toggleButton)).toBe(true)
     expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
-    expect(toggleButton.getAttribute('aria-controls')).toBe('left-panel')
+    expect(toggleButton.className).not.toContain('absolute')
+    expect(resizeHandle?.className).toContain('transition-opacity')
+  })
+
+  it('falls back to the floating sidebar toggle while the sidebar is collapsed', async () => {
+    await renderPage()
+
+    await act(async () => {
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const toggleButton = getSidebarToggle()
+    const sidebarPanel = container.querySelector('[data-testid="left-panel"]')
+
+    // Exactly one toggle instance at a time: the floating fallback replaces the header one.
+    expect(container.querySelectorAll('[data-testid="workspace-sidebar-toggle"]')).toHaveLength(1)
     expect(sidebarPanel?.contains(toggleButton)).toBe(false)
+    expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+    expect(toggleButton.getAttribute('aria-controls')).toBe('left-panel')
+    expect(toggleButton.getAttribute('aria-keyshortcuts')).toBe('Control+B')
     expect(toggleButton.className).toContain('absolute')
     expect(toggleButton.className.split(' ')).toContain('top-0')
     expect(toggleButton.className).not.toContain('-top-1')
@@ -363,8 +406,102 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(toggleButton.className).toContain('bg-transparent')
     expect(toggleButton.className).toContain('hover:bg-surface-control-hover')
     expect(toggleButton.className).not.toContain('bg-primary/20')
-    expect(toggleButton.style.left).not.toBe('0px')
-    expect(resizeHandle?.className).toContain('transition-opacity')
+    // Collapsing hands keyboard focus to the surviving floating instance.
+    expect(document.activeElement).toBe(toggleButton)
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const expandedToggle = getSidebarToggle()
+    expect(container.querySelectorAll('[data-testid="workspace-sidebar-toggle"]')).toHaveLength(1)
+    expect(sidebarPanel?.contains(expandedToggle)).toBe(true)
+    expect(expandedToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(expandedToggle)
+  })
+
+  it.each([
+    { platform: 'darwin', modifier: { metaKey: true }, wrongModifier: { ctrlKey: true } },
+    { platform: 'win32', modifier: { ctrlKey: true }, wrongModifier: { metaKey: true } },
+    { platform: 'linux', modifier: { ctrlKey: true }, wrongModifier: { metaKey: true } }
+  ])(
+    'toggles the desktop sidebar with the platform shortcut on $platform',
+    async ({ platform, modifier, wrongModifier }) => {
+      window.api.platform = platform
+      await renderPage()
+
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ...wrongModifier,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
+
+      const collapseEvent = new KeyboardEvent('keydown', {
+        key: 'b',
+        ...modifier,
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => window.dispatchEvent(collapseEvent))
+      expect(collapseEvent.defaultPrevented).toBe(true)
+
+      // The collapsed fallback is the floating button, which owns the shortcut hint.
+      const collapsedToggle = getSidebarToggle()
+      expect(collapsedToggle.getAttribute('aria-expanded')).toBe('false')
+      expect(collapsedToggle.className).toContain('absolute')
+      expect(collapsedToggle.getAttribute('aria-keyshortcuts')).toBe(
+        platform === 'darwin' ? 'Meta+B' : 'Control+B'
+      )
+      // Focus stays in the composer: the handoff guard must not steal it for the fallback.
+      expect(document.activeElement).toBe(input)
+
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ...modifier,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
+      expect(document.activeElement).toBe(input)
+      input.remove()
+    }
+  )
+
+  it('leaves the sidebar unchanged while a modal dialog is open', async () => {
+    await renderPage()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+
+    try {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
+    } finally {
+      dialog.remove()
+    }
   })
 
   // Right preview edge keeps the always-on divider from main; left stays tick-on-hover only.
@@ -389,14 +526,14 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('animates the sidebar to zero and restores its last open size', async () => {
     await renderPage()
 
-    const toggleButton = getSidebarToggle()
-    const initialToggleLeft = toggleButton.style.left
     await act(async () => {
-      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
+    // The floating fallback mounts at the last known open position until resize events track it.
+    const toggleButton = getSidebarToggle()
     expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
-    expect(toggleButton.style.left).toBe(initialToggleLeft)
+    expect(toggleButton.style.left).toBe('calc(16% - 38px)')
     expect(motionHarness.animate).toHaveBeenCalledWith(
       16,
       0,
@@ -434,7 +571,7 @@ describe('WorkspacePage preview panel resize sync', () => {
       toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
     expect(motionHarness.animate).toHaveBeenLastCalledWith(
       0,
       16,
@@ -446,29 +583,31 @@ describe('WorkspacePage preview panel resize sync', () => {
     )
   })
 
-  it('keeps the preview toggle in stable workspace chrome outside collapsed panel content', async () => {
+  it('keeps the preview toggle floating outside the sidebar, expanded or collapsed', async () => {
     await renderPage()
 
     const toggleButton = getPreviewToggle()
-    const conversationPanel = container.querySelector('[data-testid="conversation-panel"]')
+    const sidebarPanel = container.querySelector('[data-testid="left-panel"]')
     const previewPanel = container.querySelector('[data-testid="preview-panel"]')
 
     expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
-    expect(conversationPanel?.contains(toggleButton)).toBe(false)
+    expect(sidebarPanel?.contains(toggleButton)).toBe(false)
     expect(previewPanel?.contains(toggleButton)).toBe(false)
     expect(toggleButton.className).toContain('absolute')
     expect(toggleButton.className).toContain('right-2')
-    expect(toggleButton.className.split(' ')).toContain('top-0')
-    expect(toggleButton.className).not.toContain('-top-0.5')
-    expect(toggleButton.className).not.toContain('-top-1')
-    expect(toggleButton.className).not.toContain('mt-0.5')
-    expect(toggleButton.className).toContain('bg-transparent')
-    expect(toggleButton.className).toContain('shadow-none')
-    expect(toggleButton.className).toContain('hover:bg-surface-control-hover')
-    expect(toggleButton.className).toContain('cursor-pointer')
-    expect(toggleButton.className).toContain('text-action-panel-toggle')
-    expect(toggleButton.className).not.toContain('bg-primary/20')
-    expect(toggleButton.className).not.toContain('shadow-card')
+
+    // Collapsing the sidebar leaves the same floating instance mounted.
+    await act(async () => {
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('false')
+    expect(getPreviewToggle()).toBe(toggleButton)
+    expect(sidebarPanel?.contains(toggleButton)).toBe(false)
+
+    await act(async () => {
+      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
   })
 
   it('hides the preview toggle and keeps the panel collapsed when there are no preview items', async () => {
@@ -514,7 +653,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(filePreviewDialogHarness.item).toBeUndefined()
   })
 
-  it('uses only background treatment to show the expanded preview toggle state', async () => {
+  it('marks the sidebar preview toggle as expanded after opening the panel', async () => {
     await renderPage()
 
     const toggleButton = getPreviewToggle()
@@ -523,18 +662,7 @@ describe('WorkspacePage preview panel resize sync', () => {
     })
 
     expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
-    expect(toggleButton.className).toContain('bg-primary/20')
-    expect(toggleButton.className).toContain('shadow-card')
-    expect(toggleButton.className).toContain('backdrop-blur')
-    expect(toggleButton.className).toContain('cursor-pointer')
-    expect(toggleButton.className.split(' ')).toContain('top-0')
-    expect(toggleButton.className).not.toContain('-top-0.5')
-    expect(toggleButton.className).not.toContain('-top-1')
-    expect(toggleButton.className).not.toContain('mt-0.5')
-    expect(toggleButton.className).toContain('text-action-panel-toggle')
-    expect(toggleButton.className).not.toContain('bg-transparent')
-    expect(toggleButton.className).not.toContain('shadow-none')
-    expect(toggleButton.className).not.toContain('hover:bg-surface-control-hover')
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
   })
 
   it('syncs the initial collapsed preview size without running a close animation', async () => {
@@ -585,6 +713,54 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(
       container.querySelector('[data-testid="mobile-preview-sheet"]')?.getAttribute('data-open')
     ).toBe('true')
+  })
+
+  it('toggles the mobile navigation drawer with Ctrl+B', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    const toggleFromKeyboard = async (): Promise<void> => {
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+    }
+
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+    await toggleFromKeyboard()
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('true')
+    await toggleFromKeyboard()
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+  })
+
+  it('closes the mobile navigation drawer from Escape and the overlay', async () => {
+    workspacePageHarness.isMobile = true
+    await renderPage()
+
+    const openNavigation = async (): Promise<void> => {
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="navigation-toggle"]')?.click()
+      })
+      expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('true')
+    }
+
+    await openNavigation()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
+
+    await openNavigation()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Close navigation"]')?.click()
+    })
+    expect(container.querySelector('aside')?.getAttribute('data-mobile-open')).toBe('false')
   })
 
   it('keeps an explicit open request when expand animation emits a near-zero resize', async () => {
@@ -742,16 +918,15 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('keeps the sidebar open when an expand animation reports a near-zero resize', async () => {
     await renderPage()
 
-    const toggleButton = getSidebarToggle()
     await act(async () => {
-      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     const closeAnimationOptions = motionHarness.animate.mock.calls.at(-1)?.[2] as
       { onComplete?: () => void } | undefined
     await act(async () => closeAnimationOptions?.onComplete?.())
 
     await act(async () => {
-      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     await act(async () => {
       workspacePageHarness.sidebarOnResize?.({ asPercentage: 0.05, inPixels: 0.5 }, 'left-panel', {
@@ -760,14 +935,13 @@ describe('WorkspacePage preview panel resize sync', () => {
       })
     })
 
-    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
   })
 
   it('moves keyboard focus from a collapsed sidebar separator to its toggle', async () => {
     await renderPage()
 
     const leftHandle = container.querySelector<HTMLElement>('[aria-label="Resize left panel"]')
-    const toggleButton = getSidebarToggle()
     leftHandle?.focus()
 
     await act(async () => {
@@ -777,12 +951,16 @@ describe('WorkspacePage preview panel resize sync', () => {
       })
     })
 
+    // The header instance unmounts on collapse, so focus lands on the floating fallback.
+    const toggleButton = getSidebarToggle()
+    expect(toggleButton.className).toContain('absolute')
     expect(document.activeElement).toBe(toggleButton)
   })
 
   it('moves keyboard focus from a collapsed preview separator to its toggle', async () => {
     await renderPage()
 
+    // The floating preview toggle is always mounted, so it is the collapse focus target.
     const rightHandle = container.querySelector<HTMLElement>('[aria-label="Resize right panel"]')
     const toggleButton = getPreviewToggle()
     rightHandle?.focus()
@@ -800,11 +978,10 @@ describe('WorkspacePage preview panel resize sync', () => {
   it('lets an opposite sidebar drag interrupt a closing animation', async () => {
     await renderPage()
 
-    const toggleButton = getSidebarToggle()
     await act(async () => {
-      toggleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      getSidebarToggle().dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
-    expect(toggleButton.getAttribute('aria-expanded')).toBe('false')
+    expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('false')
     expect(workspacePageHarness.sidebarOnResize).toBeTypeOf('function')
     await act(async () => {
       workspacePageHarness.sidebarOnResize?.({ asPercentage: 10, inPixels: 100 }, 'left-panel', {
@@ -813,7 +990,7 @@ describe('WorkspacePage preview panel resize sync', () => {
       })
     })
 
-    expect(toggleButton.getAttribute('aria-expanded')).toBe('true')
+    expect(getSidebarToggle().getAttribute('aria-expanded')).toBe('true')
   })
 
   it('does not resize a detached sidebar panel during an in-flight animation', async () => {

@@ -28,7 +28,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: () => boolean
-  onAccepted: () => void
+  onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
   reportBestEffortFailure?: (stage: ProviderPromptObservationStage, error: unknown) => void
 }>
@@ -75,7 +75,12 @@ const normalizeFacts = (
   return Object.freeze({
     ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
     ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
-    ...(facts.contextUsedTokens === undefined ? {} : { contextUsedTokens: facts.contextUsedTokens })
+    ...(facts.contextUsedTokens === undefined
+      ? {}
+      : { contextUsedTokens: facts.contextUsedTokens }),
+    ...(facts.lastModelStepUsage
+      ? { lastModelStepUsage: Object.freeze({ ...facts.lastModelStepUsage }) }
+      : {})
   })
 }
 
@@ -163,7 +168,7 @@ class AcpProviderPromptExecutor {
         if (!accepted) {
           accepted = true
           try {
-            input.onAccepted()
+            await input.onAccepted()
           } catch (error) {
             reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
           }

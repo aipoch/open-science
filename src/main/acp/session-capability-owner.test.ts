@@ -6,6 +6,7 @@ import {
   AcpSessionCapabilityOwner,
   CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   REVIEWER_SESSION_CAPABILITY_POLICY,
+  SIDE_CHAT_SESSION_CAPABILITY_POLICY,
   policyAllowsSessionCapability
 } from './session-capability-owner'
 
@@ -31,6 +32,62 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it.each([
+    [claudeCodeFramework, 'open-science-host-message'],
+    [codexFramework, 'open-science-host-message'],
+    [opencodeFramework, 'open_science_host_message']
+  ] as const)(
+    'provisions only the relationship-bound Side chat message tool for %s',
+    async (framework, modelFacingName) => {
+      const sendMessage = vi.fn()
+      const registerHostMessage = vi.fn()
+      const host = {
+        ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:3', token: 'host' })),
+        registerHostMessage,
+        urlFor: vi.fn(
+          (kind: string, routingId: string) => `http://127.0.0.1:3/${kind}/${routingId}`
+        ),
+        unregister: vi.fn(),
+        clear: vi.fn(),
+        close: vi.fn()
+      } as unknown as AgentMcpHttpHost
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: undefined,
+        skillImport: undefined,
+        sideChat: { sendMessage },
+        mcpHttpHost: host
+      })
+
+      const provision = await owner.provision({
+        stableAppSessionId: 'side-1',
+        framework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/empty',
+        projectName: 'project-1'
+      })
+
+      expect(provision.descriptor).toMatchObject({
+        role: 'side-chat',
+        transport: 'http',
+        capabilities: ['host-message'],
+        canonicalMcpServerNames: ['open-science-host-message'],
+        modelFacingMcpServerNames: [modelFacingName]
+      })
+      expect(provision.mcpServers).toEqual([
+        expect.objectContaining({ type: 'http', name: modelFacingName })
+      ])
+      expect(registerHostMessage).toHaveBeenCalledWith(
+        'side-1',
+        expect.objectContaining({ sendMessage: expect.any(Function) })
+      )
+      await registerHostMessage.mock.calls[0][1].sendMessage({ target: 'main', text: 'hello' })
+      expect(sendMessage).toHaveBeenCalledWith('side-1', { target: 'main', text: 'hello' })
+    }
+  )
+
   it.each([
     [claudeCodeFramework, 'open-science-plan'],
     [codexFramework, 'open-science-plan'],
@@ -591,7 +648,8 @@ describe('ACP session capability owner', () => {
       'artifacts',
       'notebook',
       'skill-import',
-      'host-agents'
+      'host-agents',
+      'host-skills'
     ])
     expect(primary.descriptor.modelFacingMcpServerNames).toEqual([
       'open_science_artifacts',
@@ -603,7 +661,13 @@ describe('ACP session capability owner', () => {
       'open-science-notebook',
       'open-science-skills'
     ])
-    expect(primary.descriptor.controlRpcMethods).toEqual(['mcpCall', 'computeCall', 'agentsCall'])
+    expect(primary.descriptor.controlRpcMethods).toEqual([
+      'capabilitiesCall',
+      'mcpCall',
+      'computeCall',
+      'agentsCall',
+      'skillsCall'
+    ])
     expect(reviewer.mcpServers).toEqual([])
     expect(reviewer.descriptor.capabilities).toEqual([])
     expect(policyAllowsSessionCapability(REVIEWER_SESSION_CAPABILITY_POLICY, 'notebook')).toBe(
@@ -613,6 +677,29 @@ describe('ACP session capability owner', () => {
       policyAllowsSessionCapability(CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY, 'future-delegation')
     ).toBe(false)
   })
+
+  it.each([
+    ['claude-code', claudeCodeFramework, true, false],
+    ['opencode', opencodeFramework, true, false],
+    ['codex-response', codexFramework, true, false],
+    ['codex-bridge', codexFramework, false, true]
+  ] as const)(
+    'publishes capabilitiesCall through the %s primary control descriptor',
+    async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
+      const owner = createOwner()
+      const built = await owner.provision({
+        stableAppSessionId: 'session-1',
+        framework,
+        nativeMcpEnabled,
+        bridgeMcpAliasesEnabled,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        sessionCwd: '/workspace',
+        projectName: 'project'
+      })
+
+      expect(built.descriptor.controlRpcMethods).toContain('capabilitiesCall')
+    }
+  )
 
   it('returns an immutable, credential-free descriptor', async () => {
     const owner = createOwner()

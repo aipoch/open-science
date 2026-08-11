@@ -19,6 +19,7 @@ import {
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
@@ -32,6 +33,7 @@ let conversationProps: {
   onDraftDocChange: (doc: ComposerDoc) => void
   isHistoryBrowsing: boolean
   historyStatus: string
+  permissionProfile: PermissionProfileId
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
   onSpecialistChange?: (specialistId: string | undefined) => void
   onSendMessage: (forcedSkillIds: string[]) => void
@@ -212,7 +214,7 @@ describe('WorkspacePage draft preservation', () => {
       sessions: [createSession('sess-a', 'proj-1'), createSession('sess-b', 'proj-1')],
       selectedSessionId: 'sess-a'
     })
-    useSettingsStore.setState({ skills: [] })
+    useSettingsStore.setState({ skills: [], defaultPermissionProfile: 'ask' })
     useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
@@ -347,6 +349,25 @@ describe('WorkspacePage draft preservation', () => {
 
     await openSession('sess-b')
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for B'))
+  })
+
+  it('uses the configured profile only for new conversations', async () => {
+    useSettingsStore.setState({ defaultPermissionProfile: 'auto' })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a' ? { ...session, permissionProfile: 'full' } : session
+      ),
+      selectedSessionId: 'sess-a'
+    }))
+    await renderPage()
+
+    expect(conversationProps.permissionProfile).toBe('full')
+
+    await act(async () => {
+      sidebarProps.onNewConversation()
+    })
+
+    expect(conversationProps.permissionProfile).toBe('auto')
   })
 
   it('browses visible Session prompts and restores the unsent scratch draft', async () => {

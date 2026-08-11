@@ -8,6 +8,10 @@ import {
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import {
+  getDefaultPermissionProfile,
+  type PermissionProfileId
+} from '../../shared/permission-profiles'
 import type { SettingsPreferences, SettingsPreferencesSnapshot } from './capabilities'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
@@ -34,7 +38,8 @@ const toSettingsPreferencesSnapshot = (settings: StoredSettings): SettingsPrefer
   appIconVariant: settings.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
   ...(settings.projectFilesFilter === undefined
     ? {}
-    : { projectFilesFilter: settings.projectFilesFilter })
+    : { projectFilesFilter: settings.projectFilesFilter }),
+  defaultPermissionProfile: getDefaultPermissionProfile(settings)
 })
 
 class SettingsPreferencesModule implements SettingsPreferences {
@@ -93,6 +98,12 @@ class SettingsPreferencesModule implements SettingsPreferences {
     filter: ProjectFilesFilterPreference | undefined
   ): Promise<SettingsPreferencesSnapshot> {
     return toSettingsPreferencesSnapshot(await this.repository.setProjectFilesFilter(filter))
+  }
+
+  async setDefaultPermissionProfile(
+    profile: PermissionProfileId
+  ): Promise<SettingsPreferencesSnapshot> {
+    return toSettingsPreferencesSnapshot(await this.repository.setDefaultPermissionProfile(profile))
   }
 }
 

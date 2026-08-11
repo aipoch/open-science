@@ -1,5 +1,20 @@
+/*
+ * Hallmark · component: Plan approval card · genre: modern-minimal · theme: existing semantic tokens
+ * pre-emit critique: P5 · H5 · E5 · S5 · R5 · V4
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: inherited from the shared Button, Textarea, and workspace surface tokens
+ * slop test: pass · component scope, existing workspace chrome and tokens preserved
+ */
 import { useState } from 'react'
-import { Download, Info, ListChecks, Maximize2, Minimize2 } from 'lucide-react'
+import {
+  CornerDownLeft,
+  Download,
+  Info,
+  ListChecks,
+  Maximize2,
+  Minimize2,
+  Pencil
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -14,8 +29,10 @@ import {
 
 type PlanSurfaceProps = Readonly<{ projection: ActivePlanProjection; stale?: boolean }>
 
-const plural = (count: number, singular: string): string =>
-  `${count} ${singular}${count === 1 ? '' : 's'}`
+type RestoredPlanResponder = Readonly<{
+  sessionId: string
+  respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
+}>
 
 const lifecycleLabel = (projection: ActivePlanProjection): string => {
   switch (projection.lifecycle) {
@@ -62,6 +79,7 @@ const STEP_STATUS_PRESENTATION: Record<
 const WorkspacePlanCard = ({
   projection,
   stale = false,
+  embedded = false,
   className = '',
   onOpen,
   onRespond,
@@ -73,6 +91,7 @@ const WorkspacePlanCard = ({
     onRespond: (decision: 'approved' | 'rejected') => Promise<void>
     onSubmitResponse?: (text: string) => Promise<void>
     onResolved?: () => void
+    embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const decisionPending = projection.approval === 'pending' && !stale
@@ -98,53 +117,53 @@ const WorkspacePlanCard = ({
   if (resolvedProjectionKey === projectionKey) return <></>
   return (
     <article
-      className={`overflow-hidden rounded-lg border border-border bg-card shadow-card ${className}`}
+      className={`overflow-hidden bg-card ${
+        embedded
+          ? 'rounded-none border-0 shadow-none'
+          : 'rounded-lg border border-border shadow-card'
+      } ${className}`}
+      aria-busy={decisionBusy}
     >
       {stale ? (
         <div className="border-b border-border bg-muted px-3.5 py-2 text-xs text-muted-foreground">
           ⚠ A newer plan is active. This plan can no longer be approved.
         </div>
       ) : null}
-      <div className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-56 flex-1">
-            <div className="text-xs text-muted-foreground">{lifecycleLabel(projection)}</div>
-            <div className="mt-1 text-[17px] font-medium text-foreground">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ListChecks className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+              <span>{lifecycleLabel(projection)}</span>
+            </div>
+            <div className="mt-1 min-w-0 break-words text-[17px] font-semibold leading-6 text-foreground">
               {projection.document.task_summary}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {plural(projection.counts.phases, 'phase')} ·{' '}
-              {plural(projection.counts.delegations, 'delegation')} ·{' '}
-              {plural(projection.counts.steps, 'step')}
-            </div>
           </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onOpen}>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="[@media(pointer:coarse)]:h-11"
+              onClick={onOpen}
+            >
               Open
             </Button>
             {decisionPending ? (
-              <>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={decisionBusy}
-                  onClick={() => void respond('rejected')}
-                >
-                  Dismiss
-                </Button>
-                <Button
-                  type="button"
-                  disabled={decisionBusy}
-                  onClick={() => void respond('approved')}
-                >
-                  Approve
-                </Button>
-              </>
+              <Button
+                type="button"
+                className="[@media(pointer:coarse)]:h-11"
+                disabled={decisionBusy}
+                onClick={() => void respond('approved')}
+              >
+                Approve
+              </Button>
             ) : null}
           </div>
         </div>
-        <div className="mt-3 inline-flex rounded-full bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
-          ● {projection.document.feasibility.confidence} confidence
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-text-100">
+          <span className="size-1.5 rounded-full bg-text-300" aria-hidden="true" />
+          {projection.document.feasibility.confidence} confidence
         </div>
         {decisionPending ? (
           <form
@@ -176,23 +195,42 @@ const WorkspacePlanCard = ({
             <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
               Respond to Plan
             </label>
-            <div className="flex items-center gap-2">
-              <span aria-hidden="true">✎</span>
+            <div className="flex items-start gap-2">
+              <span
+                className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-300"
+                aria-hidden="true"
+              >
+                <Pencil className="size-4" strokeWidth={1.75} />
+              </span>
               <Textarea
                 id={`plan-response-${projection.artifactVersionId}`}
                 rows={1}
-                className="min-h-9 flex-1 resize-none border-0 bg-transparent px-0 py-2 shadow-none dark:bg-transparent"
-                placeholder="Describe changes, or type “approve”…"
+                aria-invalid={decisionError ? true : undefined}
+                aria-describedby={
+                  decisionError ? `plan-response-error-${projection.artifactVersionId}` : undefined
+                }
+                className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 shadow-none focus-visible:border-transparent dark:bg-transparent"
+                placeholder="Describe changes to the Plan…"
                 value={responseText}
                 disabled={decisionBusy}
                 onChange={(event) => setResponseText(event.target.value)}
               />
-              <Button type="submit" disabled={decisionBusy || responseText.trim().length === 0}>
-                Send
+              <Button
+                type="submit"
+                variant="outline"
+                size="icon-lg"
+                aria-label="Send Plan feedback"
+                disabled={decisionBusy || responseText.trim().length === 0}
+              >
+                <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
               </Button>
             </div>
             {decisionError ? (
-              <p role="alert" className="mt-1 text-xs text-destructive">
+              <p
+                id={`plan-response-error-${projection.artifactVersionId}`}
+                role="alert"
+                className="mt-1 pl-11 text-xs text-destructive"
+              >
                 {decisionError}
               </p>
             ) : null}
@@ -451,3 +489,4 @@ const PlanPreviewSurface = ({
 }
 
 export { PlanPreviewSurface, PlanProgressChip, WorkspacePlanCard }
+export type { RestoredPlanResponder }

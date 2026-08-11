@@ -53,6 +53,8 @@ describe('Codex turn adapter', () => {
       turnUsage: {
         inputTokens: 174,
         cacheTokens: 32_000,
+        cachedReadTokens: 32_000,
+        cachedWriteTokens: 0,
         outputTokens: 38
       }
     })
@@ -115,9 +117,18 @@ describe('Codex turn adapter', () => {
       turnUsage: {
         inputTokens: 60,
         cacheTokens: 40,
+        cachedReadTokens: 40,
+        cachedWriteTokens: 0,
         outputTokens: 10
       },
-      contextUsedTokens: 32_174
+      contextUsedTokens: 32_174,
+      lastModelStepUsage: {
+        inputTokens: 174,
+        cacheTokens: 32_500,
+        cachedReadTokens: 32_000,
+        cachedWriteTokens: 500,
+        outputTokens: 38
+      }
     })
   })
 
@@ -140,6 +151,15 @@ describe('Codex turn adapter', () => {
       turnUsage: {
         inputTokens: Number.MAX_SAFE_INTEGER,
         cacheTokens: 1,
+        cachedReadTokens: 1,
+        cachedWriteTokens: 0,
+        outputTokens: 0
+      },
+      lastModelStepUsage: {
+        inputTokens: Number.MAX_SAFE_INTEGER,
+        cacheTokens: 1,
+        cachedReadTokens: 1,
+        cachedWriteTokens: 0,
         outputTokens: 0
       }
     })

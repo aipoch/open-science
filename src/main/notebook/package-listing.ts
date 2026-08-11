@@ -6,6 +6,7 @@ import type { DiscoveredInterpreter, EnvPackage } from '../../shared/notebook-ru
 import { packageToolFor } from '../../shared/notebook-runtime'
 import { rscriptFor, windowsCondaPrefixForR } from './environment-discovery'
 import { listArgv, micromambaSpawnEnv, resolveMicromamba } from './micromamba'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import { condaActivatedPath } from './runtime-paths'
 
 // Read-only package inventory for one DISCOVERED environment (Settings → Runtimes "Packages"
@@ -127,6 +128,9 @@ export type ListEnvPackagesDeps = {
   exec?: ListPackagesExec
   // Resolved micromamba binary (micromamba dispatch only); defaults to resolveMicromamba().
   micromamba?: string
+  // Production injects the shared prepared runner; explicit strings stay authoritative for isolated
+  // tests and callers.
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   // The app runtime root (<dataRoot>/runtime) — micromamba's --root-prefix and spawn env.
   runtimeRoot?: string
   platform?: NodeJS.Platform
@@ -170,8 +174,6 @@ export const listEnvPackages = async (
   const via = packageListingVia(env)
 
   if (via === 'micromamba') {
-    const mm = deps.micromamba ?? resolveMicromamba()
-    if (!mm) throw new Error('Could not list packages: micromamba not found.')
     if (!deps.runtimeRoot) throw new Error('Could not list packages: no runtime root configured.')
     const prefix = condaPrefixFromInterpreter(env.interpreterPath, env.language, platform)
     if (!prefix) {
@@ -179,6 +181,13 @@ export const listEnvPackages = async (
     }
     let stdout: string
     try {
+      const mm =
+        deps.micromamba !== undefined
+          ? deps.micromamba
+          : deps.micromambaRunner
+            ? await deps.micromambaRunner.resolve()
+            : resolveMicromamba()
+      if (!mm) throw new Error('micromamba not found.')
       const argv = listArgv(mm, deps.runtimeRoot, prefix)
       ;({ stdout } = await exec(argv[0], argv.slice(1), {
         ...options,

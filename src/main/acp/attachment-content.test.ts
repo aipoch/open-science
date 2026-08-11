@@ -4,6 +4,7 @@ import {
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildDatasetAttachmentNotice,
   buildDeferredMediaNotice,
+  buildLocalFileAttachmentNotice,
   buildOversizedAttachmentNotice,
   formatBytes,
   imageAttachmentMimeType,
@@ -173,6 +174,18 @@ describe('binary dataset attachments', () => {
     expect(notice).toContain('sample')
     expect(notice).toContain('notebook')
     expect(notice).toContain('Do not load the whole file')
+  })
+})
+
+describe('generic binary attachments', () => {
+  it('keeps unsupported provider file formats available through local tooling', () => {
+    const notice = buildLocalFileAttachmentNotice({ name: 'report.docx', size: 24_576 })
+
+    expect(notice).toContain('report.docx')
+    expect(notice).toContain('24.0 KB')
+    expect(notice).toContain('available on disk')
+    expect(notice).toContain('appropriate local tooling')
+    expect(notice).toContain('do not send the binary file directly to the model')
   })
 })
 

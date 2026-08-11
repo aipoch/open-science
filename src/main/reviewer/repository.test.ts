@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 
 import type { NewCheck, ReviewCheck, TurnScope } from '../../shared/reviewer'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from './repository'
 
 // Integration test against a real (temp) SQLite database, mirroring projects/prisma-client.test.ts:
@@ -32,7 +32,7 @@ afterEach(async () => {
 const createRepository = async (): Promise<ReviewRepository> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
   client = createProjectDbClient(storageRoot)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
   const boundClient = client
 
   return new ReviewRepository(() => Promise.resolve(boundClient), {
@@ -928,7 +928,7 @@ describe('review repository (integration)', () => {
     // it to throw, standing in for a version-bump failure after the finding write has been staged.
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
     const realClient = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(realClient)
+    await migrateApplicationDatabase(realClient)
     client = realClient
 
     // Client whose $transaction runs the real one but, once armed, hands the callback a tx whose

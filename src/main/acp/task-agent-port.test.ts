@@ -12,6 +12,7 @@ describe('ACP Task Agent port', () => {
       | 'resumeSession'
       | 'setPermissionProfile'
       | 'prompt'
+      | 'cancelPrompt'
     >()
   })
 
@@ -32,7 +33,9 @@ describe('ACP Task Agent port', () => {
         contextReset: true
       })),
       setPermissionProfile: vi.fn(async () => undefined),
-      sendPrompt: vi.fn(async () => undefined)
+      sendPrompt: vi.fn(async () => undefined),
+      sendPromptObserved: vi.fn(async () => undefined),
+      cancelPrompt: vi.fn(async () => undefined)
     }
     const withSessionAvailable = vi.fn()
     const port = createAcpTaskAgentPort(runtime, { create }, undefined, {
@@ -81,6 +84,7 @@ describe('ACP Task Agent port', () => {
       contextReset: true,
       resumeFallback: { historyPreamble: 'Fallback conversation.' }
     })
+    await port.cancelPrompt('session-stable')
 
     expect(create).toHaveBeenCalledWith({
       projectName: 'project-1',
@@ -108,6 +112,7 @@ describe('ACP Task Agent port', () => {
       contextReset: true,
       resumeFallback: { historyPreamble: 'Fallback conversation.' }
     })
+    expect(runtime.cancelPrompt).toHaveBeenCalledWith({ sessionId: 'session-stable' })
   })
 
   it('keeps Task prompt notification tracking equivalent on success and failure', async () => {
@@ -126,7 +131,9 @@ describe('ACP Task Agent port', () => {
         getSnapshot: () => ({ sessionIds: [] }),
         resumeSession: vi.fn(),
         setPermissionProfile: vi.fn(),
-        sendPrompt
+        sendPrompt,
+        sendPromptObserved: sendPrompt,
+        cancelPrompt: vi.fn()
       },
       { create: vi.fn() },
       { trackPrompt, untrackPrompt }
@@ -146,5 +153,34 @@ describe('ACP Task Agent port', () => {
     sendPrompt.mockRejectedValueOnce(failure)
     await expect(port.prompt(prompt)).rejects.toBe(failure)
     expect(untrackPrompt).toHaveBeenCalledWith('session-1', trackedPrompt)
+  })
+
+  it('forwards provider acceptance through the provider-neutral Task prompt observer', async () => {
+    const onProviderPromptAccepted = vi.fn()
+    const sendPrompt = vi.fn(async (_request, onAccepted?: () => void) => {
+      onAccepted?.()
+    })
+    const port = createAcpTaskAgentPort(
+      {
+        getSnapshot: () => ({ sessionIds: [] }),
+        resumeSession: vi.fn(),
+        setPermissionProfile: vi.fn(),
+        sendPrompt,
+        sendPromptObserved: sendPrompt,
+        cancelPrompt: vi.fn()
+      },
+      { create: vi.fn() }
+    )
+
+    await port.prompt(
+      {
+        sessionId: 'session-1',
+        promptMessageId: 'prompt-1',
+        text: 'Research this.'
+      },
+      { onProviderPromptAccepted }
+    )
+
+    expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
   })
 })

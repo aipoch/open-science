@@ -15,6 +15,7 @@ import type {
   ExportSkillRequest,
   ImportAgentHomeSkillsRequest,
   ImportSkillRequest,
+  SaveGitHubTokenRequest,
   ImportSkillZipBatchRequest,
   ImportSkillZipRequest,
   InstallCodexRequest,
@@ -54,6 +55,12 @@ import type {
   ReviewSuppressionEvent
 } from '../shared/reviewer'
 import type { HandoffEventsRequest, HandoffRetryRequest } from '../shared/handoff-lifecycle'
+import type {
+  SideChatCloseRequest,
+  SideChatPromptRequest,
+  SideChatSessionRequest,
+  SideChatStartRequest
+} from '../shared/side-chat'
 import { announceWindowFindReady, subscribeCloseActivePane } from '../shared/window-controls'
 
 type RemoveListener = () => void
@@ -84,6 +91,8 @@ const api: OpenScienceAPI = {
   saveManagedFile: (request) => electronRendererContracts.invoke('saveManagedFile', request),
   saveSessionArtifacts: (request) =>
     electronRendererContracts.invoke('saveSessionArtifacts', request),
+  saveProjectArtifacts: (request) =>
+    electronRendererContracts.invoke('saveProjectArtifacts', request),
   platform: process.platform,
   getRuntimeVersions: () => ({
     electron: process.versions.electron,
@@ -92,6 +101,13 @@ const api: OpenScienceAPI = {
   }),
   lifecycle: {
     getClientId: () => electronRendererContracts.invoke('lifecycle.getClientId')
+  },
+  databaseStartup: {
+    getState: () => electronRendererContracts.invoke('databaseStartup.getState'),
+    retry: () => electronRendererContracts.invoke('databaseStartup.retry'),
+    quit: () => electronRendererContracts.invoke('databaseStartup.quit'),
+    onStateChanged: (listener) =>
+      electronRendererContracts.subscribe('databaseStartup.onStateChanged', listener)
   },
   diagnostics: {
     reportRendererFailure: (report) =>
@@ -106,6 +122,8 @@ const api: OpenScienceAPI = {
     disconnect: () => electronRendererContracts.invoke('acp.disconnect'),
     createSession: (request) => electronRendererContracts.invoke('acp.createSession', request),
     resumeSession: (request) => electronRendererContracts.invoke('acp.resumeSession', request),
+    continueInterruptedTurn: (request) =>
+      electronRendererContracts.invoke('acp.continueInterruptedTurn', request),
     resetSessionContext: (request) =>
       electronRendererContracts.invoke('acp.resetSessionContext', request),
     sendPrompt: (request) => electronRendererContracts.invoke('acp.sendPrompt', request),
@@ -114,6 +132,8 @@ const api: OpenScienceAPI = {
     deleteSession: (request) => electronRendererContracts.invoke('acp.deleteSession', request),
     respondToPermission: (response) =>
       electronRendererContracts.invoke('acp.respondToPermission', response),
+    respondToElicitation: (response) =>
+      electronRendererContracts.invoke('acp.respondToElicitation', response),
     setPermissionProfile: (request) =>
       electronRendererContracts.invoke('acp.setPermissionProfile', request),
     revokePermissionGrant: (request) =>
@@ -122,6 +142,20 @@ const api: OpenScienceAPI = {
     onEvent: (listener) => electronRendererContracts.subscribe('acp.onEvent', listener),
     onPermissionRequest: (listener) =>
       electronRendererContracts.subscribe('acp.onPermissionRequest', listener)
+  },
+  sideChat: {
+    list: () => electronRendererContracts.invoke('sideChat.list'),
+    start: (request: SideChatStartRequest) =>
+      electronRendererContracts.invoke('sideChat.start', request),
+    send: (request: SideChatPromptRequest) =>
+      electronRendererContracts.invoke('sideChat.send', request),
+    cancel: (request: SideChatSessionRequest) =>
+      electronRendererContracts.invoke('sideChat.cancel', request),
+    close: (request: SideChatCloseRequest) =>
+      electronRendererContracts.invoke('sideChat.close', request),
+    onEvent: (listener) => electronRendererContracts.subscribe('sideChat.onEvent', listener),
+    onRelayDelivered: (listener) =>
+      electronRendererContracts.subscribe('sideChat.onRelayDelivered', listener)
   },
   permissions: {
     list: () => electronRendererContracts.invoke('permissions.list'),
@@ -188,6 +222,9 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setClosePreference', request),
     setProjectFilesFilter: (request) =>
       electronRendererContracts.invoke('settings.setProjectFilesFilter', request),
+    setDefaultPermissionProfile: (request) =>
+      electronRendererContracts.invoke('settings.setDefaultPermissionProfile', request),
+
     setAppIconVariant: (request) =>
       electronRendererContracts.invoke('settings.setAppIconVariant', request),
     listAppIcons: () => electronRendererContracts.invoke('settings.listAppIcons'),
@@ -216,6 +253,10 @@ const api: OpenScienceAPI = {
     setPackageMirror: (request) =>
       electronRendererContracts.invoke('settings.setPackageMirror', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
+    getGitHubTokenStatus: () => electronRendererContracts.invoke('settings.getGitHubTokenStatus'),
+    saveGitHubToken: (request: SaveGitHubTokenRequest) =>
+      electronRendererContracts.invoke('settings.saveGitHubToken', request),
+    removeGitHubToken: () => electronRendererContracts.invoke('settings.removeGitHubToken'),
     getSkillDetail: (id: string) => electronRendererContracts.invoke('settings.getSkillDetail', id),
     exportSkill: (request: ExportSkillRequest) =>
       electronRendererContracts.invoke('settings.exportSkill', request),
@@ -283,6 +324,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.subscribe('settings.onSkillImportApprovalSettled', listener),
     replayPendingSkillImportApprovals: () =>
       electronRendererContracts.invoke('settings.replayPendingSkillImportApprovals'),
+    replayConnectorApproval: (id: string) =>
+      electronRendererContracts.invoke('settings.replayConnectorApproval', id),
     respondSkillImportApproval: (response) =>
       electronRendererContracts.invoke('settings.respondSkillImportApproval', response),
     respondConnectorApproval: (request: RespondApprovalRequest) =>
@@ -362,6 +405,14 @@ const api: OpenScienceAPI = {
     revealInFolder: () => electronRendererContracts.invoke('logs.revealInFolder')
   },
   notifications: {
+    getSnapshot: () => electronRendererContracts.invoke('notifications.getSnapshot'),
+    markAllRead: (request) =>
+      electronRendererContracts.invoke('notifications.markAllRead', request),
+    markRead: (request) => electronRendererContracts.invoke('notifications.markRead', request),
+    markSessionCompletionsRead: (request) =>
+      electronRendererContracts.invoke('notifications.markSessionCompletionsRead', request),
+    onChanged: (listener) =>
+      electronRendererContracts.subscribe('notifications.onChanged', listener),
     // Main-process task notifications route their click through this channel.
     onOpenSession: (listener) =>
       electronRendererContracts.subscribe('notifications.onOpenSession', listener),
@@ -375,6 +426,10 @@ const api: OpenScienceAPI = {
   },
   github: {
     getStars: () => electronRendererContracts.invoke('github.getStars')
+  },
+  network: {
+    getInfo: () => electronRendererContracts.invoke('network.getInfo'),
+    checkConnectivity: () => electronRendererContracts.invoke('network.checkConnectivity')
   },
   cli: {
     getStatus: () => electronRendererContracts.invoke('cli.getStatus'),
@@ -450,6 +505,7 @@ const api: OpenScienceAPI = {
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
       electronRendererContracts.invoke('compute.respondApproval', request),
+    replayApproval: (id: string) => electronRendererContracts.invoke('compute.replayApproval', id),
     listDir: (providerId, path) =>
       electronRendererContracts.invoke('compute.listDir', providerId, path),
     bookmarksGet: (providerId) =>

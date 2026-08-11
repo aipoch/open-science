@@ -1,5 +1,5 @@
-import { randomBytes, randomUUID } from 'node:crypto'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { randomUUID } from 'node:crypto'
+import type { ServerResponse } from 'node:http'
 
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type {
@@ -15,6 +15,11 @@ import {
   resolveSelectedSkills,
   selectExplicitConnectorSkills
 } from './skill-selector-routing'
+import {
+  ProviderLoopbackHttpHost,
+  writeProviderLoopbackJson as json,
+  type ProviderLoopbackHttpRequest
+} from './provider-loopback-http-host'
 
 // Responses payloads are intentionally open-ended across providers. Keep the compatibility boundary
 // permissive, then validate the fields this module rewrites before touching them.
@@ -43,10 +48,6 @@ export type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity
 
 type NativeFetch = typeof fetch
 
-// Open Science can put up to 24 MiB of base64 image data in one turn before Codex adds text,
-// replayed history, and tool declarations. Match the app's 64 MiB local request envelope so those
-// valid multimodal turns fit while this authenticated loopback boundary remains memory-bounded.
-const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 const log = createLogger('native-responses-compatibility')
 const SAFE_NETWORK_ERROR_CODES = new Set([
   'EAI_AGAIN',
@@ -209,25 +210,6 @@ const responsesUrl = (baseUrl: string): string =>
     .replace(/\/+$/, '')
     .replace(/\/responses$/i, '')}/responses`
 
-const json = (response: ServerResponse, status: number, body: unknown): void => {
-  response.writeHead(status, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(body))
-}
-
-const readBody = async (request: IncomingMessage): Promise<JsonObject> => {
-  const chunks: Buffer[] = []
-  let total = 0
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    total += bytes.length
-    if (total > MAX_REQUEST_BODY_BYTES) throw new Error('native Responses request is too large')
-    chunks.push(bytes)
-  }
-  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
-  if (!isObject(parsed)) throw new Error('native Responses request must be a JSON object')
-  return parsed
-}
-
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'content-length',
@@ -242,7 +224,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ])
 
 const upstreamHeaders = (
-  request: IncomingMessage,
+  request: ProviderLoopbackHttpRequest,
   key: string | undefined
 ): Record<string, string> => {
   const headers: Record<string, string> = {}
@@ -326,18 +308,46 @@ const namespaceToolDeclarations = (tools: ResponsesBridgeNamespacedTool[]): Json
 }
 
 export class NativeResponsesCompatibilityProxy {
-  private server: Server | undefined
-  private connection: ResponsesBridgeConnection | undefined
+  private readonly host: ProviderLoopbackHttpHost<ResponsesBridgeConnection>
   private readonly reviewerSessionKeys = new Set<string>()
   private readonly scopedReviewerSessionKeys = new Set<string>()
   private readonly toolLessSessionKeys = new Set<string>()
   private readonly scopedToolLessSessionKeys = new Set<string>()
+  private readonly hostMessageSessionScopes = new Map<string, ResponsesBridgeNamespacedTool[]>()
+  private readonly scopedHostMessageSessionKeys = new Set<string>()
+  private readonly strictHostMessageSessionKeys = new Set<string>()
 
   constructor(
     private target: NativeResponsesCompatibilityTarget,
     private readonly fetchImpl: NativeFetch = fetch,
     private readonly options: NativeResponsesCompatibilityOptions = {}
-  ) {}
+  ) {
+    this.host = new ProviderLoopbackHttpHost({
+      credentialMode: 'bearer',
+      createConnection: (origin, token) => ({
+        baseUrl: origin + '/v1',
+        token,
+        kind: 'responses-compatibility'
+      }),
+      onUnauthorized: (response) =>
+        json(response, 401, {
+          error: { message: 'Invalid native Responses compatibility token' }
+        }),
+      onError: (_error, response) => {
+        if (response.headersSent) {
+          response.destroy()
+          return
+        }
+        json(response, 400, {
+          error: {
+            type: 'invalid_request_error',
+            message: 'Native Responses compatibility request failed'
+          }
+        })
+      },
+      handle: (request, response) => this.handle(request, response)
+    })
+  }
 
   setTarget(target: NativeResponsesCompatibilityTarget): void {
     this.target = target
@@ -444,44 +454,7 @@ export class NativeResponsesCompatibilityProxy {
   }
 
   async start(): Promise<ResponsesBridgeConnection> {
-    if (this.connection) return this.connection
-    const token = randomBytes(24).toString('hex')
-    const server = createServer((request, response) => {
-      void this.handle(request, response).catch(() => {
-        if (response.destroyed || response.writableEnded) return
-        if (!response.headersSent) {
-          json(response, 400, {
-            error: {
-              type: 'invalid_request_error',
-              message: 'Native Responses compatibility request failed'
-            }
-          })
-        } else {
-          response.destroy()
-        }
-      })
-    })
-    this.server = server
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-      server.unref()
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        throw new Error('native Responses compatibility proxy did not bind a port')
-      }
-      this.connection = {
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        token,
-        kind: 'responses-compatibility'
-      }
-      return this.connection
-    } catch (error) {
-      await this.close().catch(() => undefined)
-      throw error
-    }
+    return this.host.start()
   }
 
   registerReviewerSession(promptCacheKey: string): void {
@@ -504,66 +477,75 @@ export class NativeResponsesCompatibilityProxy {
     return this.scopedToolLessSessionKeys.delete(promptCacheKey)
   }
 
+  registerHostMessageSession(
+    promptCacheKey: string,
+    namespacedTools: ResponsesBridgeNamespacedTool[],
+    options?: Readonly<{ failClosedUnknownKeys?: boolean }>
+  ): void {
+    this.hostMessageSessionScopes.set(promptCacheKey, namespacedTools)
+    this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+    if (options?.failClosedUnknownKeys) this.strictHostMessageSessionKeys.add(promptCacheKey)
+    else this.strictHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
+  unregisterHostMessageSession(promptCacheKey: string): boolean {
+    this.hostMessageSessionScopes.delete(promptCacheKey)
+    this.strictHostMessageSessionKeys.delete(promptCacheKey)
+    return this.scopedHostMessageSessionKeys.delete(promptCacheKey)
+  }
+
   async close(): Promise<void> {
-    const server = this.server
-    this.server = undefined
-    this.connection = undefined
     this.reviewerSessionKeys.clear()
     this.scopedReviewerSessionKeys.clear()
     this.toolLessSessionKeys.clear()
     this.scopedToolLessSessionKeys.clear()
-    if (!server) return
-    const closing = new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    )
-    server.closeAllConnections()
-    await closing
+    this.hostMessageSessionScopes.clear()
+    this.scopedHostMessageSessionKeys.clear()
+    this.strictHostMessageSessionKeys.clear()
+    await this.host.close()
   }
 
-  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== 'POST' || request.url !== '/v1/responses') {
+  private async handle(
+    request: ProviderLoopbackHttpRequest,
+    response: ServerResponse
+  ): Promise<void> {
+    if (request.method !== 'POST' || request.path !== '/v1/responses') {
       json(response, 404, { error: { message: 'Unknown native Responses compatibility route' } })
       return
     }
-    if (request.headers.authorization !== `Bearer ${this.connection?.token}`) {
-      json(response, 401, { error: { message: 'Invalid native Responses compatibility token' } })
-      return
-    }
 
-    const abortController = new AbortController()
     const requestId = randomUUID()
     const startedAt = Date.now()
     let phase = 'read-request'
-    const abortUpstream = (): void => abortController.abort()
-    const abortOnRequestClose = (): void => {
-      if (request.aborted || !request.complete) abortUpstream()
-    }
-    const abortOnResponseClose = (): void => {
-      if (!response.writableEnded) abortUpstream()
-    }
-    request.once('aborted', abortUpstream)
-    request.once('close', abortOnRequestClose)
-    response.once('close', abortOnResponseClose)
 
     try {
-      const body = await readBody(request)
+      const body = (await request.readJsonObject()) as JsonObject
       const promptCacheKey =
         typeof body.prompt_cache_key === 'string' ? body.prompt_cache_key : undefined
       const reviewerScoped =
         promptCacheKey !== undefined && this.reviewerSessionKeys.has(promptCacheKey)
       const toolLessScoped =
         promptCacheKey !== undefined && this.toolLessSessionKeys.has(promptCacheKey)
+      const hostMessageTools =
+        promptCacheKey === undefined ? undefined : this.hostMessageSessionScopes.get(promptCacheKey)
+      const hostMessageScoped = hostMessageTools !== undefined
+      const hostMessageBoundaryActive = this.strictHostMessageSessionKeys.size > 0
       if (reviewerScoped) this.scopedReviewerSessionKeys.add(promptCacheKey)
       if (toolLessScoped) this.scopedToolLessSessionKeys.add(promptCacheKey)
+      if (hostMessageScoped) this.scopedHostMessageSessionKeys.add(promptCacheKey!)
       // Codex currently advertises built-in tools even when reviewer session metadata disables them.
       // Replace the full declaration set at this boundary so reviewer turns can reach only their
       // scope-bounded reviewer MCP, matching the Chat bridge's fail-closed contract.
       const scopedBody =
-        reviewerScoped || toolLessScoped
+        reviewerScoped || toolLessScoped || hostMessageScoped || hostMessageBoundaryActive
           ? {
               ...body,
               tools: namespaceToolDeclarations(
-                reviewerScoped ? (this.target.reviewerScope?.namespacedTools ?? []) : []
+                reviewerScoped
+                  ? (this.target.reviewerScope?.namespacedTools ?? [])
+                  : hostMessageScoped
+                    ? hostMessageTools
+                    : []
               ),
               tool_choice: 'auto'
             }
@@ -584,7 +566,7 @@ export class NativeResponsesCompatibilityProxy {
         method: 'POST',
         headers: upstreamHeaders(request, this.target.key),
         body: JSON.stringify(upstreamRequest),
-        signal: abortController.signal
+        signal: request.signal
       })
       const contentType = upstream.headers.get('content-type') ?? ''
       const responseType = upstreamResponseType(contentType)
@@ -615,16 +597,12 @@ export class NativeResponsesCompatibilityProxy {
       log.warn('native Responses compatibility request failed', {
         requestId,
         phase,
-        outcome: abortController.signal.aborted ? 'aborted' : 'error',
+        outcome: request.signal.aborted ? 'aborted' : 'error',
         durationMs: Math.max(0, Date.now() - startedAt),
         ...diagnosticErrorFields(error),
         ...(errorCode ? { errorCode } : {})
       })
       throw error
-    } finally {
-      request.off('aborted', abortUpstream)
-      request.off('close', abortOnRequestClose)
-      response.off('close', abortOnResponseClose)
     }
   }
 }

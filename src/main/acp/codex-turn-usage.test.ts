@@ -11,7 +11,13 @@ describe('Codex turn token usage', () => {
         cachedReadTokens: 40,
         outputTokens: 10
       })
-    ).toEqual({ inputTokens: 60, cacheTokens: 40, outputTokens: 10 })
+    ).toEqual({
+      inputTokens: 60,
+      cacheTokens: 40,
+      cachedReadTokens: 40,
+      cachedWriteTokens: 0,
+      outputTokens: 10
+    })
 
     expect(
       toCodexTurnTokenUsage({
@@ -38,6 +44,12 @@ describe('Codex turn token usage', () => {
         cachedReadTokens: 32_000,
         outputTokens: 38
       })
-    ).toEqual({ inputTokens: 174, cacheTokens: 32_000, outputTokens: 38 })
+    ).toEqual({
+      inputTokens: 174,
+      cacheTokens: 32_000,
+      cachedReadTokens: 32_000,
+      cachedWriteTokens: 0,
+      outputTokens: 38
+    })
   })
 })

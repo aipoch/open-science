@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { AcpRuntimeOptions } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { composeAcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import {
@@ -51,5 +52,40 @@ describe('ACP Runtime Provider Session composition', () => {
     await first.owners.sessionDeletion.delete('detached-session')
     expect(barrier).toHaveBeenCalledTimes(2)
     expect(withOperation).toHaveBeenCalledOnce()
+  })
+
+  it('forwards the project Agent Context resolver into the creator, adopter, and resumer deps', () => {
+    const resolveProjectAgentContext: AcpRuntimeOptions['resolveProjectAgentContext'] = vi.fn(
+      async () => undefined
+    )
+    const options: AcpRuntimeOptions = {
+      appVersion: 'test',
+      defaultCwd: '/workspace',
+      resolveProjectAgentContext
+    }
+    const base = composeAcpRuntimeBaseOwners(options)
+    const session = composeAcpRuntimeSessionOwners(options, base)
+    const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
+      connect: vi.fn(async () => session.publication.getSnapshot()),
+      disconnect: vi.fn(async () => session.publication.getSnapshot()),
+      openAgentConnection: vi.fn(async () => {
+        throw new Error('not called during composition')
+      })
+    })
+    const owners = composeAcpRuntimeProviderSessionOwners(options, base, session, lifecycle)
+
+    // deps is constructor-private; the composition contract is that each workflow holds the exact
+    // option function, so the assertion reads the stored deps through a structural cast.
+    type AgentContextDeps = {
+      deps: { resolveProjectAgentContext?: AcpRuntimeOptions['resolveProjectAgentContext'] }
+    }
+    const creatorDeps = (owners.providerSessionCreator as unknown as AgentContextDeps).deps
+    const resumerDeps = (owners.providerSessionResumer as unknown as AgentContextDeps).deps
+    const adopterDeps = (resumerDeps as unknown as { adopter: unknown })
+      .adopter as unknown as AgentContextDeps
+
+    expect(creatorDeps.resolveProjectAgentContext).toBe(resolveProjectAgentContext)
+    expect(adopterDeps.deps.resolveProjectAgentContext).toBe(resolveProjectAgentContext)
+    expect(resumerDeps.resolveProjectAgentContext).toBe(resolveProjectAgentContext)
   })
 })

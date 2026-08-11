@@ -87,6 +87,11 @@ do not become alternate state stores.
 | Notebook runtime                | Own runtime discovery, Session binding decisions, execution, environment operations, and durable run history. It consumes enablement snapshots through the named Settings capability rather than owning or reading raw Settings state.                           |
 | Persistence and artifact owners | Own project/session files, uploads, artifact versions, provenance, and deletion/finalization coordination. Application commands receive narrow handler capabilities instead of repositories.                                                                     |
 
+After Session persistence hydrates, the renderer mounts one route-independent Workspace runtime
+owner at the application boundary. Home consumes its Session status projection without acquiring
+Workspace commands or preview behavior. Generated artifacts continue to finalize in the background,
+while molecule preview activation is limited to the foreground Workspace for the owning Project.
+
 ```mermaid
 flowchart LR
   Electron["Electron IPC adapters"] --> Commands["Application command interfaces"]
@@ -109,6 +114,29 @@ This boundary preserves the current surface asymmetry; it is not a parity roadma
   download/reveal operations, and CLI/Task have no direct Compute management API.
 - Web and Task invoke transport-neutral application commands directly. Electron continues to use
   typed IPC adapters; no Web or Task path captures or synthesizes an Electron sender.
+
+### User-attention, activity, and audit projections
+
+Application events are lifecycle facts used for in-process and cross-surface synchronization. They
+are not automatically user notifications or durable audit records. Consumers must project those
+facts according to the question their state answers:
+
+- The **notification inbox** answers “what needs my attention?” It owns unread state, bounded
+  retention, action state, navigation targets, and safe presentation text. The first slice includes
+  user-initiated task outcomes and blocking authorization requests. Project and Session management
+  operations do not create inbox items merely because an application event was broadcast.
+- A future **activity timeline** may answer “what happened in this Project?” It can project create,
+  rename, archive, restore, delete, import, export, and similar product history without creating
+  unread pressure. It must not reuse notification read/action state.
+- A future **audit record** may answer “which actor performed which operation from which surface,
+  and what was the result?” It requires append-oriented retention, actor/surface identity,
+  correlation, outcome, and redacted metadata. It must remain available independently of
+  notification retention and target deletion.
+
+The application event hub is the distribution seam, not a persistence owner. A future activity or
+audit module may consume richer committed lifecycle facts through that seam, but must not turn the
+renderer synchronization catalog into an implicit audit schema. In particular,
+`NotificationInboxItem` must not store Project/Session management history or serve as an audit log.
 
 Issue #458 may add an orchestration layer above the ACP coordinator later. That layer must consume
 only declared Settings, ACP, Notebook, Artifact, Permission, Workspace, and Event interfaces. Compute

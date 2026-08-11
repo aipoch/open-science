@@ -1,10 +1,17 @@
+import {
+  ApplicationCommandError,
+  type ApplicationCommandContract
+} from '../shared/application-command-contract'
 import type { CallerContext } from './caller-context'
 
 declare const applicationCommandTypes: unique symbol
 
 type Awaitable<Value> = Value | PromiseLike<Value>
 
-type AnyApplicationCommand = Readonly<{ name: string }>
+type AnyApplicationCommand = Readonly<{
+  name: string
+  contract?: ApplicationCommandContract<readonly unknown[], unknown>
+}>
 
 export type ApplicationCommand<
   Name extends string,
@@ -12,6 +19,7 @@ export type ApplicationCommand<
   Result
 > = Readonly<{
   name: Name
+  contract?: ApplicationCommandContract<Args, Result>
   [applicationCommandTypes]?: Readonly<{ args: Args; result: Result }>
 }>
 
@@ -86,6 +94,8 @@ export type ApplicationCommandDiagnosticCode =
   | 'authorization-stale'
   | 'lease-mismatch'
   | 'lease-stale'
+  | 'invalid-command-arguments'
+  | 'invalid-command-result'
   | 'handler-rejected'
   | 'router-disposed'
 
@@ -123,9 +133,12 @@ export const defineApplicationCommand = <
   Args extends readonly unknown[],
   Result
 >(
-  name: Name
+  name: Name,
+  contract?: ApplicationCommandContract<Args, Result>
 ): ApplicationCommand<Name, Args, Result> =>
-  Object.freeze({ name }) as ApplicationCommand<Name, Args, Result>
+  Object.freeze(
+    contract ? { name, contract: Object.freeze({ ...contract }) } : { name }
+  ) as ApplicationCommand<Name, Args, Result>
 
 export const defineApplicationCommandGroup = <
   const Name extends string,
@@ -249,12 +262,42 @@ export const createApplicationCommandRouter = (
       throw new Error('Caller lease is no longer current.')
     }
 
+    let handlerInvocation = invocation as ApplicationInvocation<readonly unknown[]>
+    if (registered.command.contract) {
+      try {
+        handlerInvocation = Object.freeze({
+          ...invocation,
+          args: registered.command.contract.args.parse(invocation.args)
+        })
+      } catch {
+        report('invalid-command-arguments', command.name)
+        throw new ApplicationCommandError(
+          'invalid-command-arguments',
+          `Invalid arguments for application command: ${command.name}`
+        )
+      }
+    }
+
+    let result: unknown
     try {
-      return (await registered.handler(invocation)) as CommandResult<typeof command>
+      result = await registered.handler(handlerInvocation)
     } catch (error) {
       report('handler-rejected', command.name)
       throw error
     }
+
+    if (registered.command.contract) {
+      try {
+        return registered.command.contract.result.parse(result) as CommandResult<typeof command>
+      } catch {
+        report('invalid-command-result', command.name)
+        throw new ApplicationCommandError(
+          'invalid-command-result',
+          `Invalid result for application command: ${command.name}`
+        )
+      }
+    }
+    return result as CommandResult<typeof command>
   }
 
   return Object.freeze({

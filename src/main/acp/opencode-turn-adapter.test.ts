@@ -58,7 +58,15 @@ describe('ACP OpenCode turn adapter', () => {
         cachedWriteTokens: 2,
         outputTokens: 5
       },
-      modelTurnCount: 2
+      modelTurnCount: 2,
+      contextUsedTokens: 23,
+      lastModelStepUsage: {
+        inputTokens: 19,
+        cacheTokens: 5,
+        cachedReadTokens: 4,
+        cachedWriteTokens: 1,
+        outputTokens: 3
+      }
     })
   })
 

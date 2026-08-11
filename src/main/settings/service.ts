@@ -19,6 +19,7 @@ import type {
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
+  GitHubTokenStatus,
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
   InstallClaudeRequest,
@@ -62,6 +63,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -92,9 +94,10 @@ import {
   type ExplicitAgentBackendTarget
 } from './backend-resolver'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SkillExportArchive } from '../skills/export'
+import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
@@ -133,6 +136,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
+  // GitHub request implementation, injectable so credential tests never hit the network.
+  githubFetch?: FetchLike
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
@@ -191,7 +196,8 @@ class SettingsService {
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
-      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
+      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot),
+      githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
     this.runtimeManager = new AgentRuntimeManager({
@@ -281,6 +287,8 @@ class SettingsService {
       closePreference: preferences.closePreference,
       appIconVariant: preferences.appIconVariant,
       projectFilesFilter: preferences.projectFilesFilter,
+      defaultPermissionProfile: preferences.defaultPermissionProfile,
+
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
@@ -455,6 +463,12 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsSnapshot> {
+    await this.preferences.setDefaultPermissionProfile(profile)
+
+    return this.getSettingsView()
+  }
+
   // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
   // snapshot so the settings card reflects the result.
   async detectOpencode(): Promise<SettingsSnapshot> {
@@ -470,6 +484,23 @@ class SettingsService {
   // Compatibility facade: Skill state and filesystem rules live in SkillCatalogModule.
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
+  }
+
+  // Internal main-process adapter used by host.skills. Unlike listSkills(), this includes bundled
+  // internal Skills and returns source directories only to the trusted caller callback.
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.skills.listHostSkills()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    return this.skills.withHostSkillRead(id, read)
+  }
+
+  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.skills.publishHostSkill(slug, sourcePath, overwrite)
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {
@@ -498,6 +529,10 @@ class SettingsService {
   // still enforces the specialist's own connector access config.
   async provisionedConnectorSkillNames(): Promise<string[]> {
     return this.connectors.provisionedConnectorSkillNames()
+  }
+
+  setMaterializedCustomSkillNamesProvider(provider: () => readonly string[]): void {
+    this.connectors.setMaterializedCustomSkillNamesProvider(provider)
   }
 
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
@@ -573,6 +608,18 @@ class SettingsService {
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
     return this.skills.importSkill(request)
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    return this.skills.getGitHubTokenStatus()
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    return this.skills.saveGitHubToken(token)
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    return this.skills.removeGitHubToken()
   }
 
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list. The

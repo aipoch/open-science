@@ -20,7 +20,7 @@ import {
   Zap
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 
 import {
   resolveCodexSubscriptionType,
@@ -240,6 +240,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // new location; the active panel and open sub-views are derived from the current entry.
   const [history, setHistory] = useState<NavLocation[]>([INITIAL_LOCATION])
   const [historyIndex, setHistoryIndex] = useState(0)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
   const isMobile = useMediaQuery('(max-width: 767px)')
@@ -720,6 +721,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none" />
         <Dialog.Content
           data-slot="settings-surface"
+          onOpenAutoFocus={() => {
+            returnFocusRef.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null
+          }}
+          onCloseAutoFocus={(event) => {
+            const returnFocus = returnFocusRef.current
+            returnFocusRef.current = null
+            if (!returnFocus?.isConnected) return
+            event.preventDefault()
+            returnFocus.focus()
+          }}
           // Don't let a click/focus outside the dialog dismiss it. A Radix Select inside the panel
           // (provider type, active model, install source) portals its listbox outside the dialog's
           // DOM, so an outside-click meant only to close the open dropdown would otherwise also close

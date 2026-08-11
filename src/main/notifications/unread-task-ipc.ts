@@ -47,8 +47,8 @@ const normalizeViewState = (input: unknown): UnreadTaskViewState | undefined => 
   }
 }
 
-// Registers one bidirectional channel: ordinary renderer projections update unread state, while
-// numbered challenges provide a fresh, fail-closed visibility acknowledgement for terminal races.
+// Registers one bidirectional legacy-named channel: ordinary renderer projections update message
+// read state, while numbered challenges provide a fresh, fail-closed visibility acknowledgement.
 export const registerUnreadTaskIpc = (deps: UnreadTaskIpcDeps): UnreadTaskVisibilityProbe => {
   const pendingChallenges = new Map<
     number,

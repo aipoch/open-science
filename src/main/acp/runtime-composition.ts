@@ -5,6 +5,10 @@ import { app } from 'electron'
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
 import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+} from '../../shared/lifecycle-events'
+import {
   filterSpecialistConnectorSkills,
   resolveEffectiveSpecialistSkills
 } from '../../shared/specialist'
@@ -19,7 +23,10 @@ import {
   runTaskNotificationInBackground,
   type TaskNotificationService
 } from '../notifications/task-notifications'
+import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import {
@@ -27,7 +34,7 @@ import {
   buildSpecialistIdentityPrefix
 } from '../specialist/identity'
 import type { ProfileService } from '../specialist/service'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import { AgentMcpHttpHost } from './mcp-http-host'
@@ -38,6 +45,25 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const log = createLogger('acp')
+
+// Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
+// projectName carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_NAME fallback
+// namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
+// without an append.
+const createProjectAgentContextResolver = (repository: {
+  get: (id: string) => Promise<{ agentContext?: string } | null>
+}): ((projectName: string) => Promise<string | undefined>) => {
+  return async (projectName) => {
+    try {
+      const project = await repository.get(projectName)
+      const context = project?.agentContext?.trim()
+      return context ? context : undefined
+    } catch (error) {
+      log.warn('project Agent Context lookup failed', errorLogFields(error))
+      return undefined
+    }
+  }
+}
 
 type AcpRuntimeArtifacts = {
   repository: ArtifactRepository
@@ -67,6 +93,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   permissionGrantRegistry?: PermissionGrantRegistry
   initializationBarrier?: Promise<unknown>
   taskNotifications?: TaskNotificationService
+  notificationInbox?: Pick<
+    NotificationInboxController,
+    'record' | 'settleAction' | 'settleAuthorization'
+  >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
@@ -86,7 +116,10 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'patchSessionRuntimeContext'
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
+    | 'loadSessionForContinuation'
+    | 'sessionProjectId'
   >
+  sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -104,6 +137,7 @@ const createAcpRuntime = ({
   permissionGrantRegistry,
   initializationBarrier,
   taskNotifications,
+  notificationInbox,
   onSessionTurnStarted,
   onSessionTurnEnded,
   onSkillImportAttachmentEligible,
@@ -113,11 +147,14 @@ const createAcpRuntime = ({
   onDisconnected,
   beforeSessionDelete,
   profileService,
-  sessionPersistenceCoordinator
+  sessionPersistenceCoordinator,
+  sideChatRelays
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
+  // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
+  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
   const callbacks: AcpRuntimeCallbacks = {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
@@ -139,6 +176,13 @@ const createAcpRuntime = ({
           (error) => log.warn('permission notification failed', errorLogFields(error))
         )
       }
+    },
+    onPermissionSettled: (requestId, state) => {
+      if (!notificationInbox) return
+      runTaskNotificationInBackground(
+        () => notificationInbox.settleAuthorization('agent-tool', requestId, state),
+        (error) => log.warn('permission inbox settlement failed', errorLogFields(error))
+      )
     }
   }
 
@@ -208,17 +252,89 @@ const createAcpRuntime = ({
         },
         ...(sessionPersistenceCoordinator
           ? {
+              permissionWait: {
+                sessions: sessionPersistenceCoordinator,
+                onSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    // The durable commit remains authoritative when a renderer projection is gone.
+                    log.warn('permission wait Session publication failed', errorLogFields(error))
+                  }
+                },
+                onContinuationSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    log.warn(
+                      'durable continuation Session publication failed',
+                      errorLogFields(error)
+                    )
+                  }
+                }
+              }
+            }
+          : {}),
+        ...(sessionPersistenceCoordinator
+          ? {
               plan: {
                 mcpEntryPath,
                 getRpcConnection: ({ sessionId, projectId }) =>
                   notebookRpcServer.issuePlanConnection(sessionId, projectId),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                sessions: sessionPersistenceCoordinator
+                sessions: sessionPersistenceCoordinator,
+                onApprovalRequested: (request) => {
+                  if (taskNotifications) {
+                    runTaskNotificationInBackground(
+                      () => taskNotifications.handlePlanApproval(request),
+                      (error) =>
+                        log.warn('plan approval notification failed', errorLogFields(error))
+                    )
+                    return
+                  }
+                  if (notificationInbox) {
+                    runTaskNotificationInBackground(
+                      () =>
+                        notificationInbox.record({
+                          dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
+                          kind: 'authorization.required',
+                          source: 'session-plan',
+                          projectId: request.projectId,
+                          sessionId: request.sessionId,
+                          originId: request.artifactVersionId,
+                          title: 'Plan approval needed',
+                          summary: 'A plan needs your approval.',
+                          actionState: 'pending'
+                        }),
+                      (error) =>
+                        log.warn('plan approval inbox record failed', errorLogFields(error))
+                    )
+                  }
+                },
+                onApprovalSettled: (request) => {
+                  if (!notificationInbox) return
+                  runTaskNotificationInBackground(
+                    () =>
+                      notificationInbox.settleAuthorization(
+                        'session-plan',
+                        request.artifactVersionId,
+                        request.state
+                      ),
+                    (error) => log.warn('plan approval inbox settle failed', errorLogFields(error))
+                  )
+                }
               }
             }
           : {}),
         callbacks: runtimeCallbacks,
+        sideChatRelays,
         permissionGrantStore,
         permissionGrantRegistry,
         resolveSpecialistIdentity: profileService
@@ -263,7 +379,8 @@ const createAcpRuntime = ({
                 return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
               }
             }
-          : undefined
+          : undefined,
+        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository)
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
       return new AcpRuntime(
@@ -291,5 +408,5 @@ const createAcpRuntime = ({
   )
 }
 
-export { createAcpRuntime }
+export { createAcpRuntime, createProjectAgentContextResolver }
 export type { AcpRuntimeCompositionOptions }

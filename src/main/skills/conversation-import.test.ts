@@ -6,7 +6,7 @@ import { deflateRawSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import {
@@ -317,7 +317,7 @@ describe('ConversationSkillImporter', () => {
     roots.push(root)
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const skills = new UserSkillRepository(root)
     const [staged] = await stageUploadFixtures(uploads, {
@@ -385,7 +385,7 @@ describe('ConversationSkillImporter', () => {
     ])
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'source-session' }
     })
@@ -445,7 +445,7 @@ describe('ConversationSkillImporter', () => {
     ])
     const client = createProjectDbClient(root)
     disconnects.push(() => client.$disconnect())
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'private-project', sessionId: 'private-session' }
     })
@@ -772,10 +772,12 @@ describe('SkillImportApprovalBroker lifecycle', () => {
   it('settles and dismisses a request when its timeout expires', async () => {
     vi.useFakeTimers()
     const onSettled = vi.fn()
+    const onLifecycleSettled = vi.fn()
     const broker = new SkillImportApprovalBroker({
       generateId: () => 'approval-timeout',
       broadcast: vi.fn(),
       onSettled,
+      onLifecycleSettled,
       timeoutMs: 10
     })
     const response = broker.request(approvalInfo('session-1'))
@@ -784,6 +786,25 @@ describe('SkillImportApprovalBroker lifecycle', () => {
 
     await expect(response).resolves.toEqual({ id: 'approval-timeout', cancelled: true })
     expect(onSettled).toHaveBeenCalledWith('approval-timeout')
+    expect(onLifecycleSettled).toHaveBeenCalledWith('approval-timeout', 'expired')
+  })
+
+  it('settles the inbox lifecycle when renderer teardown throws', async () => {
+    const onLifecycleSettled = vi.fn()
+    const broker = new SkillImportApprovalBroker({
+      generateId: () => 'approval-renderer-failure',
+      broadcast: vi.fn(),
+      onSettled: () => {
+        throw new Error('renderer unavailable')
+      },
+      onLifecycleSettled
+    })
+    const response = broker.request(approvalInfo('session-1'))
+
+    broker.respond({ id: 'approval-renderer-failure', items: [] })
+
+    await expect(response).resolves.toEqual({ id: 'approval-renderer-failure', items: [] })
+    expect(onLifecycleSettled).toHaveBeenCalledWith('approval-renderer-failure', 'resolved')
   })
 
   it('cancels only approvals owned by the stopped conversation', async () => {

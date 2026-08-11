@@ -1,0 +1,301 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import type { PrismaClient } from '@prisma/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import {
+  MAX_NOTIFICATION_INBOX_ITEMS,
+  NotificationInboxDbRepository,
+  type NotificationInboxClient
+} from './notification-inbox-repository'
+
+let storageRoot: string | undefined
+let client: PrismaClient | undefined
+
+const createRepository = async (): Promise<NotificationInboxDbRepository> => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'open-science-notification-inbox-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  return new NotificationInboxDbRepository(() => Promise.resolve(client!))
+}
+
+const record = (
+  repository: NotificationInboxDbRepository,
+  originId: string
+): ReturnType<NotificationInboxDbRepository['record']> =>
+  repository.record({
+    id: `item-${originId}`,
+    dedupeKey: `task:${originId}`,
+    kind: 'task.completed',
+    sessionId: `session-${originId}`,
+    originId,
+    title: 'Task completed',
+    summary: `Task ${originId} finished.`
+  })
+
+afterEach(async () => {
+  await client?.$disconnect()
+  client = undefined
+  if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
+  storageRoot = undefined
+})
+
+describe('NotificationInboxDbRepository', () => {
+  it('records each dedupe key once and returns newest-first snapshots', async () => {
+    const repository = await createRepository()
+
+    await record(repository, 'one')
+    const duplicate = await record(repository, 'one')
+    await record(repository, 'two')
+
+    expect(duplicate.changed).toBe(false)
+    await expect(repository.snapshot()).resolves.toMatchObject({
+      unreadCount: 2,
+      latestSequence: 2,
+      items: [
+        { originId: 'two', sequence: 2 },
+        { originId: 'one', sequence: 1 }
+      ]
+    })
+    expect((await repository.snapshot()).items.every((item) => item.readAt === undefined)).toBe(
+      true
+    )
+  })
+
+  it('marks all only through the caller snapshot boundary', async () => {
+    const repository = await createRepository()
+    await record(repository, 'before')
+    const boundary = (await repository.snapshot()).latestSequence
+    await record(repository, 'after')
+
+    await repository.markAllRead(boundary, 1000)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.find((item) => item.originId === 'before')?.readAt).toBe(1000)
+    expect(snapshot.items.find((item) => item.originId === 'after')?.readAt).toBeUndefined()
+  })
+
+  it('persists a rejected approval without silently acknowledging its unread message', async () => {
+    const repository = await createRepository()
+    await repository.record({
+      id: 'approval-1',
+      dedupeKey: 'authorization:connector:request-1',
+      kind: 'authorization.required',
+      source: 'connector',
+      originId: 'request-1',
+      title: 'Approval needed',
+      summary: 'A connector needs approval.',
+      actionState: 'pending'
+    })
+
+    await repository.settle('authorization:connector:request-1', 'rejected', 2000)
+
+    await expect(repository.snapshot()).resolves.toMatchObject({
+      unreadCount: 1,
+      items: [{ actionState: 'rejected', settledAt: 2000 }]
+    })
+    expect((await repository.snapshot()).items[0]).not.toHaveProperty('readAt')
+  })
+
+  it('expires only transient pending authorizations during startup restore', async () => {
+    const repository = await createRepository()
+    for (const [originId, actionState] of [
+      ['stale', 'pending'],
+      ['settled', 'resolved']
+    ] as const) {
+      await repository.record({
+        id: `approval-${originId}`,
+        dedupeKey: `authorization:connector:${originId}`,
+        kind: 'authorization.required',
+        source: 'connector',
+        originId,
+        title: 'Approval needed',
+        summary: 'A connector needs approval.',
+        actionState
+      })
+    }
+    await repository.record({
+      id: 'approval-plan',
+      dedupeKey: 'authorization:session-plan:plan-1',
+      kind: 'authorization.required',
+      source: 'session-plan',
+      sessionId: 'session-1',
+      originId: 'plan-1',
+      title: 'Plan approval needed',
+      summary: 'A plan needs approval.',
+      actionState: 'pending'
+    })
+    await record(repository, 'task')
+
+    await repository.expireTransientPendingAuthorizations(2250)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(4)
+    expect(snapshot.items.find((item) => item.originId === 'stale')).toMatchObject({
+      actionState: 'expired',
+      settledAt: 2250
+    })
+    expect(snapshot.items.find((item) => item.originId === 'settled')).toMatchObject({
+      actionState: 'resolved'
+    })
+    expect(snapshot.items.find((item) => item.originId === 'plan-1')).toMatchObject({
+      actionState: 'pending'
+    })
+    expect(snapshot.items.find((item) => item.originId === 'plan-1')).not.toHaveProperty(
+      'settledAt'
+    )
+    expect(snapshot.items.find((item) => item.originId === 'task')).not.toHaveProperty(
+      'actionState'
+    )
+  })
+
+  it('acknowledges visible task outcomes without marking authorization messages read', async () => {
+    const repository = await createRepository()
+    await record(repository, 'visible')
+    await repository.record({
+      id: 'approval-visible',
+      dedupeKey: 'authorization:agent-tool:request-visible',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-visible',
+      originId: 'request-visible',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
+
+    await repository.markSessionTaskOutcomesRead(['session-visible'], 2500)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.find((item) => item.kind === 'task.completed')?.readAt).toBe(2500)
+    expect(
+      snapshot.items.find((item) => item.kind === 'authorization.required')?.readAt
+    ).toBeUndefined()
+  })
+
+  it('acknowledges session completions without marking other task outcomes read', async () => {
+    const repository = await createRepository()
+    await record(repository, 'visible')
+    await repository.record({
+      id: 'failed-visible',
+      dedupeKey: 'task:failed:visible',
+      kind: 'task.failed',
+      sessionId: 'session-visible',
+      originId: 'failed-visible',
+      title: 'Task failed',
+      summary: 'The task failed.'
+    })
+
+    await repository.markSessionCompletionsRead(['session-visible'], 2750)
+
+    const snapshot = await repository.snapshot()
+    expect(snapshot.unreadCount).toBe(1)
+    expect(snapshot.items.find((item) => item.kind === 'task.completed')?.readAt).toBe(2750)
+    expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
+  })
+
+  it('migrates legacy unread sessions exactly once and clears the old projection', async () => {
+    const repository = await createRepository()
+    await client!.unreadTaskSession.create({ data: { sessionId: 'legacy-session' } })
+    let nextId = 0
+
+    await repository.migrateLegacyUnread(() => `legacy-item-${++nextId}`, 3000)
+    await repository.migrateLegacyUnread(() => `legacy-item-${++nextId}`, 4000)
+
+    await expect(client!.unreadTaskSession.count()).resolves.toBe(0)
+    await expect(repository.snapshot()).resolves.toMatchObject({
+      unreadCount: 1,
+      items: [
+        {
+          id: 'legacy-item-1',
+          sessionId: 'legacy-session',
+          title: 'Previous task update',
+          createdAt: 3000
+        }
+      ]
+    })
+  })
+
+  it('retains only the newest one thousand messages', async () => {
+    const repository = await createRepository()
+    await client!.notificationInboxItem.createMany({
+      data: Array.from({ length: MAX_NOTIFICATION_INBOX_ITEMS }, (_, index) => ({
+        id: `item-${index}`,
+        dedupeKey: `task:${index}`,
+        kind: 'task.completed',
+        sessionId: `session-${index}`,
+        originId: String(index),
+        title: 'Task completed',
+        summary: `Task ${index} finished.`
+      }))
+    })
+    await record(repository, String(MAX_NOTIFICATION_INBOX_ITEMS))
+
+    const snapshot = await repository.snapshot(MAX_NOTIFICATION_INBOX_ITEMS)
+    await expect(client!.notificationInboxItem.count()).resolves.toBe(MAX_NOTIFICATION_INBOX_ITEMS)
+    expect(snapshot.items).toHaveLength(200)
+    expect(snapshot.items.at(-1)?.originId).toBe('801')
+    expect(snapshot.items[0]?.originId).toBe(String(MAX_NOTIFICATION_INBOX_ITEMS))
+  })
+
+  it('acknowledges archive history and removes deleted targets independently', async () => {
+    const repository = await createRepository()
+    await record(repository, 'archive')
+    await record(repository, 'delete')
+    await repository.record({
+      id: 'approval-archive',
+      dedupeKey: 'authorization:agent-tool:request-archive',
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: 'session-archive',
+      originId: 'request-archive',
+      title: 'Approval needed',
+      summary: 'A tool request needs approval.',
+      actionState: 'pending'
+    })
+
+    await repository.markSessionsRead(['session-archive'], 5000)
+    await repository.deleteSessions(['session-delete'])
+
+    await expect(repository.snapshot()).resolves.toMatchObject({
+      unreadCount: 0,
+      items: [
+        { sessionId: 'session-archive', readAt: 5000 },
+        { sessionId: 'session-archive', readAt: 5000 }
+      ]
+    })
+  })
+
+  it('chunks multi-id read, deletion, and catalog mutations inside transactions', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }))
+    const deleteMany = vi.fn(async () => ({ count: 1 }))
+    const sessionIds = Array.from({ length: 501 }, (_, index) => `session-${index}`)
+    const fakeClient = {
+      $transaction: async (operation: (transaction: NotificationInboxClient) => Promise<unknown>) =>
+        operation(fakeClient),
+      notificationInboxItem: {
+        updateMany,
+        deleteMany,
+        count: vi.fn(async () => 0),
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => sessionIds.map((sessionId) => ({ sessionId })))
+      }
+    } as unknown as NotificationInboxClient
+    const repository = new NotificationInboxDbRepository(() => Promise.resolve(fakeClient))
+
+    await repository.markRead(sessionIds, 6000)
+    await repository.markSessionsRead(sessionIds, 6000)
+    await repository.markSessionTaskOutcomesRead(sessionIds, 6000)
+    await repository.markSessionCompletionsRead(sessionIds, 6000)
+    await repository.deleteSessions(sessionIds)
+    await repository.reconcileSessionCatalog([])
+
+    expect(updateMany).toHaveBeenCalledTimes(8)
+    expect(deleteMany).toHaveBeenCalledTimes(4)
+  })
+})

@@ -64,6 +64,7 @@ const computePaths = [
   'compute.list',
   'compute.listDir',
   'compute.probe',
+  'compute.replayApproval',
   'compute.respondApproval',
   'compute.revealInFolder',
   'compute.scratchSet',

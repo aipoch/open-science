@@ -8,6 +8,7 @@ import {
   fetchSkillFiles,
   searchGitHubSkillRepositories,
   scanRepoForSkills,
+  createAuthenticatedGitHubFetch,
   type FetchLike
 } from './github-import'
 
@@ -15,6 +16,45 @@ import {
 // configured limits instead of hard-coded numbers.
 const OVER_FILE = SKILL_IMPORT_LIMITS.maxFileBytes + 1
 const AT_FILE = SKILL_IMPORT_LIMITS.maxFileBytes
+
+describe('createAuthenticatedGitHubFetch', () => {
+  it('adds the token only to exact trusted HTTPS GitHub hosts', async () => {
+    const requests: Array<{ url: string; headers?: Record<string, string> }> = []
+    const fetcher: FetchLike = async (url, init) => {
+      requests.push({ url, headers: init?.headers })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0)
+      }
+    }
+    const authenticated = createAuthenticatedGitHubFetch(fetcher, ' github_pat_secret ')
+
+    await authenticated('https://api.github.com/rate_limit', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+    await authenticated('https://raw.githubusercontent.com/acme/repo/main/SKILL.md')
+    await authenticated('https://api.github.com.evil.example/collect')
+    await authenticated('http://api.github.com/collect')
+
+    expect(requests).toEqual([
+      {
+        url: 'https://api.github.com/rate_limit',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: 'Bearer github_pat_secret'
+        }
+      },
+      {
+        url: 'https://raw.githubusercontent.com/acme/repo/main/SKILL.md',
+        headers: { Authorization: 'Bearer github_pat_secret' }
+      },
+      { url: 'https://api.github.com.evil.example/collect', headers: {} },
+      { url: 'http://api.github.com/collect', headers: {} }
+    ])
+  })
+})
 
 describe('parseGitHubSkillUrl', () => {
   it('parses tree URLs into owner/repo/ref/path', () => {
@@ -722,21 +762,46 @@ describe('searchGitHubSkillRepositories', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
-  it.each([403, 429])(
-    'turns GitHub status %s into an actionable rate-limit error',
-    async (status) => {
+  it.each([
+    { status: 429, remaining: null, retryAfter: null },
+    { status: 403, remaining: '0', retryAfter: null },
+    { status: 403, remaining: '12', retryAfter: '30' }
+  ])(
+    'turns GitHub rate-limit metadata for status $status into an actionable error',
+    async ({ status, remaining, retryAfter }) => {
       const fetcher: FetchLike = async () => ({
         ok: false,
         status,
         json: async () => ({}),
-        arrayBuffer: async () => new ArrayBuffer(0)
+        arrayBuffer: async () => new ArrayBuffer(0),
+        headers: {
+          get: (name) =>
+            name === 'x-ratelimit-remaining'
+              ? remaining
+              : name === 'retry-after'
+                ? retryAfter
+                : null
+        }
       })
 
       await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
-        'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+        'GitHub request was rate-limited. Configure or update the GitHub token on this page, then try again.'
       )
     }
   )
+
+  it('keeps a bare 403 distinct from rate limiting', async () => {
+    const fetcher: FetchLike = async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0)
+    })
+
+    await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
+      'GitHub API request was forbidden (403). Check repository access and token permissions, then try again.'
+    )
+  })
 
   it('ignores malformed repository items instead of exposing unchecked data', async () => {
     const fetcher: FetchLike = async () => ({

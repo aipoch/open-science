@@ -14,10 +14,13 @@ type SessionPlanExecutionBinding = Readonly<{
   interactionSequence: number
 }>
 
+type SessionPlanAgentDecisionAuthorization = SessionPlanExecutionBinding
+
 type SessionPlanInteractionRow = {
   identity?: SessionPlanInteractionIdentity
   approvalReservation?: string
   approval?: SessionPlanApprovalParking
+  agentDecisionAuthorization?: SessionPlanAgentDecisionAuthorization
   execution?: SessionPlanExecutionBinding
 }
 
@@ -31,6 +34,7 @@ class SessionPlanInteractionOwner {
   }: SessionPlanInteractionIdentity & Readonly<{ sessionId: string }>): void {
     const row = this.rows.get(sessionId) ?? {}
     row.identity = { artifactVersionId, interactionId }
+    delete row.agentDecisionAuthorization
     this.rows.set(sessionId, row)
   }
 
@@ -108,6 +112,47 @@ class SessionPlanInteractionOwner {
     return true
   }
 
+  authorizeAgentDecision({
+    sessionId,
+    artifactVersionId,
+    interactionSequence
+  }: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>): void {
+    const row = this.rows.get(sessionId) ?? {}
+    row.agentDecisionAuthorization = { artifactVersionId, interactionSequence }
+    this.rows.set(sessionId, row)
+  }
+
+  isAgentDecisionAuthorized({
+    sessionId,
+    artifactVersionId,
+    interactionSequence
+  }: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>): boolean {
+    const authorization = this.rows.get(sessionId)?.agentDecisionAuthorization
+    return (
+      authorization?.artifactVersionId === artifactVersionId &&
+      authorization.interactionSequence === interactionSequence
+    )
+  }
+
+  consumeAgentDecisionAuthorization(
+    input: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>
+  ): boolean {
+    if (!this.isAgentDecisionAuthorized(input)) return false
+    const row = this.rows.get(input.sessionId)
+    if (!row) return false
+    delete row.agentDecisionAuthorization
+    this.prune(input.sessionId, row)
+    return true
+  }
+
+  releaseAgentDecisionAuthorization(sessionId: string, interactionSequence: number): boolean {
+    const row = this.rows.get(sessionId)
+    if (row?.agentDecisionAuthorization?.interactionSequence !== interactionSequence) return false
+    delete row.agentDecisionAuthorization
+    this.prune(sessionId, row)
+    return true
+  }
+
   bindExecution({
     sessionId,
     artifactVersionId,
@@ -145,7 +190,13 @@ class SessionPlanInteractionOwner {
   }
 
   private prune(sessionId: string, row: SessionPlanInteractionRow): void {
-    if (!row.identity && !row.approvalReservation && !row.approval && !row.execution) {
+    if (
+      !row.identity &&
+      !row.approvalReservation &&
+      !row.approval &&
+      !row.agentDecisionAuthorization &&
+      !row.execution
+    ) {
       this.rows.delete(sessionId)
     }
   }

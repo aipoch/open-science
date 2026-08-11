@@ -22,6 +22,7 @@ import {
   samePath
 } from '../storage-root'
 import { resolveMicromamba } from '../notebook/micromamba'
+import type { MicromambaRunner } from '../notebook/windows-micromamba-runner'
 import { captureMicromamba } from '../notebook/provisioner-runtime'
 import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
@@ -79,6 +80,8 @@ type StorageCommandOwnerDeps = {
   broadcastProgress?: (progress: MigrationProgress) => void
   cleanupRuntimeCache?: (runtimeRoot: string) => void
   logger?: Logger
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
+  exportRuntimeLocks?: typeof exportRuntimeLocks
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -240,9 +243,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           notebook: deps.notebook,
           // Preserve the runtime across the move by exporting each env to an offline lock at the
           // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
-          exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
-            exportRuntimeLocks(fromDataRoot, toDataRoot, {
-              mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+          exportRuntimeLocks: async (fromDataRoot, toDataRoot) =>
+            (deps.exportRuntimeLocks ?? exportRuntimeLocks)(fromDataRoot, toDataRoot, {
+              mm: deps.micromambaRunner
+                ? await deps.micromambaRunner.resolve()
+                : resolveMicromamba({ resourcesPath: process.resourcesPath }),
               capture: captureMicromamba
             })
         },

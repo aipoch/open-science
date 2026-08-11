@@ -18,6 +18,7 @@ import { notebookGated } from './provisioning-view'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 import { NotebookInputDataStrip } from './NotebookInputDataStrip'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import {
   resolveRunErrorLine,
   environmentLabel,
@@ -203,6 +204,8 @@ const TerminalInput = ({
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
 const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+  const kernelScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
+  const environmentScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const [notebookState, setNotebookState] = useState<NotebookSessionState | undefined>()
   const [terminalCode, setTerminalCode] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -394,7 +397,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         className="flex shrink-0 items-center border-b border-border-100 px-2 py-1.5"
         data-testid="kernel-switcher"
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div
+          ref={kernelScrollFadeRef}
+          className="scroll-fade-x flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+        >
           {visibleKinds.map((kind) =>
             kind === 'r' ? (
               // R additionally kicks off lazy provisioning on first selection (D6 — see lazy-r.ts).
@@ -437,7 +443,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
       {showEnvSelector ? (
         <div
-          className="flex shrink-0 items-center gap-1 border-b border-border-100 px-2 py-1"
+          ref={environmentScrollFadeRef}
+          className="scroll-fade-x flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto border-b border-border-100 px-2 py-1"
           data-testid="env-selector"
         >
           {envNames.map((envName) => (

@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import { ApplicationCommandError } from '../shared/application-command-contract'
 import { createCallerContext, type CallerContext } from './caller-context'
 import {
   createApplicationCommandRouter,
@@ -352,4 +353,74 @@ describe('application command router', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('lease-1')
     expect(JSON.stringify(diagnostics)).not.toContain('private handler detail')
   })
+
+  it('validates contracted arguments and results at the command interface', async () => {
+    const args = ['project-1'] as const
+    const result = { id: 'project-1' }
+    const argsCodec = { parse: vi.fn((value: unknown) => value as typeof args) }
+    const resultCodec = { parse: vi.fn((value: unknown) => value as typeof result) }
+    const command = defineApplicationCommand<'projects:get', readonly [id: string], typeof result>(
+      'projects:get',
+      { args: argsCodec, result: resultCodec }
+    )
+    const handler = vi.fn(() => result)
+    const router = createApplicationCommandRouter()
+    const scope = router.registrar.createScope()
+    scope.registerGroup(defineApplicationCommandGroup('projects', [command] as const), {
+      'projects:get': handler
+    })
+
+    await expect(router.dispatcher.invoke(command, invocation(args))).resolves.toBe(result)
+    expect(argsCodec.parse).toHaveBeenCalledWith(args)
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ args }))
+    expect(resultCodec.parse).toHaveBeenCalledWith(result)
+    expect(Object.isFrozen(command.contract)).toBe(true)
+  })
+
+  it.each([
+    {
+      failure: 'arguments',
+      expectedCode: 'invalid-command-arguments',
+      argsCodec: {
+        parse: (): readonly [string] => {
+          throw new Error('private argument detail')
+        }
+      },
+      resultCodec: { parse: (value: unknown) => value as string }
+    },
+    {
+      failure: 'result',
+      expectedCode: 'invalid-command-result',
+      argsCodec: { parse: (value: unknown) => value as readonly [string] },
+      resultCodec: {
+        parse: (): string => {
+          throw new Error('private result detail')
+        }
+      }
+    }
+  ] as const)(
+    'rejects invalid contracted $failure without leaking codec details',
+    async ({ expectedCode, argsCodec, resultCodec }) => {
+      const diagnostics: unknown[] = []
+      const handler = vi.fn(() => 'value')
+      const command = defineApplicationCommand<'projects:get', readonly [string], string>(
+        'projects:get',
+        { args: argsCodec, result: resultCodec }
+      )
+      const router = createApplicationCommandRouter((diagnostic) => diagnostics.push(diagnostic))
+      const scope = router.registrar.createScope()
+      scope.registerGroup(defineApplicationCommandGroup('projects', [command] as const), {
+        'projects:get': handler
+      })
+
+      const dispatched = router.dispatcher.invoke(command, invocation(['project-1'] as const))
+
+      const error = await dispatched.catch((error) => error)
+      expect(error).toBeInstanceOf(ApplicationCommandError)
+      expect(error).toMatchObject({ code: expectedCode })
+      expect(JSON.stringify(error)).not.toContain('private')
+      expect(diagnostics).toEqual([{ code: expectedCode, commandName: 'projects:get' }])
+      expect(handler).toHaveBeenCalledTimes(expectedCode === 'invalid-command-result' ? 1 : 0)
+    }
+  )
 })

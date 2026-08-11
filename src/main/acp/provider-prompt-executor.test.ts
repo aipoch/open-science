@@ -177,7 +177,15 @@ describe('AcpProviderPromptExecutor', () => {
           cachedWriteTokens: 0,
           outputTokens: 2
         },
-        modelTurnCount: 1
+        modelTurnCount: 1,
+        contextUsedTokens: 5,
+        lastModelStepUsage: {
+          inputTokens: 4,
+          cacheTokens: 1,
+          cachedReadTokens: 1,
+          cachedWriteTokens: 0,
+          outputTokens: 2
+        }
       }
     })
   })
@@ -211,6 +219,26 @@ describe('AcpProviderPromptExecutor', () => {
     expect(fixture.captureStop).toHaveBeenCalledOnce()
     expect(fixture.probe.finalize).toHaveBeenCalledWith({ response })
     expect(fixture.probe.cancel).not.toHaveBeenCalled()
+  })
+
+  it('preserves an adapter last-model-step snapshot without inferring one from generic ACP usage', async () => {
+    const response: PromptResponse = {
+      stopReason: 'end_turn',
+      usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 }
+    }
+    const fixture = setup([stop(response)])
+    fixture.probe.finalize = vi.fn(async () => ({
+      lastModelStepUsage: { inputTokens: 7, cacheTokens: 2, outputTokens: 1 }
+    }))
+
+    await expect(fixture.executor.execute(fixture.input)).resolves.toEqual({
+      kind: 'stopped',
+      response,
+      facts: {
+        turnUsage: { inputTokens: 12, cacheTokens: 0, outputTokens: 3 },
+        lastModelStepUsage: { inputTokens: 7, cacheTokens: 2, outputTokens: 1 }
+      }
+    })
   })
 
   it('preserves prompt rejection before acceptance and cancels its probe once', async () => {

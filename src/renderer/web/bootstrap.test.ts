@@ -41,6 +41,7 @@ class FakeWebSocket {
 
 type WebApi = {
   projects: {
+    create: (request: unknown) => Promise<unknown>
     onCreated: (listener: (payload: unknown) => void) => () => void
   }
 }
@@ -86,6 +87,41 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('reconstructs Application Command errors returned by Web RPC', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === '/api/bootstrap') {
+          return new Response(
+            JSON.stringify({ ...bootstrapPayload, rpcChannels: ['projects:create'] }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        if (String(input) === '/rpc/projects%3Acreate') {
+          return new Response(
+            JSON.stringify({
+              protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+              ok: false,
+              error: {
+                code: 'invalid-command-arguments',
+                message: 'Invalid project request.'
+              }
+            }),
+            { status: 500, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        throw new Error(`Unexpected fetch: ${String(input)}`)
+      })
+    )
+
+    const api = await loadBootstrap()
+    await expect(api.projects.create({ name: 42 })).rejects.toMatchObject({
+      name: 'ApplicationCommandError',
+      code: 'invalid-command-arguments',
+      message: 'Invalid project request.'
+    })
+  })
+
   it('opens the initial event socket with the stable Web client id', async () => {
     await loadBootstrap()
 
@@ -122,6 +158,20 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(FakeWebSocket.instances).toHaveLength(3)
+  })
+
+  it('signals stores to refresh whenever the event socket opens', async () => {
+    const listener = vi.fn()
+    window.addEventListener('open-science:web-events-open', listener)
+    await loadBootstrap()
+
+    FakeWebSocket.instances[0].emit('open')
+    FakeWebSocket.instances[0].emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    FakeWebSocket.instances[1].emit('open')
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    window.removeEventListener('open-science:web-events-open', listener)
   })
 
   it('keeps existing event subscriptions active after reconnecting', async () => {

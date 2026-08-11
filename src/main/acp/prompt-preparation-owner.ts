@@ -11,7 +11,7 @@ import { createLogger, errorLogFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
-  ContextUsageTurnHandle,
+  ContextWindowTurnHandle,
   SessionEstimateInput
 } from './context-usage-tracker'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
@@ -61,6 +61,7 @@ type AcpPromptPreparationInput = Readonly<{
   backend: AcpBackendGenerationView
   tooling: AcpSessionToolingAvailability
   specialistPrefix?: string
+  sessionSetupPromptPrefix?: string
   projectId: string
   fallbackPromptMessageId?: string
   bridgeSkillsAvailable: boolean
@@ -85,7 +86,7 @@ type ReadyPreparedPromptHandle = Readonly<{
   content: string | ContentBlock[]
   promptPrefix?: string
   skillActivityInputs: ReadonlyArray<Readonly<{ name: string; path: string }>>
-  transferContextTurn: () => ContextUsageTurnHandle
+  transferContextTurn: () => ContextWindowTurnHandle
   close: () => void
 }>
 type PreparedPromptHandle = CancelledPreparedPromptHandle | ReadyPreparedPromptHandle
@@ -105,7 +106,7 @@ class AcpPromptPreparationOwner {
 
   async prepare(input: AcpPromptPreparationInput): Promise<PreparedPromptHandle> {
     let releaseGrant: (() => void) | undefined
-    let contextTurn: ContextUsageTurnHandle | undefined
+    let contextTurn: ContextWindowTurnHandle | undefined
     let closed = false
 
     const releaseOwned = (failContext: boolean): void => {
@@ -158,6 +159,7 @@ class AcpPromptPreparationOwner {
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
         specialistPrefix: input.specialistPrefix,
+        sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [
           ...(skillPreparation.specialistSkillGuidance
             ? [skillPreparation.specialistSkillGuidance]
@@ -242,7 +244,7 @@ class AcpPromptPreparationOwner {
         content: prepared.content,
         ...(promptPrefix ? { promptPrefix } : {}),
         skillActivityInputs,
-        transferContextTurn: (): ContextUsageTurnHandle => {
+        transferContextTurn: (): ContextWindowTurnHandle => {
           if (closed) throw new Error('Prepared prompt is already closed.')
           if (transferred || !contextTurn) {
             throw new Error('Prepared prompt Context turn was already transferred.')

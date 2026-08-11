@@ -71,6 +71,7 @@ import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import {
   type NotebookSessionAggregate,
   type NotebookSessionExecutionRequest,
@@ -175,6 +176,7 @@ type NotebookRuntimeServiceOptions = {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   // Structured main-process diagnostics for package operations and interpreter probes. Injectable so
   // tests assert logging without initializing the rotating file sink.
   logger?: RuntimeDiagnosticLogger
@@ -191,13 +193,6 @@ type NotebookRuntimeServiceOptions = {
   saveIpynbAll?: (
     files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
   ) => Promise<ExportNotebookAllResult>
-  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
-  // bound to the artifact's declaring project/session subtree.
-  resolveArtifactPath?: (request: {
-    path: string
-    projectName: string
-    sessionId: string
-  }) => Promise<string>
   environmentStateTracker?: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -338,8 +333,7 @@ class NotebookRuntimeService {
     this.exportReader = new NotebookExportReader({
       repository: this.repository,
       defaultProjectName: options.projectName,
-      appVersion: options.appVersion,
-      resolveArtifactPath: options.resolveArtifactPath
+      appVersion: options.appVersion
     })
     this.sessions = new NotebookSessionRegistry({
       beforeTeardown: async () => {
@@ -437,6 +431,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      micromambaRunner: options.micromambaRunner,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({

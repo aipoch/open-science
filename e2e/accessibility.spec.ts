@@ -2,7 +2,8 @@ import { expect } from '@playwright/test'
 import type { AxeResults } from 'axe-core'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
+import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
@@ -46,6 +47,48 @@ const waitForFiniteAnimations = async (page: Page): Promise<void> => {
       .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
     await Promise.allSettled(animations.map((animation) => animation.finished))
   })
+}
+
+const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
+  await page.setViewportSize({ width, height })
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
+}
+
+const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
+  const homeThemeMenu = page.getByRole('button', { name: /^Theme:/ })
+  const workspaceNavigation = page.getByRole('complementary', { name: 'Workspace navigation' })
+  await expect(homeThemeMenu.or(workspaceNavigation)).toBeVisible()
+  if (await homeThemeMenu.isVisible()) {
+    await homeThemeMenu.click()
+    await page.getByRole('menuitem', { name: new RegExp(`^${theme}`) }).click()
+  } else {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const settings = page.getByRole('dialog', { name: 'Settings' })
+    await settings
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('button', { name: 'General', exact: true })
+      .click()
+    await settings
+      .getByRole('radiogroup', { name: 'Theme' })
+      .getByRole('radio', { name: theme })
+      .click()
+    await page.keyboard.press('Escape')
+    await expect(settings).toBeHidden()
+  }
+  if (theme === 'Dark') await expect(page.locator('html')).toHaveClass(/dark/)
+  else await expect(page.locator('html')).not.toHaveClass(/dark/)
+}
+
+const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<void> => {
+  await expect(target).toBeVisible()
+  for (let index = 0; index < maxTabs; index += 1) {
+    if (await target.evaluate((element) => document.activeElement === element)) return
+    await page.keyboard.press('Tab')
+  }
+  await expect(
+    target,
+    `Keyboard focus did not reach ${await target.getAttribute('aria-label')}`
+  ).toBeFocused()
 }
 
 test('has no blocking accessibility violations in startup and home surfaces', async ({ app }) => {
@@ -120,9 +163,126 @@ test('has no blocking accessibility violations in permission and file preview st
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await setViewport(page, 767)
+  await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
+  await waitForFiniteAnimations(page)
+  await expectNoBlockingViolations(page, 'Project files (narrow)')
   await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
   const preview = page.getByRole('dialog', { name: 'Preview accessible-preview.md' })
   await expect(preview).toBeVisible()
   await waitForFiniteAnimations(page)
   await expectNoBlockingViolations(page, 'File preview dialog')
+})
+
+test('has no blocking accessibility violations across representative state combinations', async ({
+  app
+}) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+  await setViewport(page, 1280)
+  const projectId = await createProject(page, 'Accessible state matrix')
+
+  const prompts = [
+    'Summarize how reproducible research benefits from keeping inputs, code, environment details, and outputs together for later inspection.',
+    'Compare a quick exploratory analysis with a documented workflow that another researcher can audit, rerun, and extend.',
+    'List the practical checks a team should make before sharing a computational result with collaborators or reviewers.'
+  ]
+  for (const prompt of prompts) {
+    await sendPrompt(page, prompt, 'Deterministic reply: Summarize the deterministic fixture.')
+  }
+  await setTheme(page, 'Dark')
+  await expectNoBlockingViolations(page, 'Long conversation (dark)')
+
+  await sendPrompt(
+    page,
+    'Create a provenance artifact.',
+    'Artifact provenance verified for session',
+    90_000
+  )
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page
+    .locator('[data-testid="files-view"]')
+    .getByRole('button', { name: 'Preview generated file provenance-evidence.txt' })
+    .click()
+  const preview = page.getByRole('dialog', { name: 'Preview provenance-evidence.txt' })
+  await expect(preview).toBeVisible()
+  await preview.getByRole('button', { name: 'Open Provenance for provenance-evidence.txt' }).click()
+  const provenance = page.locator('[data-testid="artifact-provenance"]')
+  await expect(provenance).toBeVisible()
+  await expect(provenance.getByLabel('Loading Provenance')).toBeHidden({ timeout: 30_000 })
+  await expectNoBlockingViolations(page, 'Artifact provenance')
+  await provenance.getByRole('button', { name: 'Close Provenance' }).click()
+  await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
+  await page
+    .getByRole('tablist', { name: 'Open previews' })
+    .getByRole('tab', { name: 'Files' })
+    .press('Delete')
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Compute', exact: true })
+    .click()
+  await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+  await setViewport(page, 767)
+  await expectNoBlockingViolations(page, 'Compute settings (narrow, dark)')
+  await settings.getByRole('button', { name: 'Close settings' }).click()
+  await expect(settings).toBeHidden()
+
+  await app.writeCorruptSessionFile(projectId)
+  page = await app.restart()
+  const recoveryAlert = page
+    .getByRole('alert')
+    .filter({ hasText: 'Saved conversation data was damaged' })
+  await expect(recoveryAlert).toBeVisible()
+  await expectNoBlockingViolations(page, 'Conversation recovery warning')
+})
+
+test('supports the core project journey with keyboard input only', async ({ app }) => {
+  let page = await app.completeOnboarding()
+  page = await app.configureFakeAgent()
+
+  const newProject = page.getByRole('button', { name: 'New project' })
+  await focusWithTab(page, newProject)
+  await page.keyboard.press('Enter')
+  const projectDialog = page.getByRole('dialog', { name: 'New project' })
+  await expect(projectDialog).toBeVisible()
+  const name = projectDialog.getByLabel('Name')
+  await focusWithTab(page, name)
+  await page.keyboard.type('Keyboard journey')
+  const create = projectDialog.getByRole('button', { name: 'Create project' })
+  await focusWithTab(page, create)
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+
+  const composer = page.getByRole('textbox', { name: 'Ask anything' })
+  await focusWithTab(page, composer)
+  await page.keyboard.type('Summarize the deterministic fixture.')
+  const send = page.getByRole('button', { name: 'Send message' })
+  await focusWithTab(page, send)
+  await page.keyboard.press('Enter')
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: false })
+  ).toBeVisible()
+
+  const files = page.getByRole('button', { name: 'Files', exact: true })
+  await focusWithTab(page, files)
+  await page.keyboard.press('Enter')
+  await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
+
+  const settingsTrigger = page.getByRole('button', { name: 'Settings', exact: true })
+  await focusWithTab(page, settingsTrigger)
+  await page.keyboard.press('Enter')
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settings).toBeVisible()
+  const compute = settings
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('button', { name: 'Compute', exact: true })
+  await focusWithTab(page, compute)
+  await page.keyboard.press('Enter')
+  await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(settings).toBeHidden()
+  await expect(settingsTrigger).toBeFocused()
 })

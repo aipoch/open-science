@@ -86,7 +86,7 @@ describe('ACP Session presentation policy', () => {
       metaArg: {
         _meta: {
           claudeCode: {
-            emitRawSDKMessages: [{ type: 'result' }],
+            emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
             options: {
               tools: { type: 'preset', preset: 'claude_code' },
               plugins: [{ type: 'local', path: '/app/claude' }],
@@ -204,6 +204,37 @@ describe('ACP Session presentation policy', () => {
         specialistSkills
       })
     ).toBeUndefined()
+  })
+
+  it.each([
+    ['OpenCode', opencodeFramework],
+    ['Codex Responses', codexFramework],
+    ['Codex Bridge', codexFramework]
+  ] as const)(
+    'keeps the %s Session setup prefix after Specialist identity on every turn',
+    (_route, framework) => {
+      expect(
+        policy.buildTurnPromptPrefix({
+          framework,
+          tooling: { artifacts: false, notebook: false, skillImport: false },
+          specialistPrefix: 'Specialist identity.',
+          sessionSetupPromptPrefix: 'Project Agent Context.'
+        })
+      ).toBe('Specialist identity.\n\nProject Agent Context.')
+    }
+  )
+
+  it('does not repeat a launcher prefix that is identical during Session setup and turn setup', () => {
+    expect(
+      policy.buildTurnPromptPrefix({
+        framework: {
+          ...codexFramework,
+          buildSessionSetup: () => ({ promptPrefix: 'Framework guidance.' })
+        },
+        tooling: { artifacts: false, notebook: false, skillImport: false },
+        sessionSetupPromptPrefix: 'Framework guidance.'
+      })
+    ).toBe('Framework guidance.')
   })
 
   it('renders exact Specialist handoff continuation text from the original request and result', () => {

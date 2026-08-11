@@ -1,4 +1,4 @@
-// Tracks jobs whose background dispatch is currently in flight (mkdir + input staging + launch).
+// Tracks jobs whose dispatch handoff or background work is in flight (mkdir + staging + launch).
 //
 // Why this exists: a job sits in status 'submitted' with no remote_handle for the entire dispatch
 // window. Since input staging can scp GB-scale files with a 30-minute timeout (scp-runner.ts), that
@@ -14,26 +14,48 @@
 // no-handle from before the restart is correctly seen as orphaned. This is exactly the semantics
 // design.md §8 boundary 3 asks for.
 export class DispatchTracker {
-  private readonly inFlight = new Set<string>()
+  private readonly inFlight = new Map<string, number>()
+  private readonly waiters = new Map<string, Set<() => void>>()
 
-  // Marks a job's dispatch as started. Call synchronously before the first await of dispatchJob so
-  // the poller can never observe the job as untracked while its dispatch is genuinely running.
+  // Acquires one dispatch lease. The submit path holds a handoff lease before publishing the row;
+  // dispatchJob acquires its own lease synchronously before its first await.
   begin(jobId: string): void {
-    this.inFlight.add(jobId)
+    this.inFlight.set(jobId, (this.inFlight.get(jobId) ?? 0) + 1)
   }
 
-  // Marks a job's dispatch as finished (success or failure). Always call from a finally block.
+  // Releases one lease and wakes waiters only after the final overlapping lease is released.
   end(jobId: string): void {
+    const leases = this.inFlight.get(jobId)
+    if (leases === undefined) return
+    if (leases > 1) {
+      this.inFlight.set(jobId, leases - 1)
+      return
+    }
     this.inFlight.delete(jobId)
+    const waiters = this.waiters.get(jobId)
+    this.waiters.delete(jobId)
+    for (const resolve of waiters ?? []) resolve()
   }
 
   // Whether a job's dispatch is currently in flight in this process.
   has(jobId: string): boolean {
     return this.inFlight.has(jobId)
   }
+
+  async waitFor(jobIds: readonly string[]): Promise<void> {
+    await Promise.all(
+      [...new Set(jobIds)].map((jobId) => {
+        if (!this.inFlight.has(jobId)) return Promise.resolve()
+        return new Promise<void>((resolve) => {
+          const waiters = this.waiters.get(jobId) ?? new Set()
+          waiters.add(resolve)
+          this.waiters.set(jobId, waiters)
+        })
+      })
+    )
+  }
 }
 
-// Process-wide shared tracker. ComputeService's dispatchJob writes to it; JobPoller reads from it.
-// Both default to this instance so production wiring shares one tracker without threading it through
-// every constructor. Tests inject their own DispatchTracker for isolation.
+// Process-wide shared tracker. Submit handoff and dispatchJob write to it; JobPoller and owner
+// deletion read from it. Defaults keep production wiring on one tracker without constructor plumbing.
 export const sharedDispatchTracker = new DispatchTracker()

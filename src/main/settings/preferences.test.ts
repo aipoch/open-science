@@ -30,7 +30,8 @@ describe('SettingsPreferencesModule', () => {
       reasoningEffort: 'default',
       notificationsEnabled: true,
       conversationSkillImportEnabled: true,
-      appIconVariant: 'light'
+      appIconVariant: 'light',
+      defaultPermissionProfile: 'ask'
     })
   })
 
@@ -43,6 +44,7 @@ describe('SettingsPreferencesModule', () => {
     await preferences.setConversationSkillImportEnabled(false)
     await preferences.setClosePreference('quit')
     await preferences.setAppIconVariant('dark')
+    await preferences.setDefaultPermissionProfile('auto')
     await preferences.setDataRoot(dataRoot)
     await preferences.markOnboardingComplete()
     await preferences.markPathsNormalized()
@@ -57,7 +59,8 @@ describe('SettingsPreferencesModule', () => {
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
       closePreference: 'quit',
-      appIconVariant: 'dark'
+      appIconVariant: 'dark',
+      defaultPermissionProfile: 'auto'
     })
 
     await preferences.setClosePreference(undefined)
@@ -70,7 +73,8 @@ describe('SettingsPreferencesModule', () => {
       reasoningEffort: 'high',
       notificationsEnabled: false,
       conversationSkillImportEnabled: false,
-      appIconVariant: 'dark'
+      appIconVariant: 'dark',
+      defaultPermissionProfile: 'auto'
     })
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })

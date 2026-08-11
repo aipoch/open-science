@@ -1,0 +1,291 @@
+import { basename, isAbsolute } from 'node:path'
+
+import { fuzzyScore } from '../../shared/fuzzy-match'
+import type {
+  HostArtifact,
+  HostArtifactCatalogItem,
+  HostArtifactsResult
+} from '../../shared/project-files'
+import { createUploadVersionReference } from '../../shared/uploads'
+
+type HostArtifactCatalog = {
+  readHostArtifactCatalog(request: {
+    projectId: string
+    versionId?: string
+  }): Promise<HostArtifactCatalogItem[]>
+}
+
+type HostArtifactPathResolvers = {
+  artifact: {
+    resolveVersionContent(request: {
+      projectId: string
+      appSessionId: string
+      artifactId: string
+      versionId: string
+    }): Promise<{ path: string }>
+  }
+  upload: {
+    resolveManagedUploadPath(
+      request: { path: string },
+      scope: { projectId: string; sessionId: string }
+    ): Promise<string>
+  }
+}
+
+type HostArtifactReadContext = { projectId: string; sessionId: string }
+
+type NormalizedOptions = {
+  versionId?: string
+  sessionId?: string
+  filename?: string
+  exact: boolean
+  search?: string
+  contentType?: string
+  afterMs?: number
+  beforeMs?: number
+  cursor?: string
+  limit: number
+}
+
+type Cursor = { version: 1; queryKey: string; offset: number }
+
+const OPTION_KEYS = new Set([
+  'version_id',
+  'session_id',
+  'filename',
+  'exact',
+  'search',
+  'content_type',
+  'after',
+  'before',
+  'cursor',
+  'limit'
+])
+const DEFAULT_LIMIT = 20
+const MAX_LIMIT = 100
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const optionalString = (
+  options: Record<string, unknown>,
+  key: string,
+  maxLength = 256
+): string | undefined => {
+  const value = options[key]
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
+    throw new Error(
+      `host.artifacts ${key} must be a non-empty string of at most ${maxLength} characters.`
+    )
+  }
+  return value
+}
+
+const parseUtcTime = (value: string, key: 'after' | 'before'): number => {
+  const normalized = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? `${value}T00:00:00.000Z` : value
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/u.test(
+      normalized
+    )
+  ) {
+    throw new Error(`host.artifacts ${key} must be a UTC date or ISO timestamp with an offset.`)
+  }
+  const parsed = Date.parse(normalized)
+  if (!Number.isFinite(parsed)) throw new Error(`host.artifacts ${key} is not a valid time.`)
+  if (/^\d{4}-\d{2}-\d{2}$/u.test(value) && new Date(parsed).toISOString().slice(0, 10) !== value) {
+    throw new Error(`host.artifacts ${key} is not a valid UTC date.`)
+  }
+  return parsed
+}
+
+const normalizeOptions = (value: unknown): NormalizedOptions => {
+  if (value === undefined) value = {}
+  if (!isRecord(value)) throw new Error('host.artifacts options must be an object.')
+  const unknown = Object.keys(value).filter((key) => !OPTION_KEYS.has(key))
+  if (unknown.length > 0) throw new Error(`host.artifacts unknown option: ${unknown[0]}`)
+
+  const versionId = optionalString(value, 'version_id', 512)
+  if (versionId && Object.keys(value).length !== 1) {
+    throw new Error('host.artifacts version_id cannot be combined with other options.')
+  }
+
+  const sessionId = optionalString(value, 'session_id', 512)
+  const filename = optionalString(value, 'filename')
+  const search = optionalString(value, 'search')
+  const contentType = optionalString(value, 'content_type')
+  const after = optionalString(value, 'after', 64)
+  const before = optionalString(value, 'before', 64)
+  const cursor = optionalString(value, 'cursor', 4096)
+  const exact = value.exact === undefined ? false : value.exact
+  if (typeof exact !== 'boolean') throw new Error('host.artifacts exact must be a boolean.')
+  if (exact && !filename) throw new Error('host.artifacts exact requires filename.')
+  if (search && filename) throw new Error('host.artifacts search cannot be combined with filename.')
+  const limit = value.limit === undefined ? DEFAULT_LIMIT : value.limit
+  if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_LIMIT) {
+    throw new Error(`host.artifacts limit must be an integer between 1 and ${MAX_LIMIT}.`)
+  }
+  const afterMs = after ? parseUtcTime(after, 'after') : undefined
+  const beforeMs = before ? parseUtcTime(before, 'before') : undefined
+  if (afterMs !== undefined && beforeMs !== undefined && afterMs >= beforeMs) {
+    throw new Error('host.artifacts after must be earlier than before.')
+  }
+
+  return {
+    versionId,
+    sessionId,
+    filename,
+    exact,
+    search,
+    contentType,
+    afterMs,
+    beforeMs,
+    cursor,
+    limit: limit as number
+  }
+}
+
+const encodeCursor = (cursor: Cursor): string =>
+  Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
+
+const decodeCursor = (value: string, queryKey: string): Cursor => {
+  let cursor: unknown
+  try {
+    cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown
+  } catch {
+    throw new Error('host.artifacts cursor is invalid.')
+  }
+  if (
+    !isRecord(cursor) ||
+    cursor.version !== 1 ||
+    cursor.queryKey !== queryKey ||
+    !Number.isInteger(cursor.offset) ||
+    (cursor.offset as number) < 0
+  ) {
+    throw new Error('host.artifacts cursor does not match the requested filters.')
+  }
+  return cursor as Cursor
+}
+
+const toHostArtifact = (item: HostArtifactCatalogItem): HostArtifact => ({
+  id: item.sourceFileId,
+  filename: item.filename,
+  ...(item.contentType ? { content_type: item.contentType } : {}),
+  size_bytes: item.sizeBytes,
+  latest_version_id: item.versionId,
+  ...(item.checksum ? { checksum: item.checksum } : {}),
+  session_id: item.sessionId,
+  root_frame_id: item.rootFrameId,
+  is_user_upload: item.source === 'upload',
+  latest_version_created_at: new Date(item.sortAtMs).toISOString()
+})
+
+class HostArtifactsService {
+  constructor(
+    private readonly catalog: HostArtifactCatalog,
+    private readonly resolvers: HostArtifactPathResolvers
+  ) {}
+
+  async list(options: unknown, context: HostArtifactReadContext): Promise<HostArtifactsResult> {
+    const normalized = normalizeOptions(options)
+    const candidates = await this.catalog.readHostArtifactCatalog({
+      projectId: context.projectId,
+      ...(normalized.versionId ? { versionId: normalized.versionId } : {})
+    })
+    const ranked = candidates.flatMap((item) => {
+      if (normalized.sessionId && item.sessionId !== normalized.sessionId) return []
+      if (normalized.filename) {
+        const matches = normalized.exact
+          ? basename(item.filename) === normalized.filename
+          : item.filename.toLowerCase().includes(normalized.filename.toLowerCase())
+        if (!matches) return []
+      }
+      if (
+        normalized.contentType &&
+        item.contentType?.toLowerCase() !== normalized.contentType.toLowerCase()
+      ) {
+        return []
+      }
+      if (normalized.afterMs !== undefined && item.sortAtMs < normalized.afterMs) return []
+      if (normalized.beforeMs !== undefined && item.sortAtMs >= normalized.beforeMs) return []
+      const match = normalized.search ? fuzzyScore(normalized.search, item.filename) : undefined
+      if (normalized.search && !match) return []
+      return [{ item, score: match?.score ?? 0 }]
+    })
+    if (normalized.search) {
+      ranked.sort(
+        (left, right) =>
+          right.score - left.score ||
+          right.item.sortAtMs - left.item.sortAtMs ||
+          (`${left.item.source}:${left.item.sourceFileId}` <
+          `${right.item.source}:${right.item.sourceFileId}`
+            ? -1
+            : 1)
+      )
+    }
+
+    const queryKey = JSON.stringify({
+      projectId: context.projectId,
+      sessionId: normalized.sessionId,
+      filename: normalized.filename,
+      exact: normalized.exact,
+      search: normalized.search,
+      contentType: normalized.contentType,
+      afterMs: normalized.afterMs,
+      beforeMs: normalized.beforeMs
+    })
+    const offset = normalized.cursor ? decodeCursor(normalized.cursor, queryKey).offset : 0
+    if (offset > ranked.length) throw new Error('host.artifacts cursor is no longer valid.')
+    const page = ranked.slice(offset, offset + normalized.limit)
+    const nextOffset = offset + page.length
+    const truncated = nextOffset < ranked.length
+    const artifacts = page.map(({ item }) => toHostArtifact(item))
+    return {
+      count: artifacts.length,
+      project_id: context.projectId,
+      truncated,
+      ...(truncated
+        ? { next_cursor: encodeCursor({ version: 1, queryKey, offset: nextOffset }) }
+        : {}),
+      artifacts
+    }
+  }
+
+  async resolvePath(versionIdValue: unknown, context: HostArtifactReadContext): Promise<string> {
+    if (typeof versionIdValue !== 'string' || !versionIdValue || versionIdValue.length > 512) {
+      throw new Error('host.artifact_path version_id must be a non-empty string.')
+    }
+    const [item] = await this.catalog.readHostArtifactCatalog({
+      projectId: context.projectId,
+      versionId: versionIdValue
+    })
+    if (!item)
+      throw new Error(`Artifact Version not found in the current Project: ${versionIdValue}`)
+
+    const resolved =
+      item.source === 'artifact'
+        ? await this.resolvers.artifact.resolveVersionContent({
+            projectId: context.projectId,
+            appSessionId: item.sessionId,
+            artifactId: item.sourceFileId,
+            versionId: item.versionId
+          })
+        : {
+            path: await this.resolvers.upload.resolveManagedUploadPath(
+              {
+                path: createUploadVersionReference(item.versionId, {
+                  projectId: context.projectId,
+                  sessionId: item.sessionId
+                })
+              },
+              { projectId: context.projectId, sessionId: item.sessionId }
+            )
+          }
+    if (!isAbsolute(resolved.path))
+      throw new Error('Managed Artifact resolver returned a relative path.')
+    return resolved.path
+  }
+}
+
+export { HostArtifactsService }
+export type { HostArtifactCatalog, HostArtifactPathResolvers, HostArtifactReadContext }

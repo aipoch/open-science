@@ -9,7 +9,13 @@ import type {
   SetGrantedLocalRootAccessRequest
 } from '../shared/local-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  NotificationInboxSnapshot,
+  NotificationMarkAllReadRequest,
+  NotificationMarkReadRequest,
+  NotificationMarkSessionCompletionsReadRequest,
+  OpenSessionFromNotificationRequest
+} from '../shared/notifications'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -43,6 +49,11 @@ import type { CliCommandOwner } from './cli-install/ipc'
 import type { GithubCommandOwner } from './github-ipc'
 import type { LocalFsService } from './local-fs/service'
 import type { LogsCommandOwner } from './logs-ipc'
+import {
+  requireNotificationMarkAllReadRequest,
+  requireNotificationMarkReadRequest,
+  requireNotificationMarkSessionCompletionsReadRequest
+} from './notifications/notification-inbox-requests'
 import {
   canManagePairing,
   isDesktopCaller,
@@ -125,6 +136,26 @@ const logsCommands = Object.freeze({
 })
 
 const notificationCommands = Object.freeze({
+  getSnapshot: defineApplicationCommand<
+    'notifications:get-snapshot',
+    readonly [],
+    NotificationInboxSnapshot
+  >('notifications:get-snapshot'),
+  markAllRead: defineApplicationCommand<
+    'notifications:mark-all-read',
+    readonly [request: NotificationMarkAllReadRequest],
+    void
+  >('notifications:mark-all-read'),
+  markRead: defineApplicationCommand<
+    'notifications:mark-read',
+    readonly [request: NotificationMarkReadRequest],
+    void
+  >('notifications:mark-read'),
+  markSessionCompletionsRead: defineApplicationCommand<
+    'notifications:mark-session-completions-read',
+    readonly [request: NotificationMarkSessionCompletionsReadRequest],
+    void
+  >('notifications:mark-session-completions-read'),
   peekPendingOpenSession: defineApplicationCommand<
     'notifications:peek-pending-open-session',
     readonly [],
@@ -300,6 +331,12 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   logs: LogsCommandOwner
   notifications: Readonly<{
+    getSnapshot: () => Promise<NotificationInboxSnapshot>
+    markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
+    markRead: (request: NotificationMarkReadRequest) => Promise<void>
+    markSessionCompletionsRead: (
+      request: NotificationMarkSessionCompletionsReadRequest
+    ) => Promise<void>
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
   }>
@@ -400,6 +437,15 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:get-snapshot': () => dependencies.notifications.getSnapshot(),
+      'notifications:mark-all-read': ({ args }) =>
+        dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
+      'notifications:mark-read': ({ args }) =>
+        dependencies.notifications.markRead(requireNotificationMarkReadRequest(args[0])),
+      'notifications:mark-session-completions-read': ({ args }) =>
+        dependencies.notifications.markSessionCompletionsRead(
+          requireNotificationMarkSessionCompletionsReadRequest(args[0])
+        ),
       'notifications:peek-pending-open-session': () =>
         dependencies.notifications.peekPendingOpenSession(),
       'notifications:take-pending-open-session': ({ args }) =>

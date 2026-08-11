@@ -365,35 +365,6 @@ const ComposerAgentControlsMenu = ({
                 </DropdownMenuSub>
               )}
 
-              {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
-              <DropdownMenuItem
-                disabled={readOnly || autoReviewDisabled}
-                className="items-center gap-2 px-2 py-1.5"
-                onSelect={(event) => {
-                  event.preventDefault()
-                  onAutoReviewChange(!autoReviewEnabled)
-                }}
-              >
-                <ScanEye
-                  className="size-4 shrink-0 text-text-200"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
-                  <span className="block text-[11px] leading-4 text-text-300">
-                    A reviewer agent checks every change before it lands.
-                  </span>
-                </span>
-                <Switch
-                  size="sm"
-                  checked={autoReviewEnabled}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  className="pointer-events-none"
-                />
-              </DropdownMenuItem>
-
               {hasGrants ? (
                 <div className="mt-1 border-t border-border-200 pt-1">
                   <div className="flex items-center justify-between px-2 pb-0.5">
@@ -444,6 +415,37 @@ const ComposerAgentControlsMenu = ({
                   </div>
                 </div>
               ) : null}
+
+              <DropdownMenuSeparator />
+
+              {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
+              <DropdownMenuItem
+                disabled={readOnly || autoReviewDisabled}
+                className="items-center gap-2 px-2 py-1.5"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  onAutoReviewChange(!autoReviewEnabled)
+                }}
+              >
+                <ScanEye
+                  className="size-4 shrink-0 text-text-200"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    A reviewer agent checks every change before it lands.
+                  </span>
+                </span>
+                <Switch
+                  size="sm"
+                  checked={autoReviewEnabled}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
 
               {/* Specialist + Compute are one resource-selection group: a single divider leads
                   the group (above Specialist when present, above Compute otherwise), so the two

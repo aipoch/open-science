@@ -1,0 +1,460 @@
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+
+import type { PrismaClient } from '@prisma/client'
+
+import type {
+  ArtifactVersionFile,
+  CreateArtifactVersionRequest
+} from '../../shared/artifact-provenance'
+import type { ArtifactDurability } from './durability'
+import { sha256 } from './provenance-canonical'
+import type {
+  ArtifactVersionProducerCapture,
+  PreparedArtifactVersionPersistence
+} from './provenance-producer-capture'
+import type { ArtifactRepository } from './repository'
+
+const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+const VERSION_ALLOCATION_MAX_ATTEMPTS = 3
+
+const assertSafeSegment = (value: string, label: string): string => {
+  if (!SAFE_SEGMENT_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}: ${value}`)
+  }
+  return value
+}
+
+const assertChecksum = (value: string, label: string): string => {
+  if (!SHA256_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}: expected lowercase SHA-256`)
+  }
+  return value
+}
+
+// JavaScript has no native toCaseFold. Locale-independent lowercase plus the multi-character and
+// positional folds that differ on supported filenames covers the portability cases that ordinary
+// lowercasing misses (notably German sharp-s and Greek final sigma).
+const normalizeArtifactFilename = (filename: string): string =>
+  filename
+    .normalize('NFC')
+    .toLocaleLowerCase('und')
+    .replace(/\u00df/gu, 'ss')
+    .replace(/\u03c2/gu, '\u03c3')
+
+const storageKey = (...segments: string[]): string => segments.join('/')
+const isRetryableLineageVersionConflict = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'P2002') {
+    return false
+  }
+  const meta =
+    'meta' in error && typeof error.meta === 'object' && error.meta ? error.meta : undefined
+  const target = meta && 'target' in meta ? meta.target : undefined
+  const fields = Array.isArray(target) ? target.map(String) : [String(target ?? '')]
+  const joined = fields.join(' ')
+  return (
+    (joined.includes('artifactId') && joined.includes('versionNumber')) ||
+    (joined.includes('projectId') &&
+      joined.includes('sessionId') &&
+      joined.includes('normalizedFilename'))
+  )
+}
+
+const withVersionAllocationRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (attempt >= VERSION_ALLOCATION_MAX_ATTEMPTS || !isRetryableLineageVersionConflict(error)) {
+        throw error
+      }
+    }
+  }
+}
+
+type CompatibilityRoutingPublicationOptions = {
+  allowRoutingReplacement?: boolean
+  replaceUnroutedBytes?: boolean
+}
+type PersistedVersionFileRecord = {
+  id: string
+  artifactId: string
+  versionNumber: number
+  filename: string
+  artifactRunId: string
+  contentStorageKey: string
+  contentType: string | null
+  sizeBytes: bigint
+  checksum: string
+  createdAt: Date
+  producerRunId: string | null
+  executionSnapshotJson: string | null
+}
+type StagingArtifactVersionRecord = PersistedVersionFileRecord & {
+  state: string
+  evidenceStorageKey: string
+  evidenceJson: string
+  evidenceChecksum: string
+  executionSnapshotChecksum: string | null
+  executionSnapshotStorageKey: string | null
+  artifact: { id: string; filename: string }
+}
+type PublishCompatibilityRouting = (
+  version: PersistedVersionFileRecord,
+  options?: CompatibilityRoutingPublicationOptions
+) => Promise<void>
+
+type ArtifactProvenanceVersionWriterOptions = {
+  storageRoot: string
+  getClient: () => Promise<PrismaClient>
+  compatibilityRepository: Pick<ArtifactRepository, 'listPendingRunFiles'>
+  createId: () => string
+  now: () => Date
+  durability: ArtifactDurability
+  captureProducer: (
+    request: CreateArtifactVersionRequest,
+    createdAt: Date,
+    artifactChecksum: string
+  ) => Promise<ArtifactVersionProducerCapture>
+  prepareVersionPersistence: (input: {
+    request: CreateArtifactVersionRequest
+    producer: ArtifactVersionProducerCapture
+    artifactId: string
+    versionId: string
+    versionNumber: number
+    checksum: string
+    sizeBytes: number
+    createdAt: Date
+  }) => PreparedArtifactVersionPersistence
+  recoverStagingVersion: (
+    version: StagingArtifactVersionRecord,
+    projectId: string,
+    appSessionId: string,
+    requestedFilename: string,
+    publishCompatibilityRouting: PublishCompatibilityRouting
+  ) => Promise<ArtifactVersionFile>
+  projectVersionFile: (
+    version: PersistedVersionFileRecord,
+    projectId: string,
+    appSessionId: string
+  ) => Promise<ArtifactVersionFile>
+}
+
+class ArtifactProvenanceVersionWriter {
+  // Repository instances can coexist over separate Prisma clients for the same database. Serialize
+  // lineage identity allocation process-wide so those clients cannot race a case-folded filename.
+  private static readonly lineageWrites = new Map<string, Promise<void>>()
+
+  constructor(private readonly options: ArtifactProvenanceVersionWriterOptions) {}
+
+  async writeVersion(
+    request: CreateArtifactVersionRequest,
+    publishCompatibilityRouting: PublishCompatibilityRouting
+  ): Promise<ArtifactVersionFile> {
+    const lineageKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}\0${normalizeArtifactFilename(request.filename)}`
+    const previous =
+      ArtifactProvenanceVersionWriter.lineageWrites.get(lineageKey) ?? Promise.resolve()
+    let release = (): void => undefined
+    const current = new Promise<void>((resolveCurrent) => {
+      release = resolveCurrent
+    })
+    const tail = previous.then(() => current)
+    ArtifactProvenanceVersionWriter.lineageWrites.set(lineageKey, tail)
+    await previous
+
+    try {
+      return await this.writeVersionSerialized(request, publishCompatibilityRouting)
+    } finally {
+      release()
+      if (ArtifactProvenanceVersionWriter.lineageWrites.get(lineageKey) === tail) {
+        ArtifactProvenanceVersionWriter.lineageWrites.delete(lineageKey)
+      }
+    }
+  }
+
+  private async writeVersionSerialized(
+    request: CreateArtifactVersionRequest,
+    publishCompatibilityRouting: PublishCompatibilityRouting
+  ): Promise<ArtifactVersionFile> {
+    const projectId = assertSafeSegment(request.projectId, 'project id')
+    const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
+    const artifactStorageSessionId = assertSafeSegment(
+      request.artifactStorageSessionId,
+      'artifact storage session id'
+    )
+    const artifactRunId = assertSafeSegment(request.artifactRunId, 'artifact run id')
+    const writeOperationId = assertSafeSegment(request.writeOperationId, 'write operation id')
+    const writeRequestChecksum = assertChecksum(
+      request.writeRequestChecksum,
+      'write request checksum'
+    )
+    const normalizedFilename = normalizeArtifactFilename(request.filename)
+    const client = await this.options.getClient()
+    const existing = await client.artifactVersion.findUnique({
+      where: { writeOperationId },
+      include: {
+        artifact: true,
+        messageSnapshot: true,
+        inputs: { orderBy: { ordinal: 'asc' } }
+      }
+    })
+
+    if (existing) {
+      if (
+        existing.writeRequestChecksum !== writeRequestChecksum ||
+        existing.artifact.projectId !== projectId ||
+        existing.artifact.sessionId !== appSessionId
+      ) {
+        throw new Error(
+          `Artifact write operation was reused for a different request: ${writeOperationId}`
+        )
+      }
+      if (existing.state === 'staging') {
+        return this.options.recoverStagingVersion(
+          existing,
+          projectId,
+          appSessionId,
+          request.filename,
+          publishCompatibilityRouting
+        )
+      }
+      if (existing.state !== 'pending' && existing.state !== 'finalized') {
+        throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
+      }
+
+      if (existing.state === 'pending') {
+        await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true })
+      }
+      return this.options.projectVersionFile(existing, projectId, appSessionId)
+    }
+
+    const pendingFiles = await this.options.compatibilityRepository.listPendingRunFiles({
+      projectName: projectId,
+      sessionId: artifactStorageSessionId,
+      runId: artifactRunId
+    })
+    const matchingPendingFiles = pendingFiles.filter(
+      (file) => normalizeArtifactFilename(file.name) === normalizedFilename
+    )
+    const pendingFile =
+      matchingPendingFiles.find((file) => file.name === request.filename) ??
+      (matchingPendingFiles.length === 1 ? matchingPendingFiles[0] : undefined)
+
+    if (!pendingFile) {
+      if (matchingPendingFiles.length > 1) {
+        throw new Error(`Pending artifact filename is ambiguous: ${request.filename}`)
+      }
+      throw new Error(`Pending artifact file not found: ${request.filename}`)
+    }
+
+    const versionId = this.options.createId()
+    const stagingStorageKey = storageKey(
+      'artifacts',
+      projectId,
+      appSessionId,
+      '.provenance',
+      '.staging',
+      'versions',
+      versionId
+    )
+    const stagingDirectory = join(this.options.storageRoot, ...stagingStorageKey.split('/'))
+    const stagingContentPath = join(stagingDirectory, 'content')
+
+    await mkdir(stagingDirectory, { recursive: true })
+    await copyFile(pendingFile.path, stagingContentPath)
+
+    let stagingRowPersisted = false
+    try {
+      await this.options.durability.syncFile(stagingContentPath)
+      const content = await readFile(stagingContentPath)
+      const checksum = sha256(content)
+      const createdAt = this.options.now()
+      const producer = await this.options.captureProducer(request, createdAt, checksum)
+      const persisted = await withVersionAllocationRetry(() =>
+        client.$transaction(async (transaction) => {
+          const origin = await transaction.fileOriginSession.upsert({
+            where: { projectId_sessionId: { projectId, sessionId: appSessionId } },
+            create: {
+              projectId,
+              sessionId: appSessionId,
+              titleSnapshot: request.titleSnapshot
+            },
+            update: request.titleSnapshot ? { titleSnapshot: request.titleSnapshot } : {}
+          })
+          if (origin.state !== 'active') {
+            throw new Error('Artifact origin Session is being deleted and cannot accept a Version.')
+          }
+
+          let lineage = await transaction.artifactLineage.findUnique({
+            where: {
+              projectId_sessionId_normalizedFilename: {
+                projectId,
+                sessionId: appSessionId,
+                normalizedFilename
+              }
+            }
+          })
+          if (!lineage) {
+            lineage = await transaction.artifactLineage.create({
+              data: {
+                id: this.options.createId(),
+                projectId,
+                sessionId: appSessionId,
+                normalizedFilename,
+                filename: request.filename
+              }
+            })
+          }
+
+          const latest = await transaction.artifactVersion.aggregate({
+            where: { artifactId: lineage.id },
+            _max: { versionNumber: true }
+          })
+          const versionNumber = (latest._max.versionNumber ?? 0) + 1
+          const contentStorageKey = storageKey(
+            'artifacts',
+            projectId,
+            appSessionId,
+            '.provenance',
+            lineage.id,
+            'versions',
+            versionId,
+            'content'
+          )
+          const evidenceStorageKey = storageKey(
+            'artifacts',
+            projectId,
+            appSessionId,
+            '.provenance',
+            lineage.id,
+            'versions',
+            versionId,
+            'evidence.json'
+          )
+          const prepared = this.options.prepareVersionPersistence({
+            request,
+            producer,
+            artifactId: lineage.id,
+            versionId,
+            versionNumber,
+            checksum,
+            sizeBytes: content.byteLength,
+            createdAt
+          })
+          const executionSnapshotStorageKey = prepared.executionSnapshotJson
+            ? storageKey(
+                'artifacts',
+                projectId,
+                appSessionId,
+                '.provenance',
+                lineage.id,
+                'versions',
+                versionId,
+                'execution.json'
+              )
+            : undefined
+
+          return transaction.artifactVersion.create({
+            data: {
+              id: versionId,
+              artifactId: lineage.id,
+              versionNumber,
+              filename: request.filename,
+              artifactRunId,
+              writeOperationId,
+              writeRequestChecksum,
+              rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
+              agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
+              messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
+              runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
+              promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
+              notebookSessionId: prepared.notebookSessionId,
+              producerRunId: prepared.producerRunId,
+              producerRunIndex: prepared.producerRunIndex,
+              state: 'staging',
+              contentStorageKey,
+              evidenceStorageKey,
+              contentType: request.contentType,
+              sizeBytes: BigInt(content.byteLength),
+              checksum,
+              evidenceJson: prepared.evidenceJson,
+              evidenceChecksum: prepared.evidenceChecksum,
+              executionSnapshotJson: prepared.executionSnapshotJson,
+              executionSnapshotChecksum: prepared.executionSnapshotChecksum,
+              executionSnapshotStorageKey,
+              executionSnapshotSchemaVersion: prepared.executionSnapshotJson ? 2 : undefined,
+              ...(prepared.inputs ? { inputs: prepared.inputs } : {}),
+              createdAt
+            }
+          })
+        })
+      )
+      stagingRowPersisted = true
+
+      const evidencePath = join(stagingDirectory, 'evidence.json')
+      await writeFile(evidencePath, persisted.evidenceJson, 'utf8')
+      await this.syncAndVerifyFile(
+        evidencePath,
+        persisted.evidenceChecksum,
+        `Artifact Version evidence mirror is corrupt: ${persisted.id}`
+      )
+      if (persisted.executionSnapshotJson) {
+        const executionPath = join(stagingDirectory, 'execution.json')
+        await writeFile(executionPath, persisted.executionSnapshotJson, 'utf8')
+        await this.syncAndVerifyFile(
+          executionPath,
+          persisted.executionSnapshotChecksum!,
+          `Artifact Version execution mirror is corrupt: ${persisted.id}`
+        )
+      }
+      const finalContentPath = join(
+        this.options.storageRoot,
+        ...persisted.contentStorageKey.split('/')
+      )
+      await mkdir(dirname(dirname(finalContentPath)), { recursive: true })
+      await this.options.durability.syncDirectory(stagingDirectory)
+      const finalDirectory = dirname(finalContentPath)
+      await rename(stagingDirectory, finalDirectory)
+      await this.options.durability.syncDirectory(dirname(finalDirectory))
+
+      await publishCompatibilityRouting(persisted, { allowRoutingReplacement: true })
+      const finalized = await client.$transaction(async (transaction) => {
+        await transaction.artifactLineage.update({
+          where: { id: persisted.artifactId },
+          data: { filename: request.filename }
+        })
+        return transaction.artifactVersion.update({
+          where: { id: persisted.id },
+          data: { state: 'pending' }
+        })
+      })
+      return this.options.projectVersionFile(finalized, projectId, appSessionId)
+    } catch (error) {
+      // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
+      // transport retry. Removing them here would force a retry to reread a mutable pending source.
+      if (!stagingRowPersisted) {
+        await rm(stagingDirectory, { recursive: true, force: true })
+      }
+      throw error
+    }
+  }
+
+  private async syncAndVerifyFile(
+    path: string,
+    expectedChecksum: string,
+    corruptMessage: string
+  ): Promise<void> {
+    await this.options.durability.syncFile(path)
+    const bytes = await readFile(path)
+    if (sha256(bytes) !== expectedChecksum) throw new Error(corruptMessage)
+  }
+}
+
+export { ArtifactProvenanceVersionWriter, normalizeArtifactFilename }
+export type {
+  CompatibilityRoutingPublicationOptions,
+  PersistedVersionFileRecord,
+  PublishCompatibilityRouting,
+  StagingArtifactVersionRecord
+}

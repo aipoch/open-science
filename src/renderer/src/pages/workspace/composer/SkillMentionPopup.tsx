@@ -103,7 +103,14 @@ export const SkillMentionPopup = ({
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
-      } else if (event.key === 'Enter') {
+      } else if (
+        event.key === 'Enter' ||
+        (event.key === 'Tab' &&
+          !event.shiftKey &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey)
+      ) {
         const active = matches[safeIndex]
         if (active) {
           event.preventDefault()
@@ -164,7 +171,7 @@ export const SkillMentionPopup = ({
           <span className="text-text-300">↑↓</span> navigate
         </span>
         <span>
-          <span className="text-text-300">Enter</span> select
+          <span className="text-text-300">Enter / Tab</span> select
         </span>
         <span>
           <span className="text-text-300">Esc</span> close

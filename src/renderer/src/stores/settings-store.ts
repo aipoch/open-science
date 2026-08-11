@@ -12,6 +12,11 @@ import {
 } from '../../../shared/settings'
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  getDefaultPermissionProfile,
+  type PermissionProfileId
+} from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import {
   createSettingsWriteCoordinator,
@@ -111,6 +116,8 @@ type SettingsStoreData = RuntimeSetupState &
     appIconVariant: AppIconVariant
     // Last Files-tab source filter; undefined means the default ("All artifacts").
     projectFilesFilter: ProjectFilesFilterPreference | undefined
+    // Approval profile applied only when creating a new conversation.
+    defaultPermissionProfile: PermissionProfileId
   }
 
 type SettingsStoreCore = SettingsStoreData &
@@ -158,7 +165,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
   appIconVariant: DEFAULT_APP_ICON_VARIANT,
-  projectFilesFilter: undefined
+  projectFilesFilter: undefined,
+  defaultPermissionProfile: DEFAULT_PERMISSION_PROFILE
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -179,6 +187,8 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   closePreference: snapshot.closePreference,
   appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
   projectFilesFilter: snapshot.projectFilesFilter,
+  defaultPermissionProfile: getDefaultPermissionProfile(snapshot),
+
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,

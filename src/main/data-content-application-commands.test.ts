@@ -421,7 +421,7 @@ describe('Data and content application commands', () => {
       { key: 'projectList', args: [], owner: deps.projects.list },
       {
         key: 'projectUpdateArchive',
-        args: [request('project-update-archive')],
+        args: [{ id: 'project-1', archived: true, expectedArchivedAt: null }],
         owner: deps.projects.updateArchive
       },
       {

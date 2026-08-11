@@ -1,4 +1,8 @@
-import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../../../shared/acp'
+import type {
+  AcpPermissionRequest,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../../../../shared/acp'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,21 +18,33 @@ import {
 } from '../../stores/preview-workbench-store'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 import {
-  cancelWorkspaceRun,
   createWorkspaceRuntimeEventProcessor,
-  compactWorkspaceSession,
-  deleteWorkspaceSession,
   getResumeFailureMessage,
   markRunningSessionsDisconnectedOnDrop,
-  processContextOverflowRecovery,
+  pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
-  recoverContextOverflowWorkspaceSession,
-  resendEditedWorkspaceMessage,
-  resumeInterruptedWorkspaceSession,
-  sendWorkspaceMessage,
   setWorkspacePermissionProfile,
   syncWorkspaceContextUsage
 } from './useWorkspaceAgentRuntime'
+import {
+  resendEditedWorkspaceMessage,
+  sendWorkspaceMessage
+} from './workspace-runtime-command-owner'
+import { respondToWorkspaceElicitation } from './workspace-elicitation-runtime'
+import {
+  resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceElicitationState,
+  syncWorkspacePermissionState
+} from './workspace-runtime-event-owner'
+import {
+  cancelWorkspaceRun,
+  compactWorkspaceSession,
+  createWorkspaceRuntimeSessionLifecycleOwner,
+  deleteWorkspaceSession,
+  processContextOverflowRecovery,
+  recoverContextOverflowWorkspaceSession,
+  resumeInterruptedWorkspaceSession
+} from './workspace-runtime-session-lifecycle-owner'
 
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
   id: 'event-1',
@@ -80,6 +96,75 @@ const flushRuntimeTasks = async (): Promise<void> => {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+describe('workspace permission wait recovery', () => {
+  it('projects a restored main-owned request and prefers a matching live request', () => {
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const durableRequest = {
+      requestId: 'permission-1',
+      sessionId: 'session-1',
+      toolCallId: 'tool-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: durableRequest,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([
+      durableRequest
+    ])
+
+    const liveRequest = { ...durableRequest, title: 'Live runtime title' }
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [liveRequest])).toEqual(
+      [liveRequest]
+    )
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-1'
+          ? { ...session, status: 'error', error: 'Continuation failed' }
+          : session
+      )
+    }))
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([
+      durableRequest
+    ])
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        runtimeContext: session.runtimeContext?.permission
+          ? {
+              ...session.runtimeContext,
+              permission: { ...session.runtimeContext.permission, state: 'continuing' }
+            }
+          : session.runtimeContext
+      }))
+    }))
+    expect(pendingWorkspacePermissions(useSessionStore.getState().sessions, [])).toEqual([])
+  })
+})
 
 describe('workspace permission profile persistence', () => {
   it('persists the profile committed by the runtime instead of a superseded request', async () => {
@@ -611,6 +696,872 @@ describe('workspace session deletion', () => {
   })
 })
 
+describe('workspace durable elicitation', () => {
+  beforeEach(() => {
+    resetWorkspaceRuntimeEventOwnerForTests()
+    useSessionStore.setState(createInitialSessionState())
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-choice-1',
+      content: 'Build something',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      agentFrameworkId: 'opencode',
+      agentBackendId: 'opencode:provider-1'
+    })
+    useSessionStore.getState().finishRun('session-choice-1')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps another session waiting on a restored permission after answering a durable question', async () => {
+    const permissionRequest: AcpPermissionRequest = {
+      requestId: 'permission-restored',
+      sessionId: 'session-permission-1',
+      toolCallId: 'tool-permission-1',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }],
+      durable: true
+    }
+    useSessionStore.getState().appendUserMessage({
+      sessionId: permissionRequest.sessionId,
+      content: 'Run the verification',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun(permissionRequest.sessionId)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === permissionRequest.sessionId
+          ? {
+              ...session,
+              status: 'waiting-permission',
+              runtimeContext: {
+                version: 1,
+                revision: 1,
+                permission: {
+                  state: 'pending',
+                  request: permissionRequest,
+                  originatingPromptMessageId: session.messages[0].id,
+                  fingerprint: 'a'.repeat(64),
+                  createdAt: 1
+                }
+              }
+            }
+          : session
+      )
+    }))
+    syncWorkspacePermissionState([permissionRequest])
+    useSessionStore.getState().setElicitationPending('session-choice-1', true)
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
+      },
+      {
+        requestId: 'choice-1',
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request: {
+          requestId: 'choice-1',
+          sessionId: 'session-choice-1',
+          toolCallId: 'tool-choice-1',
+          message: 'Choose an approach',
+          fields: [{ id: 'question_0', label: 'Approach', kind: 'text' }],
+          durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+        }
+      }
+    )
+
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find((session) => session.id === permissionRequest.sessionId)
+    ).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: { permission: { state: 'pending', request: permissionRequest } }
+    })
+  })
+
+  it('falls back to a pending permission in the same session after answering a durable question', async () => {
+    const permissionRequest: AcpPermissionRequest = {
+      requestId: 'permission-live',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-permission-live',
+      title: 'Run npm test',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const elicitationRequest = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+    }
+    syncWorkspacePermissionState([permissionRequest])
+    syncWorkspaceElicitationState([elicitationRequest])
+    const continued = {
+      ...createSnapshot(['session-choice-1']),
+      pendingPermissions: [permissionRequest],
+      pendingElicitations: []
+    }
+
+    await respondToWorkspaceElicitation(
+      {
+        state: {
+          ...createSnapshot(['session-choice-1']),
+          pendingPermissions: [permissionRequest],
+          pendingElicitations: [elicitationRequest]
+        },
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(continued)
+      },
+      {
+        requestId: elicitationRequest.requestId,
+        action: 'accept',
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request: elicitationRequest
+      }
+    )
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-permission')
+  })
+
+  it('returns to running when no actionable user choice remains', async () => {
+    useSessionStore.getState().setElicitationPending('session-choice-1', true)
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+      }
+    }
+    const continued = {
+      ...createSnapshot(['session-choice-1']),
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1'],
+      pendingElicitations: [
+        {
+          requestId: 'generic-form-1',
+          sessionId: 'session-choice-1',
+          toolCallId: 'generic-form-tool-1',
+          message: 'Provide additional input',
+          fields: [{ id: 'detail', label: 'Detail', kind: 'text' as const }]
+        }
+      ]
+    }
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(continued)
+      },
+      response
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      agentPromptInFlight: true,
+      awaitingFirstAgentOutput: true
+    })
+  })
+
+  it('keeps waiting when another elicitation for the session remains pending', async () => {
+    useSessionStore.getState().setElicitationPending('session-choice-1', true)
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }]
+      }
+    }
+    const continued = {
+      ...createSnapshot(['session-choice-1']),
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-choice-1'],
+      agentPromptInFlightSessionIds: ['session-choice-1'],
+      pendingElicitations: [
+        {
+          requestId: 'choice-2',
+          sessionId: 'session-choice-1',
+          toolCallId: 'tool-choice-2',
+          message: 'Choose a format',
+          fields: [{ id: 'question_0', label: 'Format', kind: 'text' as const }],
+          durable: { kind: 'agent-user-choice' as const, requestId: 'choice-2' }
+        }
+      ]
+    }
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession: vi.fn(),
+        respondToElicitation: vi.fn().mockResolvedValue(continued)
+      },
+      response
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-for-user',
+      agentPromptInFlight: true
+    })
+  })
+
+  it('keeps a durable question waiting when its runtime is replaced', () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === request.sessionId
+          ? {
+              ...session,
+              status: 'waiting-for-user',
+              activities: [
+                {
+                  id: request.toolCallId,
+                  kind: 'tool',
+                  title: 'Waiting for an answer',
+                  status: 'in_progress',
+                  sortIndex: 1,
+                  eventIds: [],
+                  elicitation: {
+                    message: request.message,
+                    fields: request.fields,
+                    state: 'pending',
+                    durable: request.durable
+                  },
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                }
+              ]
+            }
+          : session
+      )
+    }))
+
+    syncWorkspaceElicitationState([request])
+    syncWorkspaceElicitationState([])
+
+    expect(useSessionStore.getState().sessions[0].status).toBe('waiting-for-user')
+  })
+
+  it('does not rearm an answered durable question when Permission becomes pending', () => {
+    const request = {
+      requestId: 'choice-1',
+      sessionId: 'session-choice-1',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+    }
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === request.sessionId
+          ? {
+              ...session,
+              status: 'waiting-for-user',
+              activities: [
+                {
+                  id: request.toolCallId,
+                  kind: 'tool',
+                  title: 'Waiting for an answer',
+                  status: 'in_progress',
+                  sortIndex: 1,
+                  eventIds: [],
+                  elicitation: {
+                    message: request.message,
+                    fields: request.fields,
+                    state: 'pending',
+                    durable: request.durable
+                  },
+                  createdAt: Date.now(),
+                  updatedAt: Date.now()
+                }
+              ]
+            }
+          : session
+      )
+    }))
+
+    syncWorkspaceElicitationState([request])
+    useSessionStore.getState().setElicitationPending(request.sessionId, false)
+    useSessionStore.getState().setPermissionPending(request.sessionId)
+    syncWorkspaceElicitationState([])
+    useSessionStore.getState().clearPermissionPending(request.sessionId)
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      interactionState: { permission: false, elicitation: false }
+    })
+  })
+
+  it('reattaches a restored session before submitting its durable answer', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: false,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+      }
+    }
+
+    await respondToWorkspaceElicitation(
+      { state: createSnapshot(), resumeSession, respondToElicitation },
+      response
+    )
+
+    expect(resumeSession).toHaveBeenCalledWith(
+      'session-choice-1',
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'opencode',
+      'opencode:provider-1',
+      undefined,
+      undefined,
+      undefined
+    )
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      respondToElicitation.mock.invocationCallOrder[0]
+    )
+    expect(respondToElicitation).toHaveBeenCalledWith(response)
+  })
+
+  it('replays prior history when restoring the provider resets its context', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-1',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+      }
+    }
+
+    await respondToWorkspaceElicitation(
+      { state: createSnapshot(), resumeSession, respondToElicitation },
+      response,
+      { supportsImageInput: true }
+    )
+
+    expect(respondToElicitation).toHaveBeenCalledWith({
+      ...response,
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBeUndefined()
+  })
+
+  it('keeps context-reset history for a retry after submitting the answer fails', async () => {
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: 'session-choice-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const respondToElicitation = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('bridge failed'))
+      .mockResolvedValueOnce(createSnapshot(['session-choice-1']))
+    const response = {
+      requestId: 'choice-retry',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+      request: {
+        requestId: 'choice-retry',
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-retry',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-retry' }
+      }
+    }
+
+    await expect(
+      respondToWorkspaceElicitation(
+        { state: createSnapshot(), resumeSession, respondToElicitation },
+        response,
+        { supportsImageInput: true }
+      )
+    ).rejects.toThrow('bridge failed')
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBe(
+      'choice-retry'
+    )
+
+    await respondToWorkspaceElicitation(
+      {
+        state: createSnapshot(['session-choice-1']),
+        resumeSession,
+        respondToElicitation
+      },
+      response,
+      { supportsImageInput: true }
+    )
+
+    expect(resumeSession).toHaveBeenCalledTimes(1)
+    expect(respondToElicitation).toHaveBeenLastCalledWith({
+      ...response,
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(useSessionStore.getState().sessions[0].elicitationHistoryReplayRequestId).toBeUndefined()
+  })
+
+  it('rewinds from an answered question and replays the retained history with the replacement answer', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    const prompt = session.messages[0]
+    const questionAt = prompt.createdAt + 10
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === session.id
+          ? {
+              ...candidate,
+              agentModel: 'old-model',
+              messages: [
+                ...candidate.messages,
+                {
+                  id: 'question-preamble',
+                  role: 'agent' as const,
+                  content: 'Question preamble',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  sortIndex: 9,
+                  createdAt: questionAt,
+                  updatedAt: questionAt
+                },
+                {
+                  id: 'downstream-answer',
+                  role: 'agent' as const,
+                  content: 'The old answer path',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  sortIndex: 11,
+                  createdAt: questionAt,
+                  updatedAt: questionAt
+                }
+              ],
+              activities: [
+                {
+                  id: 'tool-choice-answered',
+                  kind: 'tool' as const,
+                  title: 'Choose an approach',
+                  status: 'completed' as const,
+                  eventIds: ['choice-event'],
+                  sortIndex: 10,
+                  promptMessageId: prompt.id,
+                  createdAt: questionAt,
+                  updatedAt: questionAt,
+                  elicitation: {
+                    message: 'Choose an approach',
+                    fields: [
+                      {
+                        id: 'question_0',
+                        label: 'Approach',
+                        kind: 'single-select' as const,
+                        options: [
+                          { value: 'Minimal', label: 'Minimal' },
+                          { value: 'Expanded', label: 'Expanded' }
+                        ]
+                      }
+                    ],
+                    state: 'answered' as const,
+                    durable: {
+                      kind: 'agent-user-choice' as const,
+                      requestId: 'choice-revision',
+                      promptMessageId: prompt.id
+                    },
+                    answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+                  }
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:provider-2'
+    })
+    const resumeSession = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: false,
+      frameworkId: 'codex',
+      backendId: 'codex:provider-2'
+    })
+    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot([session.id]))
+    const onSendPreparationStateChange = vi.fn()
+    const persistedRevision = createDeferred<void>()
+    const flushPersistence = vi.fn(() => persistedRevision.promise)
+    const response = {
+      requestId: 'choice-revision',
+      action: 'accept' as const,
+      replacePreviousAnswer: true,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request: {
+        requestId: 'choice-revision',
+        sessionId: session.id,
+        toolCallId: 'tool-choice-answered',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'choice-revision',
+          promptMessageId: prompt.id
+        }
+      }
+    }
+
+    const revision = respondToWorkspaceElicitation(
+      {
+        state: createSnapshot([session.id]),
+        resumeSession,
+        resetSessionContext,
+        respondToElicitation
+      },
+      response,
+      {
+        supportsImageInput: true,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:provider-2',
+        agentModel: 'new-model',
+        onSendPreparationStateChange,
+        flushPersistence
+      }
+    )
+    const competingSendPrompt = vi.fn()
+    const competing = await sendWorkspaceMessage(
+      {
+        state: createSnapshot([session.id]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: competingSendPrompt
+      },
+      {
+        sessionId: session.id,
+        text: 'race the revision',
+        cwd: session.cwd,
+        projectId: session.projectId,
+        supportsImageInput: true
+      }
+    )
+    expect(competing).toBeUndefined()
+    expect(competingSendPrompt).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(flushPersistence).toHaveBeenCalledOnce())
+    expect(respondToElicitation).not.toHaveBeenCalled()
+    persistedRevision.resolve(undefined)
+    await revision
+
+    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+      shutdown.mock.invocationCallOrder[0]
+    )
+    expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSessionContext.mock.invocationCallOrder[0]
+    )
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      flushPersistence.mock.invocationCallOrder[0]
+    )
+    expect(flushPersistence.mock.invocationCallOrder[0]).toBeLessThan(
+      respondToElicitation.mock.invocationCallOrder[0]
+    )
+    expect(resumeSession).toHaveBeenCalledWith(
+      session.id,
+      session.cwd,
+      session.projectId,
+      'ask',
+      'opencode',
+      'opencode:provider-1',
+      undefined,
+      undefined,
+      undefined
+    )
+    expect(onSendPreparationStateChange.mock.calls).toEqual([
+      [session.id, true],
+      [session.id, false]
+    ])
+    expect(respondToElicitation).toHaveBeenCalledWith({
+      ...response,
+      request: {
+        ...response.request,
+        toolCallId: expect.stringMatching(/^ask-user-question-revision-/)
+      },
+      historyReplay: {
+        historyPreamble: expect.stringContaining('Build something'),
+        historyAttachments: [],
+        historyImages: []
+      }
+    })
+    expect(respondToElicitation.mock.calls[0]?.[0].historyReplay?.historyPreamble).toContain(
+      'Question preamble'
+    )
+    expect(respondToElicitation.mock.calls[0]?.[0].historyReplay?.historyPreamble).not.toContain(
+      'The old answer path'
+    )
+    const revised = useSessionStore.getState().sessions[0]
+    expect(revised.messages.map((message) => message.content)).toEqual([
+      'Build something',
+      'Question preamble'
+    ])
+    expect(revised.activities).toEqual([])
+    expect(revised.conversationGraph?.branches).toHaveLength(2)
+    expect(revised.agentFrameworkId).toBe('codex')
+    expect(revised.agentBackendId).toBe('codex:provider-2')
+    expect(revised.agentModel).toBe('new-model')
+    expect(revised.conversationGraph?.runtimeSegments.at(-1)?.model).toBe('new-model')
+  })
+
+  it('restores the transcript and forces replay when a revised answer cannot be submitted', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    const prompt = session.messages[0]
+    const questionAt = prompt.createdAt + 10
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((candidate) =>
+        candidate.id === session.id
+          ? {
+              ...candidate,
+              messages: [
+                ...candidate.messages,
+                {
+                  id: 'old-downstream',
+                  role: 'agent' as const,
+                  content: 'The old answer path',
+                  status: 'complete' as const,
+                  eventIds: [],
+                  createdAt: questionAt + 10,
+                  updatedAt: questionAt + 10
+                }
+              ],
+              activities: [
+                {
+                  id: 'answered-choice',
+                  kind: 'tool' as const,
+                  title: 'Choose an approach',
+                  status: 'completed' as const,
+                  eventIds: [],
+                  sortIndex: 1,
+                  promptMessageId: prompt.id,
+                  createdAt: questionAt,
+                  updatedAt: questionAt,
+                  elicitation: {
+                    message: 'Choose an approach',
+                    fields: [
+                      {
+                        id: 'question_0',
+                        label: 'Approach',
+                        kind: 'single-select' as const,
+                        options: [
+                          { value: 'Minimal', label: 'Minimal' },
+                          { value: 'Expanded', label: 'Expanded' }
+                        ]
+                      }
+                    ],
+                    state: 'answered' as const,
+                    durable: {
+                      kind: 'agent-user-choice' as const,
+                      requestId: 'failed-revision',
+                      promptMessageId: prompt.id
+                    },
+                    answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+                  }
+                }
+              ]
+            }
+          : candidate
+      )
+    }))
+    const shutdown = vi.fn().mockResolvedValue({ status: 'shutdown' })
+    vi.stubGlobal('window', { api: { notebook: { shutdown } } })
+    const resetSessionContext = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const response = {
+      requestId: 'failed-revision',
+      action: 'accept' as const,
+      replacePreviousAnswer: true,
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      request: {
+        requestId: 'failed-revision',
+        sessionId: session.id,
+        toolCallId: 'answered-choice',
+        message: 'Choose an approach',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select' as const,
+            options: [
+              { value: 'Minimal', label: 'Minimal' },
+              { value: 'Expanded', label: 'Expanded' }
+            ]
+          }
+        ],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'failed-revision',
+          promptMessageId: prompt.id
+        }
+      }
+    }
+
+    await expect(
+      respondToWorkspaceElicitation(
+        {
+          state: createSnapshot([session.id]),
+          resumeSession: vi.fn(),
+          resetSessionContext,
+          respondToElicitation: vi.fn().mockRejectedValue(new Error('bridge unavailable'))
+        },
+        response,
+        { supportsImageInput: true }
+      )
+    ).rejects.toThrow('bridge unavailable')
+
+    const restored = useSessionStore.getState().sessions[0]
+    expect(restored.messages.map((message) => message.content)).toEqual([
+      'Build something',
+      'The old answer path'
+    ])
+    expect(restored.activities?.map((activity) => activity.id)).toEqual(['answered-choice'])
+    expect(restored.branchContextResetRequired).toBe(true)
+
+    const sendPrompt = vi.fn().mockResolvedValue(createSnapshot([session.id]))
+    const replayReset = vi.fn().mockResolvedValue({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true,
+      frameworkId: 'opencode',
+      backendId: 'opencode:provider-1'
+    })
+    const sent = await sendWorkspaceMessage(
+      {
+        state: createSnapshot([session.id]),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: replayReset,
+        sendPrompt
+      },
+      {
+        sessionId: session.id,
+        text: 'continue safely',
+        cwd: session.cwd,
+        projectId: session.projectId,
+        supportsImageInput: true,
+        agentFrameworkId: 'opencode',
+        agentBackendId: 'opencode:provider-1'
+      }
+    )
+
+    expect(sent).toBeDefined()
+    expect(replayReset).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(sendPrompt).toHaveBeenCalledOnce())
+    expect(sendPrompt.mock.calls[0]?.[5]).toContain('The old answer path')
+  })
+})
+
 describe('workspace agent message sending', () => {
   beforeEach(() => {
     useSessionStore.setState(createInitialSessionState())
@@ -619,9 +1570,10 @@ describe('workspace agent message sending', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
-  it('forwards Plan first for an existing Session without storing it on the user Message', async () => {
+  it('forwards and durably stores Plan first for an existing Session', async () => {
     const runtime = {
       state: createSnapshot(['transport-session-1']),
       createSession: vi.fn(),
@@ -642,9 +1594,9 @@ describe('workspace agent message sending', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[12]).toBe('plan-first')
     expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
       role: 'user',
-      content: 'analyze this dataset'
+      content: 'analyze this dataset',
+      turnIntent: 'plan-first'
     })
-    expect(useSessionStore.getState().sessions[0].messages[0]).not.toHaveProperty('turnIntent')
   })
 
   it('binds an explicit continuation prompt to the durable active Plan version', async () => {
@@ -670,6 +1622,69 @@ describe('workspace agent message sending', () => {
       artifactVersionId: 'plan-version-1',
       expectedRevision: 9
     })
+  })
+
+  it('keeps the original Specialist replay clearing when the provider rejects the prompt', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original specialist turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().markSpecialistSwitchResetRequired('transport-session-1')
+    const snapshot = createSnapshot(['transport-session-1'])
+    vi.stubGlobal('window', {
+      api: { acp: { getState: vi.fn().mockResolvedValue(snapshot) } }
+    })
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockRejectedValue(new Error('provider unavailable'))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue with the new specialist',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+  })
+
+  it('clears Specialist replay before provider prompt completion settles', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original specialist turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.getState().markSpecialistSwitchResetRequired('transport-session-1')
+    const accepted = createDeferred<AcpStateSnapshot>()
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn(() => accepted.promise)
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue with the new specialist',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+
+    accepted.resolve(createSnapshot(['transport-session-1']))
+    await flushRuntimeTasks()
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
   })
 
   it('rebuilds Agent and Notebook context before continuing a switched Branch', async () => {
@@ -806,6 +1821,8 @@ describe('workspace agent message sending', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
+      undefined,
       undefined
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
@@ -906,6 +1923,8 @@ describe('workspace agent message sending', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
+      undefined,
       undefined
     )
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
@@ -983,8 +2002,7 @@ describe('workspace agent message sending', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:builtin-codex-subscription'
       },
-      undefined,
-      drainRuntimeEvents
+      { drainRuntimeEvents }
     )
 
     expect(drainRuntimeEvents).toHaveBeenCalledOnce()
@@ -2197,6 +3215,7 @@ describe('workspace agent message sending', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -2531,7 +3550,7 @@ describe('workspace agent message sending', () => {
         text: 'Continue restored conversation',
         cwd: '/workspace/project'
       },
-      preparationChanged
+      { onSendPreparationStateChange: preparationChanged }
     )
     const second = sendWorkspaceMessage(runtime, {
       sessionId: 'session-1',
@@ -2782,7 +3801,7 @@ describe('resuming an interrupted session on demand', () => {
     ])
   }
 
-  it('re-attaches the session and unlocks the composer on success', async () => {
+  it('re-attaches a session with no recoverable user turn and unlocks the composer', async () => {
     const runtime = {
       state: createSnapshot(),
       createSession: vi.fn(),
@@ -2790,11 +3809,14 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn()
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
     seedDetachedSession()
 
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      historyReplayDescriptor: { target: 'codex-bridge' }
+    })
 
     expect(runtime.resumeSession).toHaveBeenCalledWith(
       'session-1',
@@ -2803,6 +3825,8 @@ describe('resuming an interrupted session on demand', () => {
       expect.any(String),
       'codex',
       'codex:codex-isolated',
+      undefined,
+      undefined,
       undefined
     )
     expect(useSessionStore.getState().sessions[0]).toMatchObject({ status: 'idle' })
@@ -2959,7 +3983,53 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions[0].status).toBe('idle')
   })
 
-  it('reconnects and re-sends the interrupted user turn exactly once', async () => {
+  it('keeps a durable user-choice wait actionable when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Help me choose',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setElicitationPending('session-1', true)
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('waiting-for-user')
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('keeps a durable permission wait actionable when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Run the verification',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setPermissionPending('session-1')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed', {}, {}, new Set(['session-1']))
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('waiting-permission')
+    expect(session.interrupted).toBeUndefined()
+  })
+
+  it('interrupts a non-durable permission wait when the connection drops', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Approve an in-memory action',
+      cwd: '/workspace/project'
+    })
+    useSessionStore.getState().setPermissionPending('session-1')
+
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true
+    })
+  })
+
+  it('reconnects and continues the interrupted turn without duplicating its user message', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Continue the analysis',
@@ -2967,6 +4037,7 @@ describe('resuming an interrupted session on demand', () => {
       projectId: 'default-project',
       permissionProfile: 'ask'
     })
+    const originalUserMessageId = useSessionStore.getState().sessions[0].messages[0].id
     // A live drop leaves the last user turn unanswered and flags the session for Resume.
     useSessionStore.getState().markDisconnected('session-1')
 
@@ -2977,49 +4048,200 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
-    const preparationChanged = vi.fn()
-    const drainRuntimeEvents = vi.fn().mockResolvedValue(undefined)
-
-    await resumeInterruptedWorkspaceSession(runtime, 'session-1', {
-      onSendPreparationStateChange: preparationChanged,
-      drainRuntimeEvents
-    })
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
     await flushRuntimeTasks()
 
     expect(runtime.resumeSession).toHaveBeenCalled()
-    expect(preparationChanged.mock.calls).toEqual([
-      ['session-1', true],
-      ['session-1', false]
-    ])
-    expect(drainRuntimeEvents).toHaveBeenCalledOnce()
-    expect(drainRuntimeEvents.mock.invocationCallOrder[0]).toBeLessThan(
-      runtime.sendPrompt.mock.invocationCallOrder[0]
-    )
-    expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
-    expect(runtime.sendPrompt).toHaveBeenCalledWith(
-      'session-1',
-      'Continue the analysis',
-      [],
-      undefined,
-      undefined,
-      // A same-framework interrupted resume does not reset context, so no history preamble is replayed.
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
-    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      promptMessageId: originalUserMessageId
+    })
 
     const session = useSessionStore.getState().sessions[0]
     const userMessages = session.messages.filter((message) => message.role === 'user')
 
-    // The stale turn was removed and re-appended once, so there is no duplicate user bubble.
     expect(userMessages).toHaveLength(1)
+    expect(userMessages[0].id).toBe(originalUserMessageId)
     expect(userMessages[0].content).toBe('Continue the analysis')
+    expect(userMessages[0].interrupted).toBe(true)
+    expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('continues an interrupted turn that is still attached without reconnecting', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the attached turn',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalUserMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    await flushRuntimeTasks()
+
+    expect(runtime.resumeSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectId: 'default-project',
+      promptMessageId: originalUserMessageId
+    })
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
+    expect(session.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+  })
+
+  it('keeps recovery locked until stale renderer events are drained', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue after reconnecting',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const drainGate = createDeferred<void>()
+    const drainRuntimeEvents = vi.fn(() => drainGate.promise)
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi
+        .fn()
+        .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(
+      runtime,
+      'session-1',
+      drainRuntimeEvents
+    )
+    await vi.waitFor(() => expect(drainRuntimeEvents).toHaveBeenCalledWith('session-1'))
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      interrupted: true,
+      resumeRecovery: expect.objectContaining({ promptMessageId: expect.any(String) })
+    })
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
+
+    drainGate.resolve()
+    await resumeRequest
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: expect.any(String), startedAt: expect.any(Number) }
+    })
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+  })
+
+  it('keeps recovery active until Main observes the provider first update', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue after provider acceptance',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const providerFirstUpdate = createDeferred<AcpStateSnapshot>()
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn(() => providerFirstUpdate.promise),
+      sendPrompt: vi.fn()
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      flushPersistence: vi.fn().mockResolvedValue(undefined)
+    })
+    await vi.waitFor(() => expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce())
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'running',
+      interrupted: true,
+      resumeRecovery: { promptMessageId: originalMessageId }
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({ id: originalMessageId, role: 'user', interrupted: true })
+    ])
+
+    providerFirstUpdate.resolve(createSnapshot(['session-1']))
+    await resumeRequest
+
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages).toHaveLength(1)
+  })
+
+  it('keeps the original turn retryable when continuation fails before provider acceptance', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Retry this continuation',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    const originalMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi
+        .fn()
+        .mockRejectedValue(new Error('provider rejected continuation')),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      flushPersistence: vi.fn().mockResolvedValue(undefined)
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      interrupted: true,
+      resumeRecovery: { promptMessageId: originalMessageId },
+      error: 'Agent session resume failed: provider rejected continuation'
+    })
+    expect(useSessionStore.getState().sessions[0].messages).toEqual([
+      expect.objectContaining({
+        id: originalMessageId,
+        role: 'user',
+        content: 'Retry this continuation',
+        interrupted: true
+      })
+    ])
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('does not recreate an interrupted session deleted while reconnecting', async () => {
@@ -3038,6 +4260,7 @@ describe('resuming an interrupted session on demand', () => {
       createSession: vi.fn(),
       resumeSession: vi.fn(() => resumeGate.promise),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
@@ -3052,9 +4275,10 @@ describe('resuming an interrupted session on demand', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(runtime.resumeSession).toHaveBeenCalledOnce()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
   })
 
-  it('restores the interrupted user turn when re-send preparation fails', async () => {
+  it('keeps recovery retryable and preserves the prompt when provider resume fails', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Do not lose this interrupted prompt',
@@ -3064,14 +4288,16 @@ describe('resuming an interrupted session on demand', () => {
     })
     useSessionStore.getState().markDisconnected('session-1')
 
+    const originalMessageId = useSessionStore.getState().sessions[0].messages[0].id
     const runtime = {
       state: createSnapshot([]),
       createSession: vi.fn(),
       resumeSession: vi
         .fn()
-        .mockResolvedValueOnce({ sessionId: 'session-1', cwd: '/workspace/project' })
-        .mockRejectedValueOnce(new Error('adoption failed')),
+        .mockRejectedValueOnce(new Error('provider resume failed'))
+        .mockResolvedValueOnce({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn()
     }
 
@@ -3079,25 +4305,28 @@ describe('resuming an interrupted session on demand', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.messages.filter((message) => message.role === 'user')).toEqual([
-      expect.objectContaining({ content: 'Do not lose this interrupted prompt' })
+      expect.objectContaining({
+        id: originalMessageId,
+        content: 'Do not lose this interrupted prompt',
+        interrupted: true
+      })
     ])
     expect(session.interrupted).toBe(true)
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
 
-    runtime.state = createSnapshot(['session-1'])
-    runtime.sendPrompt.mockResolvedValue(createSnapshot(['session-1']))
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
     await flushRuntimeTasks()
 
     expect(runtime.resumeSession).toHaveBeenCalledTimes(2)
-    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
     expect(
       useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
     ).toEqual([expect.objectContaining({ content: 'Do not lose this interrupted prompt' })])
   })
 
-  it('replays a history preamble when an interrupted resume adopts a fresh agent session', async () => {
+  it('replays history while continuing the interrupted turn after fresh adoption', async () => {
     // A completed prior turn that must be replayed once the agent's context is gone.
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -3126,9 +4355,6 @@ describe('resuming an interrupted session on demand', () => {
     const runtime = {
       state: createSnapshot([]),
       createSession: vi.fn(),
-      // Step-1 resume adopts a fresh session (contextReset); the shared send path's own re-resume then
-      // hits the already-attached session and reports no reset — mirroring runtime's "already attached"
-      // branch. The interrupted path must still honor its own step-1 signal.
       resumeSession: vi
         .fn()
         .mockResolvedValueOnce({
@@ -3138,21 +4364,211 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+      historyReplayDescriptor: { target: 'codex-bridge' }
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        projectId: 'default-project',
+        promptMessageId: expect.any(String),
+        contextReset: expect.objectContaining({ historyReplayTarget: 'codex-bridge' })
+      })
+    )
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toHaveLength(2)
+  })
+
+  it('retains fresh-adoption replay authority until the continuation is accepted', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Summarize the source material',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The source material is summarized.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const interrupted = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Now compare the findings',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('provider rejected continuation'))
+        .mockResolvedValueOnce(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn()
+    }
+
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      interrupted: true,
+      resumeRecovery: { promptMessageId: interrupted?.messageId },
+      pendingHistoryReplay: { kind: 'before-message', messageId: interrupted?.messageId }
+    })
+    const firstRuntimeSegmentId =
+      runtime.continueInterruptedTurn.mock.calls[0]?.[0].contextReset?.runtimeSegmentId
+
+    runtime.state = createSnapshot(['session-1'])
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(runtime.resumeSession).toHaveBeenCalledOnce()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledTimes(2)
+    expect(runtime.continueInterruptedTurn.mock.calls[1]?.[0].contextReset).toMatchObject({
+      runtimeSegmentId: firstRuntimeSegmentId
+    })
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toBeUndefined()
+  })
+
+  it('does not continue a recovery prompt removed while stale events are draining', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Inspect the baseline data',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The baseline is ready.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    const interrupted = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Apply the original transformation',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().markDisconnected('session-1')
+
+    const drainGate = createDeferred<void>()
+    const drainRuntimeEvents = vi.fn(() => drainGate.promise)
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resumeRequest = resumeInterruptedWorkspaceSession(
+      runtime,
+      'session-1',
+      drainRuntimeEvents
+    )
+    await vi.waitFor(() => expect(drainRuntimeEvents).toHaveBeenCalledWith('session-1'))
+
+    useSessionStore.getState().truncateSessionFromMessage('session-1', interrupted?.messageId ?? '')
+    drainGate.resolve()
+    await resumeRequest
+
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' }
+    })
+    expect(useSessionStore.getState().sessions[0].interrupted).toBeUndefined()
+  })
+
+  it('replays full history after fresh adoption recovers an interrupted compaction', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Summarize the dataset',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'The dataset contains 20 samples.'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().beginCompaction('session-1')
+    markRunningSessionsDisconnectedOnDrop('connected', 'closed')
+
+    expect(useSessionStore.getState().sessions[0].resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'connection-lost'
+    })
+
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        cwd: '/workspace/project',
+        contextReset: true
+      }),
+      resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    runtime.state = createSnapshot(['session-1'])
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'Compare the sample groups',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
     await flushRuntimeTasks()
 
     const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
-    expect(preamble).toContain('Plot the sales data')
-    expect(preamble).toContain('Done, saved chart.png')
-    // The re-sent interrupted turn is prior-context only: it is not folded into its own preamble.
-    expect(preamble).not.toContain('now add a trend line')
+    expect(preamble).toContain('Summarize the dataset')
+    expect(preamble).toContain('The dataset contains 20 samples.')
+    expect(preamble).not.toContain('Compare the sample groups')
     expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+    expect(useSessionStore.getState().sessions[0].pendingHistoryReplay).toBeUndefined()
   })
 
-  it('marks a fresh-context retry even when the interrupted first turn has no replayable history', async () => {
+  it('continues a sole interrupted turn after fresh adoption', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Run the first notebook cell',
@@ -3174,17 +4590,25 @@ describe('resuming an interrupted session on demand', () => {
         })
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
     await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
-    expect(runtime.sendPrompt.mock.calls[0]?.[10]).toBe(true)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextReset: expect.objectContaining({ runtimeSegmentId: expect.any(String) })
+      })
+    )
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toHaveLength(1)
   })
 
-  it('does not replay a history preamble when the interrupted resume kept agent context', async () => {
+  it('continues without history replay when the interrupted resume kept agent context', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Earlier prompt',
@@ -3216,13 +4640,20 @@ describe('resuming an interrupted session on demand', () => {
         .fn()
         .mockResolvedValue({ sessionId: 'session-1', cwd: '/workspace/project' }),
       resetSessionContext: vi.fn(),
+      continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot(['session-1'])),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
 
     await resumeInterruptedWorkspaceSession(runtime, 'session-1')
     await flushRuntimeTasks()
 
-    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toBeUndefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(runtime.continueInterruptedTurn).toHaveBeenCalledWith(
+      expect.not.objectContaining({ contextReset: expect.anything() })
+    )
+    expect(
+      useSessionStore.getState().sessions[0].messages.filter((message) => message.role === 'user')
+    ).toHaveLength(2)
   })
 
   it('replays a history preamble when a resume resets agent context', async () => {
@@ -3319,6 +4750,8 @@ describe('resuming an interrupted session on demand', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
+      undefined,
       undefined
     )
     const preamble = runtime.sendPrompt.mock.calls[0]?.[5]
@@ -3575,11 +5008,84 @@ describe('recovering from a request-size overflow', () => {
     useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
   }
 
-  it('resets the agent context, drops the failed turn, and re-sends with a text preamble', async () => {
+  it('keeps overflow dedup and Plan authority inside the lifecycle owner', async () => {
+    seedOverflowedConversation()
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      artifactVersionId: 'plan-version-1',
+      revision: 12,
+      approval: 'approved',
+      lifecycle: 'in_progress'
+    } as never)
+    const nativeSnapshot = {
+      ...createSnapshot(['session-1']),
+      nativeContextCompactionSessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    }
+    const compactedSnapshot = {
+      ...nativeSnapshot,
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    }
+    const runtime = {
+      state: nativeSnapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      compactSession: vi.fn().mockResolvedValue(compactedSnapshot),
+      sendPrompt: vi.fn().mockResolvedValue(compactedSnapshot)
+    }
+    const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+    const overflowEvent = createEvent({
+      id: 'owner-overflow-1',
+      kind: 'error',
+      level: 'error',
+      recoverable: 'context-overflow',
+      sessionId: 'session-1'
+    })
+
+    expect(Object.keys(owner)).toEqual([
+      'recordPromptPlanAuthority',
+      'processRuntimeEvents',
+      'compact',
+      'resume',
+      'cancel',
+      'delete'
+    ])
+    owner.recordPromptPlanAuthority({
+      sessionId: 'session-1',
+      planContinuation: { artifactVersionId: 'plan-version-1', revision: 9 }
+    })
+    owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+    owner.processRuntimeEvents(runtime, [overflowEvent], {
+      getHistoryReplayDescriptor: () => ({ target: 'codex-bridge' })
+    })
+
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledTimes(1))
+    expect(runtime.compactSession).toHaveBeenCalledTimes(1)
+    expect(runtime.sendPrompt.mock.calls[0]?.[11]).toEqual({
+      projectId: 'default-project',
+      artifactVersionId: 'plan-version-1',
+      expectedRevision: 12
+    })
+  })
+
+  it('persists the reset provider identity and re-sends the failed turn with a text preamble', async () => {
     vi.stubGlobal('window', {
       api: { acp: { getState: vi.fn().mockResolvedValue(createSnapshot(['session-1'])) } }
     })
     seedOverflowedConversation(true)
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:old',
+        providerSessionId: 'provider-session-old',
+        providerContinuityToken: 'continuity-old'
+      }))
+    }))
 
     const runtime = {
       state: {
@@ -3592,7 +5098,11 @@ describe('recovering from a request-size overflow', () => {
       resetSessionContext: vi.fn().mockResolvedValue({
         sessionId: 'session-1',
         cwd: '/workspace/project',
-        contextReset: true
+        contextReset: true,
+        frameworkId: 'codex' as const,
+        backendId: 'codex:new',
+        providerSessionId: 'provider-session-new',
+        providerContinuityToken: 'continuity-new'
       }),
       sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
     }
@@ -3615,6 +5125,12 @@ describe('recovering from a request-size overflow', () => {
     expect(preamble).not.toContain('now compare with this new screenshot')
     expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
+    expect(toPersistedSession(useSessionStore.getState().sessions[0])).toMatchObject({
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:new',
+      providerSessionId: 'provider-session-new',
+      providerContinuityToken: 'continuity-new'
+    })
   })
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
@@ -4364,6 +5880,8 @@ describe('resendEditedWorkspaceMessage', () => {
       'ask',
       'claude-code',
       'claude-code:anthropic',
+      undefined,
+      undefined,
       undefined
     )
     expect(runtime.resetSessionContext).toHaveBeenCalledWith(
@@ -4378,6 +5896,64 @@ describe('resendEditedWorkspaceMessage', () => {
       useSessionStore.getState().sessions[0]?.messages.map((message) => message.content)
     ).toEqual(['first prompt', 'first answer', 'second prompt, edited'])
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('does not truncate or recreate an edited session deleted during adoption', async () => {
+    seedConversation()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        agentFrameworkId: 'claude-code',
+        agentBackendId: 'claude-code:anthropic'
+      }))
+    }))
+
+    const resumeGate = createDeferred<{
+      sessionId: string
+      cwd: string
+      contextReset: boolean
+      frameworkId: 'codex'
+      backendId: string
+    }>()
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(() => resumeGate.promise),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+    const truncate = vi.spyOn(useSessionStore.getState(), 'truncateSessionFromMessage')
+    const append = vi.spyOn(useSessionStore.getState(), 'appendUserMessage')
+
+    const resent = resendEditedWorkspaceMessage(
+      runtime,
+      {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text: 'second prompt, edited'
+      },
+      {
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:builtin-codex-subscription'
+      }
+    )
+    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledOnce())
+
+    useSessionStore.getState().deleteSession('session-1')
+    resumeGate.resolve({
+      sessionId: 'session-1',
+      cwd: '/workspace/project',
+      contextReset: true,
+      frameworkId: 'codex',
+      backendId: 'codex:builtin-codex-subscription'
+    })
+
+    await expect(resent).resolves.toBe(false)
+    expect(useSessionStore.getState().sessions).toEqual([])
+    expect(truncate).not.toHaveBeenCalled()
+    expect(append).not.toHaveBeenCalled()
+    expect(runtime.createSession).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('opens the resent run after reset, then replays the kept history', async () => {

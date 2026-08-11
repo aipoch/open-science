@@ -36,11 +36,37 @@ type SaveSessionArtifactFailure = SaveSessionArtifactFile & {
 type SaveSessionArtifactsResult =
   { saved: false } | { saved: true; filePaths: string[]; failures?: SaveSessionArtifactFailure[] }
 
+type SaveProjectArtifactFile = {
+  source: 'artifact' | 'upload'
+  sessionId: string
+  path: string
+  suggestedName: string
+}
+
+type SaveProjectArtifactsRequest = {
+  projectId: string
+  // Display name only: seeds the suggested zip filename. Identity stays with projectId.
+  projectName: string
+  files: SaveProjectArtifactFile[]
+}
+
+type SaveProjectArtifactFailure = SaveProjectArtifactFile & {
+  message: string
+}
+
+// filePath is absent when every file failed to resolve: no dialog is shown and nothing is written.
+type SaveProjectArtifactsResult =
+  { saved: false } | { saved: true; filePath?: string; failures?: SaveProjectArtifactFailure[] }
+
 export type {
   SaveBlobFileRequest,
   SaveBlobFileResult,
   SaveManagedFileRequest,
   SaveManagedFileResult,
+  SaveProjectArtifactFailure,
+  SaveProjectArtifactFile,
+  SaveProjectArtifactsRequest,
+  SaveProjectArtifactsResult,
   SaveSessionArtifactFailure,
   SaveSessionArtifactFile,
   SaveSessionArtifactsRequest,

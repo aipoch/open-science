@@ -40,7 +40,8 @@ const createCodexTurnAdapter = (): AcpProviderTurnAdapter => ({
         return {
           ...(turnUsage ? { turnUsage } : {}),
           ...(modelTurnCount === undefined ? {} : { modelTurnCount }),
-          ...(contextUsedTokens === undefined ? {} : { contextUsedTokens })
+          ...(contextUsedTokens === undefined ? {} : { contextUsedTokens }),
+          ...(terminalUsage ? { lastModelStepUsage: terminalUsage } : {})
         }
       },
       cancel: () => {

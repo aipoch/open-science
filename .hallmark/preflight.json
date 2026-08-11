@@ -1,0 +1,16 @@
+{
+  "scannedAt": "2026-08-09",
+  "scope": "component",
+  "framework": "Electron, React 19, TypeScript, Tailwind CSS 4",
+  "fontStack": "Inter, ui-sans-serif, system-ui",
+  "palette": "Theme tokens in src/renderer/src/assets/main.css",
+  "motion": "Existing spinner motion with reduced-motion support",
+  "spacing": "Existing Tailwind spacing scale",
+  "designSystem": "docs/design.md",
+  "preserve": [
+    "light and dark color tokens",
+    "message-scroller content gutter",
+    "activity-row geometry",
+    "existing status icon semantics"
+  ]
+}

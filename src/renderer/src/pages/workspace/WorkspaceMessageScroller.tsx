@@ -32,6 +32,7 @@ import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { ReviewerCard } from '@/components/ReviewerCard'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
@@ -47,6 +48,7 @@ import type {
   HandoffLifecycleEventSource,
   HandoffRetryRequest
 } from '../../../../shared/handoff-lifecycle'
+import type { PendingElicitationRequest } from '../../../../shared/acp'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 import { MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../../../shared/artifacts'
@@ -54,10 +56,16 @@ import {
   createArtifactVersionLocator,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
+import type { NotebookSessionReference } from '../../../../shared/notebook'
+import { useNotebookRunsById } from './use-notebook-runs-by-id'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
+  isResumingSession?: boolean
+  notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
@@ -336,13 +344,17 @@ const EditableWorkspaceMessageItem = (
 // Owns transcript scrolling and session-scoped expansion state for activity groups.
 const WorkspaceMessageScrollerImpl = ({
   activeSession,
+  isResumingSession = false,
+  notebookReference,
   onSendEditedMessage,
+  pendingElicitations = [],
   handoffLifecycleSource,
   onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
   const historicalArtifactsByVersionId = useHistoricalArtifactDescriptors(activeSession)
+  const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
   // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
@@ -426,6 +438,15 @@ const WorkspaceMessageScrollerImpl = ({
       ),
     [activeSession, handoffEvents]
   )
+  const interruptedPromptMessageId =
+    activeSession?.resumeRecovery?.promptMessageId ??
+    (activeSession?.activeRun &&
+    activeSession.messages.some(
+      (message) =>
+        message.id === activeSession.activeRun?.promptMessageId && message.interrupted === true
+    )
+      ? activeSession.activeRun.promptMessageId
+      : undefined)
   // Assistant text can be split into several messages around tool calls. All fragments share the
   // prompt they respond to, but only the last visible fragment in that turn owns whole-turn metadata.
   // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
@@ -441,6 +462,9 @@ const WorkspaceMessageScrollerImpl = ({
         footerIds.add(item.message.id)
         continue
       }
+      // The interrupted user marker owns this turn's terminal state until Resume produces a new
+      // terminal response; partial assistant fragments must not claim completion or failure.
+      if (promptMessageId === interruptedPromptMessageId) continue
 
       const previousFooterId = footerIdByPromptMessageId.get(promptMessageId)
       if (previousFooterId) footerIds.delete(previousFooterId)
@@ -449,7 +473,7 @@ const WorkspaceMessageScrollerImpl = ({
     }
 
     return footerIds
-  }, [conversationItems])
+  }, [conversationItems, interruptedPromptMessageId])
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
@@ -870,6 +894,51 @@ const WorkspaceMessageScrollerImpl = ({
                     return <WorkspacePlanActivityRecord key={item.id} activity={item.activity} />
                   }
 
+                  if (item.type === 'compaction-activity') {
+                    return (
+                      <WorkspaceContextCompactionActivityRow
+                        key={item.id}
+                        activity={item.activity}
+                      />
+                    )
+                  }
+
+                  if (item.type === 'activity') {
+                    if (!item.activity.elicitation) return null
+                    const elicitationRequest =
+                      pendingElicitations.find(
+                        (request) => request.toolCallId === item.activity.id
+                      ) ??
+                      (activeSession && item.activity.elicitation.durable
+                        ? {
+                            requestId: item.activity.elicitation.durable.requestId,
+                            sessionId: activeSession.id,
+                            toolCallId: item.activity.id,
+                            message: item.activity.elicitation.message,
+                            fields: item.activity.elicitation.fields,
+                            durable: item.activity.elicitation.durable
+                          }
+                        : undefined)
+                    return (
+                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                        <div className="px-4 pb-1 pt-3 md:px-6">
+                          <div className="mx-auto w-full max-w-4xl">
+                            <WorkspaceElicitationCard
+                              key={elicitationRequest?.requestId ?? item.activity.id}
+                              elicitation={item.activity.elicitation}
+                              request={elicitationRequest}
+                              variant={
+                                item.activity.elicitation.state === 'pending'
+                                  ? 'pending-placeholder'
+                                  : 'default'
+                              }
+                            />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                    )
+                  }
+
                   return (
                     <WorkspaceActivityGroup
                       key={item.id}
@@ -878,6 +947,7 @@ const WorkspaceMessageScrollerImpl = ({
                       onToggleGroup={toggleActivityGroup}
                       expansionOverrides={activityExpansionOverrides}
                       onToggleRow={toggleActivityRow}
+                      notebookRunsById={notebookRunsById}
                       jobsByActivityId={jobsByActivityId}
                       onOpenJobDetail={handleOpenJobDetail}
                     />
@@ -899,7 +969,9 @@ const WorkspaceMessageScrollerImpl = ({
                   </MessageScrollerItem>
                 ))}
 
-                {agentLoadingPhase !== 'hidden' && activeSession ? (
+                {isResumingSession && activeSession ? (
+                  <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
+                ) : agentLoadingPhase !== 'hidden' && activeSession ? (
                   <WorkspaceAgentLoadingRow
                     sessionId={activeSession.id}
                     phase={agentLoadingPhase}
@@ -967,6 +1039,10 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  previous.isResumingSession === next.isResumingSession &&
+  previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
+  previous.notebookReference?.projectName === next.notebookReference?.projectName &&
+  previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 
 const WorkspaceMessageScroller = memo(

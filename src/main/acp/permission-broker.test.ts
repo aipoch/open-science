@@ -1,7 +1,11 @@
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { AcpPermissionBroker, ConversationPermissionGrantStore } from './permission-broker'
+import {
+  AcpPermissionBroker,
+  ConversationPermissionGrantStore,
+  permissionRequestFingerprint
+} from './permission-broker'
 import { withTrustedNativeToolIdentity } from './permission-policy'
 
 type EmittedPermissionRequest = Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]
@@ -127,6 +131,141 @@ const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermis
 })
 
 describe('ACP permission broker', () => {
+  it('persists a prompt-bound request before publishing it and clears authority before release', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    let finishPersist!: (persisted: boolean) => void
+    const persist = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishPersist = resolve
+        })
+    )
+    const settleLive = vi.fn(async () => undefined)
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      undefined,
+      undefined,
+      { persist, settleLive }
+    )
+    const providerResponse = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python verify.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python verify.py' }
+      }),
+      {
+        profile: 'ask',
+        cwd: '/workspace',
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1'
+      }
+    )
+
+    expect(persist).toHaveBeenCalledOnce()
+    expect(emitted).toEqual([])
+    expect(broker.hasDurablePendingForSession('session-1')).toBe(false)
+
+    finishPersist(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].durable).toBe(true)
+    expect(broker.hasDurablePendingForSession('session-1')).toBe(true)
+    const reject = emitted[0].options.find((option) => option.kind === 'reject_once')
+    await broker.respond({ requestId: emitted[0].requestId, optionId: reject?.optionId })
+
+    expect(settleLive).toHaveBeenCalledOnce()
+    await expect(providerResponse).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'reject-once' }
+    })
+  })
+
+  it('abandons a durable provider RPC during teardown without settling its restored card', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const settleLive = vi.fn(async () => undefined)
+    const onSettled = vi.fn()
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      undefined,
+      onSettled,
+      { persist: vi.fn(async () => true), settleLive }
+    )
+    const providerResponse = broker.requestPermission(createPermissionRequest(), {
+      profile: 'ask',
+      cwd: '/workspace',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    broker.abandonAllPending()
+
+    await expect(providerResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(settleLive).not.toHaveBeenCalled()
+    expect(onSettled).not.toHaveBeenCalled()
+    expect(broker.getPendingRequests()).toEqual([])
+  })
+
+  it('releases a restored allow-once only for the exact parked tool fingerprint', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const originalProviderResponse = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python verify.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python verify.py' }
+      }),
+      { profile: 'ask', cwd: '/workspace' }
+    )
+    const original = emitted[0]
+    const fingerprint = permissionRequestFingerprint(original)
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/)
+    broker.cancelAllPending()
+    await expect(originalProviderResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    await broker.prepareRestoredDecision(
+      {
+        state: 'pending',
+        request: original,
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: fingerprint!,
+        createdAt: 1
+      },
+      original.options.find((option) => option.scope === 'once'),
+      'project-1'
+    )
+
+    const mismatch = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python verify.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python different.py' }
+      }),
+      { profile: 'ask', cwd: '/workspace' }
+    )
+    expect(emitted).toHaveLength(2)
+    await broker.respond({ requestId: emitted[1].requestId, cancelled: true })
+    await expect(mismatch).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+
+    const exact = broker.requestPermission(
+      createToolPermissionRequest({
+        title: 'python verify.py',
+        providerToolName: 'Bash',
+        kind: 'execute',
+        rawInput: { command: 'python verify.py' }
+      }),
+      { profile: 'ask', cwd: '/workspace' }
+    )
+    await expect(exact).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    })
+    expect(emitted).toHaveLength(2)
+  })
+
   it('projects legacy command-group grants as readable shell grants', () => {
     const store = new ConversationPermissionGrantStore()
     const categoryKey = `shell-group:argv-prefix:sha256:v1:${'a'.repeat(64)}`

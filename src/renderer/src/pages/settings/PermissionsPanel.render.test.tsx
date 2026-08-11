@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PermissionGrantSnapshot } from '../../../../shared/permission-grants'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { PermissionsPanel } from './PermissionsPanel'
 
 let container: HTMLDivElement
 let root: Root
+let setDefaultPermissionProfile: ReturnType<typeof vi.fn>
 
 const snapshot: PermissionGrantSnapshot = {
   version: 1,
@@ -32,6 +34,11 @@ const snapshot: PermissionGrantSnapshot = {
 }
 
 beforeEach(() => {
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: { configurable: true, value: () => false },
+    setPointerCapture: { configurable: true, value: () => undefined },
+    releasePointerCapture: { configurable: true, value: () => undefined }
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -45,6 +52,10 @@ beforeEach(() => {
     undoQueue: [],
     isRestoring: false
   })
+  useSettingsStore.setState({ defaultPermissionProfile: 'ask', settingsWriteError: undefined })
+  setDefaultPermissionProfile = vi.fn(({ profile }: { profile: 'ask' | 'auto' | 'full' }) =>
+    Promise.resolve({ defaultPermissionProfile: profile })
+  )
 })
 
 afterEach(() => {
@@ -56,11 +67,78 @@ afterEach(() => {
 const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { permissions: api }
+    value: { permissions: api, settings: { setDefaultPermissionProfile } }
   })
 }
 
 describe('PermissionsPanel', () => {
+  it('separates the new-conversation default from remembered permissions', async () => {
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({
+        version: 1,
+        incompleteStores: [],
+        grants: [],
+        counts: { all: 0, global: 0, project: 0, session: 0 }
+      })
+    })
+
+    await act(async () => root.render(<PermissionsPanel />))
+
+    expect(document.body.textContent).toContain('New conversations')
+    expect(document.body.textContent).toContain('Remembered permissions')
+    expect(
+      document.body.querySelector('[aria-label="Default permission mode"]')?.textContent
+    ).toContain('Ask for approval')
+    expect(document.body.textContent).toContain('Applied only to new conversations')
+  })
+
+  it('saves Auto directly and confirms before making Full access the default', async () => {
+    setPermissionApi({
+      list: vi.fn().mockResolvedValue({
+        version: 1,
+        incompleteStores: [],
+        grants: [],
+        counts: { all: 0, global: 0, project: 0, session: 0 }
+      })
+    })
+    await act(async () => root.render(<PermissionsPanel />))
+
+    const openDefaultSelect = (): void => {
+      const trigger = document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Default permission mode"]'
+      )
+      act(() => {
+        trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+    const choose = async (label: string): Promise<void> => {
+      const option = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="option"]')
+      ).find((candidate) => candidate.textContent?.includes(label))
+      await act(async () => {
+        option?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+        option?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+
+    openDefaultSelect()
+    await choose('Auto-approve edits')
+    expect(setDefaultPermissionProfile).toHaveBeenLastCalledWith({ profile: 'auto' })
+
+    openDefaultSelect()
+    await choose('Full access')
+    expect(setDefaultPermissionProfile).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('Use Full access by default?')
+
+    const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Use Full access'
+    )
+    await act(async () => confirm?.click())
+
+    expect(setDefaultPermissionProfile).toHaveBeenLastCalledWith({ profile: 'full' })
+  })
+
   it('keeps the default empty state visually quiet while exposing all scope counts', async () => {
     setPermissionApi({
       list: vi.fn().mockResolvedValue({

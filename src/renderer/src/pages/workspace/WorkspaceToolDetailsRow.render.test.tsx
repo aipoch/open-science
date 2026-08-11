@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivity } from '@/stores/session-store'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
@@ -17,6 +18,28 @@ const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   sortIndex: 1,
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
+  ...overrides
+})
+
+const createNotebookRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
+  runId: 'notebook-run-1',
+  cellId: 'cell-1',
+  source: 'agent',
+  kernelKind: 'r',
+  script: 'plot(1:3)',
+  status: 'completed',
+  startedAt: 1710000000000,
+  text: { stdout: 'saved: plot.png\n', stderr: '', traceback: '', plain: [] },
+  outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
+  artifacts: [],
+  workingFiles: [
+    {
+      path: '/workspace/plot.png',
+      relativePath: 'plot.png',
+      kind: 'other',
+      createdByRunId: 'notebook-run-1'
+    }
+  ],
   ...overrides
 })
 
@@ -190,5 +213,45 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.querySelector('[data-testid="tool-output-image"]')).toBeNull()
     expect(container.querySelectorAll('[data-testid="tool-code-block"]').length).toBeGreaterThan(0)
     expect(container.textContent).toContain('hi')
+  })
+
+  it('renders local notebook figures outside the independently collapsible text output', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: {
+        runId: 'notebook-run-1',
+        status: 'completed',
+        text: { stdout: 'saved: plot.png\n', stderr: '', traceback: '' }
+      }
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={createNotebookRun()}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    const figures = container.querySelectorAll('[data-testid="notebook-figure-output"]')
+    const figure = figures[0]
+    const textOutput = Array.from(container.querySelectorAll('details')).find((detailsElement) =>
+      detailsElement.textContent?.includes('Output')
+    )
+
+    expect(figure).not.toBeNull()
+    expect(figures).toHaveLength(1)
+    expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
+    expect(figure?.firstElementChild?.className).toContain('justify-start')
+    expect(textOutput?.contains(figure)).toBe(false)
+    expect(container.textContent).toContain('1 figure')
+    expect(container.textContent).not.toContain('Saved:')
   })
 })

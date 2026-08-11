@@ -13,6 +13,11 @@ type AcpTaskAgentRuntime = {
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
+  sendPromptObserved(
+    request: AcpPromptRequest,
+    onProviderPromptAccepted: () => void
+  ): Promise<unknown>
+  cancelPrompt(request: { sessionId: string }): Promise<unknown>
 }
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -60,20 +65,27 @@ const createAcpTaskAgentPort = (
       projectName: request.projectId,
       permissionProfile: request.permissionProfile,
       previousFrameworkId: request.previousFrameworkId,
-      previousBackendId: request.previousBackendId
+      previousBackendId: request.previousBackendId,
+      providerSessionId: request.providerSessionId,
+      providerContinuityToken: request.providerContinuityToken
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
-  prompt: async (request) => {
+  prompt: async (request, observer) => {
     const acpRequest = toAcpPromptRequest(request)
     const tracked = notifications?.trackPrompt(acpRequest)
     try {
-      await runtime.sendPrompt(acpRequest)
+      if (observer?.onProviderPromptAccepted) {
+        await runtime.sendPromptObserved(acpRequest, observer.onProviderPromptAccepted)
+      } else {
+        await runtime.sendPrompt(acpRequest)
+      }
     } catch (error) {
       if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
       throw error
     }
-  }
+  },
+  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined)
 })
 
 export { createAcpTaskAgentPort }

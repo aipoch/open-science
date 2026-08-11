@@ -1,10 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost, ComputeJob, CreateComputeHostRequest } from '../../shared/compute'
+import type {
+  ComputeApprovalRequest,
+  ComputeHost,
+  ComputeJob,
+  CreateComputeHostRequest
+} from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import type { ComputeService } from './compute-service'
@@ -81,6 +86,13 @@ const mockService = (impl: Partial<ComputeService>): ComputeService => impl as C
 const mockJobRepo = (impl: Partial<ComputeJobRepository>): ComputeJobRepository =>
   impl as ComputeJobRepository
 
+const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
+  (
+    service as unknown as {
+      remoteOperations: { approvalBroker: ComputeApprovalBroker }
+    }
+  ).remoteOperations.approvalBroker
+
 describe('compute handlers', () => {
   it('list delegates to the repository', async () => {
     const list = vi.fn(() => Promise.resolve([sampleHost()]))
@@ -117,6 +129,70 @@ describe('compute handlers', () => {
     const handlers = createComputeHandlers(mockRepository({ create }))
 
     await expect(handlers.create({ sshAlias: 'biowulf' })).rejects.toThrow(/already registered/i)
+  })
+
+  it('persists project grants through the legacy port when no Registry is available', async () => {
+    let remembered = false
+    let pendingRequest: ComputeApprovalRequest | undefined
+    const hasComputeGrant = vi.fn(() => Promise.resolve(remembered))
+    const addComputeGrant = vi.fn(() => {
+      remembered = true
+      return Promise.resolve({})
+    })
+    const legacyComputeGrants = {
+      listComputeGrants: vi.fn(() => Promise.resolve([])),
+      clearComputeGrants: vi.fn(() => Promise.resolve()),
+      hasComputeGrant,
+      addComputeGrant
+    }
+    const handleComputeApproval = vi.fn((request: ComputeApprovalRequest) => {
+      pendingRequest = request
+      return Promise.resolve()
+    })
+    const computeHandlers = createComputeHandlers(
+      mockRepository({ get: vi.fn(() => Promise.resolve(sampleHost())) }),
+      undefined,
+      undefined,
+      undefined,
+      legacyComputeGrants,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        handleComputeApproval,
+        settleAuthorization: vi.fn(() => Promise.resolve())
+      }
+    )
+    const broker = approvalBrokerFrom(computeHandlers.computeService)
+    const request = {
+      provider_id: 'ssh:biowulf',
+      provider_name: 'biowulf',
+      shape: 'direct_ssh' as const,
+      intent: 'Check module availability',
+      command_preview: 'module avail',
+      command_full: 'module avail'
+    }
+    const context = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-1'
+    }
+
+    const firstDecision = broker.requestWithContext(request, context)
+    await vi.waitFor(() => expect(pendingRequest).toBeDefined())
+    computeHandlers.approvalRespond(pendingRequest!.id, 'project')
+
+    await expect(firstDecision).resolves.toBe('project')
+    expect(addComputeGrant).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      operation: 'call_command',
+      providerId: 'ssh:biowulf'
+    })
+    await expect(broker.requestWithContext(request, context)).resolves.toBe('project')
+    expect(hasComputeGrant).toHaveBeenCalledTimes(2)
+    expect(handleComputeApproval).toHaveBeenCalledOnce()
   })
 
   it('delete passes the provider id through', async () => {
@@ -832,11 +908,19 @@ describe('createJobUpdatedBroadcaster', () => {
     })
   }
 
+  const liveJobRepository = (): Pick<ComputeJobRepository, 'get'> => ({
+    get: vi.fn(async () => sampleJob())
+  })
+
   it('looks up the host by provider_id and uses its display_name on success', async () => {
     const get = vi.fn(() =>
       Promise.resolve(sampleHost({ providerId: 'ssh:biowulf', displayName: 'Biowulf HPC' }))
     )
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob())
@@ -852,7 +936,11 @@ describe('createJobUpdatedBroadcaster', () => {
 
   it('falls back to the provider_id as display_name when hostRepository.get rejects', async () => {
     const get = vi.fn(() => Promise.reject(new Error('db locked')))
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob({ provider_id: 'ssh:lab-gpu' }))
@@ -865,7 +953,11 @@ describe('createJobUpdatedBroadcaster', () => {
 
   it('falls back to the provider_id as display_name when the host row is missing', async () => {
     const get = vi.fn(() => Promise.resolve(null))
-    const broadcaster = createJobUpdatedBroadcaster(mockRepository({ get }), storageRoot)
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get }),
+      storageRoot,
+      liveJobRepository()
+    )
 
     const captured = captureNextBroadcast()
     broadcaster(sampleJob({ provider_id: 'ssh:unknown' }))
@@ -873,6 +965,50 @@ describe('createJobUpdatedBroadcaster', () => {
 
     const summary = result.payload as { provider_id: string; display_name: string }
     expect(summary.display_name).toBe('ssh:unknown')
+  })
+
+  it('drops a delayed update after the Job owner has been deleted', async () => {
+    const sink = vi.fn()
+    const remove = addRendererBroadcastSink(sink)
+    const jobRepository = {
+      get: vi.fn().mockResolvedValueOnce(sampleJob()).mockResolvedValueOnce(null)
+    }
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      jobRepository
+    )
+
+    broadcaster(sampleJob())
+    await vi.waitFor(() => expect(jobRepository.get).toHaveBeenCalledTimes(2))
+
+    expect(sink).not.toHaveBeenCalled()
+    remove()
+  })
+
+  it('broadcasts a persisted update when the Job existence lookup fails transiently', async () => {
+    const sink = vi.fn()
+    const remove = addRendererBroadcastSink(sink)
+    const jobRepository = {
+      get: vi.fn(async () => {
+        throw new Error('database temporarily unavailable')
+      })
+    }
+    const broadcaster = createJobUpdatedBroadcaster(
+      mockRepository({ get: vi.fn(async () => sampleHost()) }),
+      storageRoot,
+      jobRepository
+    )
+
+    broadcaster(sampleJob({ status: 'success' }))
+
+    await vi.waitFor(() =>
+      expect(sink).toHaveBeenCalledWith(
+        COMPUTE_JOB_UPDATED_CHANNEL,
+        expect.objectContaining({ job_id: 'job-bcast', status: 'success' })
+      )
+    )
+    remove()
   })
 
   it('broadcastJobUpdated is a thin wrapper that emits on the documented channel', async () => {
@@ -1208,6 +1344,56 @@ describe('installComputeIpcHandlers', () => {
     for (const channel of expected) {
       expect(handlers.has(channel)).toBe(true)
     }
+  })
+
+  it('keeps the default no-Registry factory backed by persistent project grants', async () => {
+    let pendingRequest: ComputeApprovalRequest | undefined
+    const handleComputeApproval = vi.fn((request: ComputeApprovalRequest) => {
+      pendingRequest = request
+      return Promise.resolve()
+    })
+    const repository = mockRepository({ get: vi.fn(() => Promise.resolve(sampleHost())) })
+    const module = createComputeIpcModule(repository, mockJobRepo({}), undefined, undefined, {
+      handleComputeApproval,
+      settleAuthorization: vi.fn(() => Promise.resolve())
+    })
+    const request = {
+      provider_id: 'ssh:biowulf',
+      provider_name: 'biowulf',
+      shape: 'direct_ssh' as const,
+      intent: 'Check module availability',
+      command_preview: 'module avail',
+      command_full: 'module avail'
+    }
+    const context = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      operation: 'call_command',
+      ownerId: 'host-1'
+    }
+
+    const firstDecision = approvalBrokerFrom(module.computeService).requestWithContext(
+      request,
+      context
+    )
+    await vi.waitFor(() => expect(pendingRequest).toBeDefined())
+    module.handlers.approvalRespond(pendingRequest!.id, 'project')
+    await expect(firstDecision).resolves.toBe('project')
+
+    const persisted = JSON.parse(await readFile(join(storageRoot, 'settings.json'), 'utf8')) as {
+      computeGrants?: unknown[]
+    }
+    expect(persisted.computeGrants).toHaveLength(1)
+
+    const reloadedNotifications = vi.fn(() => Promise.resolve())
+    const reloaded = createComputeIpcModule(repository, mockJobRepo({}), undefined, undefined, {
+      handleComputeApproval: reloadedNotifications,
+      settleAuthorization: vi.fn(() => Promise.resolve())
+    })
+    await expect(
+      approvalBrokerFrom(reloaded.computeService).requestWithContext(request, context)
+    ).resolves.toBe('project')
+    expect(reloadedNotifications).not.toHaveBeenCalled()
   })
 
   it('keeps Compute construction separate from Electron adapter installation', () => {

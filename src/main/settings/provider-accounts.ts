@@ -1,5 +1,3 @@
-import { isDeepStrictEqual } from 'node:util'
-
 import type {
   ChatApiEndpoint,
   ProviderDraft,
@@ -17,75 +15,48 @@ import {
   claudeSharedProviderIdentity,
   codexSubscriptionProviderIdentity,
   isClaudeSubscriptionProvider,
-  isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider,
-  isCodexSubscriptionProviderId,
   isProviderUsableByFramework,
   providerEndpoints,
-  resolveCodexSubscriptionType,
   requiresChatCompletionsBridge
 } from '../../shared/settings'
 import {
   defaultVendorModel,
-  getOfficialVendorModelIds,
   isOfficialVendorId,
-  isVendorModelMultimodal,
   isVendorModelResponsesSupported,
   resolveCustomModelContextWindow,
-  resolveModelContextWindow,
   resolveVendorApiEndpoints,
   resolveVendorBaseUrl,
   resolveVendorModelsUrl,
   resolveVendorOpenAiBaseUrl
 } from '../../shared/provider-registry'
-import {
-  resolveProviderEffectiveModel,
-  resolveProviderReasoningEffortProfile
-} from '../../shared/provider-reasoning-effort'
 import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
-import { isModelBridgeSupported } from '../../shared/provider-registry'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
   type AgentFrameworkId
 } from '../agent-framework'
-import {
-  codexSubscriptionStorageDir,
-  isOfficialOpenAiResponsesBase
-} from '../agent-framework/codex'
 import { netFetchStandard } from '../skills/net-fetch'
-import {
-  clearAppOwnedCodexAuthentication,
-  clearImportedCodexProviderRoute,
-  CodexAuthController,
-  ensureCodexAuthHome,
-  importCodexAuthentication,
-  openCodexAuthSession,
-  type CodexAuthControllerPort,
-  type CodexAuthStatus
-} from './codex-auth'
-import {
-  ClaudeIsolatedAuthController,
-  type ClaudeIsolatedAuthControllerPort,
-  type ClaudeIsolatedAuthStatus
-} from './claude-isolated-auth'
-import {
-  ClaudeSharedAuthController,
-  type ClaudeSharedAuthControllerPort,
-  type ClaudeSharedAuthStatus
-} from './claude-shared-auth'
-import { encryptKey, isEncryptionAvailable, maskKey, tryDecryptKey } from './crypto'
+import { type CodexAuthControllerPort } from './codex-auth'
+import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
+import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
+import { encryptKey, maskKey, tryDecryptKey } from './crypto'
 import { classifyStatus, validateProvider as validateProviderTarget } from './validate'
 import { listProviderModels } from './list-models'
-import { getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
+import type { ResolvedProvider } from './provider-env'
+import {
+  CLAUDE_SHARED_DISCONNECTED_MESSAGE,
+  ProviderAuthLifecycleOwner
+} from './provider-auth-lifecycle'
+import {
+  ProviderRuntimeProjectionOwner,
+  requiresNativeResponsesCompatibility,
+  type ProviderRuntimeTarget,
+  type RuntimeProviderModelSelection
+} from './provider-runtime-projection'
 import type { SettingsRepository } from './repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { StoredProvider, StoredSettings } from './types'
-
-const SETUP_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000
-const CLAUDE_SHARED_AUTH_STATUS_TTL_MS = 5_000
-const CLAUDE_SHARED_DISCONNECTED_MESSAGE =
-  'Claude is disconnected from Open Science. Sign in again to use your shared Claude profile.'
 
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
@@ -107,119 +78,20 @@ type ProviderAccountsModuleOptions = {
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
 }
 
-export type RuntimeProviderModelSelection =
-  | { kind: 'configured'; requestedModel?: string }
-  | { kind: 'required'; model: string }
-  | { kind: 'provider-default' }
-
-export type ProviderRuntimeTarget = {
-  providerId: string
-  providerType: StoredProvider['type']
-  disconnectedAt?: number
-  effectiveModel?: string
-  apiEndpoints: ChatApiEndpoint[]
-  provider: ResolvedProvider
-  reasoningEffortProfile: ReasoningEffortProfile
-  frameworkCompatible: boolean
-  modelBridgeSupported: boolean
-  needsChatResponsesBridge: boolean
-  needsNativeResponsesCompatibility: boolean
-}
-
-// Native Responses vendors other than OpenAI require the same namespace compatibility proxy during
-// validation and runtime. Export one predicate so both paths prove the same protocol contract.
-const requiresNativeResponsesCompatibility = (
-  provider: ResolvedProvider,
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
-): boolean =>
-  framework.id === 'codex' &&
-  framework.supportedApiTypes.includes('responses') &&
-  providerEndpoints(provider).includes('responses') &&
-  !isCodexSubscriptionProvider(provider.type) &&
-  provider.vendorId !== 'openai' &&
-  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
-
 // Owns durable provider records and every provider-specific validation/authentication lifecycle.
 // Executable installation, runtime spawn configuration, live ACP reconnect, and transports remain
 // outside this module.
 class ProviderAccountsModule {
   private readonly repository: SettingsRepository
-  private readonly codexAuth: CodexAuthControllerPort
-  private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
-  private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
-  private claudeSharedAuthStatusCache: { authenticated: boolean; checkedAt: number } | undefined
-  private claudeSharedAuthStatusGeneration = 0
-  private claudeSharedAuthStatusPromise:
-    { generation: number; promise: Promise<boolean> } | undefined
+  private readonly runtimeProjection = new ProviderRuntimeProjectionOwner()
+  private readonly auth: ProviderAuthLifecycleOwner
   private readonly providerValidationGenerations = new Map<string, number>()
 
   constructor(private readonly options: ProviderAccountsModuleOptions) {
     this.repository = options.repository
-    this.codexAuth =
-      options.codexAuth ??
-      new CodexAuthController({
-        openSession: async (mode) => {
-          const settings = await this.repository.getSettings()
-          return openCodexAuthSession({
-            adapterPath: await options.resolveCodexExecutable(
-              settings.codex?.resolvedPath,
-              settings.codex?.nativePath
-            ),
-            nativePath: settings.codex?.nativePath,
-            mode,
-            storageRoot: options.storageRoot,
-            proxyEnv: await options.resolveCodexProxyEnvironment()
-          })
-        }
-      })
-    this.claudeIsolatedAuth =
-      options.claudeIsolatedAuth ??
-      new ClaudeIsolatedAuthController({
-        store: {
-          loadToken: () => this.loadClaudeIsolatedToken(),
-          saveToken: (token) => this.saveClaudeIsolatedToken(token),
-          clearToken: () => this.clearClaudeIsolatedToken(),
-          isEncryptionAvailable: () => isEncryptionAvailable()
-        },
-        claudePath: async () => {
-          const settings = await this.repository.getSettings()
-          return settings.claude?.resolvedPath ?? 'claude'
-        },
-        configDir: getAppClaudeConfigDir(options.storageRoot)
-      })
-    this.claudeSharedAuth =
-      options.claudeSharedAuth ??
-      new ClaudeSharedAuthController({
-        claudePath: async () => {
-          const settings = await this.repository.getSettings()
-          return settings.claude?.resolvedPath ?? 'claude'
-        },
-        configDir: options.userClaudeDir
-      })
-  }
-
-  private async loadClaudeIsolatedToken(): Promise<string | undefined> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-
-    return provider?.keyRef ? tryDecryptKey(provider.keyRef) : undefined
-  }
-
-  private async saveClaudeIsolatedToken(token: string): Promise<void> {
-    const applied = await this.repository.updateClaudeIsolatedCredentialsIfExists({
-      keyRef: encryptKey(token),
-      keyMask: maskKey(token)
-    })
-
-    if (!applied) throw new Error('The Claude provider was removed before sign-in completed.')
-  }
-
-  private async clearClaudeIsolatedToken(): Promise<void> {
-    await this.repository.updateClaudeIsolatedCredentialsIfExists({
-      keyRef: undefined,
-      keyMask: undefined
+    this.auth = new ProviderAuthLifecycleOwner({
+      ...options,
+      resolveProvider: (provider, model) => this.runtimeProjection.resolveProvider(provider, model)
     })
   }
 
@@ -253,30 +125,11 @@ class ProviderAccountsModule {
 
     const reimportCodexAuthentication =
       request.type === 'codex-shared' && request.reimportCodexAuthentication === true
-    if (
-      request.type === 'codex-shared' &&
-      (existing?.codexAuthMode !== 'imported' || reimportCodexAuthentication)
-    ) {
-      await this.codexAuth.cancelLogin()
-      await importCodexAuthentication(
-        this.options.userCodexDir,
-        codexSubscriptionStorageDir(this.options.storageRoot)
-      )
+    await this.auth.prepareCodexProviderUpsert(request, existing, () => {
       if (reimportCodexAuthentication && requestedId) {
         this.advanceProviderValidationGeneration(requestedId)
       }
-    } else if (request.type === 'codex-isolated' && existing?.codexAuthMode !== 'isolated') {
-      if (existing) await this.codexAuth.cancelLogin()
-      const codexHome = codexSubscriptionStorageDir(this.options.storageRoot)
-      await clearImportedCodexProviderRoute(codexHome)
-      await clearAppOwnedCodexAuthentication(codexHome)
-    }
-    if (isCodexSubscriptionProvider(request.type)) {
-      await ensureCodexAuthHome(
-        request.type === 'codex-shared' ? 'shared' : 'isolated',
-        this.options.storageRoot
-      )
-    }
+    })
 
     const provider: StoredProvider = {
       id: subscriptionIdentity?.id ?? existing?.id ?? this.createProviderId(),
@@ -396,372 +249,56 @@ class ProviderAccountsModule {
   }
 
   async deleteProvider(id: string): Promise<void> {
-    if (isCodexSubscriptionProviderId(id)) {
-      await this.codexAuth.cancelLogin()
-      const codexHome = codexSubscriptionStorageDir(this.options.storageRoot)
-      await clearImportedCodexProviderRoute(codexHome)
-      await clearAppOwnedCodexAuthentication(codexHome)
-    }
-    if (isClaudeSubscriptionProviderId(id)) {
-      this.claudeIsolatedAuth.cancelLogin()
-      this.claudeSharedAuth.cancelLogin()
-    }
+    await this.auth.cleanupProviderBeforeDelete(id)
     await this.repository.deleteProvider(id)
   }
 
   cancelCodexLogin(): void {
-    void this.codexAuth.cancelLogin()
+    this.auth.cancelCodexLogin()
   }
 
   cancelClaudeLogin(): void {
-    this.claudeSharedAuth.cancelLogin()
+    this.auth.cancelClaudeLogin()
   }
 
   async loginIsolatedCodex(): Promise<ValidateProviderResult> {
-    const result = this.codexAuthValidationResult(await this.codexAuth.loginIsolated())
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
-    )
-    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
-      return { ...result, applied: false }
-    }
-
-    await this.repository.upsertProvider(
-      result.ok
-        ? {
-            ...provider,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            ...provider,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
-    )
-
-    return { ...result, applied: true }
+    return this.auth.loginIsolatedCodex()
   }
 
   async logoutIsolatedCodex(): Promise<ValidateProviderResult> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === codexSubscriptionProviderIdentity().id
-    )
-    if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated') {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'No isolated Open Science Codex login is configured.'
-      }
-    }
-
-    await this.codexAuth.cancelLogin()
-    try {
-      await ensureCodexAuthHome('isolated', this.options.storageRoot)
-      await clearAppOwnedCodexAuthentication(codexSubscriptionStorageDir(this.options.storageRoot))
-    } catch {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'The Open Science Codex login could not be removed.'
-      }
-    }
-
-    await this.repository.upsertProvider({
-      ...provider,
-      lastValidatedAt: undefined,
-      lastValidationFailure: undefined
-    })
-
-    return { ok: true, category: 'ok' }
+    return this.auth.logoutIsolatedCodex()
   }
 
   async loginIsolatedClaude(token: string): Promise<ValidateProviderResult> {
-    return this.finalizeClaudeIsolatedLogin(
-      this.claudeIsolatedAuthValidationResult(await this.claudeIsolatedAuth.loginIsolated(token))
-    )
+    return this.auth.loginIsolatedClaude(token)
   }
 
   async loginIsolatedClaudeBrowser(): Promise<ValidateProviderResult> {
-    const authStatus = await this.claudeIsolatedAuth.loginIsolatedBrowser()
-    if (authStatus.cancelled) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: authStatus.message,
-        applied: false,
-        cancelled: true
-      }
-    }
-
-    return this.finalizeClaudeIsolatedLogin(this.claudeIsolatedAuthValidationResult(authStatus))
+    return this.auth.loginIsolatedClaudeBrowser()
   }
 
   async cancelClaudeIsolatedLogin(): Promise<void> {
-    this.claudeIsolatedAuth.cancelLogin()
-  }
-
-  private async finalizeClaudeIsolatedLogin(
-    initialResult: ValidateProviderResult
-  ): Promise<ValidateProviderResult> {
-    let result = initialResult
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-    if (!provider) return { ...result, applied: false }
-
-    if (result.ok) {
-      result = await this.options.runClaudeSubscriptionProbe(
-        this.resolveProvider(
-          provider,
-          settings.activeProviderId === provider.id ? settings.activeModel : undefined
-        ),
-        settings
-      )
-      const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
-        provider.keyRef,
-        result.ok
-          ? {
-              expiresAt: Date.now() + SETUP_TOKEN_LIFETIME_MS,
-              lastValidatedAt: Date.now(),
-              lastValidationFailure: undefined
-            }
-          : {
-              expiresAt: undefined,
-              lastValidatedAt: undefined,
-              lastValidationFailure: {
-                at: Date.now(),
-                category: result.category,
-                status: result.status,
-                message: result.message
-              }
-            }
-      )
-      return { ...result, applied }
-    }
-
-    const applied = await this.repository.updateClaudeIsolatedValidationIfKeyMatches(
-      provider.keyRef,
-      {
-        expiresAt: undefined,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: Date.now(),
-          category: result.category,
-          status: result.status,
-          message: result.message
-        }
-      }
-    )
-    return { ...result, applied }
+    return this.auth.cancelClaudeIsolatedLogin()
   }
 
   async logoutIsolatedClaude(): Promise<ValidateProviderResult> {
-    const status = await this.claudeIsolatedAuth.logoutIsolated()
-    if (status.message) {
-      return {
-        ok: false,
-        category: status.message.toLowerCase().includes('timed out') ? 'timeout' : 'unknown',
-        message: status.message
-      }
-    }
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-    if (provider && status.authenticated === false) {
-      await this.repository.upsertProvider({
-        ...provider,
-        expiresAt: undefined,
-        lastValidatedAt: undefined,
-        lastValidationFailure: undefined
-      })
-    }
-
-    return { ok: true, category: 'ok' }
+    return this.auth.logoutIsolatedClaude()
   }
 
   async loginClaudeShared(): Promise<ValidateProviderResult> {
-    const loginTarget = await this.repository.getSettings()
-    const targetProvider = loginTarget.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    this.invalidateClaudeSharedAuthStatus()
-    const authStatus = await this.claudeSharedAuth.loginShared()
-    this.invalidateClaudeSharedAuthStatus()
-    let result = this.claudeSharedAuthValidationResult(authStatus)
-
-    if (authStatus.cancelled) return { ...result, applied: false, cancelled: true }
-    if (targetProvider?.type !== 'claude-shared') return { ...result, applied: false }
-
-    const settings = await this.repository.getSettings()
-    const currentProvider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    if (
-      settings.claudeSubscriptionProviderId !== loginTarget.claudeSubscriptionProviderId ||
-      !isDeepStrictEqual(currentProvider, targetProvider)
-    ) {
-      return { ...result, applied: false }
-    }
-
-    const resolvedTarget = this.resolveProvider(
-      targetProvider,
-      settings.activeProviderId === targetProvider.id ? settings.activeModel : undefined
-    )
-    if (result.ok) {
-      result = await this.options.runClaudeSubscriptionProbe(resolvedTarget, settings)
-    }
-    const applied = await this.repository.updateClaudeSharedValidationIfUnchanged(
-      targetProvider,
-      loginTarget.claudeSubscriptionProviderId,
-      resolvedTarget.model,
-      result.ok
-        ? {
-            disconnectedAt: undefined,
-            lastValidatedAt: Date.now(),
-            lastValidationFailure: undefined
-          }
-        : {
-            disconnectedAt: authStatus.authenticated ? undefined : targetProvider.disconnectedAt,
-            lastValidatedAt: undefined,
-            lastValidationFailure: {
-              at: Date.now(),
-              category: result.category,
-              status: result.status,
-              message: result.message
-            }
-          }
-    )
-
-    return { ...result, applied }
+    return this.auth.loginClaudeShared()
   }
 
   async logoutClaudeShared(): Promise<ValidateProviderResult> {
-    this.invalidateClaudeSharedAuthStatus()
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    if (provider) {
-      const disconnectedAt = Date.now()
-      await this.repository.upsertProvider({
-        ...provider,
-        disconnectedAt,
-        lastValidatedAt: undefined,
-        lastValidationFailure: {
-          at: disconnectedAt,
-          category: 'auth',
-          message: CLAUDE_SHARED_DISCONNECTED_MESSAGE
-        }
-      })
-    }
-
-    return { ok: true, category: 'ok' }
+    return this.auth.logoutClaudeShared()
   }
 
   async getClaudeSharedStatus(): Promise<ValidateProviderResult> {
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
-    )
-    if (provider?.type !== 'claude-shared') {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Claude subscription provider is not configured.'
-      }
-    }
-
-    return this.validateClaudeSharedProvider(
-      this.resolveProvider(
-        provider,
-        settings.activeProviderId === provider.id ? settings.activeModel : undefined
-      ),
-      settings,
-      provider
-    )
-  }
-
-  private async validateClaudeSharedProvider(
-    provider: ResolvedProvider,
-    settings: StoredSettings,
-    storedProvider?: StoredProvider
-  ): Promise<ValidateProviderResult> {
-    if (storedProvider?.disconnectedAt !== undefined) {
-      return { ok: false, category: 'auth', message: CLAUDE_SHARED_DISCONNECTED_MESSAGE }
-    }
-
-    const status = await this.claudeSharedAuth.getStatus()
-    this.claudeSharedAuthStatusCache = {
-      authenticated: status.authenticated,
-      checkedAt: Date.now()
-    }
-    if (!status.authenticated) {
-      return this.claudeSharedAuthValidationResult(
-        status,
-        'Not signed in. Sign in via browser OAuth in the Settings card to connect your Claude subscription.'
-      )
-    }
-
-    return this.options.runClaudeSubscriptionProbe(provider, settings)
-  }
-
-  private claudeSharedAuthValidationResult(
-    status: ClaudeSharedAuthStatus,
-    notSignedInMessage?: string
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    return { ok: false, category: 'unknown', message: status.message ?? notSignedInMessage }
+    return this.auth.getClaudeSharedStatus()
   }
 
   async getClaudeIsolatedStatus(): Promise<ValidateProviderResult> {
-    const status = await this.claudeIsolatedAuth.getStatus()
-    if (!status.authenticated) {
-      return this.claudeIsolatedAuthValidationResult(
-        status,
-        'Not signed in. Run `claude setup-token` and paste the token to connect your Claude subscription.'
-      )
-    }
-
-    const settings = await this.repository.getSettings()
-    const provider = settings.providers.find(
-      (candidate) => candidate.id === CLAUDE_ISOLATED_PROVIDER_ID
-    )
-    if (!provider) {
-      return {
-        ok: false,
-        category: 'unknown',
-        message: 'Claude subscription provider is not configured.'
-      }
-    }
-
-    return this.options.runClaudeSubscriptionProbe(
-      this.resolveProvider(
-        provider,
-        settings.activeProviderId === provider.id ? settings.activeModel : undefined
-      ),
-      settings
-    )
-  }
-
-  private claudeIsolatedAuthValidationResult(
-    status: ClaudeIsolatedAuthStatus,
-    notSignedInMessage?: string
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    return { ok: false, category: 'unknown', message: status.message ?? notSignedInMessage }
+    return this.auth.getClaudeIsolatedStatus()
   }
 
   async setActiveProvider(id: string, model?: string): Promise<void> {
@@ -790,37 +327,21 @@ class ProviderAccountsModule {
         ? undefined
         : this.frameworkIncompatibilityResult(resolved.provider, framework)
 
+    const authResult = incompatibility
+      ? undefined
+      : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
     const result =
       incompatibility ??
-      (isCodexSubscriptionProvider(resolved.provider.type)
-        ? this.codexAuthValidationResult(
-            await this.codexAuth.getStatus(
-              resolveCodexSubscriptionType(resolved.provider) === 'codex-shared'
-                ? 'shared'
-                : 'isolated'
-            ),
-            'Not signed in. Use Sign in to connect your ChatGPT account.'
-          )
-        : resolved.provider.type === 'claude-shared'
-          ? await this.validateClaudeSharedProvider(
-              resolved.provider,
-              settings,
-              resolved.storedId
-                ? settings.providers.find((provider) => provider.id === resolved.storedId)
-                : undefined
-            )
-          : resolved.provider.type === 'claude-isolated'
-            ? await this.getClaudeIsolatedStatus()
-            : await validateProviderTarget(resolved.provider, {
-                fetchImpl: netFetchStandard,
-                requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
-                requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
-                  resolved.provider,
-                  framework
-                ),
-                frameworkEndpoints:
-                  framework.id === 'codex' ? undefined : framework.supportedApiTypes
-              }))
+      authResult ??
+      (await validateProviderTarget(resolved.provider, {
+        fetchImpl: netFetchStandard,
+        requireBridgeToolCall: requiresChatCompletionsBridge(resolved.provider, framework),
+        requireNativeResponsesCompatibility: requiresNativeResponsesCompatibility(
+          resolved.provider,
+          framework
+        ),
+        frameworkEndpoints: framework.id === 'codex' ? undefined : framework.supportedApiTypes
+      }))
 
     if (!resolved.storedId) return result
     if (this.providerValidationGenerations.get(resolved.storedId) !== validationGeneration) {
@@ -870,27 +391,6 @@ class ProviderAccountsModule {
     return { ...result, applied: true }
   }
 
-  private codexAuthValidationResult(
-    status: CodexAuthStatus,
-    isolatedFallback = 'Codex sign-in did not complete.'
-  ): ValidateProviderResult {
-    if (status.authenticated) return { ok: true, category: 'ok' }
-
-    return {
-      ok: false,
-      category: status.message?.toLowerCase().includes('timed out')
-        ? 'timeout'
-        : status.supported
-          ? 'auth'
-          : 'unknown',
-      message:
-        status.message ??
-        (status.mode === 'shared'
-          ? 'No existing Codex login was found. Run `codex login` or use the isolated Open Science login.'
-          : isolatedFallback)
-    }
-  }
-
   async refreshProviderModels(
     request: RefreshProviderModelsRequest
   ): Promise<RefreshProviderModelsResult> {
@@ -927,129 +427,19 @@ class ProviderAccountsModule {
   }
 
   resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
-    if (provider.type === 'official' && provider.vendorId) {
-      const vendorEndpoints = resolveVendorApiEndpoints(provider.vendorId)
-      const modelToCheck = activeModel ?? defaultVendorModel(provider.vendorId)
-      if (
-        !vendorEndpoints.includes('responses') &&
-        isVendorModelResponsesSupported(provider.vendorId, modelToCheck)
-      ) {
-        return [...vendorEndpoints, 'responses']
-      }
-      return vendorEndpoints
-    }
-
-    return provider.apiEndpoints && provider.apiEndpoints.length > 0
-      ? [...provider.apiEndpoints]
-      : ['anthropic']
+    return this.runtimeProjection.resolveProviderApiEndpoints(provider, activeModel)
   }
 
   toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
-    const hasKey = Boolean(provider.keyRef)
-    const needsKey = hasKey && tryDecryptKey(provider.keyRef) === undefined
-
-    return {
-      id: provider.id,
-      type: provider.type,
-      codexAuthMode: provider.codexAuthMode,
-      name: provider.name,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider, activeModel),
-      baseUrl: provider.baseUrl,
-      model: provider.model,
-      contextWindow: provider.contextWindow,
-      supportsImageInput: this.providerSupportsImageInput(provider, activeModel),
-      reasoningEffortPreset:
-        provider.type === 'custom' ? provider.reasoningEffortPreset : undefined,
-      reasoningEffortTransport:
-        provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
-      vendorId: provider.vendorId,
-      region: provider.region,
-      models: this.availableModels(provider),
-      maskedKey: provider.keyMask,
-      hasKey,
-      needsKey,
-      lastValidatedAt: provider.lastValidatedAt,
-      lastValidationFailure: provider.lastValidationFailure,
-      ...(provider.expiresAt !== undefined ? { expiresAt: provider.expiresAt } : {})
-    }
-  }
-
-  private providerSupportsImageInput(provider: StoredProvider, activeModel?: string): boolean {
-    if (isCodexSubscriptionProvider(provider.type)) return true
-    if (isClaudeSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'custom') return provider.supportsImageInput === true
-    if (provider.type === 'official' && provider.vendorId) {
-      return isVendorModelMultimodal(
-        provider.vendorId,
-        activeModel ?? defaultVendorModel(provider.vendorId)
-      )
-    }
-    return false
-  }
-
-  private invalidateClaudeSharedAuthStatus(): void {
-    this.claudeSharedAuthStatusCache = undefined
-    this.claudeSharedAuthStatusGeneration += 1
-  }
-
-  private async getClaudeSharedAuthStatus(): Promise<boolean> {
-    const cached = this.claudeSharedAuthStatusCache
-    if (cached && Date.now() - cached.checkedAt < CLAUDE_SHARED_AUTH_STATUS_TTL_MS) {
-      return cached.authenticated
-    }
-    const generation = this.claudeSharedAuthStatusGeneration
-    const pending = this.claudeSharedAuthStatusPromise
-    if (pending?.generation === generation) return pending.promise
-
-    const promise = this.claudeSharedAuth
-      .getStatus()
-      .then((status) => {
-        if (this.claudeSharedAuthStatusGeneration === generation) {
-          this.claudeSharedAuthStatusCache = {
-            authenticated: status.authenticated,
-            checkedAt: Date.now()
-          }
-        }
-        return status.authenticated
-      })
-      .finally(() => {
-        if (this.claudeSharedAuthStatusPromise?.promise === promise) {
-          this.claudeSharedAuthStatusPromise = undefined
-        }
-      })
-
-    this.claudeSharedAuthStatusPromise = { generation, promise }
-    return promise
+    return this.runtimeProjection.toProviderView(provider, activeModel)
   }
 
   async isProviderKeyUsable(provider: StoredProvider): Promise<boolean> {
-    if (isCodexSubscriptionProvider(provider.type)) return true
-    if (provider.type === 'claude-shared') {
-      if (provider.disconnectedAt !== undefined) return false
-      return this.getClaudeSharedAuthStatus()
-    }
-
-    return Boolean(provider.keyRef) && tryDecryptKey(provider.keyRef) !== undefined
-  }
-
-  private availableModels(provider: StoredProvider): string[] {
-    if (isCodexSubscriptionProvider(provider.type)) {
-      return getOfficialVendorModelIds('openai')
-    }
-    if (provider.type === 'official' && provider.vendorId) {
-      if (provider.fetchedModels && provider.fetchedModels.length > 0) {
-        return provider.fetchedModels
-      }
-      return getOfficialVendorModelIds(provider.vendorId)
-    }
-    return provider.model ? [provider.model] : []
+    return this.auth.isProviderKeyUsable(provider)
   }
 
   resolveActiveModel(provider: StoredProvider | undefined, requested?: string): string | undefined {
-    return resolveProviderEffectiveModel(
-      provider ? { ...provider, models: this.availableModels(provider) } : undefined,
-      requested
-    )
+    return this.runtimeProjection.resolveActiveModel(provider, requested)
   }
 
   // Produces the complete ephemeral provider input for one backend generation without mutating the
@@ -1060,111 +450,28 @@ class ProviderAccountsModule {
     selection: RuntimeProviderModelSelection,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): ProviderRuntimeTarget {
-    const availableModels = this.availableModels(storedProvider)
-    if (
-      selection.kind === 'required' &&
-      availableModels.length > 0 &&
-      !availableModels.includes(selection.model)
-    ) {
-      throw new Error(
-        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
-      )
-    }
-
-    const effectiveModel =
-      selection.kind === 'required'
-        ? this.resolveActiveModel(storedProvider, selection.model)
-        : this.resolveActiveModel(
-            storedProvider,
-            selection.kind === 'configured' ? selection.requestedModel : undefined
-          )
-
-    if (selection.kind === 'required' && effectiveModel !== selection.model) {
-      throw new Error(
-        `The requested model "${selection.model}" is not available for provider "${storedProvider.name}".`
-      )
-    }
-
-    const apiEndpoints = this.resolveProviderApiEndpoints(storedProvider, effectiveModel)
-    const provider = this.resolveProvider(storedProvider, effectiveModel)
-
-    return {
-      providerId: storedProvider.id,
-      providerType: storedProvider.type,
-      ...(storedProvider.disconnectedAt === undefined
-        ? {}
-        : { disconnectedAt: storedProvider.disconnectedAt }),
-      effectiveModel,
-      apiEndpoints,
-      provider,
-      reasoningEffortProfile: resolveProviderReasoningEffortProfile(storedProvider, effectiveModel),
-      frameworkCompatible: isProviderUsableByFramework(
-        { apiEndpoints, type: storedProvider.type },
-        framework
-      ),
-      modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
-      needsChatResponsesBridge: requiresChatCompletionsBridge(provider, framework),
-      needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
-    }
+    return this.runtimeProjection.resolveRuntimeTarget(storedProvider, selection, framework)
   }
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
   ): ProviderRuntimeTarget[] {
-    return this.availableModels(storedProvider).map((model) =>
-      this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
-    )
+    return this.runtimeProjection.resolveRuntimeModelCatalog(storedProvider, framework)
   }
 
   resolveRuntimeReasoningEffortProfile(
     storedProvider: StoredProvider,
     requestedModel?: string
   ): ReasoningEffortProfile {
-    return resolveProviderReasoningEffortProfile(
+    return this.runtimeProjection.resolveRuntimeReasoningEffortProfile(
       storedProvider,
-      this.resolveActiveModel(storedProvider, requestedModel)
+      requestedModel
     )
   }
 
   resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
-    const key = provider.keyRef ? tryDecryptKey(provider.keyRef) : undefined
-    if (provider.type === 'official' && provider.vendorId) {
-      const model = modelOverride ?? defaultVendorModel(provider.vendorId)
-      const contextWindow = resolveModelContextWindow(provider.vendorId, model)
-      return {
-        type: 'custom',
-        vendorId: provider.vendorId,
-        baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
-        model,
-        ...(contextWindow === undefined ? {} : { contextWindow }),
-        key,
-        apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-        supportsImageInput: this.providerSupportsImageInput(provider, modelOverride)
-      }
-    }
-
-    const model = modelOverride ?? provider.model
-    const contextWindow =
-      provider.type === 'custom'
-        ? resolveCustomModelContextWindow(provider.contextWindow)
-        : isClaudeSubscriptionProvider(provider.type)
-          ? resolveModelContextWindow('anthropic', model)
-          : undefined
-    return {
-      type: provider.type,
-      ...(provider.codexAuthMode === undefined ? {} : { codexAuthMode: provider.codexAuthMode }),
-      baseUrl: provider.baseUrl,
-      model,
-      ...(contextWindow === undefined ? {} : { contextWindow }),
-      key,
-      apiEndpoints: this.resolveProviderApiEndpoints(provider, model),
-      supportsImageInput: this.providerSupportsImageInput(provider, modelOverride),
-      ...(provider.type === 'custom'
-        ? { reasoningEffortTransport: provider.reasoningEffortTransport }
-        : {})
-    }
+    return this.runtimeProjection.resolveProvider(provider, modelOverride)
   }
 
   private resolveDraft(draft: ProviderDraft): ResolvedProvider {
@@ -1280,4 +587,4 @@ export {
   ProviderAccountsModule,
   requiresNativeResponsesCompatibility
 }
-export type { ProviderAccountsModuleOptions }
+export type { ProviderAccountsModuleOptions, ProviderRuntimeTarget, RuntimeProviderModelSelection }

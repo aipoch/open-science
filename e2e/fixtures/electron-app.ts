@@ -1,4 +1,4 @@
-import { test as base } from '@playwright/test'
+import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -98,6 +98,7 @@ type ElectronApp = {
   pressMainWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
   requestMainWindowClose: () => Promise<void>
   restart: () => Promise<Page>
+  writeCorruptSessionFile: (projectId: string) => Promise<void>
 }
 
 const launchEnvironment = (
@@ -212,6 +213,16 @@ const openMainWindow = async (
   const page = await application.firstWindow()
   await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const bridge = globalThis as unknown as {
+          api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+        }
+        return (await bridge.api.databaseStartup.getState()).phase
+      })
+    )
+    .toBe('ready')
   return page
 }
 
@@ -401,6 +412,15 @@ class ElectronAppHarness implements ElectronApp {
     await this.close()
     await this.launch()
     return this.page
+  }
+
+  async writeCorruptSessionFile(projectId: string): Promise<void> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) {
+      throw new Error(`Invalid E2E project id: ${projectId}`)
+    }
+    const projectSessionsRoot = join(this.roots.storageRoot, 'sessions', projectId)
+    await mkdir(projectSessionsRoot, { recursive: true })
+    await writeFile(join(projectSessionsRoot, 'corrupt-e2e-session.json'), '{invalid json', 'utf8')
   }
 
   async dispose(): Promise<void> {

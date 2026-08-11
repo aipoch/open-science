@@ -1,4 +1,8 @@
 import {
+  ApplicationCommandError,
+  isApplicationCommandErrorCode
+} from '../../shared/application-command-contract'
+import {
   WEB_RPC_PROTOCOL_VERSION,
   webRpcBootstrapSchema,
   webRpcEventSchema,
@@ -157,18 +161,22 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
     body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary)
   })
   const body = await response.text()
-  if (!response.ok) {
-    throw responseError(response, body, `RPC ${channel} failed`)
-  }
   let payload
   try {
     payload = webRpcResponseSchema.parse(JSON.parse(body, reviveBinary))
   } catch {
+    if (!response.ok) throw responseError(response, body, `RPC ${channel} failed`)
     throw new Error(
       'Open Science returned an invalid response. Try reconnecting to the remote computer.'
     )
   }
-  if (!payload.ok) throw new Error(payload.error.message)
+  if (!payload.ok) {
+    if (isApplicationCommandErrorCode(payload.error.code)) {
+      throw new ApplicationCommandError(payload.error.code, payload.error.message)
+    }
+    throw responseError(response, body, payload.error.message)
+  }
+  if (!response.ok) throw responseError(response, body, `RPC ${channel} failed`)
   return rewritePreviewUrls(payload.result)
 }
 
@@ -195,6 +203,7 @@ const connectEvents = (): void => {
   )
   socket.addEventListener('open', () => {
     eventReconnectAttempt = 0
+    window.dispatchEvent(new Event('open-science:web-events-open'))
   })
   socket.addEventListener('message', (event) => {
     const message = webRpcEventSchema.parse(JSON.parse(String(event.data), reviveBinary))

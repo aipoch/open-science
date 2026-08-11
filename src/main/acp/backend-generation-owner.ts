@@ -15,6 +15,7 @@ export type AcpBackendGenerationView = Readonly<{
   framework: AgentFramework
   backendId?: string
   modelRoute?: AgentModelRoute
+  providerContinuityToken?: string
   session: Readonly<{
     model?: string
     modelRequired: boolean
@@ -77,6 +78,9 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
     framework: backend.framework,
     ...(backend.backendId ? { backendId: backend.backendId } : {}),
     ...(backend.modelRoute ? { modelRoute: backend.modelRoute } : {}),
+    ...(backend.providerContinuityToken
+      ? { providerContinuityToken: backend.providerContinuityToken }
+      : {}),
     session: Object.freeze({
       ...(backend.sessionModel ? { model: backend.sessionModel } : {}),
       modelRequired: backend.sessionModelRequired ?? false,

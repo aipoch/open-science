@@ -1,8 +1,33 @@
-import type { ToolCallContent, ToolCallLocation, ToolKind, Usage } from '@agentclientprotocol/sdk'
+import type {
+  PromptResponse,
+  ToolCallContent,
+  ToolCallLocation,
+  ToolKind,
+  Usage
+} from '@agentclientprotocol/sdk'
 import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
+import type {
+  ElicitationProjection,
+  ElicitationResponse as BaseElicitationResponse,
+  PendingElicitationRequest
+} from './elicitation'
+
+export {
+  isDurableAgentUserChoiceRequest,
+  MAX_ELICITATION_MESSAGE_CHARS,
+  resolveAgentUserChoiceQuestions
+} from './elicitation'
+export type {
+  AgentUserChoiceQuestion,
+  ElicitationAnswer,
+  ElicitationField,
+  ElicitationProjection,
+  ElicitationValue,
+  PendingElicitationRequest
+} from './elicitation'
 
 const ACP_MESSAGE_IMAGE_MIME_TYPES = [
   'image/avif',
@@ -18,6 +43,16 @@ export type AcpMessageImage = {
   mimeType: AcpMessageImageMimeType
   data: string
   byteLength: number
+}
+
+export type ElicitationResponse = BaseElicitationResponse & {
+  // Added only when a restored provider session had to adopt fresh context. The bounded transcript
+  // and media use the same replay path as ordinary post-reset prompts.
+  historyReplay?: {
+    historyPreamble?: string
+    historyAttachments?: UploadedAttachment[]
+    historyImages?: AcpMessageImage[]
+  }
 }
 
 // Message images are embedded in runtime IPC and session JSON, so keep each block small enough to
@@ -84,6 +119,11 @@ export type AcpRuntimeEventKind =
   | 'stop'
   | 'raw'
 
+// Durable renderer marker for compaction lifecycle rows stored through the existing tool-activity
+// projection. The runtime event remains `kind: 'compaction'`; this value only identifies its transcript
+// activity after persistence and replay.
+export const ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME = 'ContextCompaction'
+
 export type AcpRuntimeEventLevel = 'info' | 'warning' | 'error'
 
 export type AcpHandoffFailure = {
@@ -98,6 +138,17 @@ export type AcpHandoffFailure = {
 // ancillary session-scoped errors (artifact cleanup, cancel timeout) — a copy edit here updates
 // both sides at once.
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
+
+// Main owns restored permission authority. These lifecycle events let renderer projections follow
+// durable settlement without making the renderer part of the persistence protocol.
+export const ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE =
+  'Restored permission continuation re-armed'
+export const ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE =
+  'Restored permission continuation settled'
+export const ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE =
+  'Permission continuation completed but its wait could not be cleared'
+export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
+  'Permission continuation failed and its wait could not be restored'
 
 // Marks a prompt failure the app can auto-recover from without user action. 'context-overflow' means
 // the conversation outgrew the provider's request-size limit; the renderer tries framework-native
@@ -238,6 +289,34 @@ export type AcpTurnTokenUsage = {
   turnCount?: number
 }
 
+export type AcpModelStepTokenUsage = Omit<AcpTurnTokenUsage, 'turnCount'>
+
+export type AcpPromptStopReason = PromptResponse['stopReason']
+
+export type AcpPromptTermination =
+  { kind: 'stop'; stopReason: AcpPromptStopReason } | { kind: 'error' }
+
+export type AcpContextWindowSampleSource =
+  'provider-response' | 'provider-update' | 'local-estimate'
+
+// Frozen context facts for one visible prompt execution. Main publishes this with the terminal
+// runtime event before context cleanup can restore a checkpoint; Renderer later supplies durable
+// event/runtime identity when binding it to the owning user Message.
+export type AcpTerminalContextWindow = {
+  termination: AcpPromptTermination
+  contextWindow: AcpContextUsage
+  modelStepUsage?: AcpModelStepTokenUsage
+  source: AcpContextWindowSampleSource
+}
+
+// Branch-bound terminal sample persisted on the user Message. This is a last-model-step context
+// snapshot, never a sum across model steps; whole-turn totals remain in `AcpTurnTokenUsage`.
+export type AcpContextWindowSample = AcpTerminalContextWindow & {
+  id: string
+  timestamp: number
+  runtimeSegmentId?: string
+}
+
 // Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
 // separate from ACP's latest-request usage snapshot.
 export const ACP_TURN_TOKEN_USAGE_META_KEY = 'open-science/turn-usage'
@@ -307,16 +386,81 @@ export const sanitizeAcpTurnTokenUsage = (value: unknown): AcpTurnTokenUsage | u
   }
 }
 
+const ACP_PROMPT_STOP_REASONS = new Set<AcpPromptStopReason>([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled'
+])
+const ACP_CONTEXT_WINDOW_SAMPLE_SOURCES = new Set<AcpContextWindowSampleSource>([
+  'provider-response',
+  'provider-update',
+  'local-estimate'
+])
+
+const sanitizeAcpPromptTermination = (value: unknown): AcpPromptTermination | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const termination = value as Record<string, unknown>
+  if (termination.kind === 'error') return { kind: 'error' }
+  if (termination.kind !== 'stop') return undefined
+  const stopReason = termination.stopReason as AcpPromptStopReason
+  return ACP_PROMPT_STOP_REASONS.has(stopReason) ? { kind: 'stop', stopReason } : undefined
+}
+
+export const sanitizeAcpContextWindowSample = (
+  value: unknown
+): AcpContextWindowSample | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const sample = value as Record<string, unknown>
+  const id = typeof sample.id === 'string' && sample.id ? sample.id : undefined
+  const timestamp = asTokenCount(sample.timestamp)
+  const termination = sanitizeAcpPromptTermination(sample.termination)
+  const contextWindow = sanitizeAcpContextUsage(sample.contextWindow)
+  const source = sample.source as AcpContextWindowSampleSource
+  if (
+    !id ||
+    timestamp === undefined ||
+    !termination ||
+    !contextWindow ||
+    !ACP_CONTEXT_WINDOW_SAMPLE_SOURCES.has(source)
+  ) {
+    return undefined
+  }
+
+  const runtimeSegmentId =
+    typeof sample.runtimeSegmentId === 'string' && sample.runtimeSegmentId
+      ? sample.runtimeSegmentId
+      : undefined
+  const modelStepUsage = sanitizeAcpTurnTokenUsage(sample.modelStepUsage)
+  if (modelStepUsage) delete modelStepUsage.turnCount
+
+  return {
+    id,
+    timestamp,
+    termination,
+    contextWindow,
+    ...(modelStepUsage ? { modelStepUsage } : {}),
+    source,
+    ...(runtimeSegmentId ? { runtimeSegmentId } : {})
+  }
+}
+
 export type AcpRuntimeEvent = {
   id: string
   timestamp: number
   kind: AcpRuntimeEventKind
   level: AcpRuntimeEventLevel
+  // Correlates transient restored-permission lifecycle events without extending durable Session data.
+  permissionRequestId?: string
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
   contextUsage?: AcpContextUsage
   // Present on a completed prompt's stop event when the Agent reports whole-turn token totals.
   turnUsage?: AcpTurnTokenUsage
+  // Frozen last-model-step context facts for a visible prompt stop/error. Renderer discards an
+  // intermediate recoverable overflow when compaction takes ownership of retrying the same Run.
+  terminalContextWindow?: AcpTerminalContextWindow
   // Identifies who owns a native compaction lifecycle so overflow recovery can keep its retry gate
   // active until the replacement prompt takes over, even if control-turn events arrive first.
   compactionReason?: 'automatic' | 'manual' | 'overflow-recovery'
@@ -353,6 +497,7 @@ export type AcpRuntimeEvent = {
   // Terminal metadata carries Bash stdout/stderr and exit code when terminal output is streamed.
   terminalOutput?: string
   terminalExitCode?: number | null
+  elicitation?: ElicitationProjection
   // Prompt identity scopes chat, tool/activity, stop/error, and Artifact events to the originating
   // user turn. App-owned continuations retain it after the renderer's ordinary active run has settled.
   runId?: string
@@ -408,6 +553,9 @@ export type AcpPermissionRequest = {
   sessionId: string
   toolCallId: string
   title: string
+  // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
+  // storage; restored authority is still reloaded and validated independently before use.
+  durable?: true
   status?: string
   providerToolName?: string
   // Set by the permission broker after framework-aware classification so the renderer never has to
@@ -435,6 +583,9 @@ export type AcpPermissionGrant = {
 }
 
 export type AcpStateSnapshot = {
+  // Main-owned construction order lets the renderer reject delayed older IPC snapshots. It is
+  // transient runtime state and is not persisted with Session data.
+  revision?: number
   status: AcpConnectionStatus
   // A coordinator may keep multiple framework generations alive. Callers handling one session should
   // prefer its owning runtime status over the active generation's top-level compatibility status.
@@ -445,6 +596,8 @@ export type AcpStateSnapshot = {
   error?: string
   events: AcpRuntimeEvent[]
   pendingPermissions: AcpPermissionRequest[]
+  // Optional for rolling renderer/main reload compatibility; current runtimes always publish it.
+  pendingElicitations?: PendingElicitationRequest[]
   permissionProfiles: Record<string, SessionPermissionProfileState>
   // Open Science-owned grants by app conversation, so the UI can show and revoke them.
   permissionGrants: Record<string, AcpPermissionGrant[]>
@@ -477,7 +630,12 @@ export type AcpCreateSessionRequest = {
 }
 
 export type AcpCreateSessionResponse = {
+  // Stable application identity used by renderer state and IPC routing.
   sessionId: string
+  // Actual ACP/provider identity. It can differ after fresh adoption under a stable app id and must
+  // survive app restart so the next session/resume targets the provider's real session.
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd?: string
   frameworkId?: AgentFrameworkId
   backendId?: string
@@ -489,6 +647,8 @@ export type AcpCreateSessionResponse = {
 
 export type AcpResumeSessionRequest = {
   sessionId: string
+  providerSessionId?: string
+  providerContinuityToken?: string
   cwd: string
   projectName?: string
   permissionProfile?: PermissionProfileId
@@ -496,6 +656,20 @@ export type AcpResumeSessionRequest = {
   previousBackendId?: string
   // Durable session binding, supplied on restore so session/resume reissues the Specialist whitelist.
   specialistId?: string
+}
+
+export type AcpContinueInterruptedTurnRequest = {
+  sessionId: string
+  projectId: string
+  promptMessageId: string
+  // Present only when session/resume adopted a fresh provider context. Main validates the Runtime
+  // Segment against the persisted active Conversation Branch before using the replay policy.
+  contextReset?: {
+    runtimeSegmentId: string
+    historyReplayTarget: import('./history-preamble').HistoryReplayTarget
+    contextWindow?: number
+    supportsImageInput?: boolean
+  }
 }
 
 export type AcpCompactSessionRequest = {
@@ -582,7 +756,16 @@ export type AcpPermissionResponse = {
   requestId: string
   optionId?: string
   cancelled?: boolean
+  // Present only when the renderer is answering main-owned permission authority restored from the
+  // Session record. Main reloads and validates that authority; this locator and replay projection do
+  // not themselves grant permission.
+  restored?: {
+    sessionId: string
+    projectId: string
+  }
 }
+
+export type AcpPermissionSettlementState = 'resolved' | 'rejected' | 'cancelled'
 
 export type AcpRevokePermissionGrantRequest = {
   sessionId: string

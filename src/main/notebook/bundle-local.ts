@@ -110,7 +110,7 @@ export const createLocalBundleAdapter =
         if (pathBudget) {
           writeFileSync(join(packDir, PACK_PATH_BUDGET_FILE), `${JSON.stringify(pathBudget)}\n`)
         }
-        return { lockPath, pathBudget }
+        return { lockPath, pathBudget, packageSourceDir: packDir }
       } catch {
         // A malformed or stale local bundle is not authoritative. Let the next adapter (CDN) try
         // the same pack instead of turning a local residue into the final provisioning error.

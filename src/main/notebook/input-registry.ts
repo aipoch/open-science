@@ -1,14 +1,8 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
-
-import type { PrismaClient } from '@prisma/client'
-
 import type { FileReference } from '../../shared/artifacts'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
 import { parseNotebookInputPreviewKey, type NotebookRunInputFile } from '../../shared/notebook'
 import type { UploadedAttachment } from '../../shared/uploads'
+import type { ImmutableInputAuthority } from '../immutable-input-authority'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
 
 type RegisterNotebookTurnInputsRequest = {
@@ -48,8 +42,10 @@ type NotebookInputPreviewTarget = {
 }
 
 type NotebookInputRegistryOptions = {
-  storageRoot: string
-  getClient: () => Promise<PrismaClient>
+  inputAuthority: Pick<
+    ImmutableInputAuthority,
+    'resolveContent' | 'resolveVersion' | 'validateVersion'
+  >
 }
 
 type RegisteredTurn = {
@@ -57,83 +53,11 @@ type RegisteredTurn = {
   inputs: NotebookRunInputFile[]
 }
 
-type VerifiedContent = {
-  fingerprint: string
-  checksum: string
-}
-
 const turnKey = (request: GetNotebookTurnInputsRequest): string =>
   JSON.stringify([request.projectId, request.appSessionId, request.promptMessageId])
 
 const versionKey = (input: NotebookRunInputFile): string =>
   `${input.sourceKind}\0${input.inputFileVersionId}`
-
-const resolveStorageKey = (storageRoot: string, key: string): string => {
-  if (!key || isAbsolute(key) || key.includes('\\')) {
-    throw new Error('Invalid Notebook input storage key.')
-  }
-  const absolutePath = resolve(storageRoot, ...key.split('/'))
-  const relativePath = absolutePath.slice(resolve(storageRoot).length)
-  if (
-    absolutePath === resolve(storageRoot) ||
-    (!relativePath.startsWith(sep) && relativePath !== '') ||
-    key.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
-  ) {
-    throw new Error('Notebook input storage key escapes managed storage.')
-  }
-  return absolutePath
-}
-
-const assertAvailableContent = async (
-  storageRoot: string,
-  storageKey: string,
-  expectedSize: number,
-  expectedChecksum: string,
-  verifiedContent: Map<string, VerifiedContent>
-): Promise<string> => {
-  const absolutePath = resolveStorageKey(storageRoot, storageKey)
-  const [resolvedRoot, resolvedPath] = await Promise.all([
-    realpath(storageRoot),
-    realpath(absolutePath)
-  ])
-  const resolvedRelativePath = resolvedPath.slice(resolvedRoot.length)
-  if (
-    resolvedPath === resolvedRoot ||
-    (!resolvedRelativePath.startsWith(sep) && resolvedRelativePath !== '')
-  ) {
-    throw new Error('Notebook input content escapes managed storage.')
-  }
-  const file = await stat(resolvedPath)
-  if (!file.isFile() || file.size !== expectedSize) {
-    throw new Error(
-      'Notebook input content is missing or no longer matches its immutable metadata.'
-    )
-  }
-  const fingerprint = [file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs].join(':')
-  const cached = verifiedContent.get(storageKey)
-  if (cached?.fingerprint === fingerprint && cached.checksum === expectedChecksum) {
-    return resolvedPath
-  }
-
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(resolvedPath)) hash.update(chunk)
-  if (hash.digest('hex') !== expectedChecksum) {
-    throw new Error('Notebook input content checksum does not match its immutable metadata.')
-  }
-  const afterRead = await stat(resolvedPath)
-  const afterReadFingerprint = [
-    afterRead.dev,
-    afterRead.ino,
-    afterRead.size,
-    afterRead.mtimeMs,
-    afterRead.ctimeMs
-  ].join(':')
-  if (afterReadFingerprint !== fingerprint) {
-    throw new Error('Notebook input content changed while its checksum was being validated.')
-  }
-  verifiedContent.set(storageKey, { fingerprint, checksum: expectedChecksum })
-  return resolvedPath
-}
 
 // One execution-scoped capability. It never resolves arbitrary paths: callers must name an exact
 // registered Version key, and only that live record is upgraded to resolver-accessed.
@@ -176,7 +100,6 @@ class NotebookInputRunLease {
 
 class NotebookInputRegistry {
   private readonly turns = new Map<string, RegisteredTurn>()
-  private readonly verifiedContent = new Map<string, VerifiedContent>()
 
   constructor(private readonly options: NotebookInputRegistryOptions) {}
 
@@ -187,7 +110,12 @@ class NotebookInputRegistry {
         throw new Error(`Upload input has no immutable Version identity: ${upload.originalName}`)
       }
       inputs.push(
-        await this.resolveVersion(request.projectId, 'upload-version', upload.versionId, upload.id)
+        await this.resolveVersion({
+          projectId: request.projectId,
+          sourceKind: 'upload-version',
+          inputFileVersionId: upload.versionId,
+          expectedSourceFileId: upload.id
+        })
       )
     }
 
@@ -199,11 +127,11 @@ class NotebookInputRegistry {
         continue
       }
       inputs.push(
-        await this.resolveVersion(
-          request.projectId,
-          reference.source === 'upload' ? 'upload-version' : 'artifact-version',
-          reference.versionId
-        )
+        await this.resolveVersion({
+          projectId: request.projectId,
+          sourceKind: reference.source === 'upload' ? 'upload-version' : 'artifact-version',
+          inputFileVersionId: reference.versionId
+        })
       )
     }
 
@@ -227,34 +155,20 @@ class NotebookInputRegistry {
     const registered = this.turns.get(turnKey(request))?.inputs ?? []
     const inputs = await Promise.all(
       registered.map(async (input) => {
-        const current = await this.resolveVersion(
+        const validation = await this.options.inputAuthority.validateVersion(
           request.projectId,
-          input.sourceKind,
-          input.inputFileVersionId,
-          input.sourceFileId
+          input
         )
-        if (
-          current.storageKey !== input.storageKey ||
-          current.checksum !== input.checksum ||
-          current.sizeBytes !== input.sizeBytes ||
-          current.sourceSessionId !== input.sourceSessionId ||
-          current.sourceVersionNumber !== input.sourceVersionNumber
-        ) {
+        if (validation.state !== 'available') {
           throw new Error(
             `Notebook input registration no longer matches its immutable Version: ${input.inputFileVersionId}`
           )
         }
-        return { ...current, association: 'turn-attached' as const }
+        return { ...validation.input, association: 'turn-attached' as const }
       })
     )
     return new NotebookInputRunLease(inputs, (input) =>
-      assertAvailableContent(
-        this.options.storageRoot,
-        input.storageKey,
-        input.sizeBytes,
-        input.checksum,
-        this.verifiedContent
-      )
+      this.options.inputAuthority.resolveContent(input)
     )
   }
 
@@ -268,18 +182,8 @@ class NotebookInputRegistry {
   async resolvePreview(
     request: ResolveNotebookInputPreviewRequest
   ): Promise<NotebookInputPreviewTarget> {
-    const input = await this.resolveVersion(
-      request.projectId,
-      request.sourceKind,
-      request.inputFileVersionId
-    )
-    const absolutePath = await assertAvailableContent(
-      this.options.storageRoot,
-      input.storageKey,
-      input.sizeBytes,
-      input.checksum,
-      this.verifiedContent
-    )
+    const input = await this.resolveVersion(request)
+    const absolutePath = await this.options.inputAuthority.resolveContent(input)
     return {
       sourceKind: input.sourceKind,
       inputFileVersionId: input.inputFileVersionId,
@@ -305,83 +209,14 @@ class NotebookInputRegistry {
   }
 
   private async resolveVersion(
-    projectId: string,
-    sourceKind: NotebookRunInputFile['sourceKind'],
-    inputFileVersionId: string,
-    expectedSourceFileId?: string
+    request: Parameters<ImmutableInputAuthority['resolveVersion']>[0]
   ): Promise<NotebookRunInputFile> {
-    const client = await this.options.getClient()
-    if (sourceKind === 'upload-version') {
-      const version = await client.uploadVersion.findFirst({
-        where: {
-          id: inputFileVersionId,
-          state: 'ready',
-          uploadFile: { is: { projectId } }
-        },
-        include: { uploadFile: true }
-      })
-      if (!version || (expectedSourceFileId && version.uploadFileId !== expectedSourceFileId)) {
-        throw new Error(`Upload Version is unavailable in this Project: ${inputFileVersionId}`)
-      }
-      const sizeBytes = Number(version.sizeBytes)
-      await assertAvailableContent(
-        this.options.storageRoot,
-        version.contentStorageKey,
-        sizeBytes,
-        version.checksum,
-        this.verifiedContent
-      )
-      return {
-        inputFileVersionId: version.id,
-        sourceKind,
-        sourceFileId: version.uploadFileId,
-        sourceVersionNumber: version.versionNumber,
-        ...(version.createdAt ? { sourceCreatedAt: version.createdAt.toISOString() } : {}),
-        sourceProjectId: version.uploadFile.projectId,
-        sourceSessionId: version.uploadFile.sessionId,
-        filename: version.originalFilename || version.filename,
-        ...(version.contentType ? { contentType: version.contentType } : {}),
-        sizeBytes,
-        checksum: version.checksum,
-        storageKey: version.contentStorageKey,
-        association: 'turn-attached'
-      }
-    }
-
-    const version = await client.artifactVersion.findFirst({
-      where: {
-        id: inputFileVersionId,
-        state: 'finalized',
-        artifact: { is: { projectId } }
-      },
-      include: { artifact: true }
-    })
-    if (!version || (expectedSourceFileId && version.artifactId !== expectedSourceFileId)) {
-      throw new Error(`Artifact Version is unavailable in this Project: ${inputFileVersionId}`)
-    }
-    const sizeBytes = Number(version.sizeBytes)
-    await assertAvailableContent(
-      this.options.storageRoot,
-      version.contentStorageKey,
-      sizeBytes,
-      version.checksum,
-      this.verifiedContent
+    const input = await this.options.inputAuthority.resolveVersion(request)
+    if (input) return input
+    const label = request.sourceKind === 'upload-version' ? 'Upload' : 'Artifact'
+    throw new Error(
+      `${label} Version is unavailable in this Project: ${request.inputFileVersionId}`
     )
-    return {
-      inputFileVersionId: version.id,
-      sourceKind,
-      sourceFileId: version.artifactId,
-      sourceVersionNumber: version.versionNumber,
-      sourceCreatedAt: version.createdAt.toISOString(),
-      sourceProjectId: version.artifact.projectId,
-      sourceSessionId: version.artifact.sessionId,
-      filename: version.artifact.filename,
-      ...(version.contentType ? { contentType: version.contentType } : {}),
-      sizeBytes,
-      checksum: version.checksum,
-      storageKey: version.contentStorageKey,
-      association: 'turn-attached'
-    }
   }
 }
 

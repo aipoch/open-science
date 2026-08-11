@@ -72,21 +72,12 @@ type IpynbNotebook = {
   nbformat_minor: 5
 }
 
-type ResolvedArtifact = {
-  mimeType: string
-  data: unknown
-}
-
 // The "Download all" projection: at most one .ipynb per data kernel that has runs. Omitted kernels
 // are skipped rather than written as an empty notebook.
 type KernelSplitIpynb = Partial<Record<'python' | 'r', IpynbNotebook>>
 
 type RunDocumentToIpynbOptions = {
   appVersion?: string
-  // Per-run artifact outputs keyed by runId, produced by the caller's async IO phase (artifact
-  // file reads) BEFORE this projection runs — keeping this module a pure function of
-  // (document, artifactOutputs, appVersion) whose result never depends on filesystem state.
-  artifactOutputs?: ReadonlyMap<string, NbformatOutput[]>
 }
 
 // nbformat accepts either one string or an array of lines. Arrays make generated notebooks stable and
@@ -232,11 +223,7 @@ const dominantEnvironment = (
   return best
 }
 
-const runToCell = (
-  run: NotebookRunRecord,
-  options: RunDocumentToIpynbOptions,
-  seen: Set<string>
-): NbformatCodeCell => {
+const runToCell = (run: NotebookRunRecord, seen: Set<string>): NbformatCodeCell => {
   const executionCount = executionCountFor(run)
   const structuredOutputs =
     run.outputs.length > 0
@@ -264,15 +251,14 @@ const runToCell = (
     execution_count: executionCount,
     id: nbformatCellId(run.runId, seen),
     metadata,
-    outputs: [...structuredOutputs, ...(options.artifactOutputs?.get(run.runId) ?? [])],
+    outputs: structuredOutputs,
     source: splitLines(shellSource(run))
   }
 }
 
 // Pure, synchronous projection of the append-only run document into a standards-compliant nbformat
-// 4.5 notebook, without changing run.json. All IO (artifact file reads) happens in the caller
-// beforehand and arrives via options.artifactOutputs, so the output is byte-identical for the same
-// (document, artifactOutputs, appVersion) inputs and never depends on filesystem state.
+// 4.5 notebook, without changing run.json. Cell outputs come only from immutable kernel-captured
+// outputs; saved Artifacts remain independent files and are never inferred as cell display output.
 //
 // `kernel` is the data kernel the caller wants the notebook scoped to. When omitted, falls back to
 // the legacy `dominantKernel` rule so the single-export path (no explicit tab) stays unchanged.
@@ -287,7 +273,7 @@ const runDocumentToIpynb = (
   const seen = new Set<string>()
 
   return {
-    cells: document.runs.map((run) => runToCell(run, options, seen)),
+    cells: document.runs.map((run) => runToCell(run, seen)),
     metadata: {
       kernelspec,
       language_info: { name: kernelspec.language },
@@ -375,10 +361,4 @@ const runDocumentToIpynbByKernel = (
 }
 
 export { runDocumentToIpynb, runDocumentToIpynbByKernel, runDocumentToIpynbForKernel }
-export type {
-  IpynbNotebook,
-  KernelSplitIpynb,
-  NbformatOutput,
-  ResolvedArtifact,
-  RunDocumentToIpynbOptions
-}
+export type { IpynbNotebook, KernelSplitIpynb, NbformatOutput, RunDocumentToIpynbOptions }

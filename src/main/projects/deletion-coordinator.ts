@@ -40,6 +40,75 @@ type ProjectPermissionGrantDeletion = {
   finalizeOwnerDeletion?(owner: { kind: 'project'; projectId: string }): Promise<void>
 }
 
+type ProjectDeletionLifecycle = {
+  beforeProjectDelete(projectId: string): Promise<void>
+  restoreProjectDeletion?(projectId: string): Promise<void>
+}
+
+type ProjectDeletionRecoveryLoopOptions = {
+  retryDelayMs?: number
+  onError?: (error: unknown) => void
+}
+
+class ProjectDeletionRecoveryLoop {
+  private readonly retryDelayMs: number
+  private readonly onError: (error: unknown) => void
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private started = false
+  private running = false
+  private activeRun: Promise<void> | undefined
+
+  constructor(
+    private readonly recover: () => Promise<void>,
+    options: ProjectDeletionRecoveryLoopOptions = {}
+  ) {
+    this.retryDelayMs = options.retryDelayMs ?? 30_000
+    this.onError = options.onError ?? (() => undefined)
+  }
+
+  start(): void {
+    if (this.started) return
+    this.started = true
+    this.run()
+  }
+
+  async stop(): Promise<void> {
+    this.started = false
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
+    await this.activeRun
+  }
+
+  private run(): void {
+    if (!this.started || this.running) return
+    this.running = true
+    const activeRun = Promise.resolve()
+      .then(() => this.recover())
+      .then(
+        () => {
+          this.running = false
+        },
+        (error: unknown) => {
+          this.running = false
+          try {
+            this.onError(error)
+          } catch {
+            // A diagnostic sink failure must not disable durable deletion recovery.
+          }
+          if (!this.started) return
+          this.timer = setTimeout(() => {
+            this.timer = undefined
+            this.run()
+          }, this.retryDelayMs)
+        }
+      )
+    this.activeRun = activeRun
+    void activeRun.then(() => {
+      if (this.activeRun === activeRun) this.activeRun = undefined
+    })
+  }
+}
+
 // Persists deletion intent so a crash cannot strand an absent project with active session data. The
 // same sticky recovery gate is shared by project CRUD, session persistence, and Files queries.
 class ProjectDeletionCoordinator {
@@ -53,7 +122,8 @@ class ProjectDeletionCoordinator {
     private readonly preview: PreviewDeletion,
     private readonly reviews?: ProjectReviewDeletion,
     private readonly provenance?: ProjectProvenanceDeletion,
-    private readonly permissionGrants?: ProjectPermissionGrantDeletion
+    private readonly permissionGrants?: ProjectPermissionGrantDeletion,
+    private readonly lifecycle?: ProjectDeletionLifecycle
   ) {}
 
   // Enqueues before yielding so two callers in the same event-loop turn cannot publish competing
@@ -83,6 +153,22 @@ class ProjectDeletionCoordinator {
     return withDataRootWrite(() => this.recoverPendingDeletionsNow())
   }
 
+  // Restores fail-closed in-memory barriers from local durable authority only. Startup waits for this
+  // bounded phase, then remote cleanup is retried by ProjectDeletionRecoveryLoop after the app opens.
+  async restorePendingDeletionBarriers(): Promise<void> {
+    await this.operationQueue
+    return withDataRootWrite(async () => {
+      if (!this.lifecycle?.restoreProjectDeletion) return
+      const projectIds = new Set(await this.projects.listDeletionIntents())
+      for (const projectId of await this.sessions.listLegacyProjectSessionTombstones()) {
+        projectIds.add(projectId)
+      }
+      for (const projectId of projectIds) {
+        await this.lifecycle.restoreProjectDeletion(projectId)
+      }
+    })
+  }
+
   // Deduplicates concurrent intent scans. Completion remains sticky until queued deletion work starts,
   // avoiding a database scan on every ordinary project, session, or Files request.
   private async recoverPendingDeletionsNow(): Promise<void> {
@@ -110,6 +196,7 @@ class ProjectDeletionCoordinator {
     const project = await this.projects.get(projectId)
     if (!project) return
 
+    await this.lifecycle?.beforeProjectDelete(projectId)
     await this.projects.createDeletionIntent(projectId)
     try {
       await this.sessions.deleteProjectSessions(projectId)
@@ -232,12 +319,14 @@ class ProjectDeletionCoordinator {
   }
 }
 
-export { ProjectDeletionCoordinator }
+export { ProjectDeletionCoordinator, ProjectDeletionRecoveryLoop }
 export type {
   PreviewDeletion,
+  ProjectDeletionRecoveryLoopOptions,
   ProjectDeletionRepository,
   ProjectReviewDeletion,
   ProjectProvenanceDeletion,
   ProjectPermissionGrantDeletion,
+  ProjectDeletionLifecycle,
   ProjectSessionDeletion
 }

@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../shared/acp'
+import type { SideChatRuntimeEvent } from '../shared/side-chat'
 import {
   ApplicationEventHub,
   type ApplicationEvent,
@@ -10,6 +11,7 @@ import {
 describe('ApplicationEventHub', () => {
   it('binds known channels to their payload types', () => {
     expectTypeOf<ApplicationEventMap['acp:event']>().toEqualTypeOf<AcpRuntimeEvent>()
+    expectTypeOf<ApplicationEventMap['side-chat:event']>().toEqualTypeOf<SideChatRuntimeEvent>()
     expectTypeOf<ApplicationEvent<'specialist:catalog-changed'>>().toEqualTypeOf<
       Readonly<{ channel: 'specialist:catalog-changed'; payload: undefined }>
     >()

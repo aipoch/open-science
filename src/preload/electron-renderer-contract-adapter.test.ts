@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
+import { ApplicationCommandError } from '../shared/application-command-contract'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 
 type MockPort = Readonly<{
@@ -124,6 +125,28 @@ describe('electron renderer contract adapter', () => {
     const adapter = createElectronRendererContractAdapter(port)
 
     await expect(adapter.invoke('preview.load', { projectId: 'project-1' })).rejects.toBe(failure)
+  })
+
+  it('unwraps runtime-validated Project outcomes and reconstructs public failures', async () => {
+    const project = { id: 'project-1' }
+    const port = createPort()
+    const adapter = createElectronRendererContractAdapter(port)
+    port.invoke.mockResolvedValueOnce({ ok: true, result: project }).mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'invalid-command-arguments',
+        message: 'Invalid arguments for application command: projects:create'
+      }
+    })
+
+    await expect(adapter.invoke('projects.get', 'project-1')).resolves.toBe(project)
+    await expect(adapter.invoke('projects.create', { name: 42 })).rejects.toEqual(
+      expect.objectContaining<ApplicationCommandError>({
+        name: 'ApplicationCommandError',
+        code: 'invalid-command-arguments',
+        message: 'Invalid arguments for application command: projects:create'
+      })
+    )
   })
 
   it('rejects surface-native methods from the IPC request path', async () => {

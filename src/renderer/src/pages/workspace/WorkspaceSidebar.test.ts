@@ -20,7 +20,8 @@ describe('workspace sidebar session status indicators', () => {
 
     expect(mainCssSource).toContain('--color-session-running: var(--session-running);')
     expect(mainCssSource).toContain('--color-session-waiting: var(--session-waiting);')
-    expect(mainCssSource).toContain('--session-running:')
+    expect(mainCssSource).toContain('--session-running: oklch(0.51 0.15 255);')
+    expect(mainCssSource).toContain('--session-running: oklch(0.77 0.1 255);')
     expect(mainCssSource).toContain('--session-waiting:')
   })
 })

@@ -1,7 +1,11 @@
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpContextUsage
+  AcpContextUsage,
+  ElicitationAnswer,
+  ElicitationProjection,
+  ElicitationResponse,
+  PendingElicitationRequest
 } from '../../../../shared/acp'
 import type { LinkedFolderFileReference } from '../../../../shared/artifacts'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
@@ -19,7 +23,9 @@ import {
   AlertTriangle,
   ArrowUp,
   BookOpen,
+  ChartNoAxesCombined,
   ChevronDown,
+  CircleHelp,
   FileText,
   Flag,
   GitBranch,
@@ -27,13 +33,14 @@ import {
   Loader2,
   ListChecks,
   Menu,
+  MessageCircleMore,
   PanelRight,
   Plus,
   ScanEye,
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, type SetStateAction } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -50,7 +57,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
-import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -59,7 +66,9 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { appendArtifactMention, docToSkillIds, type ComposerDoc } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
+import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
 import { PermissionApprovalControls } from './PermissionApprovalControls'
@@ -67,6 +76,7 @@ import { normalizeRunFailureError } from './error-report'
 import { ReportErrorDialog } from './ReportErrorDialog'
 import { SessionInterruptedBanner } from './SessionInterruptedBanner'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { PlanProgressChip, WorkspacePlanCard } from './session-plan/SessionPlanSurfaces'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
@@ -78,11 +88,14 @@ import {
 } from '@/stores/preview-workbench-store'
 import { WorkspaceMessageEditStateProvider } from './workspace-message-edit-state'
 import { workspaceHandoffLifecycleClient } from './handoff-lifecycle-source'
+import { ResizableBottomPanel } from './ResizableBottomPanel'
+import { SideChatPanel } from './SideChatPanel'
+import { hasMainConversation, type SideChatView } from './use-side-chat-controller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const composerIconButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 
@@ -102,7 +115,7 @@ const composerSplitSendMenuButtonClassName = cn(
 )
 
 const composerCancelButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300',
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
   composerInteractiveTransitionClassName
 )
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
@@ -111,6 +124,42 @@ const attachmentChipClassName =
 const attachmentRemoveButtonClassName = cn(
   'flex size-6 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000 disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
+)
+const attachmentLimitsText = `Any file type · ${formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per file. Large files are linked, not embedded.`
+
+const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize question panel"
+    testId="elicitation-composer"
+    scrollTestId="elicitation-composer-scroll"
+    constrainGrowthToOverflow
+    minimumContentSelector='[data-elicitation-option-row="true"]'
+    minimumContentIndex={1}
+  >
+    {children}
+  </ResizableBottomPanel>
+)
+
+const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize permission panel"
+    testId="permission-composer"
+    scrollTestId="permission-composer-scroll"
+    constrainGrowthToOverflow
+  >
+    {children}
+  </ResizableBottomPanel>
+)
+
+const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+  <ResizableBottomPanel
+    ariaLabel="Resize Plan panel"
+    testId="plan-composer"
+    scrollTestId="plan-composer-scroll"
+    constrainGrowthToOverflow
+  >
+    {children}
+  </ResizableBottomPanel>
 )
 
 // Formats the compact size label shown under each composer attachment chip.
@@ -140,6 +189,7 @@ type ConversationPanelProps = {
   isUploadingAttachments: boolean
   notebookReference: NotebookSessionReference | undefined
   pendingPermissions: AcpPermissionRequest[]
+  pendingElicitations?: PendingElicitationRequest[]
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
@@ -159,6 +209,13 @@ type ConversationPanelProps = {
   onSendMessage: (forcedSkillIds: string[]) => void
   // Sends this draft as a one-turn request to plan before execution.
   onPlanFirst?: (forcedSkillIds: string[]) => void
+  sideChat?: SideChatView
+  onStartSideChat?: () => void
+  sideChatDisabledReason?: string
+  onSendSideChat?: (text: string) => Promise<boolean>
+  onSideChatDraftChange?: (value: SetStateAction<string>) => void
+  onCancelSideChat?: () => void
+  onCloseSideChat?: () => void
   // A restored pending Plan has no live tool-call waiter. Every card action starts a fresh,
   // identity-bound Plan interaction instead of trying to resume the expired one.
   onRespondToRestoredPlan: (
@@ -176,6 +233,7 @@ type ConversationPanelProps = {
   onTogglePreviewPanel?: () => void
   onOpenSidebar?: () => void
   onRespondToPermission: (requestId: string, optionId?: string) => Promise<void>
+  onRespondToElicitation?: (response: ElicitationResponse) => Promise<void>
   onPermissionProfileChange: (profile: PermissionProfileId) => void
   onRevokePermissionGrant: (categoryKey: string) => void
   onClearPermissionGrants: () => void
@@ -224,6 +282,7 @@ const ConversationPanel = ({
   isUploadingAttachments,
   notebookReference,
   pendingPermissions,
+  pendingElicitations = [],
   permissionProfile,
   permissionProfileState,
   permissionGrants,
@@ -240,6 +299,13 @@ const ConversationPanel = ({
   onNavigateHistory,
   onSendMessage,
   onPlanFirst,
+  sideChat,
+  onStartSideChat,
+  sideChatDisabledReason,
+  onSendSideChat,
+  onSideChatDraftChange,
+  onCancelSideChat,
+  onCloseSideChat,
   onRespondToRestoredPlan,
   onBranchInNewSession,
   onStageAttachmentFiles,
@@ -251,6 +317,7 @@ const ConversationPanel = ({
   onTogglePreviewPanel = () => undefined,
   onOpenSidebar,
   onRespondToPermission,
+  onRespondToElicitation = async () => undefined,
   onPermissionProfileChange,
   onRevokePermissionGrant,
   onClearPermissionGrants,
@@ -273,13 +340,17 @@ const ConversationPanel = ({
 }: ConversationPanelProps): React.JSX.Element => {
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
+  const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
-  const [isResuming, setIsResuming] = useState(false)
+  const [resumingSessionId, setResumingSessionId] = useState<string>()
+  const isResuming = activeSession?.id === resumingSessionId
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
+  const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
+  const [composerFocusRequest, setComposerFocusRequest] = useState<number>()
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -327,15 +398,56 @@ const ConversationPanel = ({
         ? []
         : undefined
 
+  const sessionActivities = activeSession?.activities ?? []
+  // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
+  // first must reserve the single bottom interaction lane so the ordinary composer never competes
+  // with a question that is waiting for an answer.
+  const livePendingElicitationRequest = pendingElicitations.find((request) => {
+    const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
+      ?.elicitation?.state
+    return state === undefined || state === 'pending'
+  })
+  const pendingElicitationActivity = livePendingElicitationRequest
+    ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
+    : sessionActivities.find((activity) => activity.elicitation?.state === 'pending')
+  const restoredElicitation = pendingElicitationActivity?.elicitation
+  const pendingElicitationRequest: PendingElicitationRequest | undefined =
+    livePendingElicitationRequest ??
+    (activeSession &&
+    pendingElicitationActivity &&
+    restoredElicitation?.state === 'pending' &&
+    restoredElicitation.durable
+      ? {
+          requestId: restoredElicitation.durable.requestId,
+          sessionId: activeSession.id,
+          toolCallId: pendingElicitationActivity.id,
+          message: restoredElicitation.message,
+          fields: restoredElicitation.fields,
+          durable: restoredElicitation.durable
+        }
+      : undefined)
+  const pendingElicitation: ElicitationProjection | undefined =
+    pendingElicitationActivity?.elicitation?.state === 'pending'
+      ? pendingElicitationActivity.elicitation
+      : !pendingElicitationActivity && pendingElicitationRequest
+        ? {
+            message: pendingElicitationRequest.message,
+            fields: pendingElicitationRequest.fields,
+            state: 'pending'
+          }
+        : undefined
+  const hasPendingPermission = pendingPermissions.length > 0
+
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
-    if (!canResumeSession || isResuming) return
+    const sessionId = activeSession?.id
+    if (!canResumeSession || !sessionId || isResuming) return
 
-    setIsResuming(true)
+    setResumingSessionId(sessionId)
     try {
       await onResumeSession()
     } finally {
-      setIsResuming(false)
+      setResumingSessionId((current) => (current === sessionId ? undefined : current))
     }
   }
 
@@ -394,10 +506,31 @@ const ConversationPanel = ({
     (node) => node.type === 'text' && node.text.trim().length > 0
   )
   const canPlanFirst = canSendMessage && hasTextDraft && onPlanFirst !== undefined
+  const canStartSideChat =
+    Boolean(activeSession) &&
+    hasMainConversation(activeSession) &&
+    activeSession?.status !== 'waiting-for-user' &&
+    activeSession?.status !== 'waiting-permission' &&
+    activeSession?.status !== 'waiting-plan-approval' &&
+    canEditDraft &&
+    hasTextDraft &&
+    attachments.length === 0 &&
+    attachmentTransfers.length === 0 &&
+    !sideChatDisabledReason &&
+    onStartSideChat !== undefined
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst || !onPlanFirst) return
     onPlanFirst(docToSkillIds(draftDoc))
+  }
+
+  const handleSideChat = (): void => {
+    if (canStartSideChat) onStartSideChat?.()
+  }
+
+  const handleCloseSideChat = (): void => {
+    onCloseSideChat?.()
+    setComposerFocusRequest((request) => (request ?? 0) + 1)
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -446,6 +579,7 @@ const ConversationPanel = ({
           <h1 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-000">
             {activeSession?.title ?? 'New conversation'}
           </h1>
+          <NotificationBell className="md:hidden" />
           <button
             type="button"
             className={`flex size-7 shrink-0 items-center justify-center rounded-lg hover:bg-surface-control-hover md:hidden ${
@@ -460,10 +594,13 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+        <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage && !sideChat}>
           <WorkspaceMessageScroller
             activeSession={activeSession}
+            isResumingSession={isResuming}
+            notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
+            pendingElicitations={sideChat ? [] : pendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />
@@ -472,7 +609,11 @@ const ConversationPanel = ({
         <div className="relative shrink-0">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-bg-10 to-bg-10/0"
+            data-testid="composer-surface-fade"
+            className={cn(
+              'pointer-events-none absolute inset-x-0 bg-gradient-to-t from-bg-10 to-bg-10/0',
+              hasPendingPermission || pendingElicitation ? '-top-18 h-18' : '-top-12 h-12'
+            )}
           />
 
           <div className="px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] md:px-4 md:pb-2">
@@ -480,8 +621,8 @@ const ConversationPanel = ({
             <div className={composerContentClassName}>
               <div className="px-1 md:px-3">
                 {/* Interrupted sessions get a neutral banner with a Resume action instead of the
-                    red error box, so the user can re-attach the runtime and keep chatting. */}
-                {activeSession?.interrupted ? (
+                    red error box, so the user can re-attach and continue the interrupted turn. */}
+                {!sideChat && activeSession?.interrupted ? (
                   <SessionInterruptedBanner
                     message={activeSession.error ?? 'This session was interrupted.'}
                     isDisabled={!canResumeSession}
@@ -525,26 +666,15 @@ const ConversationPanel = ({
                   </div>
                 ) : null}
 
-                {/* Permission controls are already filtered to the visible session by the page. */}
-                <PermissionApprovalControls
-                  requests={pendingPermissions}
-                  onRespond={onRespondToPermission}
-                  notebookLookup={
-                    activeSession
-                      ? {
-                          sessionId: activeSession.id,
-                          workspaceCwd: activeSession.cwd ?? '',
-                          projectName: activeSession.projectId
-                        }
-                      : undefined
-                  }
-                />
-
                 {/* Switching between a compact job bar and Notebook chrome remounts this layer so a
                     Notebook that becomes available after jobs still receives its entrance animation. */}
-                {notebookReference ||
-                hasAnyJobs ||
-                (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false) ? (
+                {!sideChat &&
+                !hasPendingPermission &&
+                !pendingElicitation &&
+                !pendingPlan &&
+                (notebookReference ||
+                  hasAnyJobs ||
+                  (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
                   <div
                     key={notebookReference ? `notebook-${notebookReference.sessionId}` : 'jobs'}
                     className={cn(
@@ -597,11 +727,18 @@ const ConversationPanel = ({
                 ) : null}
 
                 <div className="relative">
-                  <div aria-hidden="true" className="relative -mb-8 rounded-2xl bg-bg-200 pb-8" />
+                  <div
+                    aria-hidden="true"
+                    data-testid="composer-card-backdrop"
+                    className={cn(
+                      'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
+                      (sideChat || hasPendingPermission || pendingElicitation) && 'hidden'
+                    )}
+                  />
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
-                  {reconfigureError ? (
+                  {!sideChat && reconfigureError ? (
                     <div
                       className="relative z-10 mb-2 flex items-start gap-2.5 rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5"
                       role="alert"
@@ -647,23 +784,100 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {pendingPlan ? (
-                    <WorkspacePlanCard
-                      className="relative z-10"
-                      projection={pendingPlan}
-                      onOpen={openPendingPlan}
-                      onRespond={(decision) => respondToPendingPlan({ decision })}
-                      onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
-                      onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                  {sideChat &&
+                  onSendSideChat &&
+                  onSideChatDraftChange &&
+                  onCancelSideChat &&
+                  onCloseSideChat ? (
+                    <SideChatPanel
+                      view={sideChat}
+                      onSend={onSendSideChat}
+                      onDraftChange={onSideChatDraftChange}
+                      onCancel={onCancelSideChat}
+                      onClose={handleCloseSideChat}
+                      controls={
+                        <ComposerAgentControlsMenu
+                          profile={permissionProfile}
+                          profileState={permissionProfileState}
+                          grants={permissionGrants}
+                          autoReviewEnabled={autoReviewEnabled}
+                          readOnly
+                          permissionProfileReadOnly
+                          grantActionsReadOnly
+                          autoReviewDisabled
+                          enabledComputeHosts={enabledComputeHosts}
+                          onComputeHostToggle={onComputeHostToggle}
+                          onProfileChange={onPermissionProfileChange}
+                          onAutoReviewChange={onAutoReviewToggle}
+                          onRevokeGrant={onRevokePermissionGrant}
+                          onClearGrants={onClearPermissionGrants}
+                          showSpecialist={activeSession !== undefined}
+                          specialistId={specialistId}
+                          specialistUnavailable={specialistUnavailable}
+                          specialistReadOnly
+                          onSpecialistChange={onSpecialistChange}
+                        />
+                      }
                     />
+                  ) : hasPendingPermission ? (
+                    <ResizablePermissionComposer key={pendingPermissions[0]?.requestId}>
+                      <PermissionApprovalControls
+                        requests={pendingPermissions}
+                        onRespond={onRespondToPermission}
+                        embedded
+                        notebookLookup={
+                          activeSession
+                            ? {
+                                sessionId: activeSession.id,
+                                workspaceCwd: activeSession.cwd ?? '',
+                                projectName: activeSession.projectId
+                              }
+                            : undefined
+                        }
+                      />
+                    </ResizablePermissionComposer>
+                  ) : pendingElicitation ? (
+                    <ResizableElicitationComposer
+                      key={pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id}
+                    >
+                      <WorkspaceElicitationCard
+                        elicitation={pendingElicitation}
+                        request={pendingElicitationRequest}
+                        embedded
+                        onRespond={onRespondToElicitation}
+                        onDraftChange={(answers: ElicitationAnswer[]) => {
+                          if (!activeSession || !pendingElicitationActivity) return
+                          setElicitationDraftAnswers(
+                            activeSession.id,
+                            pendingElicitationActivity.id,
+                            answers
+                          )
+                        }}
+                      />
+                    </ResizableElicitationComposer>
+                  ) : pendingPlan ? (
+                    <ResizablePlanComposer key={activePendingPlanKey}>
+                      <WorkspacePlanCard
+                        embedded
+                        projection={pendingPlan}
+                        onOpen={openPendingPlan}
+                        onRespond={(decision) => respondToPendingPlan({ decision })}
+                        onSubmitResponse={(text) => respondToPendingPlan({ feedback: text })}
+                        onResolved={() => setResolvedPlanKey(activePendingPlanKey)}
+                      />
+                    </ResizablePlanComposer>
                   ) : null}
 
-                  {/* Composer keeps draft input local until submit delegates to the session store.
-                      Enter-to-send is owned by ComposerEditor; the form only guards native submit. */}
+                  {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
+                      owns the lane and makes the ordinary controls unreachable. */}
                   <form
+                    hidden={Boolean(
+                      sideChat || hasPendingPermission || pendingElicitation || pendingPlan
+                    )}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      pendingPlan && 'hidden'
+                      (sideChat || hasPendingPermission || pendingElicitation || pendingPlan) &&
+                        'hidden'
                     )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
@@ -805,11 +1019,12 @@ const ConversationPanel = ({
                               ? { sessionId: activeSession.id, projectId: activeSession.projectId }
                               : undefined
                           }
+                          focusRequest={composerFocusRequest}
                         />
                       </div>
 
                       <div className="@container/composer flex items-center gap-1">
-                        {/* The + button opens a dropdown for Attach files and Request review actions. */}
+                        {/* The + button opens a dropdown for attachments and session actions. */}
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
@@ -829,13 +1044,14 @@ const ConversationPanel = ({
                                   <button
                                     type="button"
                                     disabled={
-                                      isUploadingAttachments || (!canEditDraft && !activeBranchPlan)
+                                      isUploadingAttachments ||
+                                      (!canEditDraft && !activeBranchPlan && !activeSession)
                                     }
                                     className={composerIconButtonClassName}
                                     aria-label={
                                       activeBranchPlan
-                                        ? 'Add attachment, view plan, or request review'
-                                        : 'Add attachment or request review'
+                                        ? 'Add attachment, view context window, view plan, or request review'
+                                        : 'Add attachment, view context window, or request review'
                                     }
                                     data-testid="composer-plus-trigger"
                                   >
@@ -845,38 +1061,51 @@ const ConversationPanel = ({
                               </TooltipTrigger>
                               <TooltipContent side="top">
                                 {activeBranchPlan
-                                  ? 'Add attachment, view plan, or request review'
-                                  : 'Add attachment or request review'}
+                                  ? 'Add attachment, view context window, view plan, or request review'
+                                  : 'Add attachment, view context window, or request review'}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
-                          <DropdownMenuContent side="top" align="start" className="w-64">
-                            <DropdownMenuItem
-                              data-testid="menu-attach-files"
-                              disabled={!canEditDraft || isUploadingAttachments}
-                              onSelect={() => fileInputRef.current?.click()}
-                              // Two-line row matching the agent-controls menu style: the limits copy
-                              // lives inside the item so hover paints one shared background.
-                              className="items-center gap-2"
-                            >
-                              <FileText
-                                className="size-4 shrink-0 text-text-200"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-[13px] font-medium leading-5">
-                                  Attach files
-                                </span>
-                                <span
-                                  className="block text-[11px] leading-4 text-text-300"
+                          <DropdownMenuContent side="top" align="start" className="w-56">
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DropdownMenuItem
+                                    data-testid="menu-attach-files"
+                                    disabled={!canEditDraft || isUploadingAttachments}
+                                    onSelect={() => fileInputRef.current?.click()}
+                                  >
+                                    <FileText
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    <span className="flex-1">Attach files</span>
+                                    <CircleHelp
+                                      className="size-3.5 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                  </DropdownMenuItem>
+                                </TooltipTrigger>
+                                <TooltipContent
+                                  side="right"
+                                  className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
                                   data-testid="attachment-limits"
                                 >
-                                  Any file type · {formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)} per
-                                  file. Large files are linked, not embedded.
-                                </span>
-                              </span>
-                            </DropdownMenuItem>
+                                  {attachmentLimitsText}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                            <div
+                              className={cn(
+                                'px-2 py-1.5 text-[11px] leading-4 text-text-300',
+                                canEditDraft && !isUploadingAttachments
+                                  ? 'hidden [@media(pointer:coarse)]:block'
+                                  : 'block'
+                              )}
+                              data-testid="attachment-limits-touch"
+                            >
+                              {attachmentLimitsText}
+                            </div>
                             <ComposerYourFilesMenu
                               onInsertFileReference={handleInsertFileReference}
                             />
@@ -926,6 +1155,20 @@ const ConversationPanel = ({
                               <span className="text-[13px] font-medium leading-5">
                                 Request review
                               </span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              data-testid="menu-context-window"
+                              disabled={!activeSession}
+                              onSelect={() => {
+                                if (activeSession) setIsContextWindowOpen(true)
+                              }}
+                            >
+                              <ChartNoAxesCombined
+                                className="mr-2 size-4 text-text-300"
+                                aria-hidden="true"
+                              />
+                              Context window
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -995,6 +1238,7 @@ const ConversationPanel = ({
                         <ComposerModelPicker />
 
                         {activeSession?.status === 'running' ||
+                        activeSession?.status === 'waiting-for-user' ||
                         activeSession?.status === 'waiting-permission' ||
                         activeSession?.compacting ||
                         activeSession?.fixLoopActive ? (
@@ -1006,7 +1250,7 @@ const ConversationPanel = ({
                             data-testid="composer-running-control-slot"
                             className={cn(
                               'flex shrink-0 justify-end',
-                              onPlanFirst || onBranchInNewSession
+                              onPlanFirst || onStartSideChat || onBranchInNewSession
                                 ? 'w-16 [@media(pointer:coarse)]:mx-3'
                                 : 'w-8'
                             )}
@@ -1019,8 +1263,55 @@ const ConversationPanel = ({
                             >
                               <Square className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
                             </button>
+                            {onStartSideChat ? (
+                              <DropdownMenu>
+                                <TooltipProvider delayDuration={200}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex">
+                                        <DropdownMenuTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className={composerIconButtonClassName}
+                                            disabled={!canStartSideChat}
+                                            aria-label="More send options"
+                                            data-testid="running-side-chat-menu-trigger"
+                                          >
+                                            <ChevronDown className="size-3.5" aria-hidden="true" />
+                                          </button>
+                                        </DropdownMenuTrigger>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      {sideChatDisabledReason ?? 'More send options'}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <DropdownMenuContent side="top" align="end" className="w-64">
+                                  <DropdownMenuItem
+                                    data-testid="menu-side-chat"
+                                    disabled={!canStartSideChat}
+                                    onSelect={handleSideChat}
+                                    title={sideChatDisabledReason}
+                                  >
+                                    <MessageCircleMore
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    <span>
+                                      Side chat
+                                      {sideChatDisabledReason ? (
+                                        <span className="block text-[11px] text-text-300">
+                                          {sideChatDisabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : null}
                           </div>
-                        ) : onPlanFirst || onBranchInNewSession ? (
+                        ) : onPlanFirst || onStartSideChat || onBranchInNewSession ? (
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
@@ -1069,6 +1360,7 @@ const ConversationPanel = ({
                                         size="icon"
                                         disabled={
                                           !canPlanFirst &&
+                                          !canStartSideChat &&
                                           (!canSendMessage || !onBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
@@ -1098,6 +1390,26 @@ const ConversationPanel = ({
                                       aria-hidden="true"
                                     />
                                     Plan first
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    data-testid="menu-side-chat"
+                                    disabled={!canStartSideChat}
+                                    onSelect={handleSideChat}
+                                    title={sideChatDisabledReason}
+                                    className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
+                                  >
+                                    <MessageCircleMore
+                                      className="mr-2 size-4 text-text-300"
+                                      aria-hidden="true"
+                                    />
+                                    <span>
+                                      Side chat
+                                      {sideChatDisabledReason ? (
+                                        <span className="block text-[11px] text-text-300">
+                                          {sideChatDisabledReason}
+                                        </span>
+                                      ) : null}
+                                    </span>
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-branch-in-new-session"
@@ -1146,6 +1458,11 @@ const ConversationPanel = ({
             model: activeSession?.agentModel
           }}
           onClose={() => setIsReportOpen(false)}
+        />
+        <ContextWindowDialog
+          open={isContextWindowOpen}
+          session={activeSession}
+          onOpenChange={setIsContextWindowOpen}
         />
       </section>
     </ResizablePanel>

@@ -1,5 +1,7 @@
 import type {
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
+  ElicitationResponse,
   AcpPermissionResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
@@ -9,6 +11,7 @@ import type {
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 
 // Provides a stable renderer fallback before the first main-process snapshot arrives.
 const emptyAcpState: AcpStateSnapshot = {
@@ -17,6 +20,7 @@ const emptyAcpState: AcpStateSnapshot = {
   sessionIds: [],
   events: [],
   pendingPermissions: [],
+  pendingElicitations: [],
   permissionProfiles: {},
   permissionGrants: {},
   contextUsageBySession: {},
@@ -56,8 +60,11 @@ const useAcpRuntime = (): {
     permissionProfile?: PermissionProfileId,
     previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
-    specialistId?: AcpResumeSessionRequest['specialistId']
+    specialistId?: AcpResumeSessionRequest['specialistId'],
+    providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
+    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
   ) => Promise<AcpCreateSessionResponse>
+  continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpStateSnapshot>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
@@ -85,7 +92,12 @@ const useAcpRuntime = (): {
     planContinuation?: AcpPromptRequest['planContinuation'],
     turnIntent?: AcpPromptRequest['turnIntent']
   ) => Promise<AcpStateSnapshot>
-  respondToPermission: (requestId: string, optionId?: string) => Promise<AcpStateSnapshot>
+  respondToPermission: (
+    requestId: string,
+    optionId?: string,
+    restored?: AcpPermissionResponse['restored']
+  ) => Promise<AcpStateSnapshot>
+  respondToElicitation: (response: ElicitationResponse) => Promise<AcpStateSnapshot>
   setPermissionProfile: (
     sessionId: string,
     profile: PermissionProfileId
@@ -100,21 +112,28 @@ const useAcpRuntime = (): {
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
 
+  const applySnapshot = useCallback((snapshot: AcpStateSnapshot): void => {
+    if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+    setState(snapshot)
+  }, [])
+
   // Loads the initial snapshot and keeps state fresh through runtime broadcasts.
   useEffect(() => {
     let isMounted = true
+    let hasPushedSnapshot = false
 
     // Avoids setting React state after the component using the hook unmounts.
-    const applySnapshot = (snapshot: AcpStateSnapshot): void => {
-      if (isMounted) {
-        setState(snapshot)
-      }
+    const applyMountedSnapshot = (snapshot: AcpStateSnapshot): void => {
+      if (isMounted) applySnapshot(snapshot)
     }
 
     // Pulls current runtime state before any broadcast has arrived.
     const loadInitialState = async (): Promise<void> => {
       try {
-        applySnapshot(await window.api.acp.getState())
+        const snapshot = await window.api.acp.getState()
+        // Older Main versions do not publish revisions. In that compatibility case, a pushed
+        // snapshot received after subscription is the only safe authority over the initial pull.
+        if (!hasPushedSnapshot || snapshot.revision !== undefined) applyMountedSnapshot(snapshot)
       } catch (error) {
         if (isMounted) {
           setActionError(getErrorMessage(error))
@@ -122,7 +141,10 @@ const useAcpRuntime = (): {
       }
     }
 
-    const removeStateListener = window.api.acp.onState(applySnapshot)
+    const removeStateListener = window.api.acp.onState((snapshot) => {
+      hasPushedSnapshot = true
+      applyMountedSnapshot(snapshot)
+    })
 
     void loadInitialState()
 
@@ -130,7 +152,7 @@ const useAcpRuntime = (): {
       isMounted = false
       removeStateListener()
     }
-  }, [])
+  }, [applySnapshot])
 
   // Runs an IPC action that returns a full runtime snapshot.
   const runSnapshotAction = useCallback(
@@ -143,7 +165,7 @@ const useAcpRuntime = (): {
 
       try {
         const snapshot = await action()
-        setState(snapshot)
+        applySnapshot(snapshot)
         return snapshot
       } catch (error) {
         setActionError(getErrorMessage(error))
@@ -152,7 +174,7 @@ const useAcpRuntime = (): {
         setPending?.(false)
       }
     },
-    []
+    [applySnapshot]
   )
 
   // Runs an IPC action that returns a non-snapshot value such as a new session id.
@@ -191,10 +213,10 @@ const useAcpRuntime = (): {
       // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
       // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
       // and the UI would show stale state until the next async IPC event fires.
-      setState(snapshot)
+      applySnapshot(snapshot)
       return snapshot
     },
-    []
+    [applySnapshot]
   )
 
   // Keep all renderer ACP IPC calls in one hook so the future conversation UI can reuse it.
@@ -233,7 +255,9 @@ const useAcpRuntime = (): {
       permissionProfile?: PermissionProfileId,
       previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
       previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
-      specialistId?: AcpResumeSessionRequest['specialistId']
+      specialistId?: AcpResumeSessionRequest['specialistId'],
+      providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
+      providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.resumeSession({
@@ -243,10 +267,18 @@ const useAcpRuntime = (): {
           permissionProfile,
           previousFrameworkId,
           previousBackendId,
-          specialistId
+          specialistId,
+          providerSessionId,
+          providerContinuityToken
         })
       ),
     [runValueAction]
+  )
+
+  const continueInterruptedTurn = useCallback(
+    (request: AcpContinueInterruptedTurnRequest) =>
+      runSendPromptAction(() => window.api.acp.continueInterruptedTurn(request)),
+    [runSendPromptAction]
   )
 
   // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
@@ -328,23 +360,43 @@ const useAcpRuntime = (): {
 
   // Converts a UI permission click into the response shape expected by IPC.
   const respondToPermission = useCallback(
-    async (requestId: string, optionId?: string): Promise<AcpStateSnapshot> => {
+    async (
+      requestId: string,
+      optionId?: string,
+      restored?: AcpPermissionResponse['restored']
+    ): Promise<AcpStateSnapshot> => {
       const response: AcpPermissionResponse = {
         requestId,
         optionId,
-        cancelled: !optionId
+        cancelled: !optionId,
+        ...(restored ? { restored } : {})
       }
       setActionError(null)
       try {
         const snapshot = await window.api.acp.respondToPermission(response)
-        setState(snapshot)
+        applySnapshot(snapshot)
         return snapshot
       } catch (error) {
         setActionError(getErrorMessage(error))
         throw error
       }
     },
-    []
+    [applySnapshot]
+  )
+
+  const respondToElicitation = useCallback(
+    async (response: ElicitationResponse): Promise<AcpStateSnapshot> => {
+      setActionError(null)
+      try {
+        const snapshot = await window.api.acp.respondToElicitation(response)
+        applySnapshot(snapshot)
+        return snapshot
+      } catch (error) {
+        setActionError(getErrorMessage(error))
+        throw error
+      }
+    },
+    [applySnapshot]
   )
 
   const setPermissionProfile = useCallback(
@@ -375,12 +427,14 @@ const useAcpRuntime = (): {
     disconnect,
     createSession,
     resumeSession,
+    continueInterruptedTurn,
     resetSessionContext,
     compactSession,
     deleteSession,
     cancel,
     sendPrompt,
     respondToPermission,
+    respondToElicitation,
     setPermissionProfile,
     revokePermissionGrant
   }

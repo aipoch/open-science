@@ -12,7 +12,8 @@ import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
-  CloseConfirmVariant
+  CloseConfirmVariant,
+  WindowFindAppearance
 } from '../shared/window-controls'
 
 type QuitEvent = { preventDefault: () => void; defaultPrevented: boolean }
@@ -112,6 +113,7 @@ type CapturedCloseOpts = {
   classifyClose: () => CloseClassification
   resolveCloseAction: () => Promise<CloseConfirmChoice>
   requestQuit: (confirmed?: boolean) => void
+  onAppearanceChanged?: (appearance: WindowFindAppearance) => void
 }
 
 type Harness = {
@@ -144,6 +146,9 @@ const setup = (
       | 'isMigrationInProgress'
       | 'platform'
       | 'createInitialWindow'
+      | 'onAppearanceChanged'
+      | 'initialWindow'
+      | 'configureMainWindow'
     >
   > & {
     trayHost?: boolean
@@ -178,6 +183,8 @@ const setup = (
       windows.push(w)
       return asWindow(w)
     },
+    initialWindow: overrides.initialWindow,
+    configureMainWindow: overrides.configureMainWindow,
     createTray: (handlers) => {
       trayHandlers = handlers
       return tray as unknown as import('electron').Tray | undefined
@@ -193,6 +200,7 @@ const setup = (
     quit,
     countWindows: () => windows.filter((w) => !w.destroyed).length,
     createInitialWindow: overrides.createInitialWindow,
+    onAppearanceChanged: overrides.onAppearanceChanged,
     platform: overrides.platform ?? 'linux',
     detectActiveSessions,
     createConfirmClose: () => confirmClose
@@ -228,6 +236,30 @@ describe('installAppLifecycle', () => {
     const { windows, trayHandlers } = setup()
     expect(windows).toHaveLength(1)
     expect(trayHandlers).toBeDefined()
+  })
+
+  it('adopts and reconfigures an existing database-startup window', () => {
+    const initialWindow = makeFakeWindow()
+    const configureMainWindow = vi.fn()
+    const { windows, getMainWindow } = setup({
+      initialWindow: asWindow(initialWindow),
+      configureMainWindow
+    })
+
+    expect(windows).toHaveLength(0)
+    expect(getMainWindow()).toBe(asWindow(initialWindow))
+    expect(configureMainWindow).toHaveBeenCalledOnce()
+    expect(configureMainWindow).toHaveBeenCalledWith(initialWindow, expect.any(Object))
+  })
+
+  it('passes native appearance synchronization to every recreated main window', () => {
+    const onAppearanceChanged = vi.fn()
+    const { app, closeOpts, windows } = setup({ platform: 'darwin', onAppearanceChanged })
+
+    expect(closeOpts[0].onAppearanceChanged).toBe(onAppearanceChanged)
+    windows[0].destroyed = true
+    app.emit('activate')
+    expect(closeOpts[1].onAppearanceChanged).toBe(onAppearanceChanged)
   })
 
   it('starts headless and creates a window only when requested', () => {

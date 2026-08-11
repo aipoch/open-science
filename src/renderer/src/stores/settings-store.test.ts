@@ -39,6 +39,7 @@ type SettingsApi = {
   setClosePreference: ReturnType<typeof vi.fn>
   setProjectFilesFilter: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
+  setDefaultPermissionProfile: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
@@ -196,6 +197,11 @@ beforeEach(() => {
       .fn()
       .mockImplementation((request: { variant: 'light' | 'dark' }) =>
         Promise.resolve({ ...snapshot([]), appIconVariant: request.variant })
+      ),
+    setDefaultPermissionProfile: vi
+      .fn()
+      .mockImplementation((request: { profile: 'ask' | 'auto' | 'full' }) =>
+        Promise.resolve({ ...snapshot([]), defaultPermissionProfile: request.profile })
       ),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -772,6 +778,14 @@ describe('settings store: onboarding completion', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(999)
+  })
+
+  it('caches the normalized default permission profile', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), defaultPermissionProfile: 'auto' })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('auto')
   })
 })
 
@@ -2064,5 +2078,31 @@ describe('settings store: setAppIconVariant', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+  })
+})
+
+describe('settings store: setDefaultPermissionProfile', () => {
+  it('forwards the profile and caches the returned snapshot', async () => {
+    await useSettingsStore.getState().setDefaultPermissionProfile('auto')
+
+    expect(api.setDefaultPermissionProfile).toHaveBeenCalledWith({ profile: 'auto' })
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('auto')
+  })
+
+  it('reverts and exposes a visible failure when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ defaultPermissionProfile: 'ask' })
+    api.setDefaultPermissionProfile.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setDefaultPermissionProfile('full')
+
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('ask')
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save the default permission mode. Try again.'
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set default permission profile',
+      expect.any(Error)
+    )
   })
 })

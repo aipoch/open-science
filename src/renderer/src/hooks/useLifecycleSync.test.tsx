@@ -3,17 +3,29 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  ProjectDeletedEvent,
-  SessionDeletedEvent,
-  SessionUpsertEvent
+import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  type ProjectDeletedEvent,
+  type SessionDeletedEvent,
+  type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
+import {
+  createLinearConversationGraph,
+  getActiveConversationContext,
+  synchronizeActiveConversationMessages
+} from '../../../shared/conversation-graph'
+import { validateDurableMessageOwnership } from '../../../main/artifacts/provenance-message-finalization'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore
+} from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
 const listeners: {
@@ -172,6 +184,255 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated session')
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('merges Main-owned permission authority without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([session])
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Run the verification'
+    })
+    const durableBeforeOutput = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: prompt?.messageId,
+      content: 'Preparing the command.'
+    })
+
+    const pendingAuthoritySession = {
+      ...durableBeforeOutput,
+      status: 'waiting-permission' as const,
+      updatedAt: durableBeforeOutput.updatedAt + 1,
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: session.id,
+            toolCallId: 'tool-1',
+            title: 'Run npm test',
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: prompt!.messageId,
+          fingerprint: 'a'.repeat(64),
+          createdAt: 1
+        }
+      }
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: pendingAuthoritySession
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.status).toBe('waiting-permission')
+    expect(projected.runtimeContext?.permission?.request.requestId).toBe('permission-1')
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+    expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableBeforeOutput,
+          status: 'running',
+          updatedAt: durableBeforeOutput.updatedAt + 2,
+          runtimeContext: { version: 1, revision: 2 }
+        }
+      })
+    })
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled.status).toBe('running')
+    expect(settled.runtimeContext?.permission).toBeUndefined()
+    expect(settled.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...pendingAuthoritySession,
+          updatedAt: durableBeforeOutput.updatedAt + 3
+        }
+      })
+    })
+
+    const afterStalePendingReplay = useSessionStore.getState().sessions[0]
+    expect(afterStalePendingReplay.status).toBe('running')
+    expect(afterStalePendingReplay.runtimeContext?.revision).toBe(2)
+    expect(afterStalePendingReplay.runtimeContext?.permission).toBeUndefined()
+    expect(afterStalePendingReplay.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+  })
+
+  it('applies a Main-owned continuation prompt before projecting later artifact events', async () => {
+    const prompt = {
+      id: 'prompt-original',
+      role: 'user' as const,
+      content: 'Choose an approach.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const preamble = {
+      id: 'agent-question-preamble',
+      role: 'agent' as const,
+      content: 'Please choose one option.',
+      status: 'complete' as const,
+      responseToMessageId: prompt.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = {
+      ...session,
+      messages: [prompt, preamble],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: session.id,
+        messages: [prompt, preamble],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      updatedAt: 2
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    const revisionPrompt = {
+      id: 'prompt-revision',
+      role: 'user' as const,
+      content: 'The user revised the previous structured answer: Approach: Expanded',
+      status: 'complete' as const,
+      responseToMessageId: preamble.id,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const durable = {
+      ...base,
+      messages: [...base.messages, revisionPrompt],
+      conversationGraph: synchronizeActiveConversationMessages(
+        base.conversationGraph,
+        [...base.messages, revisionPrompt],
+        3
+      ),
+      updatedAt: 3
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: durable,
+        originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+      })
+    })
+
+    const projected = toPersistedSession(useSessionStore.getState().sessions[0])
+    expect(projected.messages.at(-1)).toMatchObject({ id: revisionPrompt.id })
+    expect(projected.conversationGraph?.messages.at(-1)).toMatchObject({
+      id: revisionPrompt.id,
+      introducedOnBranchId: `message-branch-${session.id}`
+    })
+    const context = getActiveConversationContext(projected.conversationGraph!, revisionPrompt.id)
+    const finalMessage = {
+      id: 'agent-final',
+      role: 'agent' as const,
+      content: 'Created the revised artifact.',
+      status: 'complete' as const,
+      responseToMessageId: revisionPrompt.id,
+      eventIds: [],
+      createdAt: 4,
+      updatedAt: 4
+    }
+    projected.messages.push(finalMessage)
+    projected.conversationGraph = synchronizeActiveConversationMessages(
+      projected.conversationGraph!,
+      projected.messages,
+      4,
+      context.runtimeSegmentId
+    )
+    expect(() =>
+      validateDurableMessageOwnership(projected, {
+        ...context,
+        messageId: finalMessage.id
+      })
+    ).not.toThrow()
+  })
+
+  it("does not roll back live conversation state from this renderer's save echo", async () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex-response',
+        agentModel: 'gpt-5.5',
+        runtimeContext: { version: 1, revision: 1 }
+      }
+    ])
+    const earlierSave = toPersistedSession(useSessionStore.getState().sessions[0])
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Create the report',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex-response',
+      agentModel: 'gpt-5.6-sol'
+    })
+    const live = useSessionStore.getState().sessions[0]
+    const context = getActiveConversationContext(live.conversationGraph!, appended!.messageId)
+    const response = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: appended?.messageId,
+      content: 'Saved the report.'
+    })
+    useSessionStore.getState().finishRun(session.id, undefined, appended?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...earlierSave, updatedAt: live.updatedAt + 1 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(() =>
+      validateDurableMessageOwnership(toPersistedSession(useSessionStore.getState().sessions[0]), {
+        ...context,
+        messageId: response!.messageId
+      })
+    ).not.toThrow()
+  })
+
+  it("keeps archive cleanup for this renderer's update echo", async () => {
+    const removeSessionItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
+    useSessionStore.getState().hydrateSessions([{ ...session, title: 'Live title', updatedAt: 3 }])
+    useSessionStore.setState({ selectedSessionId: session.id })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, title: 'Stale title', archivedAt: 2, updatedAt: 4 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]?.title).toBe('Live title')
+    expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
 
   it('clears a stale notice when its session is archived', async () => {

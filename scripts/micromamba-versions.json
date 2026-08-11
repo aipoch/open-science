@@ -13,7 +13,9 @@
     "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
     "    curl -fsSL \"https://github.com/mamba-org/micromamba-releases/releases/download/$tag/micromamba-$s.tar.bz2\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
     "  done",
-    "The sha256 covers the downloaded .tar.bz2 archive (before extraction).",
+    "The sha256 covers the downloaded .tar.bz2 archive (before extraction). binarySha256 covers the extracted executable used by runtime preflight.",
+    "compatibility is a separately pinned final-1.x Windows runner, bundled so recovery never downloads executable code at runtime.",
+    "To repin compatibility, update its version/releaseTag, hash the official win-64 tarball, extract Library/bin/micromamba.exe, and hash that executable independently.",
     "Before accepting a micromamba bump, revalidate the Windows managed-runtime fixtures for multi-cache search, URL-derived cache layout, and flat-cache fallback with LongPathsEnabled=0."
   ],
   "version": "2.8.1",
@@ -24,5 +26,18 @@
     "linux-64": "8528263837623551a44464a372e5bd6b0b856479a83d2a77490a19dd98da3b06",
     "linux-aarch64": "daa4d5c7c5d688ce0deed4ff7887a4ff95429c89d80c76e39ab1ee3d5f66b913",
     "win-64": "e82874c473688860d087dfe825e1a52ae9deaf8099c7edaf3caff80e2687ed5d"
+  },
+  "binarySha256": {
+    "win-64": "b645a5259cb92b5869b0e60943390dd0d362cae45bc7e2f5ba8c7e4a4b06c7aa"
+  },
+  "compatibility": {
+    "version": "1.5.12",
+    "releaseTag": "1.5.12-0",
+    "sha256": {
+      "win-64": "078a87f3f009586fed9450b085ed4801bf2aab552bb88da72d881db2cee40f89"
+    },
+    "binarySha256": {
+      "win-64": "3c2642b581d7fb00b4c8da0cae483276a2afca2b542740d8f5fde51448207727"
+    }
   }
 }

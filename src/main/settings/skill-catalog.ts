@@ -15,6 +15,7 @@ import type {
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   ImportSkillZipRequest,
+  GitHubTokenStatus,
   PreviewGitHubSkillRequest,
   PreviewAgentHomeSkillRequest,
   PreviewSkillZipRequest,
@@ -31,9 +32,12 @@ import type {
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
+  createAuthenticatedGitHubFetch,
+  isGitHubRateLimitResponse,
   parseGitHubRepo,
   parseGitHubSkillUrl,
-  searchGitHubSkillRepositories
+  searchGitHubSkillRepositories,
+  type FetchLike
 } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
@@ -48,6 +52,7 @@ import {
 } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
+import { encryptKey, maskKey, tryDecryptKey } from './crypto'
 
 type SkillCatalogEntry = {
   name: string
@@ -78,6 +83,7 @@ type SkillCatalogModuleOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
+  githubFetch?: FetchLike
 }
 
 // Owns the installed Skill catalog and its filesystem rules. SettingsService remains a compatibility
@@ -85,10 +91,57 @@ type SkillCatalogModuleOptions = {
 class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
+  private readonly githubFetch: FetchLike
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(options.storageRoot)
+    this.githubFetch = options.githubFetch ?? netFetch
+  }
+
+  private async authenticatedGitHubFetch(): Promise<FetchLike> {
+    const settings = await this.options.repository.getSettings()
+    return createAuthenticatedGitHubFetch(this.githubFetch, tryDecryptKey(settings.githubTokenRef))
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    const settings = await this.options.repository.getSettings()
+    const configured = Boolean(settings.githubTokenRef && tryDecryptKey(settings.githubTokenRef))
+    return {
+      configured,
+      ...(configured && settings.githubTokenMask ? { mask: settings.githubTokenMask } : {})
+    }
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    const trimmed = token.trim()
+    const response = await createAuthenticatedGitHubFetch(this.githubFetch, trimmed)(
+      'https://api.github.com/rate_limit',
+      { headers: { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' } }
+    )
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('GitHub rejected this token. Check that it is valid and try again.')
+      }
+      if (isGitHubRateLimitResponse(response)) {
+        throw new Error('GitHub token verification was rate-limited. Wait a moment and try again.')
+      }
+      if (response.status === 403) {
+        throw new Error(
+          'GitHub forbids this token from accessing the API. Check its permissions and organization access, then try again.'
+        )
+      }
+      throw new Error(`GitHub token verification failed (${response.status}). Try again.`)
+    }
+
+    await this.options.repository.setGitHubToken(encryptKey(trimmed), maskKey(trimmed))
+    return this.getGitHubTokenStatus()
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    await this.options.repository.setGitHubToken(undefined, undefined)
+    return { configured: false }
   }
 
   private async catalog(): Promise<BundledSkill[]> {
@@ -96,9 +149,31 @@ class SkillCatalogModule {
     return [...featured, ...user]
   }
 
+  private async managedCatalog(): Promise<BundledSkill[]> {
+    return (await this.catalog()).filter((skill) => skill.exposure !== 'internal')
+  }
+
+  // Main-process adapter for host.skills. This intentionally includes internal bundled Skills so
+  // /Customize can load skill-creator, while user-facing projections below use managedCatalog().
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.catalog()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    const bundled = (await this.skillRegistry.list()).find((skill) => skill.id === id)
+    return bundled ? read(bundled) : this.userSkills.withSkillReadLock(id, read)
+  }
+
+  async publishHostSkill(slug: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.userSkills.publishPersonalDirectory(slug, sourcePath, overwrite)
+  }
+
   async listSkills(): Promise<SkillView[]> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -117,7 +192,7 @@ class SkillCatalogModule {
     }>
   > {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -135,12 +210,13 @@ class SkillCatalogModule {
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
     const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
-    return ids.filter((id) => disabled.has(id))
+    const managedIds = new Set((await this.managedCatalog()).map((skill) => skill.id))
+    return ids.filter((id) => managedIds.has(id) && disabled.has(id))
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
     const nameById = new Map(
-      (await this.catalog()).map((skill) => [
+      (await this.managedCatalog()).map((skill) => [
         skill.id,
         skill.source === 'featured' ? skill.id : skill.name
       ])
@@ -158,7 +234,7 @@ class SkillCatalogModule {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
     const rootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
-    const byId = new Map((await this.catalog()).map((skill) => [skill.id, skill] as const))
+    const byId = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill] as const))
     const descriptors: Array<{ name: string; path: string }> = []
     for (const id of [...new Set(ids)]) {
       const skill = byId.get(id)
@@ -195,7 +271,7 @@ class SkillCatalogModule {
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => !disabled.has(skill.id))
+        .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
         .map((skill) => ({
           directory: `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.source === 'featured' ? skill.id : skill.name,
@@ -223,7 +299,7 @@ class SkillCatalogModule {
 
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const skill = skills.find((entry) => entry.id === id)
@@ -279,7 +355,10 @@ class SkillCatalogModule {
   }
 
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
+    const outcome = await this.userSkills.importFromGitHub(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -327,7 +406,10 @@ class SkillCatalogModule {
   async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
-    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
+    const preview = await this.userSkills.previewGitHubSkill(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     const suffix = location.path ? `/${location.path}` : ''
     const revision = location.ref ? `@${location.ref}` : ''
     return {
@@ -338,11 +420,16 @@ class SkillCatalogModule {
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     if (parseGitHubRepo(request.repo)) {
-      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+      return {
+        skills: await this.userSkills.scanRepo(request.repo, await this.authenticatedGitHubFetch())
+      }
     }
     return {
       skills: [],
-      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+      repositories: await searchGitHubSkillRepositories(
+        request.repo,
+        await this.authenticatedGitHubFetch()
+      )
     }
   }
 
@@ -667,7 +754,9 @@ class SkillCatalogModule {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
-      (await this.catalog()).filter((skill) => !disabled.has(skill.id))
+      (await this.catalog()).filter(
+        (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
+      )
     )
   }
 
@@ -676,9 +765,13 @@ class SkillCatalogModule {
     disabledSkillIds: string[],
     modelConfig?: ClaudeRuntimeModelConfig | null
   ): Promise<void> {
+    const skills = await this.catalog()
+    const internalIds = new Set(
+      skills.filter((skill) => skill.exposure === 'internal').map((skill) => skill.id)
+    )
     await provisionAppClaudeConfigDir(configDir, {
-      skills: await this.catalog(),
-      disabledSkillIds,
+      skills,
+      disabledSkillIds: disabledSkillIds.filter((id) => !internalIds.has(id)),
       ...(modelConfig === undefined ? {} : { modelConfig })
     })
   }

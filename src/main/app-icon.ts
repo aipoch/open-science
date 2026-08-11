@@ -1,7 +1,8 @@
-import type { App, BrowserWindow, NativeImage } from 'electron'
+import type { App, BrowserWindow, NativeImage, NativeTheme } from 'electron'
 
 import type { AppIconPreview, AppIconVariant } from '../shared/settings'
 import { APP_ICON_VARIANT_INFOS, DEFAULT_APP_ICON_VARIANT } from '../shared/settings'
+import type { WindowFindAppearance } from '../shared/window-controls'
 import { createLogger } from './logger'
 
 const logger = createLogger('app-icon')
@@ -14,6 +15,7 @@ export type AppIconElectron = {
   nativeImage: {
     createFromPath: (path: string) => NativeImage
   }
+  nativeTheme: Pick<NativeTheme, 'on' | 'shouldUseDarkColors'>
 }
 
 // Edge size (px) of the settings-preview thumbnail. Small enough to keep the data URLs light while
@@ -57,16 +59,18 @@ export type AppIconControllerDeps = {
   platform?: NodeJS.Platform
 }
 
-// Owns the runtime app icon: the per-window icon off macOS (title bar / Alt-Tab, and the taskbar on
-// most Linux WMs) and the Dock on macOS. The selected variant is applied to every current window and
-// re-applied to each new window as it is created, so the choice survives window recreation (macOS
-// activate, second-instance surface). NOTE: on Windows setIcon changes the window's own icon but NOT
-// the taskbar button, which Windows keys off the AppUserModelID / the baked-in exe icon — so the
-// taskbar there is intentionally out of scope. The installed bundle/exe icon is baked in and unaffected.
+// Owns runtime icon appearance. Off macOS the independent variant is applied to every window and
+// re-applied after recreation. On macOS the renderer's resolved Theme drives the Dock, while the
+// installed .app/Finder/Launchpad icon remains the build/icon.icon asset catalog. NOTE: on Windows
+// setIcon changes the window's own icon but NOT the taskbar button, which Windows keys off the
+// AppUserModelID / baked-in exe icon; the installed bundle/exe icon is unaffected at runtime.
 export type AppIconController = {
-  // Applies a variant to every open window (off macOS) or the Dock (macOS) and remembers it for
-  // windows created later.
+  // Applies the independent app-icon setting off macOS. On macOS, Theme is authoritative so this
+  // legacy setting cannot race the adaptive app icon / Dock appearance.
   setVariant: (variant: AppIconVariant) => void
+  // Applies the resolved General > Theme appearance to the macOS Dock. `followsSystem` keeps the
+  // main process listening after the last renderer window closes.
+  setAppearance: (appearance: WindowFindAppearance) => void
   // The variant currently applied.
   getVariant: () => AppIconVariant
 }
@@ -95,6 +99,7 @@ export const createAppIconController = (deps: AppIconControllerDeps): AppIconCon
   // Cache each built image so repeated applies (every new window) don't re-decode the platform asset.
   const cache = new Map<AppIconVariant, NativeImage | undefined>()
   let current: AppIconVariant = deps.initialVariant
+  let currentAppearance: WindowFindAppearance | undefined
 
   const iconFor = (variant: AppIconVariant): NativeImage | undefined => {
     if (!cache.has(variant)) cache.set(variant, loadIcon(deps, variant))
@@ -130,13 +135,40 @@ export const createAppIconController = (deps: AppIconControllerDeps): AppIconCon
     applyToWindow(window)
   })
 
-  // Apply the persisted variant now: the dock right away, and any window that already exists.
-  applyEverywhere()
+  // Resolve a system-following preference from Electron's native source rather than trusting a
+  // renderer snapshot that may have been sent immediately before the OS appearance changed.
+  const applyAppearanceToDock = (): void => {
+    if (!isDarwin || !currentAppearance) return
+    current = currentAppearance.followsSystem
+      ? deps.electron.nativeTheme.shouldUseDarkColors
+        ? 'dark'
+        : 'light'
+      : currentAppearance.theme
+    applyToDock()
+  }
+
+  if (isDarwin) {
+    // Keep following macOS even while every BrowserWindow is closed. Before the renderer announces
+    // its preference we deliberately leave the Dock alone, so the bundled .icon remains authoritative
+    // during startup instead of being immediately overwritten by a stale persisted icon choice.
+    deps.electron.nativeTheme.on('updated', () => {
+      if (currentAppearance?.followsSystem) applyAppearanceToDock()
+    })
+  } else {
+    // Off macOS the independent persisted icon variant remains the existing source of truth.
+    applyEverywhere()
+  }
 
   return {
     setVariant: (variant: AppIconVariant): void => {
+      if (isDarwin) return
       current = variant
       applyEverywhere()
+    },
+    setAppearance: (appearance: WindowFindAppearance): void => {
+      if (!isDarwin) return
+      currentAppearance = appearance
+      applyAppearanceToDock()
     },
     getVariant: (): AppIconVariant => current
   }

@@ -644,15 +644,24 @@ run <- base::local({
   kernel_dev_off <- grDevices::dev.off
   kernel_plot_new <- graphics::plot.new
   capture_state <- new.env(parent = emptyenv())
+  external_device_owners <- new.env(parent = emptyenv())
+  request_state <- new.env(parent = emptyenv())
+  request_state$sequence <- 0L
 
-  reset_capture_state <- function(dev_id = NA_integer_, initial_usr = NULL) {
+  reset_capture_state <- function(
+      dev_id = NA_integer_,
+      initial_usr = NULL,
+      request_id = NA_integer_) {
     capture_state$active <- !is.na(dev_id)
     capture_state$dev_id <- dev_id
     capture_state$initial_usr <- initial_usr
+    capture_state$request_id <- request_id
     capture_state$page_seen <- FALSE
     capture_state$recorded_plot_seen <- FALSE
     capture_state$graphics_state_seen <- FALSE
     capture_state$closed <- FALSE
+    capture_state$external_device_capture_keys <- character()
+    capture_state$external_capture_keys <- character()
   }
 
   reset_capture_state()
@@ -840,6 +849,52 @@ run <- base::local({
       identical(as.integer(unname(which)), as.integer(unname(capture_state$dev_id)))
   }
 
+  external_device_key <- function(which) {
+    if (length(which) != 1L || is.na(which)) {
+      return(NA_character_)
+    }
+    as.character(as.integer(unname(which)))
+  }
+
+  external_device_owned_by_current_request <- function(which) {
+    key <- external_device_key(which)
+    !is.na(key) &&
+      exists(key, envir = external_device_owners, inherits = FALSE) &&
+      identical(
+        get(key, envir = external_device_owners, inherits = FALSE),
+        capture_state$request_id
+      )
+  }
+
+  file_device_capture_key <- function(args) {
+    path <- args[["filename", exact = TRUE]]
+    if (is.null(path)) path <- args[["file", exact = TRUE]]
+    if (is.null(path) && length(args) > 0L) path <- args[[1L]]
+    if (!is.character(path) || length(path) != 1L || is.na(path) || !nzchar(path)) {
+      return(NA_character_)
+    }
+    normalized_path <- file.path(
+      normalizePath(dirname(path), winslash = "/", mustWork = FALSE),
+      basename(path)
+    )
+    tools::file_path_sans_ext(normalized_path)
+  }
+
+  registered_external_capture_key <- function(which) {
+    key <- external_device_key(which)
+    if (is.na(key) || is.null(capture_state$external_device_capture_keys[[key]])) {
+      return(NA_character_)
+    }
+    capture_state$external_device_capture_keys[[key]]
+  }
+
+  forget_external_device <- function(which) {
+    key <- external_device_key(which)
+    if (!is.na(key) && exists(key, envir = external_device_owners, inherits = FALSE)) {
+      rm(list = key, envir = external_device_owners)
+    }
+  }
+
   mark_capture_page <- function() {
     if (isTRUE(capture_state$active) &&
         !isTRUE(capture_state$closed) &&
@@ -866,6 +921,71 @@ run <- base::local({
     if (capture_state_device_matches(which) &&
         !capture_device_is_open(capture_state$dev_id)) {
       capture_state$closed <- TRUE
+    }
+    forget_external_device(which)
+  }
+
+  record_external_plot <- function(which) {
+    if (!isTRUE(capture_state$active) ||
+        isTRUE(capture_state$closed) ||
+        capture_state_device_matches(which) ||
+        !external_device_owned_by_current_request(which) ||
+        !capture_device_is_open(capture_state$dev_id) ||
+        !capture_device_is_open(which)) {
+      return(NULL)
+    }
+    capture_key <- registered_external_capture_key(which)
+    if (!is.na(capture_key) && capture_key %in% capture_state$external_capture_keys) {
+      return(NULL)
+    }
+    current_dev <- grDevices::dev.cur()
+    if (!identical(current_dev, which)) {
+      suppressWarnings(try(grDevices::dev.set(which), silent = TRUE))
+    }
+    recorded <- suppressWarnings(try(grDevices::recordPlot(), silent = TRUE))
+    if (!identical(current_dev, which) && capture_device_is_open(current_dev)) {
+      suppressWarnings(try(grDevices::dev.set(current_dev), silent = TRUE))
+    }
+    if (inherits(recorded, "try-error") || length(recorded) < 1L || is.null(recorded[[1L]])) {
+      return(NULL)
+    }
+    if (!is.na(capture_key)) {
+      capture_state$external_capture_keys <- c(
+        capture_state$external_capture_keys,
+        capture_key
+      )
+    }
+    recorded
+  }
+
+  replay_external_plot <- function(recorded) {
+    if (is.null(recorded) ||
+        isTRUE(capture_state$closed) ||
+        !capture_device_is_open(capture_state$dev_id)) {
+      return(invisible(NULL))
+    }
+    current_dev <- grDevices::dev.cur()
+    if (!identical(current_dev, capture_state$dev_id)) {
+      suppressWarnings(try(grDevices::dev.set(capture_state$dev_id), silent = TRUE))
+    }
+    suppressWarnings(try(grDevices::replayPlot(recorded), silent = TRUE))
+    if (!identical(current_dev, capture_state$dev_id) && capture_device_is_open(current_dev)) {
+      suppressWarnings(try(grDevices::dev.set(current_dev), silent = TRUE))
+    }
+    invisible(NULL)
+  }
+
+  register_external_device <- function(args) {
+    current_dev <- grDevices::dev.cur()
+    if (isTRUE(capture_state$active) &&
+        !isTRUE(capture_state$closed) &&
+        !capture_state_device_matches(current_dev)) {
+      key <- external_device_key(current_dev)
+      if (!is.na(key)) {
+        assign(key, capture_state$request_id, envir = external_device_owners)
+        capture_state$external_device_capture_keys[[key]] <- file_device_capture_key(args)
+      }
+      suppressWarnings(try(grDevices::dev.control(displaylist = "enable"), silent = TRUE))
     }
   }
 
@@ -915,6 +1035,8 @@ run <- base::local({
         base::list(
           after_close = mark_capture_after_dev_off,
           before_close = mark_capture_before_dev_off,
+          record_external = record_external_plot,
+          replay_external = replay_external_plot,
           original = original
         ),
         parent = globalenv()
@@ -922,9 +1044,27 @@ run <- base::local({
       lockEnvironment(wrapper_env, bindings = TRUE)
       eval(
         quote(function(which = grDevices::dev.cur()) {
+          recorded <- record_external(which)
           before_close(which)
           result <- base::withVisible(original(which))
           after_close(which)
+          replay_external(recorded)
+          if (result$visible) result$value else base::invisible(result$value)
+        }),
+        envir = wrapper_env
+      )
+    }
+
+    make_file_device_wrapper <- function(original) {
+      wrapper_env <- base::list2env(
+        base::list(register_device = register_external_device, original = original),
+        parent = globalenv()
+      )
+      lockEnvironment(wrapper_env, bindings = TRUE)
+      eval(
+        quote(function(...) {
+          result <- base::withVisible(original(...))
+          register_device(base::list(...))
           if (result$visible) result$value else base::invisible(result$value)
         }),
         envir = wrapper_env
@@ -936,12 +1076,17 @@ run <- base::local({
       install_capture_binding_wrapper("grid", "grid.newpage", make_page_wrapper)
     }
     install_capture_binding_wrapper("grDevices", "dev.off", make_dev_off_wrapper)
+    for (name in c("bmp", "jpeg", "png", "tiff", "pdf", "postscript", "svg", "cairo_pdf", "cairo_ps")) {
+      install_capture_binding_wrapper("grDevices", name, make_file_device_wrapper)
+    }
   }
 
   install_capture_wrappers()
 
   function(req) {
-    reset_capture_state()
+    request_state$sequence <- request_state$sequence + 1L
+    request_id <- request_state$sequence
+    reset_capture_state(request_id = request_id)
     page_dir <- if (nzchar(kernel_figures_dir)) create_capture_page_dir() else tempdir()
     pattern <- file.path(page_dir, "page-%03d.png")
     dev_id <- NA_integer_
@@ -956,7 +1101,7 @@ run <- base::local({
       dev_id <- grDevices::dev.cur()
       grDevices::dev.control(displaylist = "enable")
       capture_initial_usr <- capture_device_usr(dev_id)
-      reset_capture_state(dev_id, capture_initial_usr)
+      reset_capture_state(dev_id, capture_initial_usr, request_id)
       on.exit(reset_capture_state(), add = TRUE)
     }
     mark_recorded_plot <- function() {

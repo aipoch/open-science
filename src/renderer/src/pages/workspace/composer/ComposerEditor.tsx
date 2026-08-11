@@ -50,6 +50,7 @@ type ComposerEditorProps = {
   // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
   // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
   mentionPreviewContext?: { sessionId: string; projectId?: string }
+  focusRequest?: number
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -170,7 +171,8 @@ export const ComposerEditor = ({
   isHistoryBrowsing = false,
   historyStatus = '',
   onNavigateHistory,
-  mentionPreviewContext
+  mentionPreviewContext,
+  focusRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
@@ -213,6 +215,10 @@ export const ComposerEditor = ({
       moveCaretToEnd(root)
     }
   }, [doc])
+
+  useLayoutEffect(() => {
+    if (focusRequest !== undefined && editorRef.current) moveCaretToEnd(editorRef.current)
+  }, [focusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 

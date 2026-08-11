@@ -98,13 +98,17 @@ to poll its state:
 ```bash
 open-science run --project "Systematic review" --prompt-file ./task.md --json
 open-science run status <run-id> --json
+open-science run cancel <run-id> --json
 open-science session status <session-id> --json
 ```
 
 Use `--timeout-ms <milliseconds>` with `--wait` to bound how long the client waits. A timeout stops the
 CLI wait and returns exit code `1`; it does not cancel the run, which can still be inspected with
-`open-science run status <run-id>`. When the `ask` approval profile needs permission, human-readable
-output directs the user to approve the request in Open Science Desktop or the Web UI.
+`open-science run status <run-id>`. Add `--cancel-on-timeout` to explicitly cancel the server run after
+the timeout; the command still reports the original timeout and returns exit code `1`. Explicit
+cancellation waits for provider work and application finalization to drain, and preserves partial
+output and successfully finalized artifacts. When the `ask` approval profile needs permission,
+human-readable output directs the user to approve the request in Open Science Desktop or the Web UI.
 
 Pass an existing session ID to continue a conversation. Approval profiles are `ask`, `auto`, and
 `full`; `--skill` is repeatable:
@@ -128,6 +132,12 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
 the final run object, one JSON value per line:
+
+The event stream includes `run.progress` phase changes and ten-second liveness heartbeats before the
+first visible provider output. Each progress payload includes `runId`, `sessionId`, `projectId`,
+`phase`, `timestamp`, `elapsedMs`, and `heartbeat`. Its timer starts after Task has prepared the
+Session and registered its Run; Session creation or resume time before registration is outside this
+stream.
 
 ```bash
 open-science run \

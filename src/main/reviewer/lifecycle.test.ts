@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -278,7 +278,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -336,7 +336,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -386,7 +386,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -444,7 +444,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -502,7 +502,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -556,7 +556,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -622,7 +622,7 @@ describe('reviewer app lifecycle integration', () => {
       await runtime.createSession({ cwd: '/workspace' })
 
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
       const session = makeSession()
 
@@ -657,7 +657,7 @@ describe('reviewer app lifecycle integration', () => {
 
     it('deleteReviewsForProject removes all reviews across all sessions in a project', async () => {
       const client = createProjectDbClient(temporaryRoot!)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       const repository = new ReviewRepository(() => Promise.resolve(client))
 
       // Create reviews for two sessions in the same project, plus one in a different project.

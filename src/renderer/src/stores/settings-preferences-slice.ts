@@ -6,6 +6,7 @@ import type {
   SettingsSnapshot
 } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
@@ -21,6 +22,7 @@ type SettingsPreferencesState = {
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
   projectFilesFilter: ProjectFilesFilterPreference | undefined
+  defaultPermissionProfile: PermissionProfileId
 }
 
 type OptimisticPreferenceField =
@@ -30,6 +32,7 @@ type OptimisticPreferenceField =
   | 'closePreference'
   | 'appIconVariant'
   | 'projectFilesFilter'
+  | 'defaultPermissionProfile'
 
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
@@ -38,6 +41,8 @@ export type SettingsPreferencesActions = {
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
   setProjectFilesFilter: (filter: ProjectFilesFilterPreference | undefined) => Promise<void>
+  setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<void>
+
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
@@ -50,6 +55,7 @@ type SettingsPreferencesCommands = Pick<
   | 'setClosePreference'
   | 'setAppIconVariant'
   | 'setProjectFilesFilter'
+  | 'setDefaultPermissionProfile'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 >
@@ -68,7 +74,8 @@ const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
   appIcon: 'Could not save app icon preference. Try again.',
-  projectFilesFilter: 'Could not save files filter preference. Try again.'
+  projectFilesFilter: 'Could not save files filter preference. Try again.',
+  defaultPermissionProfile: 'Could not save the default permission mode. Try again.'
 }
 
 // Owns renderer preference commands and their optimistic settlement. Core remains the sole owner of
@@ -159,6 +166,15 @@ export const createSettingsPreferencesSlice = ({
         filter,
         () => getCommands().setProjectFilesFilter({ filter }),
         'Failed to set project files filter'
+      ),
+
+    setDefaultPermissionProfile: (profile) =>
+      runOptimisticWrite(
+        'defaultPermissionProfile',
+        'defaultPermissionProfile',
+        profile,
+        () => getCommands().setDefaultPermissionProfile({ profile }),
+        'Failed to set default permission profile'
       ),
 
     completeOnboarding: async () => {

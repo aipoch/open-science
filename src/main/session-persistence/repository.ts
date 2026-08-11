@@ -54,6 +54,7 @@ type SessionDirectoryEntry = {
 }
 
 type SessionRepositoryDependencies = {
+  hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean
   remove(path: string, options: { force: boolean; recursive: boolean }): Promise<void>
   readDirectoryEntries(path: string): Promise<SessionDirectoryEntry[]>
   readManifestFile(path: string): Promise<string>
@@ -63,6 +64,7 @@ type SessionRepositoryDependencies = {
 }
 
 const DEFAULT_DEPENDENCIES: SessionRepositoryDependencies = {
+  hasActiveRuntimePrompt: () => false,
   remove: (path, options) => rm(path, options),
   readDirectoryEntries: (path) => readdir(path, { withFileTypes: true }),
   readManifestFile: (path) => readFile(path, 'utf8'),
@@ -119,6 +121,8 @@ class SessionRepository {
     dependencies: Partial<SessionRepositoryDependencies> = {}
   ) {
     this.dependencies = {
+      hasActiveRuntimePrompt:
+        dependencies.hasActiveRuntimePrompt ?? DEFAULT_DEPENDENCIES.hasActiveRuntimePrompt,
       remove: dependencies.remove ?? DEFAULT_DEPENDENCIES.remove,
       readDirectoryEntries:
         dependencies.readDirectoryEntries ?? DEFAULT_DEPENDENCIES.readDirectoryEntries,
@@ -635,7 +639,9 @@ class SessionRepository {
 
     try {
       const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
-        preserveLegacyUploadPaths: true
+        preserveLegacyUploadPaths: true,
+        preserveRuntimeState: (sessionId) =>
+          this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
       })
       if (!session) {
         const wasQuarantined =

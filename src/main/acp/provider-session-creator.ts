@@ -11,8 +11,8 @@ import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   type AcpSessionCapabilityOwner,
+  type SessionCapabilityPolicy,
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
@@ -39,12 +39,17 @@ type AcpProviderSessionCreatorDependencies = Readonly<{
     startupGeneration: number
   ) => AcpPrimarySessionIdentityReservationResult
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure'>
   resolveSpecialistIdentity?: (
     specialistId: string,
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // undefined when the project has no Agent Context or the lookup fails; failures never block
+  // session creation.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
   updateCwd: (cwd: string) => void
   pushEvent: (event: CreationEvent) => void
@@ -71,13 +76,14 @@ export class AcpProviderSessionCreator {
       const startupBackend = this.deps.currentBackend()
       const startupGeneration = this.deps.registry.startupGeneration
       const specialist = await this.resolveSpecialist(request.specialistId, startupBackend)
+      const projectContextAppend = await this.resolveProjectAgentContext(projectName)
 
       log.info('createSession: createMcpServers', this.deps.diagnosticContext())
       capability = await this.deps.capabilities.provision({
         framework: startupBackend.framework,
         nativeMcpEnabled: startupBackend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        policy: this.deps.capabilityPolicy,
         sessionCwd: cwd,
         projectName
       })
@@ -89,7 +95,9 @@ export class AcpProviderSessionCreator {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: specialist.append ? [specialist.append] : [],
+        extraSystemPromptAppends: [specialist.append, projectContextAppend].filter(
+          (append): append is string => Boolean(append)
+        ),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,
         specialistSkills: specialist.skills
@@ -146,6 +154,7 @@ export class AcpProviderSessionCreator {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
+        aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
         aggregate.setSpecialistPrefix(specialist.prefix || undefined)
         aggregate.setSpecialistId(request.specialistId)
         provisionedCapability.commit(session.sessionId)
@@ -160,6 +169,10 @@ export class AcpProviderSessionCreator {
       log.info('createSession: completed successfully', this.deps.diagnosticContext())
       return {
         sessionId: session.sessionId,
+        providerSessionId: session.sessionId,
+        ...(backend.providerContinuityToken
+          ? { providerContinuityToken: backend.providerContinuityToken }
+          : {}),
         cwd,
         frameworkId: backend.framework.id,
         ...(backend.backendId ? { backendId: backend.backendId } : {})
@@ -185,6 +198,18 @@ export class AcpProviderSessionCreator {
       throw startupError
     } finally {
       reservation?.release()
+    }
+  }
+
+  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+    if (!this.deps.resolveProjectAgentContext) return undefined
+    try {
+      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const trimmed = context?.trim()
+      return trimmed ? trimmed : undefined
+    } catch (error) {
+      this.safeLogError('project Agent Context resolution failed', error, undefined, false)
+      return undefined
     }
   }
 

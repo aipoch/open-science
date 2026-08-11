@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
+import { resolveNotebookRunFigures } from './notebook-run-figures'
 import { NotebookRunOutputs } from './NotebookRunOutputs'
 
 let container: HTMLDivElement
@@ -15,8 +16,8 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
-afterEach(() => {
-  act(() => root.unmount())
+afterEach(async () => {
+  await act(async () => root.unmount())
   container.remove()
 })
 
@@ -49,14 +50,151 @@ describe('NotebookRunOutputs', () => {
     expect(container.querySelector('[data-testid="notebook-run-outputs"]')).not.toBeNull()
   })
 
-  it('renders a figure (display image/png) inline as an image', () => {
-    render([{ type: 'display', data: { 'image/png': 'QUJD' } }])
+  it('keeps figures in separate always-visible frames while only text output is collapsible', () => {
+    render([
+      { type: 'stream', name: 'stdout', text: 'saved: plot.png\n' },
+      { type: 'display', data: { 'image/png': 'QUJD' } }
+    ])
 
     const image = container.querySelector(
       '[data-testid="notebook-output-image"]'
     ) as HTMLImageElement
+    const textOutput = container.querySelector('[data-testid="notebook-text-output"]')
+    const figure = container.querySelector('[data-testid="notebook-figure-output"]')
+
     expect(image).not.toBeNull()
     expect(image.getAttribute('src')).toBe('data:image/png;base64,QUJD')
+    expect(textOutput?.tagName).toBe('DETAILS')
+    expect(textOutput?.hasAttribute('open')).toBe(true)
+    expect(textOutput?.contains(figure)).toBe(false)
+    expect(figure?.querySelectorAll('[data-testid="notebook-output-image"]')).toHaveLength(1)
+    expect(figure?.className).not.toContain('border-border-200')
+    expect(figure?.className).not.toContain('overflow-x-auto')
+    expect(figure?.className).not.toContain('border-border-100')
+    expect(figure?.className).not.toContain('shadow')
+    expect(figure?.firstElementChild?.className).toContain('justify-center')
+    expect(image.className).toContain('max-h-[16rem]')
+    expect(image.className).toContain('max-w-full')
+    expect(image.className).toContain('w-auto')
+    expect(image.className).toContain('h-auto')
+    expect(image.className).toContain('object-contain')
+    expect(image.className).toContain('rounded-lg')
+    expect(image.className).toContain('border-border-200')
+    expect(image.classList.contains('w-full')).toBe(false)
+  })
+
+  it('shows every captured figure from the same run in its own frame', () => {
+    render([
+      { type: 'display', data: { 'image/png': 'U0FNRQ==' } },
+      { type: 'display', data: { 'image/png': 'U0FNRQ==' } }
+    ])
+
+    const figures = container.querySelectorAll('[data-testid="notebook-figure-output"]')
+    expect(figures).toHaveLength(2)
+    expect(figures[0]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
+    expect(figures[1]?.querySelector('img')?.getAttribute('src')).toContain('U0FNRQ==')
+  })
+
+  it('ignores saved working files when the run captured a figure', () => {
+    const run = makeRun({
+      outputs: [{ type: 'display', data: { 'image/png': 'SElTVE9SSUNBTA==' } }],
+      workingFiles: [
+        {
+          path: '/workspace/sin.tiff',
+          relativePath: 'sin.tiff',
+          kind: 'other',
+          size: 100,
+          mtimeMs: 1,
+          createdByRunId: 'r1'
+        }
+      ]
+    })
+
+    expect(resolveNotebookRunFigures(run)).toEqual([
+      expect.objectContaining({
+        source: 'captured',
+        mimeType: 'image/png',
+        payload: 'SElTVE9SSUNBTA=='
+      })
+    ])
+
+    act(() => root.render(<NotebookRunOutputs run={run} />))
+
+    expect(container.querySelectorAll('[data-testid="notebook-figure-output"]')).toHaveLength(1)
+    expect(container.querySelector('[data-testid="notebook-output-tiff"]')).toBeNull()
+  })
+
+  it('does not treat saved working files as notebook output when the kernel captured no figure', () => {
+    const run = makeRun({
+      workingFiles: [
+        {
+          path: '/workspace/first.png',
+          relativePath: 'first.png',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/notes.txt',
+          relativePath: 'notes.txt',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/second.webp',
+          relativePath: 'charts/second.webp',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/third.tiff',
+          relativePath: 'charts/third.tiff',
+          kind: 'other',
+          createdByRunId: 'r1'
+        },
+        {
+          path: '/workspace/fourth.pdf',
+          relativePath: 'charts/fourth.pdf',
+          kind: 'other',
+          createdByRunId: 'r1'
+        }
+      ]
+    })
+    const figures = resolveNotebookRunFigures(run)
+
+    expect(figures).toEqual([])
+
+    act(() => root.render(<NotebookRunOutputs run={run} />))
+    expect(container.querySelector('[data-testid="notebook-figure-outputs"]')).toBeNull()
+  })
+
+  it('preserves every captured occurrence without adding mutable saved-file previews', () => {
+    const figures = resolveNotebookRunFigures(
+      makeRun({
+        outputs: [
+          { type: 'display', data: { 'image/png': 'QUJD' } },
+          { type: 'display', data: { 'image/png': 'QUJD' } }
+        ],
+        workingFiles: [
+          {
+            path: '/workspace/plot.png',
+            relativePath: 'plot.png',
+            kind: 'other',
+            createdByRunId: 'r1'
+          },
+          {
+            path: '/workspace/plot.png',
+            relativePath: 'plot.png',
+            kind: 'other',
+            createdByRunId: 'r1'
+          }
+        ]
+      })
+    )
+
+    expect(figures).toEqual([
+      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' }),
+      expect.objectContaining({ source: 'captured', mimeType: 'image/png', payload: 'QUJD' })
+    ])
   })
 
   it('renders stream stdout text', () => {
@@ -84,7 +222,7 @@ describe('NotebookRunOutputs', () => {
   it('renders ANSI SGR color codes as styled text, stripping the escapes', () => {
     render([{ type: 'stream', name: 'stdout', text: '[31mred[0m normal' }])
 
-    const outputs = container.querySelector('[data-testid="notebook-run-outputs"]')
+    const outputs = container.querySelector('[data-testid="notebook-text-output"] > div')
     expect(outputs?.textContent).toBe('red normal') // escape chars stripped, text preserved
     const span = outputs?.querySelector('span[style]') as HTMLElement | null
     expect(span?.textContent).toBe('red')

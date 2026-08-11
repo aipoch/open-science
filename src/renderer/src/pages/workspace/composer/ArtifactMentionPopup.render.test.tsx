@@ -71,10 +71,17 @@ afterEach(() => {
 const options = (): HTMLElement[] =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
 
-const pressKey = (key: string): void => {
-  act(() => {
-    document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+const pressKey = (key: string, init: KeyboardEventInit = {}): KeyboardEvent => {
+  const event = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    ...init
   })
+  act(() => {
+    document.dispatchEvent(event)
+  })
+  return event
 }
 
 const renderPopup = async ({
@@ -112,6 +119,7 @@ describe('ArtifactMentionPopup', () => {
     })
 
     expect(event.defaultPrevented).toBe(true)
+    expect(pressKey('Tab').defaultPrevented).toBe(false)
   })
 
   it('renders both sections with rows and tags', async () => {
@@ -291,6 +299,21 @@ describe('ArtifactMentionPopup', () => {
         source: 'upload'
       })
     )
+  })
+
+  it('selects the highlighted row on plain Tab but preserves Shift+Tab navigation', async () => {
+    const onSelect = vi.fn()
+    await renderPopup({ onSelect })
+
+    pressKey('ArrowDown')
+    const tabEvent = pressKey('Tab')
+    const shiftTabEvent = pressKey('Tab', { shiftKey: true })
+
+    expect(tabEvent.defaultPrevented).toBe(true)
+    expect(shiftTabEvent.defaultPrevented).toBe(false)
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'art-1' }))
+    expect(document.body.textContent).toContain('Enter / Tab select')
   })
 
   it('selects an artifact row on click', async () => {

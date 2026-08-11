@@ -26,6 +26,7 @@ type SkillImportApprovalBrokerOptions = {
   broadcast: (request: ConversationSkillImportApprovalRequest) => void
   generateId: () => string
   onSettled?: (id: string) => void
+  onLifecycleSettled?: (id: string, state: 'resolved' | 'expired' | 'cancelled') => void
   timeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
@@ -64,7 +65,7 @@ class SkillImportApprovalBroker {
     })
     // A new turn cannot inherit an unanswered dialog from an older turn of the same session.
     for (const [id, pending] of this.pending) {
-      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
+      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true }, 'cancelled')
     }
   }
 
@@ -77,7 +78,7 @@ class SkillImportApprovalBroker {
     if (this.activeSessionTurns.get(sessionId)?.turnToken !== turnToken) return
     this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
-      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
+      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true }, 'cancelled')
     }
   }
 
@@ -113,7 +114,10 @@ class SkillImportApprovalBroker {
     if (cancellation?.isCancelled()) return Promise.resolve({ id, cancelled: true })
 
     return new Promise((resolve) => {
-      const timer = this.setTimer(() => this.settle({ id, cancelled: true }), this.timeoutMs)
+      const timer = this.setTimer(
+        () => this.settle({ id, cancelled: true }, 'expired'),
+        this.timeoutMs
+      )
       this.pending.set(id, { sessionId: info.sessionId, request, resolve, timer })
       this.options.broadcast(request)
     })
@@ -124,22 +128,25 @@ class SkillImportApprovalBroker {
   }
 
   respond(response: ConversationSkillImportApprovalResponse): void {
-    this.settle(response)
+    this.settle(response, response.cancelled ? 'cancelled' : 'resolved')
   }
 
   cancelSession(sessionId: string): void {
     this.activeSessionTurns.delete(sessionId)
     for (const [id, pending] of this.pending) {
-      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true })
+      if (pending.sessionId === sessionId) this.settle({ id, cancelled: true }, 'cancelled')
     }
   }
 
   cancelAll(): void {
     this.activeSessionTurns.clear()
-    for (const id of this.pending.keys()) this.settle({ id, cancelled: true })
+    for (const id of this.pending.keys()) this.settle({ id, cancelled: true }, 'cancelled')
   }
 
-  private settle(response: ConversationSkillImportApprovalResponse): void {
+  private settle(
+    response: ConversationSkillImportApprovalResponse,
+    state: 'resolved' | 'expired' | 'cancelled'
+  ): void {
     const pending = this.pending.get(response.id)
     if (!pending) return
 
@@ -150,6 +157,11 @@ class SkillImportApprovalBroker {
       this.options.onSettled?.(response.id)
     } catch {
       // Renderer teardown must not change the broker result or leave the agent call parked.
+    }
+    try {
+      this.options.onLifecycleSettled?.(response.id, state)
+    } catch {
+      // Inbox projection is independent from renderer teardown and remains best-effort.
     }
   }
 }

@@ -10,7 +10,7 @@ import {
   synchronizeActiveConversationActivities
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from '../reviewer/repository'
 import { createPngInlineSource } from './artifact-test-fixtures'
 import { ArtifactRepository } from './repository'
@@ -32,7 +32,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-messages-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const durableSessionAuthority: { current?: PersistedChatSession } = {}
     const provenance = new ArtifactProvenanceRepository({
@@ -348,7 +348,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-empty-session-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
       getClient: () => Promise.resolve(client)
@@ -399,7 +399,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-review-retention-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const compatibilityRepository = new ArtifactRepository(storageRoot)
     const provenance = new ArtifactProvenanceRepository({
       storageRoot,
@@ -553,7 +553,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-review-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const reviews = new ReviewRepository(() => Promise.resolve(client), {
       snapshotStorageRoot: storageRoot
     })
@@ -578,7 +578,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-review-sidecar-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const reviews = new ReviewRepository(() => Promise.resolve(client), {
       snapshotStorageRoot: storageRoot
     })
@@ -610,7 +610,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-message-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -679,7 +679,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-review-snapshot-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const reviews = new ReviewRepository(() => Promise.resolve(client), {
       snapshotStorageRoot: storageRoot
     })
@@ -728,7 +728,7 @@ describe('Provenance Message snapshots', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-provenance-delete-recovery-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const snapshots = new ProvenanceMessageSnapshotRepository({
       storageRoot,
       getClient: () => Promise.resolve(client),

@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V4 */
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './agent-markdown.css';
@@ -140,7 +141,8 @@
   --chart-3: rgb(210 157 56);
   --chart-4: rgb(178 132 229);
   --chart-5: rgb(225 113 91);
-  --session-running: oklch(0.49 0.115 184);
+  --session-running: oklch(0.51 0.15 255);
+  --session-running-shimmer: rgb(255 255 255 / 78%);
   --session-waiting: oklch(0.62 0.16 68);
   --border: #dededa;
   --input: #dededa;
@@ -210,7 +212,7 @@
   --chart-3: rgb(210 157 56);
   --chart-4: rgb(178 132 229);
   --chart-5: rgb(225 113 91);
-  --session-running: oklch(0.7 0.11 184);
+  --session-running: oklch(0.77 0.1 255);
   --session-waiting: oklch(0.74 0.14 68);
   --border: #3a3931;
   --input: #3a3931;
@@ -252,6 +254,11 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  html,
+  body {
+    overflow-x: clip;
+  }
+
   button,
   a,
   input,
@@ -262,6 +269,36 @@
 }
 
 @layer components {
+  /* Theme-independent edge treatment for compact horizontal navigation and chip rails. */
+  .scroll-fade-x {
+    -webkit-mask-image: var(--scroll-fade-x-mask, none);
+    mask-image: var(--scroll-fade-x-mask, none);
+    mask-repeat: no-repeat;
+    mask-size: 100% 100%;
+  }
+
+  .scroll-fade-x[data-scroll-fade='left'] {
+    --scroll-fade-x-mask: linear-gradient(to right, transparent, hsl(var(--always-black)) 2.5rem);
+  }
+
+  .scroll-fade-x[data-scroll-fade='right'] {
+    --scroll-fade-x-mask: linear-gradient(
+      to right,
+      hsl(var(--always-black)) calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
+  .scroll-fade-x[data-scroll-fade='both'] {
+    --scroll-fade-x-mask: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--always-black)) 2.5rem,
+      hsl(var(--always-black)) calc(100% - 2.5rem),
+      transparent
+    );
+  }
+
   /*
    * Radix ScrollArea wraps content in display:table / min-width:100%, which lets
    * long unbroken strings expand past the resizable panel. Force a normal block.
@@ -271,6 +308,54 @@
 
     & > div {
       @apply block! w-full min-w-0 max-w-full!;
+    }
+  }
+
+  /* Running title sweep and completed-card dismiss affordance. */
+  @keyframes home-session-running-shimmer {
+    0%,
+    62%,
+    100% {
+      opacity: 0;
+      transform: translateX(-180%) skewX(-18deg);
+    }
+    70% {
+      opacity: 1;
+    }
+    86% {
+      opacity: 0;
+      transform: translateX(430%) skewX(-18deg);
+    }
+  }
+
+  .home-session-title-running {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .home-session-title-running::after {
+    position: absolute;
+    inset-block: -0.15rem;
+    inset-inline-start: 0;
+    width: 28%;
+    background: linear-gradient(90deg, transparent, var(--session-running-shimmer), transparent);
+    content: '';
+    pointer-events: none;
+    animation: home-session-running-shimmer 7.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+
+  .home-session-dismiss {
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .home-session-dismiss {
+      opacity: 0;
+    }
+
+    .home-session-card:hover .home-session-dismiss,
+    .home-session-card:focus-within .home-session-dismiss {
+      opacity: 1;
     }
   }
 
@@ -357,6 +442,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .home-session-title-running::after {
+      animation: none;
+      display: none;
+    }
+
     .open-science-thinking-indicator,
     .open-science-thinking-indicator::before,
     .open-science-thinking-indicator__dot {

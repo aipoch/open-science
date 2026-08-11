@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
@@ -62,7 +62,7 @@ describe('managed file reference resolver', () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(uploads, {
       files: [
@@ -106,7 +106,7 @@ describe('managed file reference resolver', () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const uploads = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(uploads, {
       files: [

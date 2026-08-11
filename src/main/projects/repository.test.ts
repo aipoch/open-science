@@ -6,7 +6,9 @@ const createRow = (overrides: Record<string, unknown> = {}): Record<string, unkn
   id: 'project-1',
   name: 'Research',
   description: 'A project',
+  agentContext: '',
   isExample: false,
+  pinned: false,
   createdAt: new Date(1710000000000),
   updatedAt: new Date(1710000000100),
   ...overrides
@@ -19,6 +21,7 @@ const createMockClient = (
   >
 ): {
   client: ProjectClient
+  executeRaw: ReturnType<typeof vi.fn>
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
 } => {
@@ -36,9 +39,11 @@ const createMockClient = (
     deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     findMany: vi.fn().mockResolvedValue([])
   }
+  const executeRaw = vi.fn().mockResolvedValue(1)
 
   return {
-    client: { project, projectDeletionIntent } as unknown as ProjectClient,
+    client: { $executeRaw: executeRaw, project, projectDeletionIntent } as unknown as ProjectClient,
+    executeRaw,
     project,
     projectDeletionIntent
   }
@@ -79,7 +84,9 @@ describe('project repository', () => {
 
     await repository.create({ name: '  Trimmed  ' })
 
-    expect(project.create).toHaveBeenCalledWith({ data: { name: 'Trimmed', description: '' } })
+    expect(project.create).toHaveBeenCalledWith({
+      data: { name: 'Trimmed', description: '', agentContext: '' }
+    })
   })
 
   it('rejects a blank project name without touching the database', async () => {
@@ -102,6 +109,31 @@ describe('project repository', () => {
       where: { id: 'project-1' },
       data: { name: 'Renamed' }
     })
+  })
+
+  it('does not roll back concurrent activity time while changing pin placement', async () => {
+    let persisted = createRow()
+    const concurrentUpdatedAt = new Date(1710000000200)
+    const { client, executeRaw, project } = createMockClient({
+      findUnique: () => Promise.resolve(persisted),
+      update: ({ data }: { data: Record<string, unknown> }) => {
+        persisted = { ...persisted, updatedAt: concurrentUpdatedAt, ...data }
+        return Promise.resolve(persisted)
+      }
+    })
+    executeRaw.mockImplementation(() => {
+      persisted = { ...persisted, pinned: true, updatedAt: concurrentUpdatedAt }
+      return Promise.resolve(1)
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(repository.update({ id: 'project-1', pinned: true })).resolves.toMatchObject({
+      pinned: true,
+      updatedAt: concurrentUpdatedAt.getTime()
+    })
+
+    expect(executeRaw).toHaveBeenCalledOnce()
+    expect(project.update).not.toHaveBeenCalled()
   })
 
   it('deletes a project by id', async () => {
@@ -165,5 +197,66 @@ describe('project repository', () => {
     expect(projectDeletionIntent.deleteMany).toHaveBeenCalledWith({
       where: { projectId: 'project-1' }
     })
+  })
+
+  it('persists a trimmed Agent Context on create', async () => {
+    const { client, project } = createMockClient({
+      create: () => Promise.resolve(createRow({ agentContext: 'Always cite DOIs.' }))
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await repository.create({ name: 'Research', agentContext: '  Always cite DOIs.  ' })
+
+    expect(project.create).toHaveBeenCalledWith({
+      data: { name: 'Research', description: '', agentContext: 'Always cite DOIs.' }
+    })
+  })
+
+  it('patches the Agent Context on update without touching other fields', async () => {
+    const { client, project } = createMockClient({
+      update: () => Promise.resolve(createRow({ agentContext: 'Prefer Python.' }))
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await repository.update({ id: 'project-1', agentContext: '  Prefer Python.  ' })
+
+    expect(project.update).toHaveBeenCalledWith({
+      where: { id: 'project-1' },
+      data: { agentContext: 'Prefer Python.' }
+    })
+  })
+
+  it('keeps the Agent Context when pinning in the same update', async () => {
+    const { client, executeRaw, project } = createMockClient({
+      update: () => Promise.resolve(createRow({ pinned: true, agentContext: 'Always cite DOIs.' }))
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await repository.update({ id: 'project-1', pinned: true, agentContext: 'Always cite DOIs.' })
+
+    // A combined pin + Agent Context edit must not enter the pin-only raw-SQL fast path, which
+    // would silently drop the Agent Context.
+    expect(executeRaw).not.toHaveBeenCalled()
+    expect(project.update).toHaveBeenCalledWith({
+      where: { id: 'project-1' },
+      data: { pinned: true, agentContext: 'Always cite DOIs.' }
+    })
+  })
+
+  it('maps a non-empty Agent Context from stored rows and omits an empty one', async () => {
+    const { client } = createMockClient({
+      findMany: () =>
+        Promise.resolve([
+          createRow({ id: 'with-context', agentContext: 'Always cite DOIs.' }),
+          createRow({ id: 'without-context', agentContext: '' })
+        ])
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    const projects = await repository.list()
+
+    expect(projects[0]).toMatchObject({ id: 'with-context', agentContext: 'Always cite DOIs.' })
+    expect(projects[1]).toMatchObject({ id: 'without-context' })
+    expect('agentContext' in projects[1]!).toBe(false)
   })
 })

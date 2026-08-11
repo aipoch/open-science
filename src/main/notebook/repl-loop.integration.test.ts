@@ -91,6 +91,215 @@ describe('repl_loop local RPC transport', () => {
       )
     }
   }, 60_000)
+
+  it('validates, freezes, and refreshes host.capabilities projections', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        requests.push(JSON.parse(body))
+        const result =
+          requests.length === 3
+            ? { mcp: 'yes', compute: true, agents: true, skills: true, artifacts: true }
+            : { mcp: true, compute: true, agents: true, skills: true, artifacts: true }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-capabilities-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        'const first = await host.capabilities(); first.mcp = false; ' +
+          'const second = await host.capabilities(); ' +
+          'return JSON.stringify({ first, second, frozen: Object.isFrozen(first), same: first === second })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toEqual({
+        first: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
+        second: { mcp: true, compute: true, agents: true, skills: true, artifacts: true },
+        frozen: true,
+        same: false
+      })
+      expect(requests).toEqual([
+        { method: 'capabilitiesCall', params: {} },
+        { method: 'capabilitiesCall', params: {} }
+      ])
+
+      const extraArgument = await send(
+        "try { await host.capabilities('unexpected'); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(extraArgument.result).toBe('TypeError: host.capabilities accepts no arguments')
+      expect(requests).toHaveLength(2)
+
+      const invalidProjection = await send(
+        "try { await host.capabilities(); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(invalidProjection.result).toBe(
+        'host.capabilities returned an invalid capability projection'
+      )
+      expect(requests).toHaveLength(3)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('validates and freezes host.artifacts results and resolves host.artifact_path', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const managedPath = join(tmpdir(), 'managed', 'report.pdf')
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(parsed)
+        const result =
+          parsed.params?.op === 'path'
+            ? managedPath
+            : {
+                count: 2,
+                project_id: 'project-a',
+                truncated: false,
+                artifacts: [
+                  {
+                    id: 'artifact-1',
+                    filename: 'result.csv',
+                    content_type: 'text/csv',
+                    size_bytes: 12,
+                    latest_version_id: 'artifact-version-1',
+                    checksum: 'a'.repeat(64),
+                    session_id: 'session-a',
+                    root_frame_id: 'root-1',
+                    is_user_upload: false,
+                    latest_version_created_at: '2026-08-01T00:00:00.000Z'
+                  },
+                  {
+                    id: 'upload-1',
+                    filename: 'report.pdf',
+                    size_bytes: 24,
+                    latest_version_id: 'upload-version-1',
+                    session_id: 'session-b',
+                    root_frame_id: null,
+                    is_user_upload: true,
+                    latest_version_created_at: '2026-08-02T00:00:00.000Z'
+                  }
+                ]
+              }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-artifacts-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const projection = await send(
+        "const page = await host.artifacts({ search: 'report', limit: 2 }); " +
+          'const localPath = await host.artifact_path(page.artifacts[1].latest_version_id); ' +
+          'return JSON.stringify({ page, localPath, pageFrozen: Object.isFrozen(page), ' +
+          'artifactsFrozen: Object.isFrozen(page.artifacts), itemFrozen: Object.isFrozen(page.artifacts[0]) })'
+      )
+      expect(projection.error).toBeNull()
+      expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
+        page: { count: 2, project_id: 'project-a', truncated: false },
+        localPath: managedPath,
+        pageFrozen: true,
+        artifactsFrozen: true,
+        itemFrozen: true
+      })
+      expect(requests).toEqual([
+        {
+          method: 'artifactsCall',
+          params: { op: 'list', options: { search: 'report', limit: 2 } }
+        },
+        { method: 'artifactsCall', params: { op: 'path', version_id: 'upload-version-1' } }
+      ])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('routes host.skills through its native skillsCall method', async () => {
+    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        received = JSON.parse(body)
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result: { status: 'edited', origin: 'draft' } }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-skills-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1'
+    })
+
+    try {
+      const result = await send(
+        "return await host.skills.edit('demo', 'SKILL.md', 'new body', 'old body')"
+      )
+      expect(result.error).toBeNull()
+      expect(received).toMatchObject({
+        method: 'skillsCall',
+        params: {
+          op: 'edit',
+          name: 'demo',
+          path: 'SKILL.md',
+          content: 'new body',
+          old_string: 'old body'
+        }
+      })
+
+      const validated = await send("return await host.skills.validate('demo')")
+      expect(validated.error).toBeNull()
+      expect(received).toMatchObject({
+        method: 'skillsCall',
+        params: { op: 'validate', name: 'demo' }
+      })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
 })
 
 gate('repl_loop.js', () => {

@@ -17,6 +17,10 @@ import {
   createPlanMcpServerForEnvironment,
   type PlanMcpEnvironment
 } from '../session-plan/plan-mcp-server'
+import {
+  createHostMessageMcpServer,
+  type HostMessageMcpHandler
+} from '../side-chat/host-message-mcp-server'
 import { createLogger } from '../logger'
 
 const log = createLogger('mcp-http-host')
@@ -27,7 +31,7 @@ type HostConnection = {
 }
 
 // The MCP server kinds this host serves; each maps to a factory + a per-session environment.
-const SERVER_KINDS = ['artifact', 'notebook', 'skill-import', 'plan'] as const
+const SERVER_KINDS = ['artifact', 'notebook', 'skill-import', 'plan', 'host-message'] as const
 type ServerKind = (typeof SERVER_KINDS)[number]
 
 const isServerKind = (value: string): value is ServerKind =>
@@ -39,6 +43,7 @@ type SessionEntry = {
   notebook?: NotebookMcpEnvironment
   skillImport?: SkillImportMcpEnvironment
   plan?: PlanMcpEnvironment
+  hostMessage?: HostMessageMcpHandler
 }
 
 // Reads and JSON-parses a POST body so it can be handed to the transport as a pre-parsed payload.
@@ -148,6 +153,12 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
+  registerHostMessage(routingId: string, handler: HostMessageMcpHandler): void {
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.hostMessage = handler
+    this.sessions.set(routingId, entry)
+  }
+
   // Drops a routing id's registered environments once its session is gone.
   unregister(routingId: string): void {
     this.sessions.delete(routingId)
@@ -192,6 +203,10 @@ class AgentMcpHttpHost {
     if (kind === 'plan') {
       if (!entry.plan) return undefined
       return createPlanMcpServerForEnvironment(entry.plan)
+    }
+
+    if (kind === 'host-message') {
+      return entry.hostMessage ? createHostMessageMcpServer(entry.hostMessage) : undefined
     }
 
     const skillImportEnvironment = entry.skillImport

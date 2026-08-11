@@ -5,6 +5,10 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAcpRuntime } from './useAcpRuntime'
+import {
+  acceptAcpRuntimeSnapshotRevision,
+  resetAcpRuntimeSnapshotRevisionForTests
+} from './runtime-snapshot-revision-owner'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -78,6 +82,7 @@ let acpApi: {
   disconnect: ReturnType<typeof vi.fn>
   createSession: ReturnType<typeof vi.fn>
   resumeSession: ReturnType<typeof vi.fn>
+  continueInterruptedTurn: ReturnType<typeof vi.fn>
   compactSession: ReturnType<typeof vi.fn>
   deleteSession: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
@@ -99,6 +104,7 @@ const mountRuntime = async (): Promise<{
 }
 
 beforeEach(() => {
+  resetAcpRuntimeSnapshotRevisionForTests()
   capturedStateListener = undefined
   removeStateListener = vi.fn()
   acpApi = {
@@ -111,6 +117,7 @@ beforeEach(() => {
     disconnect: vi.fn().mockResolvedValue(createSnapshot({ status: 'idle' })),
     createSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
     resumeSession: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
+    continueInterruptedTurn: vi.fn().mockResolvedValue(createSnapshot()),
     compactSession: vi.fn().mockResolvedValue(createSnapshot()),
     deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
     cancel: vi.fn().mockResolvedValue(createSnapshot()),
@@ -300,7 +307,7 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.compactSession).toHaveBeenCalledWith({ sessionId: 'session-1' })
   })
 
-  it('forwards the previous framework id into the resume payload for a framework switch', async () => {
+  it('forwards prior runtime and provider identity into the resume payload', async () => {
     const { result } = await mountRuntime()
 
     await act(async () => {
@@ -309,7 +316,11 @@ describe('useAcpRuntime payload construction', () => {
         '/workspace/project',
         'Project',
         'ask',
-        'opencode'
+        'opencode',
+        'opencode:provider-a',
+        'specialist-1',
+        'provider-session-1',
+        'bridge-generation-1'
       )
     })
 
@@ -318,8 +329,27 @@ describe('useAcpRuntime payload construction', () => {
       cwd: '/workspace/project',
       projectName: 'Project',
       permissionProfile: 'ask',
-      previousFrameworkId: 'opencode'
+      previousFrameworkId: 'opencode',
+      previousBackendId: 'opencode:provider-a',
+      specialistId: 'specialist-1',
+      providerSessionId: 'provider-session-1',
+      providerContinuityToken: 'bridge-generation-1'
     })
+  })
+
+  it('forwards only the restricted interrupted-turn continuation contract', async () => {
+    const { result } = await mountRuntime()
+    const request = {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
+
+    await act(async () => {
+      await result.current.continueInterruptedTurn(request)
+    })
+
+    expect(acpApi.continueInterruptedTurn).toHaveBeenCalledWith(request)
   })
 
   it('includes history preamble/attachments/images and resume fallback when a prompt replays context', async () => {
@@ -410,6 +440,50 @@ describe('useAcpRuntime state subscription', () => {
     unmount()
 
     expect(removeStateListener).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let an older initial snapshot overwrite a newer pushed lifecycle event', async () => {
+    const initial = createDeferred<AcpStateSnapshot>()
+    acpApi.getState.mockReturnValueOnce(initial.promise)
+    const { result } = await mountRuntime()
+    const terminal = createSnapshot({
+      revision: 2,
+      events: [
+        {
+          id: 'permission-settled',
+          timestamp: 2,
+          kind: 'permission',
+          level: 'info',
+          permissionRequestId: 'permission-restored',
+          title: 'Restored permission settled'
+        }
+      ]
+    })
+
+    act(() => {
+      capturedStateListener?.(terminal)
+    })
+    expect(acceptAcpRuntimeSnapshotRevision({ revision: 1 })).toBe(false)
+    await act(async () => {
+      initial.resolve(
+        createSnapshot({
+          revision: 1,
+          events: [
+            {
+              id: 'permission-rearmed',
+              timestamp: 1,
+              kind: 'permission',
+              level: 'info',
+              permissionRequestId: 'permission-restored',
+              title: 'Restored permission rearmed'
+            }
+          ]
+        })
+      )
+      await initial.promise
+    })
+
+    expect(result.current.state).toEqual(terminal)
   })
 })
 

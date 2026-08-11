@@ -5,6 +5,7 @@ export type SettingsWriteKey =
   | 'notifications'
   | 'conversationSkillImport'
   | 'closePreference'
+  | 'defaultPermissionProfile'
   | 'appIcon'
   | 'projectFilesFilter'
 
@@ -13,6 +14,7 @@ export type OptimisticSettingsWriteKey =
   | 'notifications'
   | 'conversationSkillImport'
   | 'closePreference'
+  | 'defaultPermissionProfile'
   | 'appIcon'
   | 'projectFilesFilter'
 

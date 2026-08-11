@@ -56,14 +56,18 @@ const makeNativeImage = (): AppIconElectron['nativeImage'] => ({
 
 // Builds an injectable electron surface plus handles to inspect the dock and window-created listener.
 const makeElectron = (
-  windows: FakeWindow[]
+  windows: FakeWindow[],
+  initialSystemDark = false
 ): {
   electron: AppIconElectron
   setDockIcon: ReturnType<typeof vi.fn>
   emitWindowCreated: (window: FakeWindow) => void
+  setSystemDark: (dark: boolean) => void
 } => {
   const setDockIcon = vi.fn()
   let windowCreatedHandler: ((event: unknown, window: FakeWindow) => void) | undefined
+  let nativeThemeUpdatedHandler: (() => void) | undefined
+  let systemDark = initialSystemDark
 
   const on = (event: string, handler: (event: unknown, window: FakeWindow) => void): void => {
     if (event === 'browser-window-created') windowCreatedHandler = handler
@@ -76,13 +80,25 @@ const makeElectron = (
       isReady: () => true
     },
     getAllWindows: () => windows,
-    nativeImage: makeNativeImage()
+    nativeImage: makeNativeImage(),
+    nativeTheme: {
+      on: (event: string, handler: () => void): void => {
+        if (event === 'updated') nativeThemeUpdatedHandler = handler
+      },
+      get shouldUseDarkColors(): boolean {
+        return systemDark
+      }
+    }
   } as unknown as AppIconElectron
 
   return {
     electron,
     setDockIcon,
-    emitWindowCreated: (window: FakeWindow) => windowCreatedHandler?.({}, window)
+    emitWindowCreated: (window: FakeWindow) => windowCreatedHandler?.({}, window),
+    setSystemDark: (dark: boolean) => {
+      systemDark = dark
+      nativeThemeUpdatedHandler?.()
+    }
   }
 }
 
@@ -169,7 +185,7 @@ describe('createAppIconController (darwin)', () => {
     emptyPaths = new Set()
   })
 
-  it('sets the dock icon and leaves windows untouched', () => {
+  it('leaves the bundled adaptive icon untouched until Theme is announced', () => {
     const window = makeWindow()
     const { electron, setDockIcon } = makeElectron([window])
 
@@ -179,14 +195,52 @@ describe('createAppIconController (darwin)', () => {
       initialVariant: 'light',
       platform: 'darwin'
     })
-    expect(setDockIcon).toHaveBeenCalledTimes(1)
+    expect(setDockIcon).not.toHaveBeenCalled()
     expect(window.appliedIcon).toBeUndefined()
+
+    controller.setAppearance({ theme: 'dark', followsSystem: false })
+
+    expect(setDockIcon).toHaveBeenCalledTimes(1)
+    expect(setDockIcon.mock.calls[0][0].path).toBe(variantPaths.dark)
+    expect(window.appliedIcon).toBeUndefined()
+  })
+
+  it('keeps following native appearance after the renderer window closes', () => {
+    const { electron, setDockIcon, setSystemDark } = makeElectron([], false)
+    const controller = createAppIconController({
+      electron,
+      variantPaths,
+      initialVariant: 'dark',
+      platform: 'darwin'
+    })
+
+    // A stale renderer snapshot says dark, but nativeTheme is authoritative in system mode.
+    controller.setAppearance({ theme: 'dark', followsSystem: true })
+    expect(setDockIcon.mock.calls[0][0].path).toBe(variantPaths.light)
+
+    setSystemDark(true)
+    expect(setDockIcon.mock.calls[1][0].path).toBe(variantPaths.dark)
+
+    // Once the user pins Light, later OS changes must not replace that explicit choice.
+    controller.setAppearance({ theme: 'light', followsSystem: false })
+    expect(setDockIcon.mock.calls[2][0].path).toBe(variantPaths.light)
+    setSystemDark(false)
+    expect(setDockIcon).toHaveBeenCalledTimes(3)
+  })
+
+  it('ignores the independent app-icon setting because Theme owns the macOS Dock', () => {
+    const { electron, setDockIcon } = makeElectron([])
+    const controller = createAppIconController({
+      electron,
+      variantPaths,
+      initialVariant: 'light',
+      platform: 'darwin'
+    })
 
     controller.setVariant('dark')
 
-    expect(setDockIcon).toHaveBeenCalledTimes(2)
-    expect(setDockIcon.mock.calls[1][0].path).toBe(variantPaths.dark)
-    expect(window.appliedIcon).toBeUndefined()
+    expect(controller.getVariant()).toBe('light')
+    expect(setDockIcon).not.toHaveBeenCalled()
   })
 })
 

@@ -16,6 +16,7 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'customize:agent_detach_connector'
   ],
   mcp_tool: [
+    'mcp:open-science-notebook/ask_user_question',
     'mcp:open-science-notebook/notebook_execute',
     'mcp:open-science-notebook/repl_execute',
     'mcp:open-science-notebook/bash_execute',

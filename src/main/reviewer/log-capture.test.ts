@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ReviewRepository } from './repository'
 import { driveReviewerToStop } from './orchestrator'
 import type { ReviewerLogEntry } from '../../shared/reviewer'
@@ -87,6 +87,69 @@ describe('driveReviewerToStop — log capture via onUpdate', () => {
     if (messages[0]?.kind === 'message') {
       expect(messages[0].text).toBe('Review done.')
     }
+  })
+
+  it('flushes interleaved content before tools and lets terminal output override raw output', async () => {
+    const updates: FakeUpdate[] = [
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'agent_thought_chunk',
+          content: { type: 'text', text: 'Trace the evidence.' }
+        }
+      },
+      {
+        kind: 'session_update',
+        update: { sessionUpdate: 'agent_message_chunk', content: 'Checking the result.' }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tc-order',
+          _meta: { claudeCode: { toolName: 'Bash' } },
+          title: 'check result',
+          rawInput: 'check result'
+        }
+      },
+      {
+        kind: 'session_update',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tc-order',
+          rawOutput: 'provider fallback',
+          status: 'completed',
+          _meta: {
+            terminal_output: { data: 'terminal result' },
+            terminal_exit: { exit_code: 0 }
+          }
+        }
+      },
+      { kind: 'stop', stopReason: 'end_turn' }
+    ]
+    let i = 0
+    const session = { nextUpdate: async (): Promise<FakeUpdate> => updates[i++]! }
+    const log: ReviewerLogEntry[] = []
+
+    await driveReviewerToStop(
+      session,
+      { timeoutMs: 1000, maxUpdates: 100 },
+      { onUpdate: (entry) => log.push(entry) }
+    )
+
+    expect(log).toEqual([
+      { kind: 'thought', text: 'Trace the evidence.' },
+      { kind: 'message', text: 'Checking the result.' },
+      {
+        kind: 'tool',
+        toolName: 'Bash',
+        title: 'check result',
+        rawInput: 'check result',
+        rawOutput: 'terminal result',
+        status: 'ok',
+        exitCode: 0
+      }
+    ])
   })
 
   it('produces ONE unified tool entry from tool_call + tool_call_update (not split tool_call/tool_result)', async () => {
@@ -410,7 +473,7 @@ afterEach(async () => {
 describe('ReviewRepository — reviewerLog round-trip', () => {
   it('persists a unified-tool reviewerLog and reloads it via getReviewsForSession', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const log: ReviewerLogEntry[] = [
@@ -462,7 +525,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('tolerates legacy/unknown entry kinds in the persisted JSON without throwing', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     // Simulate a legacy log that still uses the old tool_call/tool_result split (or unknown kind).
@@ -499,7 +562,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('returns an empty reviewerLog for reviews created without one', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await repository.createReview({
@@ -518,7 +581,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('persists a reviewerLog via updateReview patch', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const created = await repository.createReview({
@@ -546,7 +609,7 @@ describe('ReviewRepository — reviewerLog round-trip', () => {
 
   it('Review no longer has a reasoning field', async () => {
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await repository.createReview({

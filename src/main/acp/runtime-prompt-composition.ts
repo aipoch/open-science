@@ -195,6 +195,7 @@ const composeAcpRuntimePromptOwners = (
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
       onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
+      sideChatRelays: options.sideChatRelays,
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
       diagnosticContext,

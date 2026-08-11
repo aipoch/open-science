@@ -74,6 +74,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     notebook: options.notebook,
     skillImport: options.skillImport,
     plan: options.plan,
+    sideChat: options.sideChat,
     mcpHttpHost: options.mcpHttpHost
   })
   let generationConnectionEffects: AcpGenerationConnectionEffects | undefined
@@ -159,7 +160,9 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
             resolveVersionContent: (request) =>
               options.artifacts!.provenance!.resolveVersionContent!(request)
           },
-          sessions: options.plan.sessions
+          sessions: options.plan.sessions,
+          onApprovalRequested: options.plan.onApprovalRequested,
+          onApprovalSettled: options.plan.onApprovalSettled
         })
       : undefined
   const uploadRepository = options.uploads?.repository

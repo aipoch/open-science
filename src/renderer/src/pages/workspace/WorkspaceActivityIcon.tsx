@@ -3,6 +3,7 @@ import type { ToolActivity } from '@/stores/session-store'
 import {
   Check,
   CircleAlert,
+  CircleMinus,
   FilePen,
   FileText,
   Globe2,
@@ -13,7 +14,7 @@ import {
   Wrench
 } from 'lucide-react'
 
-import { isActivityActive } from './workspace-conversation-items'
+import { isActivityActive, isContextCompactionActivity } from './workspace-conversation-items'
 
 type WorkspaceActivityIconProps = {
   activity: ToolActivity
@@ -32,6 +33,9 @@ const WorkspaceActivityIcon = ({ activity }: WorkspaceActivityIconProps): React.
   // Status takes precedence over tool kind so terminal or active states are unmistakable.
   if (isActive) return <LoaderCircle {...iconProps} />
   if (activity.status === 'failed') return <CircleAlert {...iconProps} />
+  if (isContextCompactionActivity(activity) && activity.title === 'Context compaction cancelled') {
+    return <CircleMinus {...iconProps} />
+  }
   if (activity.status === 'completed') return <Check {...iconProps} />
 
   // Otherwise the tool kind hints at what the call did.

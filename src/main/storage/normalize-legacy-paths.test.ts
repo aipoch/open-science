@@ -13,7 +13,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { NOTEBOOKS_DIR, NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { NotebookRunRepository } from '../notebook/repository'
 import { PreviewStateRepository } from '../projects/preview-repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ProjectRepository } from '../projects/repository'
 import { SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
@@ -94,7 +94,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
 
     const client = createProjectDbClient(configRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const projectRepository = new ProjectRepository(() => Promise.resolve(client))
     const previewStateRepository = new PreviewStateRepository(() => Promise.resolve(client))
@@ -247,7 +247,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
 
     const client = createProjectDbClient(configRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const projectRepository = new ProjectRepository(() => Promise.resolve(client))
     const previewStateRepository = new PreviewStateRepository(() => Promise.resolve(client))

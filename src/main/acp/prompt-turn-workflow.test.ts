@@ -6,7 +6,7 @@ import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
@@ -24,7 +24,7 @@ type Harness = {
     dispose: Mock<AcpPromptTurnWorkflowOptions['artifacts']['dispose']>
   }
   authorize: Mock<AcpPromptTurnWorkflowOptions['skills']['authorize']>
-  context: ContextUsageTurnHandle
+  context: ContextWindowTurnHandle
   contextUsage: { reconcileUsed: Mock<(sessionId: string, used: number) => boolean> }
   emitSkillActivities: Mock<AcpPromptTurnWorkflowOptions['environment']['emitSkillActivities']>
   executor: Mock<AcpPromptTurnWorkflowOptions['executor']['execute']>
@@ -129,6 +129,9 @@ const createHarness = (
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
+    sideChatClaim?: NonNullable<
+      NonNullable<AcpPromptTurnWorkflowOptions['environment']['sideChatRelays']>['claim']
+    >
   } = {}
 ): Harness => {
   const journal: string[] = []
@@ -150,6 +153,7 @@ const createHarness = (
   })
   aggregate.setSpecialistId('specialist-1')
   aggregate.setSpecialistPrefix('[Analyst]')
+  aggregate.setSessionSetupPromptPrefix('Project Agent Context.')
   const lookup = vi.fn(() => ({
     appSessionId: 'app-1',
     generation: 1,
@@ -202,7 +206,7 @@ const createHarness = (
     complete: vi.fn(() => true),
     fail: vi.fn(),
     supersede: vi.fn()
-  } as unknown as ContextUsageTurnHandle
+  } as unknown as ContextWindowTurnHandle
   const prepared = {
     status: 'ready',
     content: 'provider content',
@@ -296,6 +300,7 @@ const createHarness = (
       selectedContextWindow: () => 128_000,
       emitSkillActivities,
       onProviderPromptAccepted,
+      ...(input.sideChatClaim ? { sideChatRelays: { claim: input.sideChatClaim } } : {}),
       routeNotification: vi.fn(),
       diagnosticContext: () => ({}),
       pushUserMessage
@@ -408,6 +413,12 @@ describe('AcpPromptTurnWorkflow', () => {
       kind: 'stopped',
       response: { stopReason: 'end_turn' }
     })
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        specialistPrefix: '[Analyst]',
+        sessionSetupPromptPrefix: 'Project Agent Context.'
+      })
+    )
 
     const onPublished = vi.fn()
     await handles.emitArtifact(onPublished)
@@ -597,6 +608,65 @@ describe('AcpPromptTurnWorkflow', () => {
       'failed'
     ])
     expect(harness.onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
+  it('claims side-chat advisories for preparation and commits them after provider admission', async () => {
+    const commit = vi.fn(async () => undefined)
+    const restore = vi.fn()
+    const claim = vi.fn(() => ({
+      historyPreamble: 'Side chat advisory: use black.',
+      commit,
+      restore
+    }))
+    const harness = createHarness({ sideChatClaim: claim })
+    const prompt = request()
+    prompt.historyPreamble = 'Existing history.'
+
+    await harness.workflow.run(prompt, { kind: 'user' })
+
+    expect(claim).toHaveBeenCalledWith('s1')
+    expect(harness.preparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          historyPreamble: 'Existing history.\n\nSide chat advisory: use black.'
+        })
+      })
+    )
+    expect(commit).toHaveBeenCalledWith('message-1')
+    expect(restore).not.toHaveBeenCalled()
+    expect(commit.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.onProviderPromptAccepted.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('restores claimed side-chat advisories when the provider never accepts the prompt', async () => {
+    const commit = vi.fn()
+    const restore = vi.fn()
+    const harness = createHarness({
+      sideChatClaim: () => ({ historyPreamble: 'Side note.', commit, restore }),
+      execute: async () => {
+        throw new Error('provider rejected startup')
+      }
+    })
+
+    await expect(harness.workflow.run(request(), { kind: 'user' })).rejects.toThrow(
+      'provider rejected startup'
+    )
+
+    expect(commit).not.toHaveBeenCalled()
+    expect(restore).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['an app continuation', { continuation: true }, { kind: 'app-continuation' as const }],
+    ['a suppressed user message', { suppressUserMessage: true }, { kind: 'user' as const }]
+  ])('does not consume side-chat advisories for %s', async (_name, requestPatch, mode) => {
+    const claim = vi.fn()
+    const harness = createHarness({ sideChatClaim: claim })
+
+    await harness.workflow.run(Object.assign(request(), requestPatch), mode)
+
+    expect(claim).not.toHaveBeenCalled()
   })
 
   it('passes protected Plan guidance through the interaction-scoped lifecycle', async () => {

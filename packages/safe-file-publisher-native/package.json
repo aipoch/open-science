@@ -1,0 +1,11 @@
+{
+  "name": "@aipoch/safe-file-publisher-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild"
+  }
+}

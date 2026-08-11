@@ -149,7 +149,8 @@ class AcpConnectionLifecycleWorkflow {
         clientCapabilities: {
           fs: { readTextFile: true, writeTextFile: true },
           session: { configOptions: { boolean: {} } },
-          plan: {}
+          plan: {},
+          elicitation: { form: {} }
         }
       })
       attempt.assertCurrent()

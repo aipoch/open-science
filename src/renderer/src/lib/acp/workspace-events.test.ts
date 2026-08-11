@@ -1,14 +1,21 @@
-import type { AcpRuntimeEvent, AcpPermissionRequest } from '../../../../shared/acp'
+import {
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpRuntimeEvent,
+  type AcpPermissionRequest
+} from '../../../../shared/acp'
 import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '../../stores/preview-workbench-store'
+import { useNavigationStore } from '../../stores/navigation-store'
 import {
   createInitialSessionState,
   toPersistedSession,
@@ -18,13 +25,16 @@ import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   applyWorkspaceRuntimeEvent,
   assembleReviewRunRequest,
-  syncWorkspaceAgentFirstOutputState,
-  syncWorkspacePermissionState,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,
   clearSuppressNextAutoReview,
   resetDeferredArtifactEventsForTests
 } from './workspace-events'
+import {
+  resetWorkspaceRuntimeEventOwnerForTests,
+  syncWorkspaceAgentFirstOutputState,
+  syncWorkspacePermissionState
+} from './workspace-runtime-event-owner'
 
 // Creates a runtime event with stable defaults for store adapter tests.
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
@@ -62,17 +72,40 @@ const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile
   ...overrides
 })
 
+const pendingPlanProjection: ActivePlanProjection = {
+  artifactId: 'plan-1',
+  artifactVersionId: 'plan-version-1',
+  artifactChecksum: 'a'.repeat(64),
+  revision: 1,
+  approval: 'pending',
+  lifecycle: 'awaiting_approval',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Review the generated plan',
+    phases: [],
+    desired_outputs: [],
+    feasibility: { confidence: 'high', rationale: 'Ready for review.' }
+  },
+  stepStatuses: {},
+  stepStates: {},
+  counts: { phases: 0, delegations: 0, steps: 0, completed: 0, inProgress: 0 }
+}
+
 describe('workspace runtime events', () => {
   // Rebuild the visible session before each adapter assertion.
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     resetDeferredArtifactEventsForTests()
+    resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
-      content: 'Summarize this'
+      content: 'Summarize this',
+      projectId: 'default-project'
     })
   })
 
@@ -100,6 +133,21 @@ describe('workspace runtime events', () => {
       streamId: 'assistant-message-1',
       eventIds: ['event-1', 'event-2'],
       status: 'streaming'
+    })
+  })
+
+  it('keeps a pending Plan actionable after the runtime reports a timeout stop', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'plan-ready', kind: 'plan', planProjection: pendingPlanProjection })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'plan-timeout', kind: 'stop', text: 'end_turn' })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-plan-approval',
+      activeRun: undefined,
+      activePlanProjection: { approval: 'pending', lifecycle: 'awaiting_approval' }
     })
   })
 
@@ -276,6 +324,158 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].errorReportable).toBe(true)
   })
 
+  it('retains a cancelled prompt as an interrupted turn instead of completing it', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-1',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'I will search PubMed now.'
+      })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-2',
+        kind: 'stop',
+        text: 'cancelled',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('error')
+    expect(session.resumeRecovery).toMatchObject({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId
+    })
+    expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+    expect(session.messages[1]).toMatchObject({
+      content: 'I will search PubMed now.',
+      status: 'error'
+    })
+    expect(session.messages[1].completedAt).toBeUndefined()
+  })
+
+  it('keeps both cancelled and resumed-completed context points on the owning prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    if (!promptMessageId) throw new Error('expected active prompt')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-cancelled',
+        timestamp: 100,
+        kind: 'stop',
+        text: 'cancelled',
+        promptMessageId,
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'cancelled' },
+          contextWindow: { used: 31_000, size: 128_000 },
+          source: 'provider-update'
+        }
+      })
+    )
+
+    useSessionStore
+      .getState()
+      .prepareInterruptedTurnContinuation('transport-session-1', promptMessageId, undefined, false)
+    useSessionStore.getState().completeInterruptedTurnResume('transport-session-1')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-completed',
+        timestamp: 200,
+        kind: 'stop',
+        text: 'end_turn',
+        promptMessageId,
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'end_turn' },
+          contextWindow: { used: 34_000, size: 128_000 },
+          modelStepUsage: { inputTokens: 2_000, cacheTokens: 32_000, outputTokens: 100 },
+          source: 'provider-response'
+        }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    const samples = session.messages[0].contextWindowSamples
+    expect(samples).toEqual([
+      expect.objectContaining({
+        id: 'usage-cancelled',
+        timestamp: 100,
+        termination: { kind: 'stop', stopReason: 'cancelled' },
+        contextWindow: { used: 31_000, size: 128_000 },
+        runtimeSegmentId: expect.any(String)
+      }),
+      expect.objectContaining({
+        id: 'usage-completed',
+        timestamp: 200,
+        termination: { kind: 'stop', stopReason: 'end_turn' },
+        contextWindow: { used: 34_000, size: 128_000 },
+        runtimeSegmentId: expect.any(String)
+      })
+    ])
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === promptMessageId)
+        ?.contextWindowSamples
+    ).toEqual(samples)
+    expect(toPersistedSession(session).messages[0].contextWindowSamples).toEqual(samples)
+  })
+
+  it('records a terminal error context point on the active prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'usage-error',
+        timestamp: 300,
+        kind: 'error',
+        title: 'Prompt failed',
+        text: 'Network failed',
+        terminalContextWindow: {
+          termination: { kind: 'error' },
+          contextWindow: { used: 18_000, size: 128_000 },
+          source: 'local-estimate'
+        }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].messages[0]).toMatchObject({
+      id: promptMessageId,
+      contextWindowSamples: [
+        expect.objectContaining({
+          id: 'usage-error',
+          termination: { kind: 'error' },
+          contextWindow: { used: 18_000, size: 128_000 }
+        })
+      ]
+    })
+  })
+
+  it('binds a cancelled app continuation to its originating prompt', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+    useSessionStore.getState().finishRun('transport-session-1')
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'event-1',
+        kind: 'stop',
+        text: 'cancelled',
+        promptMessageId
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.resumeRecovery).toMatchObject({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId
+    })
+    expect(session.messages[0]).toMatchObject({ id: promptMessageId, interrupted: true })
+  })
+
   it('reattaches a post-stop app continuation and its activity and usage to the originating turn', async () => {
     const originMessageId = useSessionStore.getState().sessions[0].messages[0].id
     useSessionStore.getState().finishRun('transport-session-1')
@@ -347,53 +547,145 @@ describe('workspace runtime events', () => {
 
   it('tracks native context compaction without adding chat messages', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
-    const messageCount = useSessionStore.getState().sessions[0].messages.length
+    const sessionBefore = useSessionStore.getState().sessions[0]
+    const messageCount = sessionBefore.messages.length
+    const promptMessageId = sessionBefore.messages[0].id
 
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
-      compacting: true
+      compacting: true,
+      activities: [
+        expect.objectContaining({
+          id: 'context-compaction:1',
+          promptMessageId,
+          providerToolName: 'ContextCompaction',
+          status: 'in_progress',
+          title: 'Compacting context'
+        })
+      ]
     })
 
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-done', kind: 'compaction', status: 'completed' })
+      createEvent({
+        id: 'compact-done',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'completed',
+        title: 'Context compacted',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.compacting).toBeUndefined()
     expect(session.status).toBe('idle')
     expect(session.messages).toHaveLength(messageCount)
-  })
+    expect(session.activities).toEqual([
+      expect.objectContaining({
+        id: 'context-compaction:1',
+        eventIds: ['compact-start', 'compact-done'],
+        promptMessageId,
+        providerToolName: 'ContextCompaction',
+        status: 'completed',
+        title: 'Context compacted'
+      })
+    ])
+    expect(toPersistedSession(session).conversationGraph?.activities).toEqual([
+      expect.objectContaining({
+        id: 'context-compaction:1',
+        promptMessageId,
+        providerToolName: 'ContextCompaction',
+        status: 'completed'
+      })
+    ])
 
-  it('settles cancelled native compaction without surfacing a session error', async () => {
-    useSessionStore.getState().finishRun('transport-session-1')
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
-    )
-    await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-cancelled', kind: 'compaction', status: 'cancelled' })
+      createEvent({
+        id: 'compact-late-start',
+        kind: 'compaction',
+        promptMessageId,
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:1'
+      })
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
       compacting: undefined,
-      error: undefined
+      activities: [
+        expect.objectContaining({
+          eventIds: ['compact-start', 'compact-done'],
+          status: 'completed',
+          title: 'Context compacted'
+        })
+      ]
+    })
+  })
+
+  it('settles cancelled native compaction without surfacing a session error', async () => {
+    useSessionStore.getState().finishRun('transport-session-1')
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:cancelled'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'compact-cancelled',
+        kind: 'compaction',
+        status: 'cancelled',
+        title: 'Context compaction cancelled',
+        toolCallId: 'context-compaction:cancelled'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      compacting: undefined,
+      error: undefined,
+      activities: [
+        expect.objectContaining({
+          status: 'completed',
+          title: 'Context compaction cancelled'
+        })
+      ]
     })
   })
 
   it('surfaces native compaction failures as non-reportable session errors', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
     await applyWorkspaceRuntimeEvent(
-      createEvent({ id: 'compact-start', kind: 'compaction', status: 'in_progress' })
+      createEvent({
+        id: 'compact-start',
+        kind: 'compaction',
+        status: 'in_progress',
+        title: 'Compacting context',
+        toolCallId: 'context-compaction:failed'
+      })
     )
     await applyWorkspaceRuntimeEvent(
       createEvent({
         id: 'compact-failed',
         kind: 'compaction',
         status: 'failed',
+        title: 'Context compaction failed',
+        toolCallId: 'context-compaction:failed',
         text: 'Agent rejected /compact'
       })
     )
@@ -402,7 +694,10 @@ describe('workspace runtime events', () => {
       status: 'error',
       compacting: undefined,
       error: 'Agent rejected /compact',
-      errorReportable: false
+      errorReportable: false,
+      activities: [
+        expect.objectContaining({ status: 'failed', title: 'Context compaction failed' })
+      ]
     })
   })
 
@@ -495,7 +790,14 @@ describe('workspace runtime events', () => {
     // The recovery effect flips the session to compacting before this event is applied.
     useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
-    const applied = await applyWorkspaceRuntimeEvent(overflowEvent())
+    const applied = await applyWorkspaceRuntimeEvent({
+      ...overflowEvent(),
+      terminalContextWindow: {
+        termination: { kind: 'error' },
+        contextWindow: { used: 127_000, size: 128_000 },
+        source: 'provider-update'
+      }
+    })
 
     expect(applied).toBe(true)
     const session = useSessionStore.getState().sessions[0]
@@ -503,6 +805,7 @@ describe('workspace runtime events', () => {
     expect(session.compacting).toBe(true)
     expect(session.status).not.toBe('error')
     expect(session.error).toBeUndefined()
+    expect(session.messages[0].contextWindowSamples).toBeUndefined()
   })
 
   it('surfaces a real error for a recoverable overflow when no recovery started (e.g. cooldown)', async () => {
@@ -646,6 +949,88 @@ describe('workspace runtime events', () => {
     syncWorkspacePermissionState([])
 
     expect(useSessionStore.getState().sessions[0].status).toBe('running')
+  })
+
+  it('mirrors only request-correlated restored permission lifecycle events', async () => {
+    const request = createPermissionRequest()
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'idle',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'continuing',
+            request,
+            originatingPromptMessageId: session.messages[0].id,
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-rearmed-uncorrelated',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+      })
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      runtimeContext: { permission: { state: 'continuing' } }
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-rearmed-mismatch',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+        permissionRequestId: 'permission-other'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'idle',
+      runtimeContext: { permission: { state: 'continuing' } }
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-rearmed',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+        permissionRequestId: request.requestId
+      })
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: { permission: { state: 'pending' } }
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-settled-mismatch',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+        permissionRequestId: 'permission-other'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: { permission: { state: 'pending' } }
+    })
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'permission-settled',
+        kind: 'permission',
+        title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+        permissionRequestId: request.requestId
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.permission).toBeUndefined()
   })
 
   it('syncs first-output waiting only for known foreground workspace sessions', () => {
@@ -931,6 +1316,112 @@ describe('workspace runtime events', () => {
       openRequestVersion: 0,
       items: []
     })
+  })
+
+  it('merges and persists elicitation state on its tool activity', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'elicitation-event-1',
+        kind: 'tool',
+        toolCallId: 'tool-ask-1',
+        title: 'Choose an approach',
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'pending',
+          fields: [
+            {
+              id: 'approach',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [{ value: 'minimal', label: 'Minimal change' }]
+            }
+          ]
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'elicitation-event-2',
+        kind: 'tool',
+        toolCallId: 'tool-ask-1',
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'answered',
+          fields: [
+            {
+              id: 'approach',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [{ value: 'minimal', label: 'Minimal change' }]
+            }
+          ],
+          answers: [{ fieldId: 'approach', value: 'minimal' }],
+          respondedAt: 1710000001000
+        }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.activities).toEqual([
+      expect.objectContaining({
+        id: 'tool-ask-1',
+        eventIds: ['elicitation-event-1', 'elicitation-event-2'],
+        elicitation: expect.objectContaining({
+          state: 'answered',
+          answers: [{ fieldId: 'approach', value: 'minimal' }]
+        })
+      })
+    ])
+    expect(toPersistedSession(session).activities).toEqual([
+      expect.objectContaining({
+        elicitation: expect.objectContaining({ state: 'answered' })
+      })
+    ])
+  })
+
+  it('finishes a turn normally while a durable user choice remains pending', async () => {
+    const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'choice-pending',
+        kind: 'tool',
+        toolCallId: 'choice-tool',
+        promptMessageId,
+        status: 'pending',
+        elicitation: {
+          message: 'Choose an approach',
+          state: 'pending',
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-request',
+            ...(promptMessageId ? { promptMessageId } : {})
+          },
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Approach',
+              kind: 'single-select',
+              options: [
+                { value: 'minimal', label: 'Minimal' },
+                { value: 'expanded', label: 'Expanded' }
+              ]
+            },
+            { id: 'question_0_custom', label: 'Other', kind: 'text' }
+          ]
+        }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({ id: 'choice-turn-stop', kind: 'stop', text: 'end_turn', promptMessageId })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    expect(session.status).toBe('idle')
+    expect(session.interrupted).toBeUndefined()
+    expect(session.resumeRecovery).toBeUndefined()
+    expect(session.activities?.[0].elicitation?.state).toBe('pending')
   })
 
   it('attaches artifact events to the current message and finalizes their file paths', async () => {
@@ -1927,6 +2418,8 @@ describe('workspace runtime events', () => {
   })
 
   it('auto-opens a generated molecule artifact in the preview panel', async () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default-project' })
+    usePreviewWorkbenchStore.getState().activateProject('default-project')
     const finalizedArtifact = createArtifactFile({
       id: 'artifact-version-2',
       artifactId: 'artifact-lineage-1',
@@ -1973,6 +2466,88 @@ describe('workspace runtime events', () => {
         name: 'aspirin.mol'
       })
     ])
+  })
+
+  it('waits for the foreground project preview slice before auto-opening a molecule', async () => {
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default-project' })
+    const finalizedArtifact = createArtifactFile({
+      id: 'artifact-version-activating',
+      artifactId: 'artifact-lineage-activating',
+      versionId: 'artifact-version-activating',
+      versionNumber: 1,
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      name: 'activating.mol'
+    })
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-activating', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-activating',
+        kind: 'artifact',
+        runId: 'run-activating',
+        artifactSessionId: 'artifact-session-activating',
+        artifactClaimId: 'claim-activating',
+        artifacts: [createArtifactFile({ name: 'activating.mol' })]
+      }),
+      {
+        finalizeRunArtifacts: vi.fn().mockResolvedValue([finalizedArtifact]),
+        saveSession: vi.fn().mockResolvedValue(undefined)
+      }
+    )
+
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+
+    usePreviewWorkbenchStore.getState().activateProject('default-project')
+
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'artifact-lineage-activating',
+      panelState: 'open',
+      activeProjectId: 'default-project',
+      items: [
+        expect.objectContaining({
+          id: 'artifact-lineage-activating',
+          selectedVersionId: 'artifact-version-activating',
+          format: 'molecule'
+        })
+      ]
+    })
+  })
+
+  it('does not auto-open a generated molecule artifact while Home is visible', async () => {
+    const finalizedArtifact = createArtifactFile({
+      id: 'artifact-version-home',
+      artifactId: 'artifact-lineage-home',
+      versionId: 'artifact-version-home',
+      versionNumber: 1,
+      sessionId: 'transport-session-1',
+      messageId: 'message-1',
+      runId: undefined,
+      name: 'background.mol'
+    })
+    const finalizeRunArtifacts = vi.fn().mockResolvedValue([finalizedArtifact])
+    const saveSession = vi.fn().mockResolvedValue(undefined)
+
+    await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-before-home-molecule', kind: 'stop' }))
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'artifact-event-home',
+        kind: 'artifact',
+        runId: 'run-home',
+        artifactSessionId: 'artifact-session-home',
+        artifactClaimId: 'claim-home',
+        artifacts: [createArtifactFile({ name: 'background.mol' })]
+      }),
+      { finalizeRunArtifacts, saveSession }
+    )
+
+    expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: undefined,
+      panelState: 'collapsed',
+      items: []
+    })
   })
 
   it('does not auto-open non-molecule artifacts', async () => {

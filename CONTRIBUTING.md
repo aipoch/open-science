@@ -43,6 +43,7 @@ Run installation, development, and validation commands from the repository root:
 | Install        | `npm install`                                              |
 | Run            | `npm run dev`                                              |
 | Target test    | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
+| Module tests   | `npm run test:module -- <module-id>`                       |
 | Node typecheck | `npm run typecheck:node`                                   |
 | Web typecheck  | `npm run typecheck:web`                                    |
 | Lint           | `npm run lint`                                             |
@@ -89,6 +90,21 @@ Three runtime process layers and a shared module live under `src/`:
 4. Build the final Test Impact Set and run it after the last material edit. Use the full fallback when
    ownership, consumers, or risks cannot be established.
 5. Open a pull request with a clear description of the change and its motivation.
+
+### Database schema changes
+
+`prisma/schema.prisma` owns tables, columns, defaults, indexes, and foreign keys. SQLite CHECK
+constraints that Prisma cannot express live in `prisma/sqlite-check-constraints.json`. The runtime
+schema module is generated; do not edit it or add feature DDL to startup code.
+
+1. Change the Prisma schema and, only when required, the SQLite CHECK contract.
+2. Run `npm run db:schema:generate` and review the generated target schema.
+3. Add a new immutable entry under `src/main/database/migrations/`; never change a released
+   migration or extend the frozen `0001` legacy repair list.
+4. Run `npm run db:schema:check` and the migration tests before committing.
+
+Prisma CLI is a development and CI tool only. Packaged applications execute the checked-in
+migration manifest and do not ship the Prisma migrate engine.
 
 ### Branch names
 
@@ -160,12 +176,17 @@ Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:
 
 - the Owner Module, changed Interface, or consumers cannot be established;
 - global validation inputs change, including package metadata, TypeScript/Vitest/build configuration,
-  the PR Gate workflow, or its classifier and manifest;
+  the PR Gate workflow or classifier, or ownership, consumer, capability, or fallback routing in the
+  module-impact manifest;
 - the change crosses several runtime areas without a demonstrated impact map;
 - a release-candidate workflow or maintainer explicitly requests the complete local suite.
 
 Full fallback is a safety mechanism, not an unconditional prerequisite for every pull request.
 Contributors are not expected to reproduce every operating-system CI lane locally.
+
+Changing only `testFiles` within an already-owned Module does not trigger the full fallback. Run the
+manifest validation tests, `npm run test:module -- <module-id>`, the affected process typechecks and
+lint instead; exact-head CI remains authoritative for the complete portable and platform suites.
 
 ### CI authority and evidence
 

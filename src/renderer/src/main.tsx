@@ -3,8 +3,10 @@ import './assets/main.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
+import { startNetworkMonitor } from '@/stores/network-store'
 import { installRendererFailureDiagnostics } from './renderer-diagnostics'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -26,6 +28,10 @@ installRendererFailureDiagnostics({
 // Apply the saved theme to <html> before the first paint so dark mode doesn't flash light on startup.
 applyTheme(resolveInitialTheme())
 
+// Start connectivity monitoring (online/offline events + the initial reachability probe)
+// before React renders so indicators and the Network panel read a live store from first paint.
+startNetworkMonitor()
+
 // Install before React renders so Streamdown hooks work on first interaction.
 installStreamdown()
 
@@ -37,6 +43,8 @@ window.addEventListener('drop', (event) => event.preventDefault())
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <DatabaseStartupGate>
+      <App />
+    </DatabaseStartupGate>
   </StrictMode>
 )

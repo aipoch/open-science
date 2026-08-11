@@ -1,0 +1,222 @@
+import type {
+  AcpContinueInterruptedTurnRequest,
+  AcpPromptRequest,
+  AcpStateSnapshot
+} from '../../shared/acp'
+import { getActiveConversationContext } from '../../shared/conversation-graph'
+import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import { toRuntimeUploadedAttachment } from '../../shared/uploads'
+import type { TaskNotificationService } from '../notifications/task-notifications'
+
+const INTERRUPTED_TURN_CONTINUATION_PROMPT =
+  'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
+
+const buildContinuationPrompt = (
+  prompt: PersistedChatSession['messages'][number],
+  contextReset: boolean
+): string =>
+  contextReset
+    ? INTERRUPTED_TURN_CONTINUATION_PROMPT
+    : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
+
+type InterruptedTurnContinuationRuntime = {
+  getSnapshot(): AcpStateSnapshot
+  getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
+  startContinuation(request: AcpPromptRequest): Promise<void>
+}
+
+type InterruptedTurnContinuationDependencies = {
+  runtime: InterruptedTurnContinuationRuntime
+  loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
+  notifications?: Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
+}
+
+const expectedFrameworkForReplayTarget = (
+  target: NonNullable<AcpContinueInterruptedTurnRequest['contextReset']>['historyReplayTarget']
+): NonNullable<PersistedChatSession['agentFrameworkId']> => {
+  if (target === 'opencode') return 'opencode'
+  if (target === 'codex-response' || target === 'codex-bridge') return 'codex'
+  return 'claude-code'
+}
+
+const requireInterruptedTurn = (
+  session: PersistedChatSession,
+  request: AcpContinueInterruptedTurnRequest
+): NonNullable<PersistedChatSession['messages'][number]> => {
+  if (
+    session.resumeRecovery?.kind !== 'resume-required' ||
+    session.resumeRecovery.promptMessageId !== request.promptMessageId
+  ) {
+    throw new Error(
+      'Resume no longer matches the interrupted turn on the active Conversation Branch.'
+    )
+  }
+
+  const prompt = session.messages.find((message) => message.id === request.promptMessageId)
+  if (prompt?.role !== 'user') {
+    throw new Error(
+      'Resume no longer matches the interrupted turn on the active Conversation Branch.'
+    )
+  }
+  return prompt
+}
+
+const resolveProvenanceContext = (
+  session: PersistedChatSession,
+  request: AcpContinueInterruptedTurnRequest
+): NonNullable<AcpPromptRequest['provenanceContext']> => {
+  const graph = session.conversationGraph
+  if (!graph) return { promptMessageId: request.promptMessageId }
+
+  const provenance = getActiveConversationContext(graph, request.promptMessageId)
+  const contextReset = request.contextReset
+  if (!contextReset) return provenance
+
+  const segment = graph.runtimeSegments.find(
+    (candidate) => candidate.id === contextReset.runtimeSegmentId
+  )
+  const expectedFramework = expectedFrameworkForReplayTarget(contextReset.historyReplayTarget)
+  if (
+    !segment ||
+    segment.agentFrameId !== provenance.agentFrameId ||
+    segment.frameworkId !== expectedFramework ||
+    (session.agentFrameworkId && session.agentFrameworkId !== expectedFramework)
+  ) {
+    throw new Error('Resume Runtime Segment does not match the adopted Agent context.')
+  }
+
+  return { ...provenance, runtimeSegmentId: segment.id }
+}
+
+const buildContinuationRequest = (
+  session: PersistedChatSession,
+  prompt: PersistedChatSession['messages'][number],
+  request: AcpContinueInterruptedTurnRequest,
+  livePrompt: AcpPromptRequest | undefined
+): AcpPromptRequest => {
+  const skillIds = prompt.parts?.flatMap((part) => (part.type === 'skill' ? [part.id] : []))
+  const referencedArtifacts = prompt.parts?.reduce<
+    NonNullable<AcpPromptRequest['referencedArtifacts']>
+  >((references, part) => {
+    if (part.type !== 'artifact') return references
+    references.push(
+      part.source === 'linked-folder'
+        ? {
+            id: part.id,
+            name: part.name,
+            source: part.source,
+            rootId: part.rootId,
+            relativePath: part.relativePath,
+            mimeType: part.mimeType
+          }
+        : {
+            id: part.id,
+            name: part.name,
+            path: part.path,
+            source: part.source,
+            mimeType: part.mimeType,
+            versionId: part.versionId
+          }
+    )
+    return references
+  }, [])
+  const provenanceContext = resolveProvenanceContext(session, request)
+  const contextReset = request.contextReset
+  const replayMessages = contextReset
+    ? session.messages.map((message) =>
+        message.role === 'agent' &&
+        message.responseToMessageId === request.promptMessageId &&
+        message.status === 'error'
+          ? { ...message, status: 'complete' as const }
+          : message
+      )
+    : undefined
+  const replay =
+    contextReset && replayMessages
+      ? buildSessionHistoryReplay(
+          replayMessages,
+          {
+            target: contextReset.historyReplayTarget,
+            contextWindow: contextReset.contextWindow
+          },
+          session.projectId,
+          contextReset.supportsImageInput
+        )
+      : undefined
+  const attachments = contextReset
+    ? undefined
+    : livePrompt?.attachments?.length
+      ? livePrompt.attachments
+      : prompt.uploads?.map((upload) => toRuntimeUploadedAttachment(upload, session.projectId))
+  const retainedPromptImages = contextReset ? undefined : prompt.images
+
+  return {
+    sessionId: request.sessionId,
+    text: buildContinuationPrompt(prompt, Boolean(contextReset)),
+    suppressUserMessage: true,
+    provenanceContext,
+    ...(prompt.turnIntent === 'plan-first' || livePrompt?.turnIntent === 'plan-first'
+      ? { turnIntent: 'plan-first' as const }
+      : {}),
+    ...(livePrompt?.forcedSkillIds?.length
+      ? { forcedSkillIds: livePrompt.forcedSkillIds }
+      : skillIds?.length
+        ? { forcedSkillIds: skillIds }
+        : {}),
+    ...(livePrompt?.referencedArtifacts?.length
+      ? { referencedArtifacts: livePrompt.referencedArtifacts }
+      : referencedArtifacts?.length
+        ? { referencedArtifacts }
+        : {}),
+    ...(attachments?.length ? { attachments } : {}),
+    ...(replay?.historyPreamble ? { historyPreamble: replay.historyPreamble } : {}),
+    ...(replay?.historyAttachments.length ? { historyAttachments: replay.historyAttachments } : {}),
+    ...(replay?.historyImages.length
+      ? { historyImages: replay.historyImages }
+      : retainedPromptImages?.length
+        ? { historyImages: retainedPromptImages }
+        : {}),
+    ...(contextReset ? { contextReset: true } : {})
+  }
+}
+
+// Continues one durable interrupted turn through the app-owned prompt path. The renderer supplies
+// only identity and a closed replay policy; all hidden provider content is reconstructed in Main.
+export const continueInterruptedTurn = async (
+  dependencies: InterruptedTurnContinuationDependencies,
+  request: AcpContinueInterruptedTurnRequest
+): Promise<AcpStateSnapshot> => {
+  const session = await dependencies.loadSession(request.projectId, request.sessionId)
+  if (!session) throw new Error('Interrupted Session could not be loaded.')
+  const prompt = requireInterruptedTurn(session, request)
+  const livePrompt = dependencies.runtime.getLatestUserPrompt(
+    request.sessionId,
+    request.promptMessageId
+  )
+  const snapshot = dependencies.runtime.getSnapshot()
+  if (
+    livePrompt &&
+    (snapshot.agentPromptInFlightSessionIds ?? snapshot.promptInFlightSessionIds).includes(
+      request.sessionId
+    )
+  ) {
+    return snapshot
+  }
+
+  const tracked = dependencies.notifications?.trackPrompt({
+    sessionId: request.sessionId,
+    text: prompt.content
+  })
+  try {
+    await dependencies.runtime.startContinuation(
+      buildContinuationRequest(session, prompt, request, livePrompt)
+    )
+  } catch (error) {
+    if (tracked) dependencies.notifications?.untrackPrompt(request.sessionId, tracked)
+    throw error
+  }
+  return dependencies.runtime.getSnapshot()
+}
+
+export type { InterruptedTurnContinuationDependencies, InterruptedTurnContinuationRuntime }

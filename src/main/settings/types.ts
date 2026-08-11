@@ -12,6 +12,7 @@ import type {
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -161,6 +162,8 @@ export type StoredSettings = {
   projectFilesFilter?: ProjectFilesFilterPreference
   // Selected built-in app-icon look. Absent means the default ('light').
   appIconVariant?: AppIconVariant
+  // Default approval profile for new conversations. Absent means the safe 'ask' default.
+  defaultPermissionProfile?: PermissionProfileId
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string
@@ -180,6 +183,10 @@ export type StoredSettings = {
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
+  // OS-encrypted GitHub token used only for GitHub Skill discovery/import requests. The mask is
+  // display-only; plaintext never reaches settings.json or a renderer snapshot.
+  githubTokenRef?: string
+  githubTokenMask?: string
   connectors?: StoredConnectors
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror

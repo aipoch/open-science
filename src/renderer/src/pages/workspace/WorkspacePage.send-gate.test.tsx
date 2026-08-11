@@ -26,6 +26,7 @@ import { type ComposerDoc } from './composer/composer-doc'
 
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
 let conversationProps: {
+  actionError: string | null
   draftDoc: ComposerDoc
   canEditDraft: boolean
   canSendMessage: boolean
@@ -42,6 +43,7 @@ let conversationProps: {
 }
 
 const runtime = vi.hoisted(() => ({
+  actionError: null as string | null,
   promptInFlightSessionIds: [] as string[],
   sendPreparationInFlightSessionIds: [] as string[],
   nativeContextCompactionSessionIds: ['sess-a'] as string[],
@@ -64,7 +66,7 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
-    actionError: null,
+    actionError: runtime.actionError,
     pendingPermissions: [],
     promptInFlightSessionIds: runtime.promptInFlightSessionIds,
     sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
@@ -175,6 +177,7 @@ describe('WorkspacePage send gate while compacting', () => {
       selectedSessionId: 'sess-a'
     })
     vi.clearAllMocks()
+    runtime.actionError = null
     runtime.promptInFlightSessionIds = []
     runtime.sendPreparationInFlightSessionIds = []
     runtime.nativeContextCompactionSessionIds = ['sess-a']
@@ -264,6 +267,36 @@ describe('WorkspacePage send gate while compacting', () => {
       expect(conversationProps.canChangePermissionProfile).toBe(true)
     }
   )
+
+  it('does not query Plan authority before a newly bound Session is persisted', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockRejectedValueOnce(
+      new Error('Cannot read runtime context for a missing Session.')
+    )
+
+    await renderPage()
+
+    expect(window.api.acp.getPlanProjection).not.toHaveBeenCalled()
+  })
+
+  it('blocks overlapping actions while the Session is waiting for a user answer', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-for-user' })],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('start another request'))
+    })
+
+    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangeAgentControls).toBe(false)
+  })
 
   it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
     useSessionStore.setState({
@@ -583,5 +616,43 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.compactContextDisabledReason).toBe(
       'Resolve the current session error before compacting.'
     )
+  })
+
+  it('surfaces restored permission retry errors without replacing the authorization card', async () => {
+    runtime.actionError = 'Permission response failed'
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-restored',
+              sessionId: session.id,
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+    await renderPage()
+
+    expect(conversationProps.actionError).toBe('Permission response failed')
+
+    runtime.actionError = null
+    await act(async () => {
+      useSessionStore.getState().failRun('sess-a', 'Continuation failed')
+      useSessionStore.getState().setPermissionPending('sess-a')
+    })
+
+    expect(conversationProps.actionError).toBe('Continuation failed')
   })
 })

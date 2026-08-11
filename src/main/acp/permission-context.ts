@@ -7,19 +7,22 @@ import type {
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpPermissionResponse
+  AcpPermissionResponse,
+  AcpPermissionSettlementState
 } from '../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { getAgentFramework, type AgentFramework } from '../agent-framework'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { createLogger } from '../logger'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
-  resolveNotebookPermissionContext
+  resolveNotebookPermissionContext,
+  type PermissionWaitHooks
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
@@ -43,11 +46,16 @@ type PermissionRestoreContext = PermissionToolContext & {
   isCancelled: () => boolean
 }
 
+type ToolCallSessionUpdate = Extract<
+  SessionNotification['update'],
+  { sessionUpdate: 'tool_call' | 'tool_call_update' }
+>
+
 type CodexMcpToolIdentity = {
   title: string
   providerToolName: string
   mcpIdentity: string
-  rawInput: unknown
+  rawInput?: unknown
 }
 
 type OpenCodeMcpToolInput = {
@@ -88,6 +96,7 @@ type AcpPermissionContextOptions = {
     capturePrompt: (sessionId: string) =>
       | {
           sequence: number
+          promptMessageId?: string
           isCancellationAccepted: () => boolean
         }
       | undefined
@@ -114,6 +123,8 @@ type AcpPermissionContextOptions = {
     toolCallId: string
     waitMs: number
   }) => void
+  onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
+  permissionWaitHooks?: PermissionWaitHooks
 }
 
 type PermissionContextSessionSnapshot = {
@@ -215,31 +226,41 @@ const isCodexMcpApproval = (params: RequestPermissionRequest): boolean => {
   return isRecord(meta) && meta.is_mcp_tool_approval === true
 }
 
-const isCodexMcpToolCall = (update: SessionNotification['update']): boolean => {
+const isCodexMcpToolCall = (
+  update: SessionNotification['update']
+): update is ToolCallSessionUpdate => {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update')
+    return false
   const meta = (update as SessionNotification['update'] & { _meta?: unknown })._meta
   return isRecord(meta) && meta.is_mcp_tool_call === true
 }
 
 const codexMcpToolIdentity = (
   event: ReturnType<typeof toAcpRuntimeEvent>,
+  rawInput: unknown,
   mcpServerNames: readonly string[]
 ): CodexMcpToolIdentity | undefined => {
-  if (event.kind !== 'tool' || !isRecord(event.rawInput)) return undefined
+  if (event.kind !== 'tool' || !isRecord(rawInput)) return undefined
 
-  const server = event.rawInput.server
-  const tool = event.rawInput.tool
+  const server = rawInput.server
+  const tool = rawInput.tool
   if (typeof server !== 'string' || typeof tool !== 'string' || !tool.trim()) return undefined
 
   const title = `mcp.${server}.${tool}`
   if (event.title !== title) return undefined
   const mcpIdentity = resolveCanonicalMcpToolIdentity(title, mcpServerNames)
   if (!mcpIdentity) return undefined
+  // Runtime events intentionally omit oversized payloads. Keep correlation independent from that
+  // projection while retaining at most the existing bounded execution preview for permission UI.
+  const permissionInput = isRecord(event.rawInput)
+    ? event.rawInput.arguments
+    : boundedNotebookPermissionInput(title, rawInput, mcpServerNames)
 
   return {
     title,
     providerToolName: tool,
     mcpIdentity,
-    rawInput: event.rawInput.arguments
+    ...(permissionInput === undefined ? {} : { rawInput: permissionInput })
   }
 }
 
@@ -273,7 +294,9 @@ class AcpPermissionContext {
         )
       },
       options.conversationGrants,
-      options.permissionGrantRegistry
+      options.permissionGrantRegistry,
+      options.onPermissionSettled,
+      options.permissionWaitHooks
     )
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
@@ -354,7 +377,8 @@ class AcpPermissionContext {
           autoReviewStrategy: profileState?.autoReviewStrategy,
           cwd: aggregateSnapshot?.cwd,
           mcpServerNames,
-          projectId: routing.resolveProjectId(appSessionId)
+          projectId: routing.resolveProjectId(appSessionId),
+          promptMessageId: promptInteraction?.promptMessageId
         }
       )
     } catch (error) {
@@ -388,6 +412,22 @@ class AcpPermissionContext {
 
   getPendingRequests(): AcpPermissionRequest[] {
     return this.broker.getPendingRequests()
+  }
+
+  hasDurablePendingForSession(sessionId: string): boolean {
+    return this.broker.hasDurablePendingForSession(sessionId)
+  }
+
+  prepareRestoredDecision(
+    permission: SessionPermissionRuntimeContext,
+    option: AcpPermissionRequest['options'][number] | undefined,
+    projectId: string
+  ): Promise<void> {
+    return this.broker.prepareRestoredDecision(permission, option, projectId)
+  }
+
+  clearRestoredDecision(sessionId: string): void {
+    this.broker.clearRestoredDecision(sessionId)
   }
 
   async applyPermissionProfile(
@@ -484,7 +524,7 @@ class AcpPermissionContext {
 
     if (framework === 'codex') {
       if (!isCodexMcpToolCall(notification.update)) return
-      const identity = codexMcpToolIdentity(event, mcpServerNames)
+      const identity = codexMcpToolIdentity(event, notification.update.rawInput, mcpServerNames)
       if (!identity) return
 
       const identities = this.codexMcpToolIdentities.get(sessionId) ?? new Map()
@@ -653,6 +693,23 @@ class AcpPermissionContext {
     )
   }
 
+  consumeTrustedCodexMcpToolCall(
+    sessionId: string,
+    toolCallId: string,
+    mcpIdentity: string
+  ): boolean {
+    const identities = this.codexMcpToolIdentities.get(sessionId)
+    if (identities?.get(toolCallId)?.mcpIdentity !== mcpIdentity) return false
+
+    identities.delete(toolCallId)
+    if (identities.size === 0) this.codexMcpToolIdentities.delete(sessionId)
+    return true
+  }
+
+  hasTrustedCodexMcpToolCall(sessionId: string, toolCallId: string): boolean {
+    return this.codexMcpToolIdentities.get(sessionId)?.has(toolCallId) ?? false
+  }
+
   cancelAllPending(): void {
     this.broker.cancelAllPending()
     this.humanOnlyRequestIds.clear()
@@ -689,7 +746,8 @@ class AcpPermissionContext {
   }
 
   dispose(): void {
-    this.cancelAllPending()
+    this.broker.abandonAllPending()
+    this.humanOnlyRequestIds.clear()
     const sessionIds = new Set([
       ...this.codexMcpToolIdentities.keys(),
       ...this.claudeCodeMcpToolInputs.keys(),

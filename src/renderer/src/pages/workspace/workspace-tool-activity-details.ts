@@ -41,6 +41,9 @@ type ToolActivityDetails = {
   displayName: string
   subtitle?: string
   metaLabel?: string
+  // UI-only correlation key. The compact tool result keeps this id while figure bytes remain in
+  // the local notebook state and never enter transcript/session replay data.
+  notebookRunId?: string
   sections: ToolDetailSection[]
 }
 
@@ -732,6 +735,8 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   return {
     displayName,
     metaLabel: status,
+    notebookRunId:
+      summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined,
     sections
   }
 }

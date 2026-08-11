@@ -76,7 +76,7 @@ const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
 })
 
 type HostRepo = Pick<ComputeHostRepository, 'get'>
-type JobRepo = Pick<ComputeJobRepository, 'get' | 'update'>
+type JobRepo = Pick<ComputeJobRepository, 'get' | 'updateIfStatus'>
 
 const makeHostRepo = (host: import('../../shared/compute').ComputeHost | null): HostRepo => ({
   get: vi.fn(() => Promise.resolve(host))
@@ -86,14 +86,14 @@ const makeJobRepo = (
   job: ComputeJob | null
 ): {
   repo: JobRepo
-  update: ReturnType<typeof vi.fn>
+  transition: ReturnType<typeof vi.fn>
   get: ReturnType<typeof vi.fn>
 } => {
-  const update = vi.fn((_id: string, updates: unknown) =>
+  const transition = vi.fn((_id: string, _expectedStatuses: unknown, updates: unknown) =>
     Promise.resolve({ ...job!, ...(updates as object), job_id: _id })
   )
   const get = vi.fn(() => Promise.resolve(job))
-  return { repo: { get, update } as unknown as JobRepo, update, get }
+  return { repo: { get, updateIfStatus: transition } as unknown as JobRepo, transition, get }
 }
 
 const sampleHost = (): import('../../shared/compute').ComputeHost => ({
@@ -308,7 +308,7 @@ describe('dispatchJob', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, update } = makeJobRepo(job)
+    const { repo, transition } = makeJobRepo(job)
     const onJobUpdated = vi.fn()
 
     await dispatchJob(job.job_id, {
@@ -319,8 +319,12 @@ describe('dispatchJob', () => {
     })
 
     // Should have been called with status=running and a remoteHandle.
-    expect(update).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'running' }))
-    const updateCall = update.mock.calls[0]![1]
+    expect(transition).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({ status: 'running' })
+    )
+    const updateCall = transition.mock.calls[0]![2]
     expect(updateCall).toHaveProperty('remoteHandle')
     const handle = JSON.parse(updateCall.remoteHandle as string)
     expect(handle.pid).toBe(12345)
@@ -340,13 +344,13 @@ describe('dispatchJob', () => {
     })
     // Observe the tracker state at the moment the terminal update is written — it must still be
     // in-flight then (the finally clears it only after dispatchJobInner returns).
-    const update = vi.fn((_id: string, updates: unknown) => {
+    const updateIfStatus = vi.fn((_id: string, _expectedStatuses: unknown, updates: unknown) => {
       seenInFlightDuringUpdate = tracker.has('job-1')
       return Promise.resolve({ ...job, ...(updates as object), job_id: _id })
     })
     const repo = {
       get: vi.fn(() => Promise.resolve(job)),
-      update
+      updateIfStatus
     } as unknown as ComputeJobRepository
 
     await dispatchJob(job.job_id, {
@@ -413,7 +417,7 @@ describe('dispatchJob', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, update } = makeJobRepo(job)
+    const { repo, transition } = makeJobRepo(job)
     const onJobUpdated = vi.fn()
 
     await dispatchJob(job.job_id, {
@@ -423,8 +427,9 @@ describe('dispatchJob', () => {
       onJobUpdated
     })
 
-    expect(update).toHaveBeenCalledWith(
+    expect(transition).toHaveBeenCalledWith(
       'job-1',
+      ['submitted'],
       expect.objectContaining({ status: 'error', errorCode: 'host_unreachable' })
     )
   })
@@ -438,7 +443,7 @@ describe('dispatchJob', () => {
       truncated: false,
       timedOut: false
     })
-    const { repo, update } = makeJobRepo(job)
+    const { repo, transition } = makeJobRepo(job)
 
     await dispatchJob(job.job_id, {
       runner,
@@ -446,8 +451,9 @@ describe('dispatchJob', () => {
       jobRepository: repo as unknown as ComputeJobRepository
     })
 
-    expect(update).toHaveBeenCalledWith(
+    expect(transition).toHaveBeenCalledWith(
       'job-1',
+      ['submitted'],
       expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
     )
   })
@@ -602,7 +608,7 @@ describe('dispatchJob — staging integration', () => {
     const scpRunner: ScpRunner = {
       copy: vi.fn(async () => ({ exitCode: 1, stderr: 'no such file', timedOut: false }))
     }
-    const { repo, update } = makeJobRepo(job)
+    const { repo, transition } = makeJobRepo(job)
 
     await dispatchJob(job.job_id, {
       runner,
@@ -611,8 +617,9 @@ describe('dispatchJob — staging integration', () => {
       jobRepository: repo as unknown as ComputeJobRepository
     })
 
-    expect(update).toHaveBeenCalledWith(
+    expect(transition).toHaveBeenCalledWith(
       'job-1',
+      ['submitted'],
       expect.objectContaining({ status: 'error', errorCode: 'dispatch_failed' })
     )
   })

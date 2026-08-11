@@ -24,6 +24,7 @@ const expectedChannels = [
   'settings:detect-codex',
   'settings:detect-opencode',
   'settings:get-connector-detail',
+  'settings:get-github-token-status',
   'settings:get-package-mirror',
   'settings:get-preflight',
   'settings:get-settings',
@@ -42,8 +43,11 @@ const expectedChannels = [
   'settings:preview-skill-zip',
   'settings:refresh-provider-models',
   'settings:scan-repo-skills',
+  'settings:save-github-token',
+  'settings:remove-github-token',
   'settings:set-app-icon-variant',
   'settings:set-close-preference',
+  'settings:set-default-permission-profile',
   'settings:set-notifications-enabled',
   'settings:set-package-mirror',
   'settings:set-project-files-filter',
@@ -110,7 +114,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
-  it('installs the exact 32-command inventory and dispatches a remote-safe preflight query', async () => {
+  it('installs the exact 36-command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }
     serviceMethod('getPreflight').mockResolvedValue(preflight)
@@ -182,7 +186,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('validateProvider')).toHaveBeenCalledWith({ providerId: 'provider-1' })
   })
 
-  it('rejects all ten local-only commands before an owner can run', async () => {
+  it('rejects all fourteen local-only commands before an owner can run', async () => {
     const { appearance, dependencies, serviceMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerCoreSettingsApplicationCommands(router.registrar, dependencies)
@@ -194,8 +198,12 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.installClaude, [{ source: 'managed' }]],
       [settingsCoreApplicationCommands.installCodex, [{ source: 'managed' }]],
       [settingsCoreApplicationCommands.installOpencode, [{ source: 'managed' }]],
+      [settingsCoreApplicationCommands.getGitHubTokenStatus, []],
+      [settingsCoreApplicationCommands.saveGitHubToken, [{ token: 'github_pat_test' }]],
+      [settingsCoreApplicationCommands.removeGitHubToken, []],
       [settingsCoreApplicationCommands.setAppIconVariant, [{ variant: 'dark' }]],
       [settingsCoreApplicationCommands.setClosePreference, [{ preference: 'quit' }]],
+      [settingsCoreApplicationCommands.setDefaultPermissionProfile, [{ profile: 'auto' }]],
       [settingsCoreApplicationCommands.setNotificationsEnabled, [{ enabled: true }]],
       [settingsCoreApplicationCommands.setPackageMirror, [{}]]
     ] as const
@@ -211,8 +219,12 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('installClaude')).not.toHaveBeenCalled()
     expect(serviceMethod('installCodex')).not.toHaveBeenCalled()
     expect(serviceMethod('installOpencode')).not.toHaveBeenCalled()
+    expect(serviceMethod('getGitHubTokenStatus')).not.toHaveBeenCalled()
+    expect(serviceMethod('saveGitHubToken')).not.toHaveBeenCalled()
+    expect(serviceMethod('removeGitHubToken')).not.toHaveBeenCalled()
     expect(appearance).not.toHaveBeenCalled()
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
+    expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
     expect(serviceMethod('setPackageMirror')).not.toHaveBeenCalled()
   })
@@ -264,12 +276,28 @@ describe('Settings core application commands', () => {
       invocation([{ source: 'official-script' }] as const)
     )
     await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.getGitHubTokenStatus,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.saveGitHubToken,
+      invocation([{ token: ' github_pat_test ' }] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.removeGitHubToken,
+      invocation([] as const)
+    )
+    await router.dispatcher.invoke(
       settingsCoreApplicationCommands.setAppIconVariant,
       invocation([{ variant: 'dark' }] as const)
     )
     await router.dispatcher.invoke(
       settingsCoreApplicationCommands.setClosePreference,
       invocation([{}] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setDefaultPermissionProfile,
+      invocation([{ profile: 'auto' }] as const)
     )
     await router.dispatcher.invoke(
       settingsCoreApplicationCommands.setNotificationsEnabled,
@@ -293,6 +321,9 @@ describe('Settings core application commands', () => {
       { source: 'official-script' },
       emitInstallEvent
     )
+    expect(serviceMethod('getGitHubTokenStatus')).toHaveBeenCalledOnce()
+    expect(serviceMethod('saveGitHubToken')).toHaveBeenCalledWith('github_pat_test')
+    expect(serviceMethod('removeGitHubToken')).toHaveBeenCalledOnce()
     expect(emitInstallEvent.mock.calls.map(([event]) => event)).toEqual([
       installEvent,
       installProgressEvent
@@ -301,6 +332,7 @@ describe('Settings core application commands', () => {
     expect(emitInstallEvent.mock.calls[1]?.[0]).toBe(installProgressEvent)
     expect(appearance).toHaveBeenCalledWith('dark')
     expect(serviceMethod('setClosePreference')).toHaveBeenCalledWith(undefined)
+    expect(serviceMethod('setDefaultPermissionProfile')).toHaveBeenCalledWith('auto')
     expect(serviceMethod('setNotificationsEnabled')).toHaveBeenCalledWith(false)
     expect(serviceMethod('setPackageMirror')).toHaveBeenCalledWith(mirror)
   })
@@ -324,6 +356,12 @@ describe('Settings core application commands', () => {
     ).rejects.toThrow('Invalid close preference: close')
     await expect(
       router.dispatcher.invoke(
+        settingsCoreApplicationCommands.setDefaultPermissionProfile,
+        invocation([{ profile: 'always' } as never] as const)
+      )
+    ).rejects.toThrow('Unknown default permission profile: always')
+    await expect(
+      router.dispatcher.invoke(
         settingsCoreApplicationCommands.setNotificationsEnabled,
         invocation([{ enabled: 'yes' } as never] as const)
       )
@@ -331,6 +369,7 @@ describe('Settings core application commands', () => {
 
     expect(appearance).not.toHaveBeenCalled()
     expect(serviceMethod('setClosePreference')).not.toHaveBeenCalled()
+    expect(serviceMethod('setDefaultPermissionProfile')).not.toHaveBeenCalled()
     expect(serviceMethod('setNotificationsEnabled')).not.toHaveBeenCalled()
   })
 })

@@ -1113,6 +1113,9 @@ describe('SettingsPage layout', () => {
       'a[href="https://www.remote.it/download/"]'
     )
     expect(remoteItDownload?.textContent).toBe('Download Remote.It App')
+    expect(remoteItDownload?.className).toContain('underline')
+    expect(remoteItDownload?.className).toContain('bg-primary/10')
+    expect(remoteItDownload?.querySelector('svg')).not.toBeNull()
     expect(remoteItDownload?.closest('[data-slot="settings-section"]')).toBe(
       settingsSection('Remote browser access')
     )

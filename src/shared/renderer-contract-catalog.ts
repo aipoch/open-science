@@ -6,6 +6,7 @@ import {
   type RendererParameterCodec,
   type RendererSurfaceProfile
 } from './renderer-contract'
+import { DATABASE_STARTUP_CHANNELS } from './database-startup'
 
 const WEB = 'web'
 const LOCAL = 'local'
@@ -36,12 +37,13 @@ const RUNTIME_INTERPRETER = 'runtime-interpreter-path-object'
 const NATIVE_FILE_UPLOAD = 'native-file-upload-request'
 const SESSION_SAVE = 'session-save-optional-argument'
 const SESSION_SAVE_JSON = 'session-save-json-undefined'
+const RUNTIME_VALIDATED = 'runtime-validated'
 
 // prettier-ignore
 type ContractProfile = typeof WEB | typeof LOCAL | typeof EVENT | typeof DORMANT_EVENT | typeof CLOSE_PANE_EVENT | typeof ELECTRON | typeof MAPPED_ELECTRON | typeof SEND | typeof WINDOW_FIND_READY | typeof ELECTRON_EVENT | typeof NATIVE | typeof MAPPED_NATIVE | typeof DELEGATED_NATIVE
 
 // prettier-ignore
-type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec]
+type ContractEntry = readonly [member: string, channel: string | null, profile?: ContractProfile, electronCodec?: RendererParameterCodec, webCodec?: RendererParameterCodec, applicationCommand?: typeof RUNTIME_VALIDATED]
 
 // prettier-ignore
 const CLOSE_PANE_LIFECYCLE = { activateChannel: 'shortcut:close-active-pane-ready', activate: 'after-subscribe', deactivateChannel: 'shortcut:close-active-pane-unready', deactivate: 'after-unsubscribe' } as const
@@ -56,7 +58,7 @@ const surface = <Value>(
 
 const expandEntry = (
   publicRoot: string,
-  [member, channel, profile = WEB, electronCodec, webCodec]: ContractEntry
+  [member, channel, profile = WEB, electronCodec, webCodec, applicationCommand]: ContractEntry
 ): RendererContractSeed => {
   const isWebRequest = profile === WEB || profile === LOCAL
   const isDormantEvent = profile === DORMANT_EVENT || profile === CLOSE_PANE_EVENT
@@ -132,6 +134,7 @@ const expandEntry = (
       isWebRequest || profile === DELEGATED_NATIVE ? 'caller-context' : 'none',
       profile === WEB || profile === DELEGATED_NATIVE ? 'caller-context' : 'none'
     ),
+    applicationCommand,
     lifecycleDispatch:
       profile === CLOSE_PANE_EVENT
         ? CLOSE_PANE_LIFECYCLE
@@ -160,15 +163,16 @@ const group = (
     entries.map((entry) => expandEntry(publicRoot, entry))
   )
 
-// Compact tuple manifest: [member, channel, surface profile?, Electron codec?, Web codec?].
+// Compact tuple manifest:
+// [member, channel, surface profile?, Electron codec?, Web codec?, Application command?].
 // prettier-ignore
 export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('acp', 'acp', [
     ['onEvent', 'acp:event', EVENT], ['onPermissionRequest', 'acp:permission-request', EVENT], ['onState', 'acp:state', EVENT], ['cancel', 'acp:cancel'],
     ['compactSession', 'acp:compact-session'], ['connect', 'acp:connect', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY], ['createSession', 'acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY],
-    ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'], ['getPlanProjection', 'acp:get-plan-projection'],
+    ['continueInterruptedTurn', 'acp:continue-interrupted-turn'], ['deleteSession', 'acp:delete-session'], ['disconnect', 'acp:disconnect'], ['getState', 'acp:get-state'], ['getPlanProjection', 'acp:get-plan-projection'],
     ['resetSessionContext', 'acp:reset-session-context'], ['respondToPermission', 'acp:respond-permission'], ['resumeSession', 'acp:resume-session'],
-    ['respondPlan', 'acp:respond-plan'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
+    ['respondPlan', 'acp:respond-plan'], ['respondToElicitation', 'acp:respond-elicitation'], ['revokePermissionGrant', 'acp:revoke-permission-grant'], ['sendPrompt', 'acp:send-prompt'], ['setPermissionProfile', 'acp:set-permission-profile'],
   ]),
   group('artifacts', 'artifacts', [
     ['finalizeRunArtifacts', 'artifacts:finalize-run'], ['generateCodeReconstruction', 'artifacts:generate-code-reconstruction'], ['getCodeReconstruction', 'artifacts:get-code-reconstruction'],
@@ -187,8 +191,12 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['detailsGet', 'compute:details:get'], ['detailsSave', 'compute:details:save'], ['download', 'compute:download', LOCAL],
     ['enabledHostsGet', 'compute:enabled-hosts:get'], ['enabledHostsSet', 'compute:enabled-hosts:set'], ['get', 'compute:get'],
     ['jobsList', 'compute:jobs:list'], ['jobsMarkConsumed', 'compute:jobs:mark-consumed'], ['jobsPendingNotification', 'compute:jobs:pending-notification'],
-    ['list', 'compute:list'], ['listDir', 'compute:list-dir'], ['probe', 'compute:probe'], ['respondApproval', 'compute:approval-respond'],
+    ['list', 'compute:list'], ['listDir', 'compute:list-dir'], ['probe', 'compute:probe'], ['replayApproval', 'compute:approval-replay'], ['respondApproval', 'compute:approval-respond'],
     ['revealInFolder', 'compute:reveal-in-folder', LOCAL], ['scratchSet', 'compute:scratch:set'], ['sshConfigAliases', 'compute:ssh-config-aliases'],
+  ]),
+  group('database-startup', 'databaseStartup', [
+    ['getState', DATABASE_STARTUP_CHANNELS.getState, ELECTRON], ['retry', DATABASE_STARTUP_CHANNELS.retry, ELECTRON],
+    ['quit', DATABASE_STARTUP_CHANNELS.quit, ELECTRON], ['onStateChanged', DATABASE_STARTUP_CHANNELS.stateChanged, ELECTRON_EVENT],
   ]),
   group('diagnostics', 'diagnostics', [
     ['reportRendererFailure', 'diagnostics:renderer-failure', SEND],
@@ -210,6 +218,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('logs', 'logs', [
     ['getPath', 'logs:get-path'], ['openFile', 'logs:open-file', LOCAL], ['revealInFolder', 'logs:reveal-in-folder', LOCAL],
   ]),
+  group('network', 'network', [
+    ['getInfo', 'network:get-info', ELECTRON], ['checkConnectivity', 'network:check-connectivity', ELECTRON],
+  ]),
   group('notebook', 'notebook', [
     ['onAvailable', 'notebook:available', EVENT], ['onChanged', 'notebook:changed', EVENT], ['appendCodeCell', 'notebook:append-code-cell'],
     ['beginCodeCell', 'notebook:begin-code-cell'], ['execute', 'notebook:execute'], ['exportIpynb', 'notebook:export-ipynb', LOCAL],
@@ -222,9 +233,11 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['provision', 'notebook-env:provision', LOCAL], ['repair', 'notebook-env:repair', LOCAL],
   ]),
   group('notifications', 'notifications', [
-    ['onOpenSession', 'notifications:open-session', DORMANT_EVENT], ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT],
-    ['peekPendingOpenSession', 'notifications:peek-pending-open-session'], ['syncViewState', 'notifications:sync-unread-view', SEND],
-    ['takePendingOpenSession', 'notifications:take-pending-open-session'],
+    ['getSnapshot', 'notifications:get-snapshot'], ['markAllRead', 'notifications:mark-all-read'], ['markRead', 'notifications:mark-read'],
+    ['markSessionCompletionsRead', 'notifications:mark-session-completions-read'],
+    ['onChanged', 'notifications:changed', EVENT], ['onOpenSession', 'notifications:open-session', DORMANT_EVENT],
+    ['onViewProbe', 'notifications:probe-unread-view', DORMANT_EVENT], ['peekPendingOpenSession', 'notifications:peek-pending-open-session'],
+    ['syncViewState', 'notifications:sync-unread-view', SEND], ['takePendingOpenSession', 'notifications:take-pending-open-session'],
   ]),
   group('office-preview', 'officePreview', [
     ['attachFrame', 'office-preview:attach-frame', ELECTRON], ['close', 'office-preview:close', ELECTRON], ['onState', 'office-preview:state', ELECTRON_EVENT],
@@ -237,6 +250,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('platform-file-save', '', [
     ['getRuntimeVersions', null, NATIVE], ['saveBlobFile', 'file:save-blob', MAPPED_NATIVE], ['saveManagedFile', 'file:save-managed', DELEGATED_NATIVE],
     ['saveSessionArtifacts', 'file:save-session-artifacts', MAPPED_ELECTRON],
+    ['saveProjectArtifacts', 'file:save-project-artifacts', MAPPED_ELECTRON],
   ]),
   group('preview', 'preview', [
     ['delete', 'preview:delete'], ['load', 'preview:load'], ['save', 'preview:save'],
@@ -249,8 +263,8 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['listFiles', 'project-files:list-files'], ['repairIndex', 'project-files:repair-index'], ['searchArtifacts', 'project-files:search-artifacts'],
   ]),
   group('projects', 'projects', [
-    ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create'],
-    ['delete', 'projects:delete'], ['get', 'projects:get'], ['list', 'projects:list'], ['updateArchive', 'projects:update-archive'], ['update', 'projects:update'],
+    ['onCreated', 'project:created', EVENT], ['onDeleted', 'project:deleted', EVENT], ['onUpdated', 'project:updated', EVENT], ['create', 'projects:create', WEB, undefined, undefined, RUNTIME_VALIDATED],
+    ['delete', 'projects:delete', WEB, undefined, undefined, RUNTIME_VALIDATED], ['get', 'projects:get', WEB, undefined, undefined, RUNTIME_VALIDATED], ['list', 'projects:list', WEB, undefined, undefined, RUNTIME_VALIDATED], ['updateArchive', 'projects:update-archive', WEB, undefined, undefined, RUNTIME_VALIDATED], ['update', 'projects:update', WEB, undefined, undefined, RUNTIME_VALIDATED],
   ]),
   group('remote-access', 'remoteAccess', [
     ['onChanged', 'remote-access:changed', EVENT], ['approve', 'remote-access:approve'], ['detect', 'remote-access:detect'],
@@ -303,7 +317,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['checkEnvironment', 'settings:check-environment'], ['createSkill', 'settings:create-skill'], ['deleteProvider', 'settings:delete-provider'],
     ['deleteSkill', 'settings:delete-skill'], ['detectClaude', 'settings:detect-claude'], ['detectCodex', 'settings:detect-codex'],
     ['detectOpencode', 'settings:detect-opencode'], ['exportCustomServerTemplate', 'settings:export-custom-server-template', ELECTRON], ['exportSkill', 'settings:export-skill', ELECTRON], ['getConnectorDetail', 'settings:get-connector-detail'],
-    ['getPackageMirror', 'settings:get-package-mirror'], ['getPreflight', 'settings:get-preflight'], ['getSettings', 'settings:get-settings'],
+    ['getGitHubTokenStatus', 'settings:get-github-token-status', LOCAL], ['getPackageMirror', 'settings:get-package-mirror'], ['getPreflight', 'settings:get-preflight'], ['getSettings', 'settings:get-settings'],
     ['getSkillDetail', 'settings:get-skill-detail'], ['importAgentHomeSkills', 'settings:import-agent-home-skills', MAPPED_ELECTRON],
     ['importSkill', 'settings:import-skill'], ['importSkillZip', 'settings:import-skill-zip'], ['importSkillZipBatch', 'settings:import-skill-zip-batch'],
     ['installClaude', 'settings:install-claude', LOCAL], ['installCodex', 'settings:install-codex', LOCAL],
@@ -318,11 +332,12 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['onSkillImportApprovalRequest', 'skills:conversation-import-request', EVENT],
     ['onSkillImportApprovalSettled', 'skills:conversation-import-settled', EVENT], ['previewAgentHomeSkill', 'settings:preview-agent-home-skill'], ['previewCustomServerTemplateExport', 'settings:preview-custom-server-template-export', ELECTRON],
     ['previewGitHubSkill', 'settings:preview-github-skill'], ['previewSkillZip', 'settings:preview-skill-zip'],
-    ['refreshProviderModels', 'settings:refresh-provider-models'], ['removeCustomServer', 'settings:remove-custom-server'],
-    ['replayPendingSkillImportApprovals', 'skills:conversation-import-replay-pending'], ['respondConnectorApproval', 'connectors:approval-respond'],
-    ['respondSkillImportApproval', 'skills:conversation-import-respond'], ['scanRepoSkills', 'settings:scan-repo-skills'], ['selectCustomServerTemplate', 'settings:select-custom-server-template', ELECTRON],
+    ['refreshProviderModels', 'settings:refresh-provider-models'], ['removeCustomServer', 'settings:remove-custom-server'], ['removeGitHubToken', 'settings:remove-github-token', LOCAL],
+    ['replayConnectorApproval', 'connectors:approval-replay'], ['replayPendingSkillImportApprovals', 'skills:conversation-import-replay-pending'], ['respondConnectorApproval', 'connectors:approval-respond'],
+    ['respondSkillImportApproval', 'skills:conversation-import-respond'], ['saveGitHubToken', 'settings:save-github-token', LOCAL], ['scanRepoSkills', 'settings:scan-repo-skills'], ['selectCustomServerTemplate', 'settings:select-custom-server-template', ELECTRON],
     ['setActiveProvider', 'settings:set-active-provider'], ['setAgentFramework', 'settings:set-agent-framework'],
     ['setAppIconVariant', 'settings:set-app-icon-variant', LOCAL], ['setClosePreference', 'settings:set-close-preference', LOCAL],
+    ['setDefaultPermissionProfile', 'settings:set-default-permission-profile', LOCAL],
     ['setConnectorAutoAllow', 'settings:set-connector-auto-allow'], ['setConnectorEnabled', 'settings:set-connector-enabled'],
     ['setConversationSkillImportEnabled', 'settings:set-conversation-skill-import-enabled'], ['setCustomServerEnabled', 'settings:set-custom-server-enabled'],
     ['setNcbiCredentials', 'settings:set-ncbi-credentials'], ['setNotificationsEnabled', 'settings:set-notifications-enabled', LOCAL],
@@ -332,6 +347,10 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['uninstallClaude', 'settings:uninstall-claude', LOCAL], ['uninstallCodex', 'settings:uninstall-codex', LOCAL],
     ['uninstallOpencode', 'settings:uninstall-opencode', LOCAL], ['updateCustomServer', 'settings:update-custom-server'],
     ['updateSkill', 'settings:update-skill'], ['upsertProvider', 'settings:upsert-provider'], ['validateProvider', 'settings:validate-provider'],
+  ]),
+  group('side-chat', 'sideChat', [
+    ['onEvent', 'side-chat:event', ELECTRON_EVENT], ['onRelayDelivered', 'side-chat:relay-delivered', ELECTRON_EVENT],
+    ['cancel', 'side-chat:cancel', ELECTRON], ['close', 'side-chat:close', ELECTRON], ['list', 'side-chat:list', ELECTRON], ['send', 'side-chat:send', ELECTRON], ['start', 'side-chat:start', ELECTRON],
   ]),
   group('specialist', 'specialist', [
     ['cancelHandoff', 'specialist:cancel-handoff', ELECTRON], ['cancelPackage', 'specialist:package-cancel', ELECTRON], ['create', 'specialist:create', ELECTRON], ['delete', 'specialist:delete', ELECTRON],
@@ -375,3 +394,16 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
 ])
 
 export const RENDERER_CONTRACT_CATALOG = composeRendererContractCatalog(RENDERER_CONTRACT_GROUPS)
+
+export const ELECTRON_APPLICATION_COMMAND_CHANNELS: readonly string[] = Object.freeze(
+  RENDERER_CONTRACT_CATALOG.flatMap(
+    ({ applicationCommand, channel, dispatchPolicy, kind, surfaceInstallation }) =>
+      applicationCommand === 'runtime-validated' &&
+      channel !== null &&
+      kind === 'method' &&
+      surfaceInstallation.electron === 'preload' &&
+      dispatchPolicy.electron === 'electron-ipc-request'
+        ? [channel]
+        : []
+  ).sort()
+)

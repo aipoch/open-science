@@ -126,7 +126,52 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it('fails a same-backend resume when the Agent did not advertise resume support', () => {
+  it.each([
+    { previous: undefined, current: 'bridge-current' },
+    { previous: 'bridge-old', current: 'bridge-current' },
+    { previous: 'bridge-old', current: undefined }
+  ])(
+    'fresh-adopts Codex Bridge when hidden reasoning continuity is unavailable',
+    ({ previous, current }) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.decide({
+          appSessionId: 'stable-app-session',
+          providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+          previousFrameworkId: 'codex',
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-bridge',
+          previousProviderContinuityToken: previous,
+          currentProviderContinuityToken: current,
+          resumeCapabilityAdvertised: true
+        })
+      ).toMatchObject({
+        action: 'adopt',
+        reason: 'provider-continuity-lost',
+        contextReset: true
+      })
+    }
+  )
+
+  it('resumes Codex Bridge while its hidden reasoning cache is continuous', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.decide({
+        appSessionId: 'stable-app-session',
+        providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        previousFrameworkId: 'codex',
+        currentFrameworkId: 'codex',
+        currentModelRoute: 'codex-bridge',
+        previousProviderContinuityToken: 'bridge-current',
+        currentProviderContinuityToken: 'bridge-current',
+        resumeCapabilityAdvertised: true
+      })
+    ).toMatchObject({ action: 'resume', reason: 'compatible', contextReset: false })
+  })
+
+  it('fresh-adopts when the Agent did not advertise resume support', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(
@@ -139,12 +184,11 @@ describe('ACP Session resume policy', () => {
         resumeCapabilityAdvertised: false
       })
     ).toEqual({
-      action: 'fail',
+      action: 'adopt',
       reason: 'resume-capability-not-advertised',
       appSessionId: 'stable-app-session',
       providerSessionId: 'stable-app-session',
-      contextReset: false,
-      message: 'ACP agent does not support session resume.'
+      contextReset: true
     })
   })
 
@@ -163,6 +207,157 @@ describe('ACP Session resume policy', () => {
     expect(policy.classifyFailure({ code: -32603, message: 'Session not found' })).toEqual({
       disposition: 'adoptable',
       reason: 'session-not-found-message'
+    })
+  })
+
+  it('classifies Codex missing-rollout resume failures as adoptable', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure({
+        code: -32603,
+        message: 'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      })
+    ).toEqual({
+      disposition: 'adoptable',
+      reason: 'session-not-found-message'
+    })
+  })
+
+  it.each(['codex-responses', 'codex-responses-compatibility'] as const)(
+    'classifies a legacy %s Unknown error as adoptable',
+    (currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          {
+            currentFrameworkId: 'codex',
+            currentModelRoute,
+            providerSessionIdPersisted: false
+          }
+        )
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-codex-session-unavailable'
+      })
+    }
+  )
+  it.each(['opencode-anthropic', 'opencode-openai'] as const)(
+    'classifies a legacy %s Unknown error as adoptable',
+    (currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          {
+            currentFrameworkId: 'opencode',
+            currentModelRoute,
+            providerSessionIdPersisted: false
+          }
+        )
+      ).toEqual({
+        disposition: 'adoptable',
+        reason: 'legacy-opencode-session-unavailable'
+      })
+    }
+  )
+
+  it.each([
+    [
+      'non-internal Codex',
+      { code: -32001, message: 'Unknown error' },
+      {
+        currentFrameworkId: 'codex',
+        currentModelRoute: 'codex-responses',
+        providerSessionIdPersisted: false
+      },
+      'non-internal-error'
+    ],
+    [
+      'missing-code OpenCode',
+      { message: 'Unknown error' },
+      {
+        currentFrameworkId: 'opencode',
+        currentModelRoute: 'opencode-openai',
+        providerSessionIdPersisted: false
+      },
+      'non-internal-error'
+    ],
+    [
+      'non-session OpenCode service',
+      { code: -32603, message: 'Unknown error', data: { service: 'transport' } },
+      {
+        currentFrameworkId: 'opencode',
+        currentModelRoute: 'opencode-anthropic',
+        providerSessionIdPersisted: false
+      },
+      'non-session-service-failure'
+    ]
+  ] as const)('keeps a %s Unknown error authoritative', (_label, error, context, reason) => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(policy.classifyFailure(error, context)).toEqual({
+      disposition: 'authoritative',
+      reason
+    })
+  })
+
+  it.each([
+    ['Claude Code', 'claude-code', undefined],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ] as const)(
+    'keeps an Unknown error authoritative for legacy %s Sessions',
+    (_label, currentFrameworkId, currentModelRoute) => {
+      const policy = new AcpSessionResumePolicy()
+
+      expect(
+        policy.classifyFailure(
+          { code: -32603, message: 'Unknown error' },
+          { currentFrameworkId, currentModelRoute, providerSessionIdPersisted: false }
+        )
+      ).toEqual({
+        disposition: 'authoritative',
+        reason: 'non-internal-error'
+      })
+    }
+  )
+
+  it('keeps an Unknown error authoritative for a persisted Codex Responses identity', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        { code: -32603, message: 'Unknown error' },
+        {
+          currentFrameworkId: 'codex',
+          currentModelRoute: 'codex-responses',
+          providerSessionIdPersisted: true
+        }
+      )
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'non-internal-error'
+    })
+  })
+
+  it('keeps an Unknown error authoritative for a persisted OpenCode identity', () => {
+    const policy = new AcpSessionResumePolicy()
+
+    expect(
+      policy.classifyFailure(
+        { code: -32603, message: 'Unknown error' },
+        {
+          currentFrameworkId: 'opencode',
+          currentModelRoute: 'opencode-openai',
+          providerSessionIdPersisted: true
+        }
+      )
+    ).toEqual({
+      disposition: 'authoritative',
+      reason: 'non-internal-error'
     })
   })
 
@@ -255,12 +450,12 @@ describe('ACP Session resume policy', () => {
     })
   })
 
-  it('keeps the legacy detail-free Internal error adoptable', () => {
+  it('keeps an opaque detail-free Internal error authoritative', () => {
     const policy = new AcpSessionResumePolicy()
 
     expect(policy.classifyFailure({ code: -32603, message: 'Internal error' })).toEqual({
-      disposition: 'adoptable',
-      reason: 'legacy-internal-error-without-details'
+      disposition: 'authoritative',
+      reason: 'unrelated-internal-error'
     })
   })
 

@@ -316,7 +316,7 @@ export const createFetchBundleAdapter = (
               'utf8'
             )
           }
-          return { lockPath: winnerLockPath, pathBudget }
+          return { lockPath: winnerLockPath, pathBudget, packageSourceDir: finalDir }
         } catch {
           // Only remove a directory that is demonstrably not a complete pack, then retry the
           // rename. This handles a process interrupted before its final commit.
@@ -324,7 +324,11 @@ export const createFetchBundleAdapter = (
           await rename(unpackedDir, finalDir)
         }
       }
-      return { lockPath: join(finalDir, `${fetched.id}.lock`), pathBudget }
+      return {
+        lockPath: join(finalDir, `${fetched.id}.lock`),
+        pathBudget,
+        packageSourceDir: finalDir
+      }
     } catch (error) {
       const message = `Managed runtime pack unavailable: ${error instanceof Error ? error.message : String(error)}`
       onProgress({

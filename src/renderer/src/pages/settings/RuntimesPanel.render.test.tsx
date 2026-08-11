@@ -591,6 +591,17 @@ describe('RuntimesPanel packages dialog', () => {
       '[data-testid="runtime-packages-filter"]'
     )
     expect(filter).not.toBeNull()
+    filter?.blur()
+    const shortcutEvent = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true
+    })
+    await act(async () => window.dispatchEvent(shortcutEvent))
+    expect(shortcutEvent.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(filter)
+    expect(filter?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
+
     await act(async () => setInputValue(filter!, 'nump'))
     expect(document.querySelectorAll('[data-testid="runtime-package-row"]').length).toBe(1)
     expect(dialog?.textContent).toContain('1 of 2 · 2 conda, 0 pypi')

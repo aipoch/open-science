@@ -68,6 +68,40 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
+  it('reports allowed, rejected, and session-cancelled permission lifecycles', async () => {
+    const onPermissionSettled = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting(),
+      onPermissionSettled
+    })
+
+    const allowed = context.requestPermission(permissionRequest('session-1', 'allow-call'))
+    const allowedRequest = context.getPendingRequests()[0]
+    await context.respondToPermission(
+      { requestId: allowedRequest.requestId, optionId: 'allow-once' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await allowed
+
+    const rejected = context.requestPermission(permissionRequest('session-1', 'reject-call'))
+    const rejectedRequest = context.getPendingRequests()[0]
+    await context.respondToPermission(
+      { requestId: rejectedRequest.requestId, optionId: 'reject-once' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await rejected
+
+    const cancelled = context.requestPermission(permissionRequest('session-1', 'cancel-call'))
+    const cancelledRequest = context.getPendingRequests()[0]
+    context.cancelForSession('session-1')
+    await cancelled
+
+    expect(onPermissionSettled).toHaveBeenNthCalledWith(1, allowedRequest.requestId, 'resolved')
+    expect(onPermissionSettled).toHaveBeenNthCalledWith(2, rejectedRequest.requestId, 'rejected')
+    expect(onPermissionSettled).toHaveBeenNthCalledWith(3, cancelledRequest.requestId, 'cancelled')
+  })
+
   it('cancels a late OpenCode primary request when no prompt owns the active Session', async () => {
     const emitPermissionRequest = vi.fn()
     const resolveReviewerPermission = vi.fn()
@@ -143,6 +177,69 @@ describe('ACP permission context', () => {
       'stable-session': { codexMcpIdentities: 1 }
     })
     expect(context.snapshot().sessions).not.toHaveProperty('provider-session')
+  })
+
+  it('consumes a Codex MCP identity only for the matching session, call, and tool', () => {
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: vi.fn(),
+      routing: permissionRouting()
+    })
+    observe(
+      context,
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          kind: 'execute',
+          title: 'mcp.open-science-notebook.ask_user_question',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'ask_user_question',
+            arguments: {}
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      'codex'
+    )
+
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'wrong-session',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'wrong-call',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/notebook_state'
+      )
+    ).toBe(false)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(true)
+    expect(
+      context.consumeTrustedCodexMcpToolCall(
+        'session-1',
+        'call-1',
+        'open-science-notebook/ask_user_question'
+      )
+    ).toBe(false)
   })
 
   it('correlates sparse Codex approvals and bounds retained provider aliases', async () => {

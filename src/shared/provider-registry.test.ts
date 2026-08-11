@@ -532,9 +532,11 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('zhipu', 'glm-5-turbo')).toBe(false)
     })
 
-    it('returns false for MiniMax models (no vision support)', () => {
-      expect(isVendorModelMultimodal('minimax', 'MiniMax-M3')).toBe(false)
+    it('returns true only for MiniMax M3 models', () => {
+      expect(isVendorModelMultimodal('minimax', 'MiniMax-M3')).toBe(true)
+      expect(isVendorModelMultimodal('minimax', 'MiniMax-M3[1m]')).toBe(true)
       expect(isVendorModelMultimodal('minimax', 'MiniMax-M2.7')).toBe(false)
+      expect(isVendorModelMultimodal('minimax', 'MiniMax-M2.5')).toBe(false)
     })
 
     it('returns true only for Kimi k3 model', () => {

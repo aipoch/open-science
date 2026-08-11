@@ -201,6 +201,7 @@ describe('createWebServiceController', () => {
         createSession: vi.fn(async () => ({ sessionId: 'session-created' })),
         resumeSession: vi.fn(async (request) => ({ sessionId: request.sessionId })),
         setPermissionProfile: vi.fn(async () => undefined),
+        cancelPrompt: vi.fn(async () => undefined),
         prompt: vi.fn(async () => undefined)
       }
     })

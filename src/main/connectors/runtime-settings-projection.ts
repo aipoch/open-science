@@ -1,6 +1,7 @@
 import { toCustomMcpConfig, selectEnabledCustomServers } from './custom-mcp-bootstrap'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import { ALL_CONNECTOR_IDS } from './registry'
+import { customConnectorSlug } from '../../shared/custom-connector'
 import type { McpClientManager } from './mcp-client-manager'
 import type { StoredConnectors } from '../settings/types'
 
@@ -18,6 +19,7 @@ type ConnectorRuntimeSettingsProjectionOptions = {
 // bootstrap and Settings mutations exactly as before.
 class ConnectorRuntimeSettingsProjection {
   private snapshot: StoredConnectors | undefined
+  private materializedCustomSkills: string[] = []
   private refreshQueue: Promise<void> = Promise.resolve()
   private readonly syncBundledSkillDocs: typeof syncConnectorSkillDocs
   private readonly syncCustomSkillDocs: typeof syncCustomServerSkillDocs
@@ -37,6 +39,10 @@ class ConnectorRuntimeSettingsProjection {
     return this.snapshot
   }
 
+  materializedCustomSkillNames(): string[] {
+    return [...this.materializedCustomSkills]
+  }
+
   async refresh(): Promise<void> {
     const queued = this.refreshQueue.then(() => this.refreshOnce())
     this.refreshQueue = queued
@@ -44,6 +50,7 @@ class ConnectorRuntimeSettingsProjection {
   }
 
   private async refreshOnce(): Promise<void> {
+    this.materializedCustomSkills = []
     try {
       const connectors = await this.options.readConnectors()
       this.snapshot = connectors
@@ -52,11 +59,23 @@ class ConnectorRuntimeSettingsProjection {
       const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
 
       await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds)
-      await this.syncCustomSkillDocs(
+      const customServers = selectEnabledCustomServers(connectors)
+      const customSync = await this.syncCustomSkillDocs(
         this.options.skillsDir,
-        selectEnabledCustomServers(connectors),
+        customServers,
         (server) => this.options.mcpClientManager.listTools(toCustomMcpConfig(server))
       )
+      this.materializedCustomSkills = customSync.materializedSlugs.map((slug) => `mcp-${slug}`)
+      for (const { server, error } of customSync.failures) {
+        this.reportError(
+          new Error(
+            `Failed to sync custom MCP server "${customConnectorSlug(server)}" skill docs`,
+            {
+              cause: error
+            }
+          )
+        )
+      }
     } catch (error) {
       this.reportError(error)
     }

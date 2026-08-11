@@ -10,6 +10,8 @@ import { gzip } from 'node:zlib'
 import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
+import { toApplicationCommandErrorEnvelope } from '../../shared/application-command-contract'
+import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
   ClientLeaseRegistry,
   createTaskCallerContext,
@@ -25,7 +27,11 @@ import {
   webRpcRequestSchema
 } from '../../shared/web-rpc-contract'
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
-import { projectPublicTaskEvent, projectWebRendererEvent } from './application-event-projections'
+import {
+  projectPublicTaskEvent,
+  projectPublicTaskProgressEvent,
+  projectWebRendererEvent
+} from './application-event-projections'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { StartTaskRunRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
@@ -76,6 +82,8 @@ type WebServerOptions = {
     | 'getSession'
     | 'startRun'
     | 'getRun'
+    | 'cancelRun'
+    | 'subscribeProgress'
     | 'listArtifacts'
     | 'acquireArtifact'
     | 'releaseArtifact'
@@ -148,7 +156,7 @@ const json = (response: ServerResponse, status: number, value: unknown): void =>
 const webRpcError = (
   response: ServerResponse,
   status: number,
-  code: 'invalid_request' | 'method_not_found' | 'handler_error',
+  code: WebRpcErrorCode,
   message: string
 ): void => {
   json(response, status, {
@@ -335,6 +343,15 @@ const handleTaskApiRequest = async (
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        return true
+      }
+      const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
+      if (cancelRunMatch && request.method === 'POST') {
+        await readJsonBody(request)
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
+        })
         return true
       }
       const sessionArtifactsMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/artifacts$/)
@@ -598,12 +615,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             webRpcError(response, 401, 'invalid_request', error.message)
             return
           }
-          webRpcError(
-            response,
-            500,
-            'handler_error',
-            error instanceof Error ? error.message : String(error)
-          )
+          const publicError = toApplicationCommandErrorEnvelope(error)
+          webRpcError(response, 500, publicError.code, publicError.message)
         }
         return
       }
@@ -687,6 +700,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
     }
   })
+  const removeTaskProgressSink = options.tasks?.subscribeProgress((event) => {
+    const message = JSON.stringify(projectPublicTaskProgressEvent(event))
+    for (const socket of publicEventSockets) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(message)
+    }
+  })
 
   try {
     await new Promise<void>((resolveListening, reject) => {
@@ -698,6 +717,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     })
   } catch (error) {
     removeBroadcastSink()
+    removeTaskProgressSink?.()
     try {
       clientLeases.dispose()
     } finally {
@@ -720,6 +740,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     },
     close: async () => {
       removeBroadcastSink()
+      removeTaskProgressSink?.()
       for (const socket of sockets) socket.close()
       wsServer.close()
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()))

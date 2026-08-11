@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -323,9 +324,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
-// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
-// baked into the build and never changes).
+// Both are built-in assets; the independent choice is applied at runtime to non-macOS app windows and
+// the Windows tray glyph. macOS instead uses its Icon Composer asset for the installed app and binds
+// the running Dock icon to General > Theme (the static installed icon in Explorer/taskbar is baked in).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -396,10 +397,13 @@ export type SettingsSnapshot = {
   conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
-  // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
+  // The selected built-in app-icon look for non-macOS windows and the Windows tray. Defaults to 'light'.
   appIconVariant: AppIconVariant
   // Last Files-tab source filter. Undefined means the default ("All artifacts").
   projectFilesFilter?: ProjectFilesFilterPreference
+  // The default permission profile for new sessions. Valid values: 'ask', 'auto', 'full'.
+  // Absent or invalid falls back to 'ask' (the most restrictive mode).
+  defaultPermissionProfile?: PermissionProfileId
 }
 
 // Persisted Files-tab source filter: an artifact collection, the machine's local browser, or a
@@ -440,6 +444,10 @@ export type SetProjectFilesFilterRequest = {
 
 export type SetAppIconVariantRequest = {
   variant: AppIconVariant
+}
+
+export type SetDefaultPermissionProfileRequest = {
+  profile: PermissionProfileId
 }
 
 // A built-in icon variant plus a small preview image (data URL) generated in the main process from the
@@ -867,6 +875,16 @@ export type DeleteSkillRequest = {
 // Import a single skill from a public GitHub URL.
 export type ImportSkillRequest = {
   url: string
+}
+
+// Renderer-safe GitHub credential state. Main never returns the plaintext token.
+export type GitHubTokenStatus = {
+  configured: boolean
+  mask?: string
+}
+
+export type SaveGitHubTokenRequest = {
+  token: string
 }
 
 // Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes). When

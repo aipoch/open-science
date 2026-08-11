@@ -17,6 +17,7 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  MessageCircleMore,
   Pencil
 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
@@ -565,7 +566,7 @@ const ArtifactCard = ({
           compact
         />
         {sizeLabel ? (
-          <span className="ml-1 shrink-0 text-[11px] text-text-300">{sizeLabel}</span>
+          <span className="ml-1 shrink-0 text-[11px] text-text-000">{sizeLabel}</span>
         ) : null}
       </div>
     </button>
@@ -790,6 +791,8 @@ const WorkspaceMessageItem = ({
   staticParts
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
+  const isSideChatAdvisory =
+    message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const uploads = message.uploads ?? []
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
   const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
@@ -870,12 +873,22 @@ const WorkspaceMessageItem = ({
     <MessageScrollerItem
       key={message.id}
       messageId={message.id}
+      disableContainment={message.status === 'streaming'}
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
       <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isUserMessage ? (
+        {isSideChatAdvisory ? (
+          <div
+            data-testid="side-chat-advisory"
+            className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
+          >
+            <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
+            <span className="shrink-0 font-medium">Side chat</span>
+            <span className="min-w-0 truncate">{message.content}</span>
+          </div>
+        ) : isUserMessage ? (
           isEditing ? (
             <div className="flex justify-end">
               {/* Inline editing swaps the bubble for a multi-line editor; confirm resends the prompt. */}
@@ -971,11 +984,19 @@ const WorkspaceMessageItem = ({
                   ) : null}
                 </div>
               </div>
-              {sentDate || showRevisionNavigation ? (
+              {sentDate || message.interrupted || showRevisionNavigation ? (
                 <div
                   data-slot="user-message-footer"
                   className="mt-1 flex min-h-6 w-full flex-wrap items-center justify-end gap-x-2 text-[11px] leading-4 text-text-000/70 tabular-nums"
                 >
+                  {message.interrupted ? (
+                    <span
+                      data-slot="user-message-interrupted"
+                      className="italic text-amber-600 dark:text-amber-400"
+                    >
+                      This turn was interrupted.
+                    </span>
+                  ) : null}
                   {sentDate ? <MessageTimestamp label="Sent" date={sentDate} /> : null}
                   {showRevisionNavigation ? (
                     <TooltipProvider delayDuration={200}>

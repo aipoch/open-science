@@ -1,6 +1,24 @@
 import { randomUUID } from 'node:crypto'
 
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpPromptRequest, AcpTurnTokenUsage } from '../../shared/acp'
+
+const cloneProvenanceContext = (
+  provenanceContext: AcpPromptRequest['provenanceContext']
+): AcpPromptRequest['provenanceContext'] => {
+  if (!provenanceContext) return undefined
+  const clone: NonNullable<AcpPromptRequest['provenanceContext']> = {
+    ...provenanceContext,
+    ...(provenanceContext.messageBranchAncestry
+      ? { messageBranchAncestry: [...provenanceContext.messageBranchAncestry] }
+      : {}),
+    ...(provenanceContext.messageAncestry
+      ? { messageAncestry: [...provenanceContext.messageAncestry] }
+      : {})
+  }
+  if (clone.messageBranchAncestry) Object.freeze(clone.messageBranchAncestry)
+  if (clone.messageAncestry) Object.freeze(clone.messageAncestry)
+  return Object.freeze(clone)
+}
 
 export type AcpSessionInteractionKind = 'prompt' | 'compaction'
 
@@ -8,6 +26,7 @@ export interface AcpPromptSessionInteractionRequest {
   readonly sessionId: string
   readonly kind: 'prompt'
   readonly promptMessageId?: string
+  readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly turnToken?: string
 }
 
@@ -28,6 +47,7 @@ interface AcpSessionInteractionScopeBase {
 export interface AcpPromptSessionInteractionScope extends AcpSessionInteractionScopeBase {
   readonly kind: 'prompt'
   readonly promptMessageId?: string
+  readonly provenanceContext?: AcpPromptRequest['provenanceContext']
   readonly turnToken: string
 }
 
@@ -312,6 +332,7 @@ export class AcpSessionInteractionOwner {
       sessionId: request.sessionId,
       kind: 'prompt',
       promptMessageId: request.promptMessageId,
+      provenanceContext: cloneProvenanceContext(request.provenanceContext),
       turnToken: request.turnToken ?? randomUUID(),
       sequence: ++this.sequence,
       signal: abortController.signal
@@ -359,6 +380,7 @@ export class AcpSessionInteractionOwner {
             ...base,
             kind: request.kind,
             promptMessageId: request.promptMessageId,
+            provenanceContext: cloneProvenanceContext(request.provenanceContext),
             turnToken: request.turnToken ?? randomUUID()
           }
         : { ...base, kind: request.kind }

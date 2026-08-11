@@ -37,17 +37,17 @@ afterEach(() => {
 })
 
 describe('PermissionApprovalControls interactions', () => {
-  it('default Allow button uses the Session scope so a repeated tool does not re-prompt', () => {
+  it('default Allow button labels the session scope as this conversation', () => {
     // The easiest click approves for the logical Session; narrowing to a one-time
     // approval is an explicit choice via the scope menu.
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={vi.fn()} />)
     })
-    expect(container.textContent).toContain('this session')
+    expect(container.textContent).toContain('this conversation')
     expect(container.textContent).not.toContain('this call only')
   })
 
-  it('uses option scope metadata and labels session access accurately', () => {
+  it('uses option scope metadata and labels session access as this conversation', () => {
     const scopedRequest: AcpPermissionRequest = {
       ...baseRequest,
       options: [
@@ -63,15 +63,15 @@ describe('PermissionApprovalControls interactions', () => {
 
     expect(
       (container.querySelector('[data-testid="allow-primary"]') as HTMLButtonElement).textContent
-    ).toBe('Allow for this session')
+    ).toBe('Allow for this conversation')
 
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
 
     const sessionItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (item) => item.textContent?.includes('This session')
+      (item) => item.textContent?.includes('This conversation')
     )
-    expect(sessionItem?.textContent).toContain('Across restarts for this session')
+    expect(sessionItem?.textContent).toContain('Remembered for this conversation')
     expect(container.textContent).not.toContain('Agent session')
   })
 
@@ -166,7 +166,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
     ) as HTMLElement
     act(() => onceItem.click())
     expect(container.textContent).toContain('Allow once')
@@ -175,7 +175,7 @@ describe('PermissionApprovalControls interactions', () => {
     expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-once')
   })
 
-  it('selecting This session sends the session option from the primary button', () => {
+  it('selecting This conversation sends the session option from the primary button', () => {
     const onRespond = vi.fn()
     act(() => {
       root.render(<PermissionApprovalControls requests={[baseRequest]} onRespond={onRespond} />)
@@ -185,7 +185,7 @@ describe('PermissionApprovalControls interactions', () => {
     act(() => chevron.click())
     const sessionItem = Array.from(
       container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')
-    ).find((item) => item.textContent?.includes('This session'))
+    ).find((item) => item.textContent?.includes('This conversation'))
 
     expect(sessionItem).toBeDefined()
     act(() => sessionItem?.click())
@@ -193,7 +193,7 @@ describe('PermissionApprovalControls interactions', () => {
     const allowButton = container.querySelector(
       '[data-testid="allow-primary"]'
     ) as HTMLButtonElement
-    expect(allowButton.textContent).toBe('Allow for this session')
+    expect(allowButton.textContent).toBe('Allow for this conversation')
     act(() => allowButton.click())
 
     expect(onRespond).toHaveBeenCalledWith('req-1', 'opt-always')
@@ -234,9 +234,19 @@ describe('PermissionApprovalControls interactions', () => {
     act(() =>
       (container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement).click()
     )
-    const project = Array.from(
+    const scopeItems = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-    ).find((item) => item.textContent?.includes('This project'))
+    )
+    expect(
+      scopeItems.find((item) => item.textContent?.includes('This conversation'))?.textContent
+    ).toContain('Remembered for this conversation')
+    expect(
+      scopeItems.find((item) => item.textContent?.includes('This project'))?.textContent
+    ).toContain('Remembered for this project')
+    expect(scopeItems.find((item) => item.textContent?.includes('Global'))?.textContent).toContain(
+      'Remembered across all projects'
+    )
+    const project = scopeItems.find((item) => item.textContent?.includes('This project'))
     expect(project).toBeDefined()
     act(() => project?.click())
     expect(container.querySelector('[data-testid="allow-primary"]')?.textContent).toBe(
@@ -463,7 +473,7 @@ describe('PermissionApprovalControls interactions', () => {
       root.render(<PermissionApprovalControls requests={[alwaysOnly]} onRespond={onRespond} />)
     })
     // Defaults to the available session scope.
-    expect(container.textContent).toContain('Allow for this session')
+    expect(container.textContent).toContain('Allow for this conversation')
     expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
     expect(container.querySelector('[role="menu"]')).toBeNull()
     // Allowing sends the session option, never a mislabeled once grant.
@@ -714,7 +724,7 @@ describe('PermissionApprovalControls interactions', () => {
     const chevron = container.querySelector('[data-testid="scope-chevron"]') as HTMLButtonElement
     act(() => chevron.click())
     const onceItem = Array.from(container.querySelectorAll('[role="menuitemradio"]')).find(
-      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('session')
+      (el) => el.textContent?.includes('Once') && !el.textContent?.includes('conversation')
     ) as HTMLElement
     act(() => onceItem.click())
     // Collapse the code card so we can prove it re-expands for the next request.
@@ -736,7 +746,7 @@ describe('PermissionApprovalControls interactions', () => {
       root.render(<PermissionApprovalControls requests={[nextRequest]} onRespond={vi.fn()} />)
     })
     // Scope reset to the default Session, menu closed, card re-expanded.
-    expect(container.textContent).toContain('this session')
+    expect(container.textContent).toContain('this conversation')
     expect(container.textContent).not.toContain('this call only')
     expect(container.querySelector('[role="menuitemradio"]')).toBeNull()
     const nextToggle = container.querySelector(

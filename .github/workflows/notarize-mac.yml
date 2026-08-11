@@ -40,6 +40,13 @@ on:
         required: false
         type: boolean
         default: true
+      certified_build:
+        description: >-
+          Preserve release-certification evidence from a verified build. False for the manual
+          notarization dry run, whose build intentionally skips verification.
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tag:
@@ -53,14 +60,20 @@ permissions:
 jobs:
   notarize:
     name: Notarize + staple ${{ matrix.arch }}
-    runs-on: macos-14
+    # The final package smoke launches the stapled app. Keep it architecture-native so the x64
+    # launch is not silently dependent on Rosetta being installed on an Apple Silicon runner.
+    runs-on: ${{ matrix.os }}
     # Hard ceiling so a stuck notarization can never run forever (see also the wait --timeout below).
     timeout-minutes: 30
     strategy:
       # One arch's Apple hiccup must not cancel the other.
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        include:
+          - arch: arm64
+            os: macos-15
+          - arch: x64
+            os: macos-15-intel
     steps:
       # Notarization is optional: if the API key secret isn't configured, no-op so a tagged release
       # still succeeds with the ad-hoc mac build (today's behavior) instead of failing here. Every
@@ -236,13 +249,19 @@ jobs:
       # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
       # platform certification signal already established by the build job.
       - name: Refresh macOS certification evidence
-        if: steps.gate.outputs.enabled == 'true' && inputs.from_run
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          inputs.from_run &&
+          inputs.certified_build
         run: >-
           node scripts/ci/release-certification-evidence.mjs write
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
+          --electron-p0 "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
+          --visual-regression "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
           --package-smoke passed
+          --database-migration-certification mac/database-migration-certification.json
           --authenticode not-applicable
 
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the

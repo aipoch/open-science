@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import {
@@ -15,11 +15,12 @@ export type MicromambaDeps = {
   env?: NodeJS.ProcessEnv
   resourcesPath?: string
   home?: string
+  platform?: NodeJS.Platform
 }
 
 // The micromamba executable file name for the current platform.
-const micromambaName = (): string =>
-  process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
+const micromambaName = (platform = process.platform): string =>
+  platform === 'win32' ? 'micromamba.exe' : 'micromamba'
 
 const isFile = (path: string): boolean => {
   try {
@@ -29,40 +30,54 @@ const isFile = (path: string): boolean => {
   }
 }
 
-// Resolves the micromamba binary (contract §3). Order: OPEN_SCIENCE_MICROMAMBA_BIN override →
-// packaged resource (process.resourcesPath) → <storageRoot>/runtime/micromamba/bin → PATH. Returns
-// undefined when none resolve. The storage-root fallback reuses the production session dir name
+// Enumerates micromamba binaries (contract §3). Order: OPEN_SCIENCE_MICROMAMBA_BIN override →
+// packaged resource (process.resourcesPath) → <storageRoot>/runtime/micromamba/bin → PATH. The
+// storage-root fallback reuses the production session dir name
 // (PROD_SESSION_DIR_NAME, i.e. ~/.open-science) since this module stays electron-free and cannot
 // see the dev/prod choice made by resolveStorageRoot; dev builds rely on the env override or PATH.
-export const resolveMicromamba = (deps: MicromambaDeps = {}): string | undefined => {
+export type MicromambaLocation = {
+  kind: 'override' | 'bundled' | 'runtime' | 'path'
+  path: string
+}
+
+export const resolveMicromambaLocations = (deps: MicromambaDeps = {}): MicromambaLocation[] => {
   const env = deps.env ?? process.env
-  const name = micromambaName()
+  const platform = deps.platform ?? process.platform
+  const name = micromambaName(platform)
+  const locations: MicromambaLocation[] = []
+  const seen = new Set<string>()
+  const add = (kind: MicromambaLocation['kind'], path: string): void => {
+    if (seen.has(path) || !isFile(path)) return
+    seen.add(path)
+    locations.push({ kind, path })
+  }
 
   const override = env.OPEN_SCIENCE_MICROMAMBA_BIN
-  if (override && isFile(override)) return override
+  if (override) add('override', override)
 
   const resourcesPath = deps.resourcesPath ?? process.resourcesPath
-  if (resourcesPath) {
-    const bundled = join(resourcesPath, name)
-    if (isFile(bundled)) return bundled
-  }
+  if (resourcesPath) add('bundled', join(resourcesPath, name))
 
   const home = deps.home ?? env.HOME ?? env.USERPROFILE
   if (home) {
     const runtimeBin = join(home, PROD_SESSION_DIR_NAME, 'runtime', 'micromamba', 'bin', name)
-    if (isFile(runtimeBin)) return runtimeBin
+    add('runtime', runtimeBin)
   }
 
   const pathVar = env.PATH ?? env.Path
   if (pathVar) {
-    for (const dir of pathVar.split(delimiter)) {
+    const pathDelimiter = platform === 'win32' ? ';' : ':'
+    for (const dir of pathVar.split(pathDelimiter)) {
       if (!dir) continue
-      if (isFile(join(dir, name))) return join(dir, name)
+      add('path', join(dir, name))
     }
   }
 
-  return undefined
+  return locations
 }
+
+export const resolveMicromamba = (deps: MicromambaDeps = {}): string | undefined =>
+  resolveMicromambaLocations(deps)[0]?.path
 
 // micromamba create -p <prefix> --file <lock> --offline -y --root-prefix <root>
 // Offline clone from a bundled/CDN @EXPLICIT lock; hard-links tarballs from the pkgs cache, no network.

@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }
 }))
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedChatSession, PersistedToolActivity } from '../../shared/session-persistence'
 import { DEV_SESSION_DIR_NAME, SessionRepository, getSessionPersistenceDir } from './repository'
 
 let storageRoot: string | undefined
@@ -39,6 +39,18 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   createdAt: 1710000000000,
   updatedAt: 1710000000100,
   ...overrides
+})
+
+const createPendingMcpToolActivity = (): PersistedToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Run npm test',
+  status: 'in_progress',
+  sortIndex: 1,
+  eventIds: ['tool-1-started'],
+  promptMessageId: 'message-1',
+  createdAt: 1710000000200,
+  updatedAt: 1710000000200
 })
 
 afterEach(async () => {
@@ -643,38 +655,70 @@ describe('session persistence repository (per-session files)', () => {
     })
   })
 
-  it('normalizes interrupted runs and open activities on load', async () => {
+  it('restores permission waits without interrupting the active turn', async () => {
     const repository = new SessionRepository(await createStorageRoot())
 
-    // saveSession writes verbatim, so this simulates an app that closed mid-run.
+    // saveSession writes verbatim, so this simulates an app that closed after the main process made
+    // the permission request durable but before the user responded.
     await repository.saveSession(
       createSession({
         status: 'waiting-permission',
         activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
-        messages: [
-          {
-            id: 'message-2',
-            role: 'agent',
-            content: 'Partial',
-            status: 'streaming',
-            streamId: 'assistant-message-1',
-            eventIds: ['event-1'],
-            createdAt: 1,
-            updatedAt: 1
+        activities: [createPendingMcpToolActivity()],
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              providerToolName: 'notebook_execute',
+              isMcp: true,
+              rawInput: { command: 'npm test' },
+              options: [
+                {
+                  optionId: 'allow-once',
+                  name: 'Allow once',
+                  kind: 'allow_once',
+                  scope: 'once'
+                },
+                { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+              ]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1710000000200
           }
-        ],
-        activities: [
-          {
-            id: 'activity-open',
-            kind: 'tool',
-            title: 'downloading',
-            status: 'in_progress',
-            sortIndex: 1,
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ]
+        }
+      })
+    )
+
+    const { sessions } = await repository.loadAll()
+
+    expect(sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: {
+        permission: {
+          request: { requestId: 'permission-1' },
+          originatingPromptMessageId: 'message-1'
+        }
+      }
+    })
+    expect(sessions[0].activeRun).toBeUndefined()
+    expect(sessions[0].resumeRecovery).toBeUndefined()
+    expect(sessions[0].error).toBeUndefined()
+    expect(sessions[0].messages[0].interrupted).toBeUndefined()
+  })
+
+  it('fails a legacy permission wait closed when no durable request authority exists', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        status: 'waiting-permission',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 }
       })
     )
 
@@ -682,11 +726,93 @@ describe('session persistence repository (per-session files)', () => {
 
     expect(sessions[0]).toMatchObject({
       status: 'error',
-      error: 'Session was interrupted before the app closed.'
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'message-1'
+      }
+    })
+    expect(sessions[0].messages[0].interrupted).toBe(true)
+  })
+
+  it('rearms a prompt-bound permission continuation as actionable after restart', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        status: 'running',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
+        activities: [createPendingMcpToolActivity()],
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          permission: {
+            state: 'continuing',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              isMcp: true,
+              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1710000000200
+          }
+        }
+      })
+    )
+
+    const { sessions } = await repository.loadAll()
+
+    expect(sessions[0]).toMatchObject({
+      status: 'waiting-permission',
+      runtimeContext: {
+        version: 1,
+        revision: 2,
+        permission: {
+          state: 'pending',
+          originatingPromptMessageId: 'message-1'
+        }
+      }
     })
     expect(sessions[0].activeRun).toBeUndefined()
-    expect(sessions[0].messages[0].status).toBe('error')
-    expect(sessions[0].activities?.[0].status).toBe('failed')
+    expect(sessions[0].resumeRecovery).toBeUndefined()
+    expect(sessions[0].error).toBeUndefined()
+    expect(sessions[0].messages[0].interrupted).toBeUndefined()
+  })
+
+  it('fails a permission wait closed when its persisted fingerprint is invalid', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(
+      createSession({
+        status: 'waiting-permission',
+        activeRun: { promptMessageId: 'message-1', startedAt: 1710000000200 },
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'not-a-valid-fingerprint',
+            createdAt: 1710000000200
+          }
+        }
+      })
+    )
+
+    const { sessions } = await repository.loadAll()
+
+    expect(sessions[0].status).toBe('error')
+    expect(sessions[0].runtimeContext).toBeUndefined()
+    expect(sessions[0].messages[0].interrupted).toBe(true)
   })
 
   it('deletes a single session file and a whole project directory', async () => {

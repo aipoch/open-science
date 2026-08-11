@@ -8,7 +8,7 @@ const tokenizer = new Tiktoken(cl100kBase)
 
 describe('renderConnectorInstructions', () => {
   it('keeps only shared host.mcp conventions in opencode baseline instructions', () => {
-    const md = renderConnectorInstructions(['chemistry'])
+    const md = renderConnectorInstructions(['mcp-chemistry'])
 
     expect(md).toContain('host.mcp(')
     // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
@@ -32,10 +32,31 @@ describe('renderConnectorInstructions', () => {
   })
 
   it('forbids connector calls until the matching skill supplies the exact method name', () => {
-    const md = renderConnectorInstructions(['pubmed'])
+    const md = renderConnectorInstructions(['mcp-pubmed'])
 
     expect(md).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(md).toContain('Never guess a connector server or method name')
+  })
+
+  it('lists the exact enabled Connector Skill names without duplicates or guessed aliases', () => {
+    const md = renderConnectorInstructions([
+      'mcp-pubmed',
+      'mcp-literature',
+      'mcp-pubmed',
+      'not-a-skill'
+    ])
+
+    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md).toContain('Allowed Specialist Skills for this session')
+    expect(md).toContain('do not load or call any `mcp-*` skill absent from that list')
+    expect(md.match(/`mcp-pubmed`/g)).toHaveLength(1)
+    expect(md).not.toContain('`mcp-openalex`')
+  })
+
+  it('includes canonical custom MCP Skill names in the global catalog', () => {
+    const md = renderConnectorInstructions(['mcp-pubmed', 'mcp-custom-chemistry'])
+
+    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-custom-chemistry`.')
   })
 })
 

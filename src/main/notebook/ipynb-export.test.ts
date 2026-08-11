@@ -4,7 +4,7 @@ import Ajv from 'ajv'
 import { describe, expect, it } from 'vitest'
 
 import type { NotebookRunDocument, NotebookRunRecord } from '../../shared/notebook'
-import { runDocumentToIpynb, runDocumentToIpynbByKernel, type NbformatOutput } from './ipynb-export'
+import { runDocumentToIpynb, runDocumentToIpynbByKernel } from './ipynb-export'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
   runId: 'run-1',
@@ -216,41 +216,44 @@ describe('runDocumentToIpynb', () => {
     }
   })
 
-  it('appends pre-resolved artifact outputs without doing any IO itself', () => {
-    const artifactOutputs = new Map<string, NbformatOutput[]>([
-      [
-        'run-1',
-        [
-          {
-            output_type: 'display_data',
-            data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
-            metadata: {}
-          }
-        ]
+  it('keeps saved Artifacts separate from captured cell outputs', () => {
+    const run = makeRun({
+      outputs: [{ type: 'display', data: { 'image/png': 'captured' } }],
+      artifacts: [
+        {
+          id: 'artifact-1',
+          projectName: 'default-project',
+          sessionId: 'session-123',
+          runId: 'run-1',
+          name: 'saved.tiff',
+          path: '/data/notebooks/default-project/session-123/saved.tiff',
+          fileUrl: 'artifact://saved.tiff',
+          mimeType: 'image/tiff',
+          size: 10,
+          mtimeMs: 1
+        }
       ]
-    ])
+    })
 
-    const notebook = runDocumentToIpynb(makeDocument([makeRun()]), { artifactOutputs })
+    const notebook = runDocumentToIpynb(makeDocument([run]))
 
     expect(notebook.cells[0].outputs).toEqual([
       {
         output_type: 'display_data',
-        data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
+        data: { 'image/png': 'captured' },
         metadata: {}
       }
     ])
+    expect(JSON.stringify(notebook)).not.toContain('saved.tiff')
   })
 
   it('is byte-identical for the same document and embeds no absolute paths', () => {
     const document = makeDocument([
       makeRun({ outputs: [{ type: 'display', data: { 'image/png': 'aW1hZ2U=' } }] })
     ])
-    const artifactOutputs = new Map<string, NbformatOutput[]>([
-      ['run-1', [{ output_type: 'display_data', data: { 'image/png': 'cG5n' }, metadata: {} }]]
-    ])
 
-    const first = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs }), null, 2)}\n`
-    const second = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs }), null, 2)}\n`
+    const first = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3' }), null, 2)}\n`
+    const second = `${JSON.stringify(runDocumentToIpynb(document, { appVersion: '1.2.3' }), null, 2)}\n`
 
     expect(first).toBe(second)
     expect(first).not.toContain('/workspace')
@@ -278,20 +281,7 @@ describe('runDocumentToIpynb', () => {
       }),
       makeRun({ runId: 'r-1', kernelKind: 'r', script: 'print(1)', environment: 'default-r' })
     ])
-    const artifactOutputs = new Map<string, NbformatOutput[]>([
-      [
-        'run-1',
-        [
-          {
-            output_type: 'display_data',
-            data: { 'image/svg+xml': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
-            metadata: {}
-          }
-        ]
-      ]
-    ])
-
-    const notebook = runDocumentToIpynb(document, { appVersion: '1.2.3', artifactOutputs })
+    const notebook = runDocumentToIpynb(document, { appVersion: '1.2.3' })
 
     await validateAgainstNbformatSchema(notebook)
   })

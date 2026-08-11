@@ -1,10 +1,11 @@
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest,
-  AcpPermissionResponse
+  AcpPermissionResponse,
+  AcpPermissionSettlementState
 } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type {
@@ -12,6 +13,7 @@ import type {
   PermissionGrantRecord,
   PermissionGrantScope
 } from '../../shared/permission-grants'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { CommandShellDialect } from '../agent-framework/types'
 import { extractProviderToolName } from './runtime-events'
 import {
@@ -42,10 +44,29 @@ type PendingPermission = {
   capability?: PermissionCapability
   projectId?: string
   providerAllowOnceOptionId?: string
+  durableCandidate?: DurablePermissionWaitCandidate
+  durablePersisted?: boolean
+  durableReady?: Promise<void>
+  durablePersistenceSettled?: boolean
+  settled?: boolean
   resolve: (response: RequestPermissionResponse) => void
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
+
+type DurablePermissionWaitCandidate = Readonly<{
+  request: AcpPermissionRequest
+  projectId?: string
+  promptMessageId?: string
+  fingerprint: string
+  categoryKey?: string
+  capability?: PermissionCapability
+}>
+
+type PermissionWaitHooks = Readonly<{
+  persist: (candidate: DurablePermissionWaitCandidate) => Promise<boolean>
+  settleLive: (candidate: DurablePermissionWaitCandidate) => Promise<void>
+}>
 
 class ConversationPermissionGrantStore {
   private readonly categoriesBySession = new Map<string, Set<string>>()
@@ -108,6 +129,38 @@ const metadataRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+
+const canonicalPermissionValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalPermissionValue)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalPermissionValue(entry)])
+  )
+}
+
+const permissionRequestFingerprint = (request: AcpPermissionRequest): string | undefined => {
+  try {
+    const canonical = JSON.stringify(
+      canonicalPermissionValue({
+        title: request.title,
+        providerToolName: request.providerToolName,
+        isMcp: request.isMcp,
+        mcpIdentity: request.mcpIdentity,
+        toolKind: request.toolKind,
+        toolLocations: request.toolLocations,
+        commandPrefix: request.commandPrefix,
+        rawInput: request.rawInput
+      })
+    )
+    return canonical === undefined
+      ? undefined
+      : createHash('sha256').update(canonical).digest('hex')
+  } catch {
+    return undefined
+  }
+}
 
 type CodexCommandGroup = { categoryKey: string; commandPrefix: string[] }
 type CodexCommandGroupMatch = { kind: 'group'; group: CodexCommandGroup } | { kind: 'unsafe' }
@@ -670,6 +723,7 @@ const projectRegistrySessionGrants = (
 // Tracks permission requests until the renderer chooses an outcome.
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
+  private readonly restoredAllowOnceBySession = new Map<string, string>()
   private cancellationGeneration = 0
   private readonly sessionCancellationGenerations = new Map<string, number>()
   private readonly livePermissionProfiles = new Map<
@@ -685,7 +739,12 @@ class AcpPermissionBroker {
   constructor(
     private readonly emitPermissionRequest: EmitPermissionRequest,
     private readonly conversationGrants = new ConversationPermissionGrantStore(),
-    private readonly permissionGrantRegistry?: PermissionGrantRegistry
+    private readonly permissionGrantRegistry?: PermissionGrantRegistry,
+    private readonly onPermissionSettled?: (
+      requestId: string,
+      state: AcpPermissionSettlementState
+    ) => void,
+    private readonly permissionWaitHooks?: PermissionWaitHooks
   ) {}
 
   // Returns serializable pending requests for runtime snapshots.
@@ -696,6 +755,13 @@ class AcpPermissionBroker {
   hasPendingForSession(sessionId: string): boolean {
     return Array.from(this.pendingRequests.values()).some(
       ({ request }) => request.sessionId === sessionId
+    )
+  }
+
+  hasDurablePendingForSession(sessionId: string): boolean {
+    return Array.from(this.pendingRequests.values()).some(
+      ({ request, durablePersisted }) =>
+        request.sessionId === sessionId && durablePersisted === true
     )
   }
 
@@ -920,6 +986,27 @@ class AcpPermissionBroker {
       rawInput: params.toolCall.rawInput,
       options: permissionOptions
     }
+    const fingerprint = permissionRequestFingerprint(request)
+    const durableCandidate: DurablePermissionWaitCandidate | undefined = fingerprint
+      ? {
+          request,
+          projectId: policyContext?.projectId,
+          promptMessageId: policyContext?.promptMessageId,
+          fingerprint,
+          categoryKey,
+          capability
+        }
+      : undefined
+
+    if (
+      durableCandidate &&
+      this.restoredAllowOnceBySession.get(request.sessionId) === durableCandidate.fingerprint
+    ) {
+      this.restoredAllowOnceBySession.delete(request.sessionId)
+      return Promise.resolve({
+        outcome: { outcome: 'selected', optionId: providerAllowOnceOption.optionId }
+      })
+    }
 
     // A model-independent fallback auto-reviews only structured, workspace-contained low-risk tools.
     // Resolve against the projected options so a stripped policy amendment can never be an automatic
@@ -963,7 +1050,8 @@ class AcpPermissionBroker {
             categoryKey,
             capability,
             projectId: policyContext?.projectId,
-            providerAllowOnceOptionId: providerAllowOnceOption?.optionId
+            providerAllowOnceOptionId: providerAllowOnceOption?.optionId,
+            durableCandidate
           })
         })
     }
@@ -986,7 +1074,8 @@ class AcpPermissionBroker {
       automaticRequest,
       policyContext,
       categoryKey,
-      providerAllowOnceOptionId: providerAllowOnceOption?.optionId
+      providerAllowOnceOptionId: providerAllowOnceOption?.optionId,
+      durableCandidate
     })
   }
 
@@ -1024,14 +1113,46 @@ class AcpPermissionBroker {
   private enqueuePermissionRequest(
     pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
   ): Promise<RequestPermissionResponse> {
-    return new Promise((resolve) => {
-      const { requestId, ...entry } = pending
-      this.pendingRequests.set(requestId, {
-        ...entry,
-        resolve
-      })
-      this.emitPermissionRequest(entry.request)
+    let resolveResponse!: (response: RequestPermissionResponse) => void
+    const response = new Promise<RequestPermissionResponse>((resolve) => {
+      resolveResponse = resolve
     })
+    const { requestId, ...entry } = pending
+    const stored: PendingPermission = {
+      ...entry,
+      resolve: resolveResponse
+    }
+    this.pendingRequests.set(requestId, stored)
+
+    if (!stored.durableCandidate || !this.permissionWaitHooks) {
+      this.emitPermissionRequest(entry.request)
+      return response
+    }
+
+    stored.durableReady = this.permissionWaitHooks.persist(stored.durableCandidate).then(
+      (persisted) => {
+        stored.durablePersisted = persisted
+        stored.durablePersistenceSettled = true
+        if (persisted) stored.request = { ...stored.request, durable: true }
+      },
+      (error: unknown) => {
+        stored.durablePersistenceSettled = true
+        throw error
+      }
+    )
+    return stored.durableReady.then(
+      () => {
+        if (this.pendingRequests.get(requestId) === stored) {
+          this.emitPermissionRequest(stored.request)
+        }
+        return response
+      },
+      (error: unknown) => {
+        this.pendingRequests.delete(requestId)
+        this.settlePending(stored, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+        throw error
+      }
+    )
   }
 
   // Resolves one pending request and reports whether it was found.
@@ -1045,24 +1166,35 @@ class AcpPermissionBroker {
     this.pendingRequests.delete(response.requestId)
 
     if (response.cancelled || !response.optionId) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      const persistence = this.persistLiveSettlement(pending)
+      if (persistence) await persistence
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
     // Only options projected to the renderer are valid responses. This keeps provider-specific
     // persistent policy actions hidden at the protocol boundary as well as in the UI.
     if (!pending.request.options.some((option) => option.optionId === response.optionId)) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      const persistence = this.persistLiveSettlement(pending)
+      if (persistence) await persistence
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
     const selected = pending.request.options.find((option) => option.optionId === response.optionId)
+    const settlementState: AcpPermissionSettlementState = selected?.kind
+      .toLowerCase()
+      .startsWith('reject')
+      ? 'rejected'
+      : 'resolved'
     const rememberedScope =
       selected?.scope === 'session' || selected?.scope === 'project' || selected?.scope === 'global'
     const providerOptionId = rememberedScope ? pending.providerAllowOnceOptionId : response.optionId
 
     if (!providerOptionId) {
-      pending.resolve({ outcome: { outcome: 'cancelled' } })
+      const persistence = this.persistLiveSettlement(pending)
+      if (persistence) await persistence
+      this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
       return true
     }
 
@@ -1084,10 +1216,16 @@ class AcpPermissionBroker {
                 sessionId: pending.request.sessionId
               }
       try {
+        const persistence = this.persistLiveSettlement(pending)
+        if (persistence) await persistence
         await this.permissionGrantRegistry.remember({ capability: pending.capability, scope })
-        pending.resolve({ outcome: { outcome: 'selected', optionId: providerOptionId } })
+        this.settlePending(
+          pending,
+          { outcome: { outcome: 'selected', optionId: providerOptionId } },
+          settlementState
+        )
       } catch (error) {
-        pending.resolve({ outcome: { outcome: 'cancelled' } })
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
         throw new Error('Permission approval could not be saved; the tool call was cancelled.', {
           cause: error
         })
@@ -1100,14 +1238,57 @@ class AcpPermissionBroker {
       this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
     }
 
-    pending.resolve({
-      outcome: {
-        outcome: 'selected',
-        optionId: providerOptionId
-      }
-    })
+    const persistence = this.persistLiveSettlement(pending)
+    if (persistence) await persistence
+
+    this.settlePending(
+      pending,
+      {
+        outcome: {
+          outcome: 'selected',
+          optionId: providerOptionId
+        }
+      },
+      settlementState
+    )
 
     return true
+  }
+
+  private persistLiveSettlement(pending: PendingPermission): Promise<void> | undefined {
+    const candidate = pending.durableCandidate
+    const hooks = this.permissionWaitHooks
+    if (!candidate || !hooks) return undefined
+    return (async () => {
+      try {
+        await pending.durableReady
+        if (!pending.durablePersisted) return
+        await hooks.settleLive(candidate)
+      } catch (error) {
+        this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+        throw new Error(
+          'Permission decision could not be persisted; the tool call was cancelled.',
+          {
+            cause: error
+          }
+        )
+      }
+    })()
+  }
+
+  private settlePending(
+    pending: PendingPermission,
+    response: RequestPermissionResponse,
+    state: AcpPermissionSettlementState
+  ): void {
+    if (pending.settled) return
+    pending.settled = true
+    pending.resolve(response)
+    try {
+      this.onPermissionSettled?.(pending.request.requestId, state)
+    } catch {
+      // Notification projection failures must never change the permission decision.
+    }
   }
 
   // Returns a one-shot allow option when this category has an app-owned session grant.
@@ -1135,14 +1316,78 @@ class AcpPermissionBroker {
     this.conversationGrants.remember(request.sessionId, categoryKey)
   }
 
+  async prepareRestoredDecision(
+    permission: SessionPermissionRuntimeContext,
+    option: AcpPermissionRequest['options'][number] | undefined,
+    projectId: string
+  ): Promise<void> {
+    if (!option || option.kind.toLowerCase().startsWith('reject_')) return
+    if (!option.kind.toLowerCase().startsWith('allow_')) {
+      throw new Error('The restored permission option cannot be replayed safely.')
+    }
+
+    if (option.scope === 'once' || option.kind.toLowerCase() === ALLOW_ONCE_OPTION_KIND) {
+      this.restoredAllowOnceBySession.set(permission.request.sessionId, permission.fingerprint)
+      return
+    }
+
+    if (
+      (option.scope === 'session' || option.scope === 'project' || option.scope === 'global') &&
+      permission.capability &&
+      this.permissionGrantRegistry
+    ) {
+      const scope: PermissionGrantScope =
+        option.scope === 'global'
+          ? { kind: 'global' }
+          : option.scope === 'project'
+            ? { kind: 'project', projectId }
+            : { kind: 'session', projectId, sessionId: permission.request.sessionId }
+      await this.permissionGrantRegistry.remember({ capability: permission.capability, scope })
+      return
+    }
+
+    if (option.scope === 'session' && permission.categoryKey) {
+      this.conversationGrants.remember(permission.request.sessionId, permission.categoryKey)
+      return
+    }
+    throw new Error('The restored permission scope cannot be granted safely.')
+  }
+
+  clearRestoredDecision(sessionId: string): void {
+    this.restoredAllowOnceBySession.delete(sessionId)
+  }
+
+  // Process/connection teardown must release the dead provider RPC without erasing the durable
+  // human decision. No settlement callback fires because the restored card remains pending.
+  abandonAllPending(): void {
+    this.cancellationGeneration += 1
+    this.livePermissionProfiles.clear()
+    this.restoredAllowOnceBySession.clear()
+    const pending = Array.from(this.pendingRequests.values())
+    this.pendingRequests.clear()
+    for (const request of pending) {
+      if (request.settled) continue
+      if (
+        request.durablePersisted ||
+        (request.durableReady && !request.durablePersistenceSettled)
+      ) {
+        request.settled = true
+        request.resolve({ outcome: { outcome: 'cancelled' } })
+      } else {
+        this.settlePending(request, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+      }
+    }
+  }
+
   // Cancels every pending request while preserving conversation grants across Agent reconnects.
   cancelAllPending(): void {
     this.cancellationGeneration += 1
     this.livePermissionProfiles.clear()
+    this.restoredAllowOnceBySession.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
 
     for (const requestId of pendingRequests) {
-      this.respond({ requestId, cancelled: true })
+      void this.respond({ requestId, cancelled: true }).catch(() => undefined)
     }
   }
 
@@ -1152,11 +1397,12 @@ class AcpPermissionBroker {
       sessionId,
       (this.sessionCancellationGenerations.get(sessionId) ?? 0) + 1
     )
+    this.restoredAllowOnceBySession.delete(sessionId)
     const pendingRequests = Array.from(this.pendingRequests.values())
 
     for (const { request } of pendingRequests) {
       if (request.sessionId === sessionId) {
-        this.respond({ requestId: request.requestId, cancelled: true })
+        void this.respond({ requestId: request.requestId, cancelled: true }).catch(() => undefined)
       }
     }
   }
@@ -1173,6 +1419,8 @@ export {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
   projectRegistrySessionGrants,
+  permissionRequestFingerprint,
   resolveCategoryKey,
   resolveNotebookPermissionContext
 }
+export type { DurablePermissionWaitCandidate, PermissionWaitHooks }

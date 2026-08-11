@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   // Captures the onOpenSession listener so tests can fire the notification nudge directly.
   const notificationNudgeBox: { current: (() => void) | undefined } = { current: undefined }
+  const sideChatRelayBox: { current: ((event: unknown) => void) | undefined } = {
+    current: undefined
+  }
   type NavigationState = { view: 'home' | 'workspace'; userNavigationRevision: number }
   const navigationListeners = new Set<
     (state: NavigationState, previousState: NavigationState) => void
@@ -30,6 +33,8 @@ const mocks = vi.hoisted(() => {
     compute: { enqueueApproval: vi.fn(), pendingApprovals: [] as unknown[] },
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
+    appendRoutedUserMessage: vi.fn(),
+    sideChatRelayBox,
     environment: {
       ui: { state: 'idle' },
       init: vi.fn().mockResolvedValue(undefined),
@@ -83,6 +88,7 @@ const mocks = vi.hoisted(() => {
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
+    homePage: { props: undefined as { onOpenGlobalSearch: () => void } | undefined },
     closeActiveModal: { handler: undefined as (() => boolean) | undefined }
   }
 })
@@ -129,7 +135,12 @@ vi.mock('@/stores/navigation-store', () => ({
   )
 }))
 vi.mock('@/stores/session-store', () => ({
-  useSessionStore: { getState: () => ({ sessions: mocks.sessions }) }
+  useSessionStore: {
+    getState: () => ({
+      sessions: mocks.sessions,
+      appendRoutedUserMessage: mocks.appendRoutedUserMessage
+    })
+  }
 }))
 vi.mock('@/stores/notebook-env-store', () => ({
   useNotebookEnvStore: <T,>(selector: (state: typeof mocks.environment) => T): T =>
@@ -193,20 +204,28 @@ vi.mock('@/components/LifecycleToast', () => ({
 vi.mock('@/components/UpdateDialog', () => ({
   UpdateDialog: (): React.JSX.Element => <div data-testid="update-dialog" />
 }))
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children
+}))
 vi.mock('@/pages/home/HomePage', () => ({
   HomePage: ({
     canDeleteProjects,
-    hasCompleteSessionCatalog
+    hasCompleteSessionCatalog,
+    onOpenGlobalSearch
   }: {
     canDeleteProjects: boolean
     hasCompleteSessionCatalog: boolean
-  }): React.JSX.Element => (
-    <div
-      data-testid="home-page"
-      data-can-delete-projects={String(canDeleteProjects)}
-      data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
-    />
-  )
+    onOpenGlobalSearch: () => void
+  }): React.JSX.Element => {
+    mocks.homePage.props = { onOpenGlobalSearch }
+    return (
+      <div
+        data-testid="home-page"
+        data-can-delete-projects={String(canDeleteProjects)}
+        data-has-complete-session-catalog={String(hasCompleteSessionCatalog)}
+      />
+    )
+  }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   OnboardingWizard: (): React.JSX.Element => <div data-testid="onboarding-page" />
@@ -327,7 +346,13 @@ describe('App startup routing', () => {
         onJobUpdated: vi.fn(() => vi.fn()),
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
-      permissions: { onChanged: vi.fn(() => vi.fn()) }
+      permissions: { onChanged: vi.fn(() => vi.fn()) },
+      sideChat: {
+        onRelayDelivered: vi.fn((listener: (event: unknown) => void) => {
+          mocks.sideChatRelayBox.current = listener
+          return vi.fn()
+        })
+      }
     } as unknown as Window['api']
     mocks.openSessionById.mockClear()
     mocks.sessions = []
@@ -338,7 +363,10 @@ describe('App startup routing', () => {
     mocks.notifications.peekPendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notifications.takePendingOpenSession.mockReset().mockResolvedValue(null)
     mocks.notificationNudgeBox.current = undefined
+    mocks.sideChatRelayBox.current = undefined
+    mocks.appendRoutedUserMessage.mockClear()
     mocks.globalSearch.props = undefined
+    mocks.homePage.props = undefined
     mocks.closeActiveModal.handler = undefined
   })
 
@@ -414,6 +442,17 @@ describe('App startup routing', () => {
     expect(mocks.globalSearch.props?.open).toBe(false)
   })
 
+  it('opens the same global search from the Home header action', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    expect(mocks.globalSearch.props?.open).toBe(false)
+
+    await act(async () => mocks.homePage.props?.onOpenGlobalSearch())
+
+    expect(mocks.globalSearch.props?.open).toBe(true)
+  })
+
   it('does not open Settings over global search', async () => {
     mocks.settings.isLoaded = true
     await render()
@@ -480,6 +519,25 @@ describe('App startup routing', () => {
 
     expect(mocks.update.closeDialog).toHaveBeenCalledOnce()
     expect(mocks.settings.closeSettings).not.toHaveBeenCalled()
+  })
+
+  it('dispatches the close-pane Escape to an open Context window dialog', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.dataset.slot = 'context-window-dialog'
+    dialog.dataset.state = 'open'
+    const onKeyDown = vi.fn()
+    dialog.addEventListener('keydown', onKeyDown)
+    document.body.appendChild(dialog)
+
+    act(() => {
+      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+    })
+
+    expect(onKeyDown).toHaveBeenCalledOnce()
+    expect((onKeyDown.mock.calls[0]?.[0] as KeyboardEvent).key).toBe('Escape')
+    dialog.remove()
   })
 
   it('does not open global search while a file preview modal is open', async () => {
@@ -763,13 +821,19 @@ describe('App startup routing', () => {
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
-  it('blocks Home while the initial session snapshot is loading', async () => {
+  it('continues the startup animation while the initial session snapshot loads', async () => {
+    await render()
+
+    const settingsLogo = container.querySelector<HTMLCanvasElement>(
+      '[data-testid="settings-startup-loading"] canvas[data-testid="open-science-logo-loader"]'
+    )
+    expect(settingsLogo).not.toBeNull()
+
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.isHydrated = false
     mocks.sessionPersistence.isLoading = true
     mocks.sessionPersistence.isReady = false
-
-    await render()
+    await act(async () => root.render(<App />))
 
     const shell = container.querySelector('[data-testid="session-persistence-startup-loading"]')
     expect(shell).not.toBeNull()
@@ -777,6 +841,9 @@ describe('App startup routing', () => {
     expect(shell?.classList.contains('h-screen')).toBe(false)
     expect(shell?.classList.contains('text-foreground')).toBe(true)
     expect(shell?.classList.contains('text-muted-foreground')).toBe(false)
+    expect(
+      shell?.querySelector<HTMLCanvasElement>('canvas[data-testid="open-science-logo-loader"]')
+    ).toBe(settingsLogo)
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 
@@ -795,6 +862,35 @@ describe('App startup routing', () => {
     expect(mocks.settings.checkEnvironment).toHaveBeenCalled()
     expect(mocks.getInfo).toHaveBeenCalled()
     expect(window.api.permissions.onChanged).toHaveBeenCalledOnce()
+  })
+
+  it('projects delivered Side chat relays even while Home owns the route', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+
+    act(() => {
+      mocks.sideChatRelayBox.current?.({
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        message: {
+          id: 'relay-1',
+          content: 'Use black.',
+          createdAt: 10,
+          responseToMessageId: 'prompt-1',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+        }
+      })
+    })
+
+    expect(mocks.appendRoutedUserMessage).toHaveBeenCalledWith({
+      sessionId: 'main-1',
+      messageId: 'relay-1',
+      eventId: 'side-chat-delivered:relay-1',
+      content: 'Use black.',
+      createdAt: 10,
+      responseToMessageId: 'prompt-1',
+      relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+    })
   })
 
   it('surfaces a session load failure with a retry action', async () => {

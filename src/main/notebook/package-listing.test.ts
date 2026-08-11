@@ -157,6 +157,24 @@ describe('listEnvPackages dispatch', () => {
     expect(call[2]?.timeout).toBeGreaterThan(0)
   })
 
+  it('uses the shared prepared runner for an app-managed environment', async () => {
+    const exec = execReturning('[]')
+    const runner = {
+      initialPath: '/resources/micromamba.exe',
+      resolve: vi.fn().mockResolvedValue('/local-tools/micromamba-compat.exe')
+    }
+
+    await listEnvPackages(env({ provenance: 'app-managed' }), {
+      exec,
+      micromambaRunner: runner,
+      runtimeRoot: '/data/runtime',
+      platform: 'win32'
+    })
+
+    expect(runner.resolve).toHaveBeenCalledOnce()
+    expect(vi.mocked(exec).mock.calls[0]?.[0]).toBe('/local-tools/micromamba-compat.exe')
+  })
+
   it('lists a user-own python env with its own interpreter pip', async () => {
     const exec = execReturning(JSON.stringify([{ name: 'requests', version: '2.32.3' }]))
     const target = env({

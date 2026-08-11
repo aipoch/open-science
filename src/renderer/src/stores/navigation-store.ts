@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
+import type { CustomizeGoal } from '@/lib/customize-chat'
 
 import { useProjectStore } from './project-store'
 import { useSessionStore } from './session-store'
@@ -16,6 +17,12 @@ export type ArtifactMentionAvailability = {
   canMention: boolean
 }
 
+export type CustomizePrefillIntent = {
+  projectId: string
+  goal: CustomizeGoal
+  requestId: number
+}
+
 type NavigationStore = {
   view: NavigationView
   activeProjectId: string | undefined
@@ -27,7 +34,7 @@ type NavigationStore = {
   explicitNavigationRevision: number
   // Project id targeted by a pending `Chat with agent` prefill, consumed once by WorkspacePage when it
   // opens that project's New Conversation draft. Undefined means no prefill is pending.
-  pendingCustomizePrefill: string | undefined
+  pendingCustomizePrefill: CustomizePrefillIntent | undefined
   // Home consumes this one-shot intent to open its existing New Project dialog.
   pendingProjectCreation: boolean
   // A same-Project Artifact selected from global search. WorkspacePage consumes it once and appends
@@ -45,7 +52,7 @@ type NavigationStore = {
   // Opens a project's New Conversation draft (no Specialist binding) carrying a `/customize` prefill.
   // The intent does not send, create a session, or imply mutation approval; WorkspacePage consumes the
   // prefill once and clears it.
-  startCustomizeConversation: (projectId: string) => void
+  startCustomizeConversation: (projectId: string, goal?: CustomizeGoal) => void
   consumeCustomizePrefill: () => void
   requestProjectCreation: () => void
   consumeProjectCreation: () => void
@@ -168,15 +175,25 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
   // so the fresh draft has no Specialist binding, records the target as the last-opened project, and
   // stamps a pending prefill intent that WorkspacePage consumes once. The intent never sends or creates
   // a session; it is a navigation/prefill intent only.
-  startCustomizeConversation: (projectId) => {
+  startCustomizeConversation: (projectId, goal = 'specialist') => {
     if (!isActiveProject(projectId)) return
     useSessionStore.getState().clearSelection()
     recordLastOpenedProject(projectId)
 
-    set((state) => ({
-      ...navigationState(state, 'user', { view: 'workspace', activeProjectId: projectId }),
-      pendingCustomizePrefill: projectId
-    }))
+    set((state) => {
+      const navigation = navigationState(state, 'user', {
+        view: 'workspace',
+        activeProjectId: projectId
+      })
+      return {
+        ...navigation,
+        pendingCustomizePrefill: {
+          projectId,
+          goal,
+          requestId: navigation.explicitNavigationRevision
+        }
+      }
+    })
   },
 
   // Clears the consumed prefill intent so a later normal open starts fresh.

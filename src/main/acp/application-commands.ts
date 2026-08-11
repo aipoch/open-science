@@ -4,8 +4,10 @@ import type {
   AcpConnectRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
+  AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -45,6 +47,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpResumeSessionRequest],
     AcpCreateSessionResponse
   >('acp:resume-session'),
+  continueInterruptedTurn: defineApplicationCommand<
+    'acp:continue-interrupted-turn',
+    readonly [request: AcpContinueInterruptedTurnRequest],
+    AcpStateSnapshot
+  >('acp:continue-interrupted-turn'),
   resetSessionContext: defineApplicationCommand<
     'acp:reset-session-context',
     readonly [request: AcpResumeSessionRequest],
@@ -75,6 +82,11 @@ const acpCommands = Object.freeze({
     readonly [response: AcpPermissionResponse],
     AcpStateSnapshot
   >('acp:respond-permission'),
+  respondElicitation: defineApplicationCommand<
+    'acp:respond-elicitation',
+    readonly [response: ElicitationResponse],
+    AcpStateSnapshot
+  >('acp:respond-elicitation'),
   setPermissionProfile: defineApplicationCommand<
     'acp:set-permission-profile',
     readonly [request: AcpSetPermissionProfileRequest],
@@ -103,12 +115,14 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.disconnect,
   acpCommands.createSession,
   acpCommands.resumeSession,
+  acpCommands.continueInterruptedTurn,
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
   acpCommands.cancel,
   acpCommands.deleteSession,
   acpCommands.respondPermission,
+  acpCommands.respondElicitation,
   acpCommands.setPermissionProfile,
   acpCommands.revokePermissionGrant,
   acpCommands.getPlanProjection,
@@ -125,6 +139,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'cancelPrompt'
   | 'deleteSession'
   | 'respondToPermission'
+  | 'respondToElicitation'
   | 'setPermissionProfile'
   | 'revokePermissionGrant'
   | 'getSessionPlanProjection'
@@ -161,6 +176,12 @@ const registerAcpCommands = (
         dependencies.workflows.createSession(invocation.args[0]),
       'acp:resume-session': (invocation) =>
         dependencies.workflows.resumeSession(invocation.args[0]),
+      'acp:continue-interrupted-turn': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can continue an interrupted turn.')
+        }
+        return dependencies.workflows.continueInterruptedTurn(invocation.args[0])
+      },
       'acp:reset-session-context': (invocation) =>
         dependencies.archiveAvailability
           ? dependencies.archiveAvailability.withSessionAvailableById(
@@ -196,6 +217,12 @@ const registerAcpCommands = (
           throw new Error('Only a current human caller can respond to permission requests.')
         }
         return dependencies.runtime.respondToPermission(invocation.args[0])
+      },
+      'acp:respond-elicitation': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can respond to structured questions.')
+        }
+        return dependencies.runtime.respondToElicitation(invocation.args[0])
       },
       'acp:set-permission-profile': (invocation) =>
         dependencies.runtime.setPermissionProfile(invocation.args[0]),

@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
 import { codexFramework } from '../agent-framework/codex'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
 type Mock = ReturnType<typeof vi.fn>
-type TestContextTurn = ContextUsageTurnHandle & {
+type TestContextTurn = ContextWindowTurnHandle & {
   complete: Mock
   fail: Mock
   supersede: Mock

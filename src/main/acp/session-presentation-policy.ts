@@ -32,7 +32,11 @@ type AcpSpecialistIdentityPresentation = Readonly<{
 }>
 
 type AcpTurnPromptPrefixInput = AcpSessionSetupPresentationInput &
-  Readonly<{ specialistPrefix?: string; turnPromptReminders?: readonly string[] }>
+  Readonly<{
+    specialistPrefix?: string
+    sessionSetupPromptPrefix?: string
+    turnPromptReminders?: readonly string[]
+  }>
 
 type AcpCodexSkillInput = Readonly<{ name: string; path: string }>
 
@@ -158,7 +162,10 @@ class AcpSessionPresentationPolicy {
       input.specialistSkills
     )
     const setup = input.framework.buildSessionSetup({
-      systemPromptAppends: this.systemPromptAppends(input),
+      // A launcher-owned Session setup prefix already contains the stable appends for frameworks
+      // without dynamic system-prompt metadata. Reuse that exact prefix instead of duplicating the
+      // same appends on every turn; turn-only reminders still flow through the framework adapter.
+      systemPromptAppends: input.sessionSetupPromptPrefix ? [] : this.systemPromptAppends(input),
       turnPromptReminders: [
         ...(specialistSkillGuidance ? [specialistSkillGuidance] : []),
         ...(input.turnPromptReminders ?? [])
@@ -166,8 +173,10 @@ class AcpSessionPresentationPolicy {
       sessionOptions: input.sessionOptions
     })
 
+    const turnPromptPrefix =
+      setup.promptPrefix === input.sessionSetupPromptPrefix ? undefined : setup.promptPrefix
     return (
-      [input.specialistPrefix, setup.promptPrefix]
+      [input.specialistPrefix, input.sessionSetupPromptPrefix, turnPromptPrefix]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n') || undefined
     )

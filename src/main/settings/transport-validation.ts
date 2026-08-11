@@ -6,6 +6,7 @@ import {
   type ReasoningEffort
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
+import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
 
 const readField = (value: unknown, field: string): unknown =>
   typeof value === 'object' && value !== null
@@ -80,6 +81,14 @@ const readProjectFilesFilter = (request: unknown): ProjectFilesFilterPreference 
   }
 }
 
+const readDefaultPermissionProfile = (request: unknown): PermissionProfileId => {
+  const profile = readField(request, 'profile')
+  if (!isPermissionProfileId(profile)) {
+    throw new Error(`Unknown default permission profile: ${String(profile)}`)
+  }
+  return profile
+}
+
 const readIsolatedClaudeToken = (token: unknown): string => {
   if (typeof token !== 'string') {
     throw new Error('Claude sign-in token must be a string.')
@@ -87,10 +96,20 @@ const readIsolatedClaudeToken = (token: unknown): string => {
   return token
 }
 
+const readGitHubToken = (request: unknown): string => {
+  const token = readField(request, 'token')
+  if (typeof token !== 'string' || token.trim().length === 0 || token.length > 1024) {
+    throw new Error('GitHub token must be a non-empty string no longer than 1024 characters.')
+  }
+  return token.trim()
+}
+
 export {
   readAppIconVariant,
   readClosePreference,
   readConversationSkillImportEnabled,
+  readDefaultPermissionProfile,
+  readGitHubToken,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
   readProjectFilesFilter,

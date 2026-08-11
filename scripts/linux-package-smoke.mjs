@@ -6,6 +6,14 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import {
+  parsePackagedSqliteVersion,
+  seedLegacyDatabase,
+  verifyDatabaseMigrationLedger,
+  verifyLegacyProjectPreserved,
+  writeDatabaseMigrationCertification
+} from './database-migration-ledger-smoke.mjs'
+
 const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
 const STARTUP_TIMEOUT_MS = 60_000
@@ -109,8 +117,14 @@ const assertPackagedResources = async (
   }
   const prismaRoot = join(resourceRoot, 'node_modules', '.prisma', 'client')
   const engines = await readdir(prismaRoot).catch(() => [])
-  if (!engines.some((name) => /query_engine-.+\.so\.node$/.test(name))) {
-    throw new Error(`Packaged Linux Prisma engine is missing from ${prismaRoot}.`)
+  const nativeEngines = engines.filter(
+    (name) => name.includes('query_engine-') && name.endsWith('.node')
+  )
+  if (nativeEngines.length !== 1) {
+    throw new Error(`Packaged Linux must contain exactly one Prisma engine in ${prismaRoot}.`)
+  }
+  if (!/query_engine-.+\.so\.node$/.test(nativeEngines[0])) {
+    throw new Error(`Packaged Linux Prisma engine is incompatible: ${nativeEngines[0]}.`)
   }
 }
 
@@ -162,18 +176,31 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
       })
     ])
     if (exitCode !== 0) throw new Error(`Packaged Linux app exited with ${exitCode}.\n${output}`)
+    return parsePackagedSqliteVersion(output)
   } catch (error) {
     child.kill('SIGKILL')
     throw error
   }
 }
 
-const smokeExecutable = async ({ executable, expectedVersion, env }) => {
+const smokeExecutable = async ({
+  executable,
+  expectedVersion,
+  env,
+  storageRoot,
+  expectLegacyProject = false
+}) => {
   const resolvedExecutable = await realpath(executable)
   const resourceRoot = await findResourceRoot(executable, resolvedExecutable)
   await assertPackagedResources(resolvedExecutable, resourceRoot)
   await runProcess(join(resourceRoot, 'micromamba'), ['--version'], { env })
-  await launchAndProbe({ executable, expectedVersion, env })
+  const sqliteVersions = [
+    await launchAndProbe({ executable, expectedVersion, env }),
+    await launchAndProbe({ executable, expectedVersion, env })
+  ]
+  await verifyDatabaseMigrationLedger(storageRoot)
+  if (expectLegacyProject) await verifyLegacyProjectPreserved(storageRoot)
+  return sqliteVersions
 }
 
 const parseArguments = (argv) => {
@@ -200,25 +227,53 @@ const main = async () => {
   const appImage = await findOne(options.artifactDirectory, APPIMAGE_PATTERN, 'Linux AppImage')
   const expectedVersion = appImageVersion(appImage)
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
-  const env = {
+  const baseEnv = {
     ...process.env,
-    HOME: join(root, 'home'),
-    XDG_CONFIG_HOME: join(root, 'config'),
-    OPEN_SCIENCE_STORAGE_ROOT: join(root, 'storage')
+    HOME: join(root, 'home 数据 with spaces'),
+    XDG_CONFIG_HOME: join(root, 'config 数据 with spaces')
   }
+  const launchProfiles = (format) => [
+    { storageRoot: join(root, `${format} legacy 数据`), expectLegacyProject: true },
+    { storageRoot: join(root, `${format} fresh 数据`), expectLegacyProject: false }
+  ]
 
   try {
-    await smokeExecutable({
-      executable: options.installedExecutable,
-      expectedVersion,
-      env
-    })
+    const sqliteVersions = []
+    const debProfiles = launchProfiles('deb')
+    await seedLegacyDatabase(debProfiles[0].storageRoot)
+    for (const profile of debProfiles) {
+      sqliteVersions.push(
+        ...(await smokeExecutable({
+          executable: options.installedExecutable,
+          expectedVersion,
+          env: { ...baseEnv, OPEN_SCIENCE_E2E_STORAGE_ROOT: profile.storageRoot },
+          ...profile
+        }))
+      )
+    }
     await chmod(appImage, 0o755)
-    await runProcess(appImage, ['--appimage-extract'], { cwd: root, env })
-    await smokeExecutable({
-      executable: join(root, 'squashfs-root', 'AppRun'),
-      expectedVersion,
-      env
+    await runProcess(appImage, ['--appimage-extract'], { cwd: root, env: baseEnv })
+    const appImageProfiles = launchProfiles('appimage')
+    await seedLegacyDatabase(appImageProfiles[0].storageRoot)
+    for (const profile of appImageProfiles) {
+      sqliteVersions.push(
+        ...(await smokeExecutable({
+          executable: join(root, 'squashfs-root', 'AppRun'),
+          expectedVersion,
+          env: { ...baseEnv, OPEN_SCIENCE_E2E_STORAGE_ROOT: profile.storageRoot },
+          ...profile
+        }))
+      )
+    }
+    await writeDatabaseMigrationCertification({
+      output: join(options.artifactDirectory, 'database-migration-certification.json'),
+      sqliteVersions,
+      checks: {
+        freshInstall: 'passed',
+        legacyAdoption: 'passed',
+        reopen: 'passed',
+        specialPath: 'passed'
+      }
     })
     console.log('Linux deb install and AppImage launch smoke completed successfully.')
   } finally {

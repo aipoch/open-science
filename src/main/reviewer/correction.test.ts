@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -265,7 +265,7 @@ describe('single-round auditor correction', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
     session.conversationGraph = createLinearConversationGraph({
@@ -356,7 +356,7 @@ describe('single-round auditor correction', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
 
@@ -408,7 +408,7 @@ describe('single-round auditor correction', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
 
@@ -465,7 +465,7 @@ describe('single-round auditor correction', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
 
@@ -599,7 +599,7 @@ describe('single-round auditor correction', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
     session.conversationGraph = createLinearConversationGraph({
@@ -656,7 +656,7 @@ describe('single-round auditor correction', () => {
 
     // Do NOT pre-create a main session — sendPrompt will throw 'session not found'.
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
     const session = makeSession()
 

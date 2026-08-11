@@ -29,6 +29,7 @@ import {
   MAX_EMBEDDED_TEXT_UPLOAD_BYTES,
   buildDatasetAttachmentNotice,
   buildDeferredMediaNotice,
+  buildLocalFileAttachmentNotice,
   buildOversizedAttachmentNotice,
   isDatasetAttachment,
   isTabularAttachment,
@@ -346,10 +347,27 @@ class AcpPromptContentOwner {
       ].join('\n')
     })
 
+    const normalizedName = name.toLowerCase()
+    const normalizedMimeType = mimeEssence(mimeType)
+    const isArchive =
+      normalizedName.endsWith('.zip') ||
+      normalizedName.endsWith('.skill') ||
+      normalizedMimeType === 'application/zip' ||
+      normalizedMimeType === 'application/x-zip-compressed'
+    const imageMimeType = imageAttachmentMimeType(name, mimeType)
+
     // A replayed raster may still be required by the selected conversational turn. Every other
-    // historical file is a descriptor only: do not re-import archives or re-embed text/PDF bytes.
-    if (isHistoryUpload && !imageAttachmentMimeType(name, mimeType)) {
-      return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+    // historical file remains a descriptor: formats that downstream agents can safely represent
+    // keep their resource link, while binary formats become provider-neutral local-file text.
+    if (isHistoryUpload && !imageMimeType) {
+      if (this.isPdfFile(name, mimeType) || isTextLikeAttachment(name, mimeType)) {
+        return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+      }
+      if (isArchive) return [attachmentTextReference('attached_local_archive', false)]
+      const notice = isDatasetAttachment(name, mimeType)
+        ? buildDatasetAttachmentNotice({ name, size })
+        : buildLocalFileAttachmentNotice({ name, size })
+      return [localFileTextReference(notice)]
     }
 
     if (
@@ -368,18 +386,10 @@ class AcpPromptContentOwner {
       }
     }
 
-    const normalizedName = name.toLowerCase()
-    const normalizedMimeType = mimeEssence(mimeType)
-    if (
-      normalizedName.endsWith('.zip') ||
-      normalizedName.endsWith('.skill') ||
-      normalizedMimeType === 'application/zip' ||
-      normalizedMimeType === 'application/x-zip-compressed'
-    ) {
+    if (isArchive) {
       return [attachmentTextReference('attached_local_archive', false)]
     }
 
-    const imageMimeType = imageAttachmentMimeType(name, mimeType)
     if (imageMimeType) {
       if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
         return [
@@ -445,7 +455,7 @@ class AcpPromptContentOwner {
       return [localFileTextReference(buildDatasetAttachmentNotice({ name, size }))]
     }
 
-    return [{ type: 'resource_link', uri, name, title: name, mimeType, size }]
+    return [localFileTextReference(buildLocalFileAttachmentNotice({ name, size }))]
   }
 
   private async admitTextResource(

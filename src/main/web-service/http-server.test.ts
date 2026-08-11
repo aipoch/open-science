@@ -13,6 +13,7 @@ vi.mock('electron', () => ({
 }))
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
@@ -161,6 +162,25 @@ describe('startWebHttpServer', () => {
     )
     expect(unusedFallbackInvoke).not.toHaveBeenCalled()
 
+    directInvoke.mockRejectedValueOnce(
+      new ApplicationCommandError('invalid-command-arguments', 'Invalid project request.')
+    )
+    const invalidResponse = await fetch(`http://127.0.0.1:${server.port}/rpc/projects%3Alist`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json',
+        'x-open-science-client': 'direct-client'
+      },
+      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args: [] })
+    })
+    expect(invalidResponse.status).toBe(500)
+    expect(await invalidResponse.json()).toEqual({
+      protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+      ok: false,
+      error: { code: 'invalid-command-arguments', message: 'Invalid project request.' }
+    })
+
     const directSignal = directInvoke.mock.calls[0]?.[1].callerLease.signal
     firstSocket.close()
     await new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
@@ -173,11 +193,27 @@ describe('startWebHttpServer', () => {
   it('releases its application-event subscription when listening fails', async () => {
     const unsubscribe = vi.fn()
     const subscribe = vi.fn(() => unsubscribe)
+    const unsubscribeProgress = vi.fn()
+    const subscribeProgress = vi.fn(() => unsubscribeProgress)
     const options = {
       host: '127.0.0.1',
       token: 'test-token',
       staticRoot: '/unused',
       applicationEvents: { subscribe },
+      tasks: {
+        runWithCallerContext,
+        subscribeProgress,
+        listProjects: vi.fn(),
+        createProject: vi.fn(),
+        listSessions: vi.fn(),
+        getSession: vi.fn(),
+        startRun: vi.fn(),
+        getRun: vi.fn(),
+        cancelRun: vi.fn(),
+        listArtifacts: vi.fn(),
+        acquireArtifact: vi.fn(),
+        releaseArtifact: vi.fn()
+      },
       rpc: {
         channels: () => [],
         invoke: vi.fn(async () => undefined),
@@ -201,12 +237,17 @@ describe('startWebHttpServer', () => {
 
     expect(subscribe).toHaveBeenCalledOnce()
     expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(subscribeProgress).toHaveBeenCalledOnce()
+    expect(unsubscribeProgress).toHaveBeenCalledOnce()
 
     const retry = await startWebHttpServer({ ...options, port: 0 })
     expect(subscribe).toHaveBeenCalledTimes(2)
     expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(subscribeProgress).toHaveBeenCalledTimes(2)
+    expect(unsubscribeProgress).toHaveBeenCalledOnce()
     await retry.close()
     expect(unsubscribe).toHaveBeenCalledTimes(2)
+    expect(unsubscribeProgress).toHaveBeenCalledTimes(2)
   })
 
   it('authenticates, invokes direct commands, and delivers projected events once in order', async () => {
@@ -657,6 +698,7 @@ describe('startWebHttpServer', () => {
     }
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
@@ -670,6 +712,7 @@ describe('startWebHttpServer', () => {
         artifacts: []
       })),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn(),
       releaseArtifact: vi.fn()
@@ -744,6 +787,8 @@ describe('startWebHttpServer', () => {
       )
     ).toBe(401)
     expect(tasks.startRun).not.toHaveBeenCalled()
+    expect(await postAfterExpiringAuthorization('/api/v1/runs/run-1/cancel', {}, 3)).toBe(401)
+    expect(tasks.cancelRun).not.toHaveBeenCalled()
     const taskContext = taskContexts[0]
     expect(taskContext).toMatchObject({
       surface: 'task',
@@ -934,7 +979,7 @@ describe('startWebHttpServer', () => {
       .filter(([path]) => path.startsWith('acp.'))
       .map(([, channel]) => channel)
       .sort()
-    expect(acpChannels).toHaveLength(15)
+    expect(acpChannels).toHaveLength(17)
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',
@@ -1204,8 +1249,16 @@ describe('startWebHttpServer', () => {
       taskContexts.push(context)
       return operation()
     }
+    let publishProgress:
+      ((event: import('../../shared/task-api').TaskRunProgressEvent) => void) | undefined
     const tasks = {
       runWithCallerContext: runWithCapturedCallerContext,
+      subscribeProgress: vi.fn((listener) => {
+        publishProgress = listener
+        return () => {
+          publishProgress = undefined
+        }
+      }),
       listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'Research' }]),
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
@@ -1226,6 +1279,17 @@ describe('startWebHttpServer', () => {
         startedAt: 1,
         completedAt: 2,
         output: 'Done',
+        artifacts: []
+      }),
+      cancelRun: vi.fn().mockResolvedValue({
+        id: 'run/1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'cancelled',
+        startedAt: 1,
+        cancelRequestedAt: 2,
+        cancelledAt: 3,
+        completedAt: 3,
         artifacts: []
       }),
       listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact/1', name: 'report.md' }]),
@@ -1256,6 +1320,36 @@ describe('startWebHttpServer', () => {
     servers.push(server)
     const base = `http://127.0.0.1:${server.port}`
     const headers = { authorization: 'Bearer test-token' }
+
+    const progressSocket = new WebSocket(
+      `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`
+    )
+    await new Promise<void>((resolve) => progressSocket.once('open', resolve))
+    const progressMessage = new Promise<unknown>((resolve) =>
+      progressSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
+    )
+    publishProgress?.({
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      phase: 'provider-accepted',
+      timestamp: 250,
+      elapsedMs: 249,
+      heartbeat: false
+    })
+    await expect(progressMessage).resolves.toEqual({
+      type: 'run.progress',
+      data: {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        phase: 'provider-accepted',
+        timestamp: 250,
+        elapsedMs: 249,
+        heartbeat: false
+      }
+    })
+    progressSocket.close()
 
     const projects = await fetch(`${base}/api/v1/projects`, { headers })
     expect(projects.status).toBe(200)
@@ -1317,6 +1411,28 @@ describe('startWebHttpServer', () => {
     const status = await fetch(`${base}/api/v1/runs/run-1`, { headers })
     expect(await status.json()).toMatchObject({ data: { status: 'completed', output: 'Done' } })
 
+    const cancelled = await fetch(`${base}/api/v1/runs/run%2F1/cancel`, {
+      method: 'POST',
+      headers
+    })
+    expect(cancelled.status).toBe(200)
+    expect(await cancelled.json()).toMatchObject({
+      data: { id: 'run/1', status: 'cancelled', cancelRequestedAt: 2, cancelledAt: 3 }
+    })
+    expect(tasks.cancelRun).toHaveBeenCalledWith('run/1')
+
+    tasks.cancelRun.mockRejectedValueOnce(
+      new TaskApiError('run_not_found', 'Run not found: missing')
+    )
+    const missingRun = await fetch(`${base}/api/v1/runs/missing/cancel`, {
+      method: 'POST',
+      headers
+    })
+    expect(missingRun.status).toBe(404)
+    expect(await missingRun.json()).toEqual({
+      error: { code: 'run_not_found', message: 'Run not found: missing' }
+    })
+
     tasks.startRun.mockRejectedValueOnce(
       new TaskApiError('session_busy', 'Session already has an active run: session-1')
     )
@@ -1363,7 +1479,12 @@ describe('startWebHttpServer', () => {
     for (const path of [
       '/api/v1/permissions/permission-1/approve',
       '/api/v1/specialists',
-      '/api/v1/compute'
+      '/api/v1/compute',
+      '/api/v1/settings',
+      '/api/v1/providers',
+      '/api/v1/runtime',
+      '/api/v1/notebook',
+      '/api/v1/reviewer'
     ]) {
       const absent = await fetch(`${base}${path}`, { method: 'POST', headers })
       expect(absent.status).toBe(404)
@@ -1384,12 +1505,14 @@ describe('startWebHttpServer', () => {
     )
     const tasks = {
       runWithCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
         resourceId: 'resource-1',
@@ -1450,12 +1573,14 @@ describe('startWebHttpServer', () => {
     )
     const tasks = {
       runWithCallerContext,
+      subscribeProgress: () => () => undefined,
       listProjects: vi.fn(),
       createProject: vi.fn(),
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
       getRun: vi.fn(),
+      cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn().mockResolvedValue({
         resourceId: 'resource-disconnect',

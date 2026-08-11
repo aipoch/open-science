@@ -38,7 +38,6 @@ describe('Notebook application composition', () => {
       appVersion: '1.2.3',
       getPackageMirror: vi.fn(),
       notebookRuntimeSettings: { getSnapshot: vi.fn() },
-      resolveArtifactPath: vi.fn(),
       events: { publish }
     })
 

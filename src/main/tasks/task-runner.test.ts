@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
@@ -49,6 +49,7 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       createSession: async () => ({ sessionId: 'session-created' }),
       resumeSession: async (request) => ({ sessionId: request.sessionId }),
       setPermissionProfile: async () => undefined,
+      cancelPrompt: async () => undefined,
       prompt: async () => undefined
     },
     artifacts: {
@@ -218,6 +219,7 @@ describe('TaskRunner', () => {
         }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'event-1',
@@ -282,6 +284,233 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('publishes ordered Run progress from acceptance through completion', async () => {
+    const runner = createRunner()
+    const progress: Array<{ phase: string; heartbeat: boolean }> = []
+    const unsubscribe = runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat })
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+    await runner.waitForRun(started.id)
+
+    expect(progress).toEqual([
+      { phase: 'accepted', heartbeat: false },
+      { phase: 'session-ready', heartbeat: false },
+      { phase: 'prompt-dispatched', heartbeat: false },
+      { phase: 'completed', heartbeat: false }
+    ])
+
+    unsubscribe()
+    runner.dispose()
+  })
+
+  it('marks provider acceptance before the first visible provider event', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const phases: string[] = []
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request, observer) => {
+          observer?.onProviderPromptAccepted?.()
+          emitEvent?.({
+            id: 'assistant-1',
+            timestamp: 2,
+            sessionId: request.sessionId,
+            promptMessageId: request.promptMessageId,
+            kind: 'message',
+            role: 'assistant',
+            level: 'info',
+            text: 'Working on it.'
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => {
+            emitEvent = undefined
+          }
+        }
+      }
+    })
+    runner.subscribeProgress((event) => phases.push(event.phase))
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+    await runner.waitForRun(started.id)
+
+    expect(phases).toEqual([
+      'accepted',
+      'session-ready',
+      'prompt-dispatched',
+      'provider-accepted',
+      'first-visible-output',
+      'completed'
+    ])
+    runner.dispose()
+  })
+
+  it('emits liveness heartbeats until the first visible provider event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let finishPrompt: (() => void) | undefined
+    const prompt = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const progress: Array<{ phase: string; heartbeat: boolean; elapsedMs: number }> = []
+    const runner = createRunner({
+      now: Date.now,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => prompt
+      }
+    })
+    runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat, elapsedMs: event.elapsedMs })
+    })
+
+    try {
+      const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      expect(progress.at(-1)).toEqual({
+        phase: 'prompt-dispatched',
+        heartbeat: true,
+        elapsedMs: 10_000
+      })
+
+      finishPrompt?.()
+      await runner.waitForRun(started.id)
+      const countAfterCompletion = progress.length
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(progress).toHaveLength(countAfterCompletion)
+    } finally {
+      runner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps Run execution independent from progress subscriber failures', async () => {
+    const runner = createRunner()
+    runner.subscribeProgress(() => {
+      throw new Error('subscriber failed')
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
+    runner.dispose()
+  })
+
+  it('stops liveness heartbeats after the first visible provider event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let acceptProvider: (() => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const prompt = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const progress: Array<{ phase: string; heartbeat: boolean }> = []
+    const runner = createRunner({
+      now: Date.now,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-1' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (_request, observer) => {
+          acceptProvider = observer?.onProviderPromptAccepted
+          return prompt
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => {
+            emitEvent = undefined
+          }
+        }
+      }
+    })
+    runner.subscribeProgress((event) => {
+      progress.push({ phase: event.phase, heartbeat: event.heartbeat })
+    })
+
+    try {
+      const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
+      acceptProvider?.()
+      emitEvent?.({
+        id: 'other-prompt-assistant',
+        timestamp: 2,
+        sessionId: 'session-1',
+        promptMessageId: 'other-prompt',
+        kind: 'message',
+        role: 'assistant',
+        level: 'info',
+        text: 'Unrelated side-chat output.'
+      })
+      expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
+      emitEvent?.({
+        id: 'provider-warning',
+        timestamp: 3,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'system',
+        level: 'warning',
+        text: 'Provider is retrying.'
+      })
+      emitEvent?.({
+        id: 'terminal-stop',
+        timestamp: 4,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'stop',
+        level: 'info',
+        title: 'Prompt stopped',
+        text: 'end_turn'
+      })
+      expect(progress.at(-1)).toEqual({ phase: 'provider-accepted', heartbeat: false })
+      emitEvent?.({
+        id: 'assistant-1',
+        timestamp: 5,
+        sessionId: 'session-1',
+        promptMessageId: 'generated-id',
+        kind: 'message',
+        role: 'assistant',
+        level: 'info',
+        text: 'Working on it.'
+      })
+      const countAfterFirstOutput = progress.length
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(progress).toHaveLength(countAfterFirstOutput)
+      expect(progress.slice(-2)).toEqual([
+        { phase: 'provider-accepted', heartbeat: false },
+        { phase: 'first-visible-output', heartbeat: false }
+      ])
+
+      finishPrompt?.()
+      const completed = await runner.waitForRun(started.id)
+      expect(completed.output).toBe('Working on it.')
+    } finally {
+      runner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects overlapping runs for the same durable session', async () => {
     let finishPrompt: (() => void) | undefined
     const promptGate = new Promise<void>((resolve) => {
@@ -301,6 +530,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => promptGate
       },
       createId: () => ids.shift() ?? 'generated-id'
@@ -347,6 +577,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession,
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => undefined
       }
     })
@@ -410,6 +641,7 @@ describe('TaskRunner', () => {
           return { sessionId: existing.id, cwd: existing.cwd, contextReset: true }
         },
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async (request) => {
           prompts.push(request)
         }
@@ -440,6 +672,237 @@ describe('TaskRunner', () => {
           'Previous conversation:\n\nUser: Initial question\n\nAssistant: Initial answer'
       }
     ])
+  })
+
+  it('starts a new run without replaying an interrupted task prompt or retaining recovery state', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Collect the papers',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'Collected 20 papers',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'interrupted-user',
+          role: 'user',
+          content: 'Delete the duplicates',
+          status: 'complete',
+          interrupted: true,
+          eventIds: [],
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'app-restart',
+        promptMessageId: 'interrupted-user'
+      },
+      pendingHistoryReplay: { kind: 'before-message', messageId: 'interrupted-user' },
+      error: 'Session was interrupted before the app closed.'
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({
+          sessionId: existing.id,
+          cwd: existing.cwd,
+          contextReset: true
+        }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue with a different cleanup rule.'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        text: 'Continue with a different cleanup rule.',
+        contextReset: true,
+        historyPreamble:
+          'Previous conversation:\n\nUser: Collect the papers\n\nAssistant: Collected 20 papers'
+      })
+    ])
+    expect(prompts[0]?.historyPreamble).not.toContain('Delete the duplicates')
+    expect(saved[0]).not.toHaveProperty('resumeRecovery')
+    expect(saved[0].pendingHistoryReplay).toEqual({
+      kind: 'before-message',
+      messageId: 'interrupted-user'
+    })
+    expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
+    expect(
+      saved[0]?.messages.filter((message) => message.content === 'Delete the duplicates')
+    ).toHaveLength(1)
+  })
+
+  it('replays and consumes full-history recovery for an attached task session', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Summarize the evidence',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'The evidence is mixed.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      pendingHistoryReplay: { kind: 'all' }
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({ sessionId: 'unused' }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Compare the evidence groups.'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(prompts).toEqual([
+      expect.objectContaining({
+        text: 'Compare the evidence groups.',
+        contextReset: true,
+        historyPreamble:
+          'Previous conversation:\n\nUser: Summarize the evidence\n\nAssistant: The evidence is mixed.'
+      })
+    ])
+    expect(saved[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    expect(saved.at(-1)).not.toHaveProperty('pendingHistoryReplay')
+  })
+
+  it('retains full-history replay when the task prompt is rejected before acceptance', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      messages: [
+        {
+          id: 'prior-user',
+          role: 'user',
+          content: 'Summarize the evidence',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'prior-agent',
+          role: 'agent',
+          content: 'The evidence is mixed.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      pendingHistoryReplay: { kind: 'all' }
+    }
+    const saved: PersistedChatSession[] = []
+    const prompts: Parameters<TaskRunnerDependencies['agent']['prompt']>[0][] = []
+    const ids = ['new-user', 'new-run', 'new-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (value) => {
+          saved.push(structuredClone(value))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async () => ({ sessionId: 'unused' }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          prompts.push(request)
+          throw new Error('provider rejected prompt')
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Compare the evidence groups.'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(completed.status).toBe('failed')
+    expect(prompts[0]).toMatchObject({
+      contextReset: true,
+      historyPreamble:
+        'Previous conversation:\n\nUser: Summarize the evidence\n\nAssistant: The evidence is mixed.'
+    })
+    expect(saved[0].pendingHistoryReplay).toEqual({ kind: 'all' })
+    expect(saved.at(-1)?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
   it('provides transcript fallback for skill-triggered reconnects', async () => {
@@ -476,6 +939,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'unused' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async (request) => {
           prompts.push(request)
         }
@@ -522,6 +986,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-artifact', cwd: '/workspace/artifact' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'artifact-event',
@@ -590,6 +1055,7 @@ describe('TaskRunner', () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let saveCount = 0
     const ids = ['save-user', 'save-run', 'save-agent']
+    const progressPhases: string[] = []
     const runner = createRunner({
       sessions: {
         list: async () => [],
@@ -604,6 +1070,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-save', cwd: '/workspace/save' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'save-event',
@@ -625,6 +1092,7 @@ describe('TaskRunner', () => {
       createId: () => ids.shift() ?? 'generated-id',
       now: () => 100
     })
+    runner.subscribeProgress((event) => progressPhases.push(event.phase))
 
     const started = await runner.startRun({ project: project.id, prompt: 'Produce an answer.' })
 
@@ -635,6 +1103,7 @@ describe('TaskRunner', () => {
       completedAt: 100
     })
     expect(saveCount).toBe(3)
+    expect(progressPhases.at(-1)).toBe('failed')
   })
 
   it('preserves finalized artifacts when a later claim fails after an ownership retry', async () => {
@@ -655,6 +1124,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-partial', cwd: '/workspace/partial' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'artifact-first',
@@ -759,6 +1229,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: 'session-tool', cwd: '/workspace/tool' }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => {
           emitEvent?.({
             id: 'tool-start',
@@ -838,6 +1309,350 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('cancels one active run, retains partial output, and returns the Session to idle', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let rejectPrompt: ((error: Error) => void) | undefined
+    const promptGate = new Promise<void>((_resolve, reject) => {
+      rejectPrompt = reject
+    })
+    const savedSessions: PersistedChatSession[] = []
+    const cancelPrompt = vi.fn(async (sessionId: string) => {
+      emitEvent?.({
+        id: 'partial-output',
+        timestamp: 20,
+        kind: 'message',
+        level: 'info',
+        sessionId,
+        role: 'assistant',
+        text: 'Partial result.'
+      })
+      rejectPrompt?.(new Error('provider prompt cancelled'))
+    })
+    let time = 100
+    const progressPhases: string[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['cancel-user', 'cancel-run', 'cancel-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })(),
+      now: () => ++time
+    })
+    runner.subscribeProgress((event) => progressPhases.push(event.phase))
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Long research.' })
+    const cancelled = await runner.cancelRun(started.id)
+
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+    expect(cancelPrompt).toHaveBeenCalledWith('session-cancel')
+    expect(cancelled).toMatchObject({
+      status: 'cancelled',
+      output: 'Partial result.',
+      cancelRequestedAt: expect.any(Number),
+      cancelledAt: expect.any(Number),
+      completedAt: expect.any(Number)
+    })
+    expect(cancelled.cancelledAt).toBe(cancelled.completedAt)
+    expect(progressPhases.at(-1)).toBe('cancelled')
+    expect(savedSessions.at(-1)).toMatchObject({
+      id: 'session-cancel',
+      status: 'idle',
+      activeRun: undefined,
+      messages: [
+        expect.objectContaining({ role: 'user', content: 'Long research.' }),
+        expect.objectContaining({ role: 'agent', content: 'Partial result.' })
+      ]
+    })
+  })
+
+  it('deduplicates concurrent cancellation and treats terminal cancellation as a read', async () => {
+    let finishPrompt: (() => void) | undefined
+    let acceptCancellation: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const cancellationGate = new Promise<void>((resolve) => {
+      acceptCancellation = resolve
+    })
+    const cancelPrompt = vi.fn(async () => {
+      await cancellationGate
+      finishPrompt?.()
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-concurrent-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['concurrent-user', 'concurrent-run', 'concurrent-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Cancel once.' })
+    const first = runner.cancelRun(started.id)
+    const second = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    acceptCancellation?.()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: 'cancelled' }),
+      expect.objectContaining({ status: 'cancelled' })
+    ])
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({ status: 'cancelled' })
+    expect(cancelPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('leaves a naturally terminal run unchanged when cancellation arrives late', async () => {
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-completed' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => undefined,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['completed-user', 'completed-run', 'completed-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Finish naturally.' })
+    await runner.waitForRun(started.id)
+
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({
+      status: 'completed',
+      cancelRequestedAt: undefined,
+      cancelledAt: undefined
+    })
+    expect(cancelPrompt).not.toHaveBeenCalled()
+  })
+
+  it('observes cancellation accepted while the final Session save is draining', async () => {
+    let finalSaveStarted: (() => void) | undefined
+    let releaseFinalSave: (() => void) | undefined
+    const finalSaveStart = new Promise<void>((resolve) => {
+      finalSaveStarted = resolve
+    })
+    const finalSaveGate = new Promise<void>((resolve) => {
+      releaseFinalSave = resolve
+    })
+    let saveCount = 0
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => {
+          saveCount += 1
+          if (saveCount === 2) {
+            finalSaveStarted?.()
+            await finalSaveGate
+          }
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-during-save' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => undefined,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['save-user', 'save-run', 'save-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Finish and persist.' })
+    await finalSaveStart
+    const cancellation = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    releaseFinalSave?.()
+
+    await expect(cancellation).resolves.toMatchObject({ status: 'cancelled' })
+  })
+
+  it('keeps a real Prompt failure when cancellation is requested afterward', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finalizationStarted: (() => void) | undefined
+    let releaseFinalization: (() => void) | undefined
+    const finalizationStart = new Promise<void>((resolve) => {
+      finalizationStarted = resolve
+    })
+    const finalizationGate = new Promise<void>((resolve) => {
+      releaseFinalization = resolve
+    })
+    const cancelPrompt = vi.fn(async () => undefined)
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-failure-before-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'failure-artifact',
+            timestamp: 20,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-failure-before-cancel',
+            artifactClaimId: 'claim-failure-before-cancel',
+            artifacts: []
+          })
+          throw new Error('provider failed before cancellation')
+        },
+        cancelPrompt
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          finalizationStarted?.()
+          await finalizationGate
+          return { ok: true, artifacts: [] }
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['failure-user', 'failure-run', 'failure-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Fail first.' })
+    await finalizationStart
+    const cancellation = runner.cancelRun(started.id)
+    await vi.waitFor(() => expect(cancelPrompt).toHaveBeenCalledOnce())
+    releaseFinalization?.()
+
+    await expect(cancellation).resolves.toMatchObject({
+      status: 'failed',
+      error: 'provider failed before cancellation'
+    })
+  })
+
+  it('clears a rejected cancellation request while the run remains active', async () => {
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const cancelPrompt = vi.fn(async () => {
+      throw new Error('cancel dispatch failed')
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-failure' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => promptGate,
+        cancelPrompt
+      },
+      createId: (() => {
+        const ids = ['failure-user', 'failure-run', 'failure-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Keep working.' })
+    await expect(runner.cancelRun(started.id)).rejects.toThrow('cancel dispatch failed')
+    expect(runner.getRun(started.id)).toMatchObject({
+      status: 'running',
+      cancelRequestedAt: undefined
+    })
+
+    finishPrompt?.()
+    await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
+  })
+
+  it('lets Artifact finalization failure win after cancellation is accepted', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let finishPrompt: (() => void) | undefined
+    const promptGate = new Promise<void>((resolve) => {
+      finishPrompt = resolve
+    })
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-cancel-artifact' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'cancel-artifact',
+            timestamp: 20,
+            kind: 'artifact',
+            level: 'info',
+            sessionId: 'session-cancel-artifact',
+            artifactClaimId: 'claim-cancel-artifact',
+            artifacts: []
+          })
+          return promptGate
+        },
+        cancelPrompt: async () => finishPrompt?.()
+      },
+      artifacts: {
+        finalizeRun: async () => {
+          throw new Error('artifact finalization failed')
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: (() => {
+        const ids = ['artifact-user', 'artifact-run', 'artifact-agent']
+        return () => ids.shift() ?? 'generated-id'
+      })()
+    })
+
+    const started = await runner.startRun({ project: project.id, prompt: 'Create then cancel.' })
+
+    await expect(runner.cancelRun(started.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: 'artifact finalization failed'
+    })
+  })
+
   it('releases its runtime-event subscription when disposed', () => {
     let unsubscribeCount = 0
     const runner = createRunner({
@@ -864,6 +1679,7 @@ describe('TaskRunner', () => {
         createSession: async () => ({ sessionId: `session-${++sessionCounter}` }),
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
         prompt: async () => undefined
       },
       createId: () => `id-${++idCounter}`,

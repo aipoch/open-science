@@ -1,9 +1,27 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
 import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
 
-// Only the computeJob delegate is needed.
-type ComputeJobClient = Pick<PrismaClient, 'computeJob'>
+// Only ComputeJob persistence and a transaction wrapper are needed.
+type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
+
+export type ComputeJobOwner = Readonly<{
+  projectId: string
+  sessionId?: string
+}>
+
+export type ComputeJobSessionOwner = Readonly<{
+  projectId: string
+  sessionId: string
+}>
+
+const ownerWhere = (owner: ComputeJobOwner): { projectId: string; sessionId?: string } => ({
+  projectId: owner.projectId,
+  ...(owner.sessionId === undefined ? {} : { sessionId: owner.sessionId })
+})
+
+const sessionOwnerKey = (projectId: string, sessionId: string): string =>
+  JSON.stringify([projectId, sessionId])
 
 const asStatus = (value: string): ComputeJobStatus => {
   const valid: ComputeJobStatus[] = [
@@ -97,35 +115,106 @@ export type UpdateJobRequest = {
   notificationConsumedAt?: Date | null
 }
 
+type ComputeJobUpdateData = Parameters<ComputeJobClient['computeJob']['update']>[0]['data']
+
+const toUpdateData = (updates: UpdateJobRequest): ComputeJobUpdateData => {
+  const data: ComputeJobUpdateData = {}
+
+  if (updates.status !== undefined) data.status = updates.status
+  if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
+  if ('exitCode' in updates) data.exitCode = updates.exitCode
+  if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
+  if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
+  if ('errorCode' in updates) data.errorCode = updates.errorCode
+  if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
+  if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
+  if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
+  if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
+  if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
+  if ('harvestError' in updates) data.harvestError = updates.harvestError
+  if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
+  if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
+  if ('notificationConsumedAt' in updates)
+    data.notificationConsumedAt = updates.notificationConsumedAt
+
+  return data
+}
+
 // Owns ComputeJob reads/writes. Follows the same lazy-provider pattern as ComputeHostRepository.
 export class ComputeJobRepository {
+  private mutationQueue: Promise<unknown> = Promise.resolve()
+  private readonly deletingProjects = new Set<string>()
+  private readonly deletingSessions = new Set<string>()
+
   constructor(private readonly getClient: ComputeJobClientProvider) {}
 
-  async create(request: CreateJobRequest): Promise<ComputeJob> {
-    const client = await this.getClient()
-    const initialStatus = request.initialStatus ?? 'submitted'
-    const row = await client.computeJob.create({
-      data: {
-        id: request.id,
-        providerId: request.providerId,
-        shape: request.shape,
-        sessionId: request.sessionId,
-        projectId: request.projectId,
-        status: initialStatus,
-        intent: request.intent,
-        command: request.command,
-        commandHash: request.commandHash,
-        environment: request.environment,
-        resourceRequest: request.resourceRequest,
-        inputManifest: request.inputManifest,
-        outputManifest: request.outputManifest,
-        harvestConfig: request.harvestConfig,
-        timeoutSeconds: request.timeoutSeconds,
-        remoteWorkdir: request.remoteWorkdir,
-        submittedAt: initialStatus === 'submitted' ? new Date() : undefined
-      }
+  async beginOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      if (owner.sessionId === undefined) this.deletingProjects.add(owner.projectId)
+      else this.deletingSessions.add(sessionOwnerKey(owner.projectId, owner.sessionId))
     })
-    return toJob(row)
+  }
+
+  async abortOwnerDeletion(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      if (owner.sessionId === undefined) this.deletingProjects.delete(owner.projectId)
+      else this.deletingSessions.delete(sessionOwnerKey(owner.projectId, owner.sessionId))
+    })
+  }
+
+  async findByOwner(owner: ComputeJobOwner): Promise<ComputeJob[]> {
+    const client = await this.getClient()
+    const rows = await client.computeJob.findMany({
+      where: ownerWhere(owner),
+      orderBy: { createdAt: 'asc' }
+    })
+    return rows.map(toJob)
+  }
+
+  async listOwners(): Promise<ComputeJobSessionOwner[]> {
+    const client = await this.getClient()
+    return client.computeJob.findMany({
+      select: { projectId: true, sessionId: true },
+      distinct: ['projectId', 'sessionId'],
+      orderBy: [{ projectId: 'asc' }, { sessionId: 'asc' }]
+    })
+  }
+
+  async deleteByOwner(owner: ComputeJobOwner): Promise<void> {
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.computeJob.deleteMany({ where: ownerWhere(owner) })
+    })
+  }
+
+  async create(request: CreateJobRequest): Promise<ComputeJob> {
+    return this.runMutation(async () => {
+      this.assertOwnerMutable(request.projectId, request.sessionId)
+      const client = await this.getClient()
+      const initialStatus = request.initialStatus ?? 'submitted'
+      const row = await client.computeJob.create({
+        data: {
+          id: request.id,
+          providerId: request.providerId,
+          shape: request.shape,
+          sessionId: request.sessionId,
+          projectId: request.projectId,
+          status: initialStatus,
+          intent: request.intent,
+          command: request.command,
+          commandHash: request.commandHash,
+          environment: request.environment,
+          resourceRequest: request.resourceRequest,
+          inputManifest: request.inputManifest,
+          outputManifest: request.outputManifest,
+          harvestConfig: request.harvestConfig,
+          timeoutSeconds: request.timeoutSeconds,
+          remoteWorkdir: request.remoteWorkdir,
+          submittedAt: initialStatus === 'submitted' ? new Date() : undefined
+        }
+      })
+      return toJob(row)
+    })
   }
 
   async get(jobId: string): Promise<ComputeJob | null> {
@@ -141,7 +230,7 @@ export class ComputeJobRepository {
       where: { status: { in: ['queued', 'submitted', 'running'] } },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns all terminal jobs (success/failed/timeout) that have not yet been harvested.
@@ -155,7 +244,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns error-state jobs that have not yet emitted a compute_done notification.
@@ -172,7 +261,7 @@ export class ComputeJobRepository {
       },
       orderBy: { createdAt: 'asc' }
     })
-    return rows.map(toJob)
+    return this.excludeDeletingOwners(rows.map(toJob))
   }
 
   // Returns all non-terminal jobs for a given provider (used by per-host batch polling).
@@ -187,28 +276,34 @@ export class ComputeJobRepository {
 
   async update(jobId: string, updates: UpdateJobRequest): Promise<ComputeJob> {
     const client = await this.getClient()
-    const data: Parameters<typeof client.computeJob.update>[0]['data'] = {}
-
-    if (updates.status !== undefined) data.status = updates.status
-    if (updates.remoteHandle !== undefined) data.remoteHandle = updates.remoteHandle
-    if ('exitCode' in updates) data.exitCode = updates.exitCode
-    if ('stdoutTail' in updates) data.stdoutTail = updates.stdoutTail
-    if ('stderrTail' in updates) data.stderrTail = updates.stderrTail
-    if ('errorCode' in updates) data.errorCode = updates.errorCode
-    if ('lastPollError' in updates) data.lastPollError = updates.lastPollError
-    if (updates.submittedAt !== undefined) data.submittedAt = updates.submittedAt
-    if (updates.startedAt !== undefined) data.startedAt = updates.startedAt
-    if (updates.finishedAt !== undefined) data.finishedAt = updates.finishedAt
-    // Phase 3b harvest fields
-    if (updates.harvestedAt !== undefined) data.harvestedAt = updates.harvestedAt
-    if ('harvestError' in updates) data.harvestError = updates.harvestError
-    if ('leftOnRemote' in updates) data.leftOnRemote = updates.leftOnRemote
-    if ('notifiedAt' in updates) data.notifiedAt = updates.notifiedAt
-    if ('notificationConsumedAt' in updates)
-      data.notificationConsumedAt = updates.notificationConsumedAt
-
-    const row = await client.computeJob.update({ where: { id: jobId }, data })
+    const row = await client.computeJob.update({
+      where: { id: jobId },
+      data: toUpdateData(updates)
+    })
     return toJob(row)
+  }
+
+  async updateIfStatus(
+    jobId: string,
+    expectedStatuses: readonly ComputeJobStatus[],
+    updates: UpdateJobRequest
+  ): Promise<ComputeJob | null> {
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return null
+
+        const applied = await transaction.computeJob.updateMany({
+          where: { id: jobId, status: { in: [...expectedStatuses] } },
+          data: toUpdateData(updates)
+        })
+        if (applied.count === 0) return null
+
+        const row = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        return row ? toJob(row) : null
+      })
+    })
   }
 
   // Returns all jobs for a session, newest-first. Optionally filtered by status values.
@@ -329,6 +424,32 @@ export class ComputeJobRepository {
       orderBy: { createdAt: 'asc' }
     })
     return rows.map(toJob)
+  }
+
+  private assertOwnerMutable(projectId: string, sessionId: string): void {
+    if (!this.isOwnerMutable(projectId, sessionId)) {
+      throw new Error('Cannot create a Compute Job while its owner is being deleted.')
+    }
+  }
+
+  private excludeDeletingOwners(jobs: ComputeJob[]): ComputeJob[] {
+    return jobs.filter((job) => this.isOwnerMutable(job.project_id, job.session_id))
+  }
+
+  private isOwnerMutable(projectId: string, sessionId: string): boolean {
+    return (
+      !this.deletingProjects.has(projectId) &&
+      !this.deletingSessions.has(sessionOwnerKey(projectId, sessionId))
+    )
+  }
+
+  private runMutation<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const run = this.mutationQueue.then(operation, operation)
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 }
 

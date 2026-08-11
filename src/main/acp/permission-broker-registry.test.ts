@@ -10,7 +10,8 @@ import {
   createPermissionGrantRegistry,
   type PermissionGrantRegistry
 } from '../permission-grants/registry'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity } from './permission-policy'
 
@@ -141,6 +142,59 @@ const controlledEmptyGrantRegistry = (): {
 }
 
 describe('ACP permission broker with durable grants', () => {
+  it.each([
+    ['session', { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }],
+    ['project', { kind: 'project', projectId: 'project-1' }],
+    ['global', { kind: 'global' }]
+  ] as const)(
+    'commits a restored %s selection through the durable grant registry',
+    async (scope, expectedScope) => {
+      const registry = {
+        resolve: vi.fn().mockResolvedValue(undefined),
+        remember: vi.fn().mockResolvedValue(undefined),
+        list: vi.fn().mockResolvedValue([]),
+        listCached: vi.fn().mockReturnValue([]),
+        revoke: vi.fn(),
+        extendUndo: vi.fn(),
+        restore: vi.fn(),
+        prune: vi.fn(),
+        finalizeOwnerDeletion: vi.fn(),
+        subscribe: vi.fn().mockReturnValue(() => undefined)
+      } satisfies PermissionGrantRegistry
+      const broker = new AcpPermissionBroker(() => undefined, undefined, registry)
+      const option = {
+        optionId: `allow-${scope}`,
+        name: `Allow for ${scope}`,
+        kind: 'allow_always',
+        scope
+      } as const
+
+      await broker.prepareRestoredDecision(
+        {
+          state: 'pending',
+          request: {
+            requestId: 'permission-1',
+            sessionId: 'session-1',
+            toolCallId: 'tool-1',
+            title: 'Inspect repository status',
+            options: [option]
+          },
+          originatingPromptMessageId: 'prompt-1',
+          fingerprint: 'a'.repeat(64),
+          capability: { kind: 'execution', key: 'shell:git-status' },
+          createdAt: 1
+        },
+        option,
+        'project-1'
+      )
+
+      expect(registry.remember).toHaveBeenCalledWith({
+        capability: { kind: 'execution', key: 'shell:git-status' },
+        scope: expectedScope
+      })
+    }
+  )
+
   it('cancels a request while its durable grant lookup is still pending', async () => {
     let finishResolve: (() => void) | undefined
     const registry = {
@@ -294,10 +348,104 @@ describe('ACP permission broker with durable grants', () => {
     await expect(providerResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
   })
 
+  it('settles durable Session authority before committing a persistent grant', async () => {
+    const journal: string[] = []
+    const registry = {
+      resolve: vi.fn().mockResolvedValue(undefined),
+      remember: vi.fn(async () => {
+        journal.push('grant')
+        return undefined as never
+      }),
+      list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
+      revoke: vi.fn(),
+      extendUndo: vi.fn(),
+      restore: vi.fn(),
+      prune: vi.fn(),
+      finalizeOwnerDeletion: vi.fn(),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    } satisfies PermissionGrantRegistry
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      registry,
+      undefined,
+      {
+        persist: vi.fn(async () => true),
+        settleLive: vi.fn(async () => {
+          journal.push('authority')
+        })
+      }
+    )
+    const providerResponse = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const projectOption = emitted[0].options.find((option) => option.scope === 'project')
+    await broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: projectOption?.optionId
+    })
+
+    expect(journal).toEqual(['authority', 'grant'])
+    await expect(providerResponse).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+  })
+
+  it('does not commit a persistent grant when durable Session settlement fails', async () => {
+    const registry = {
+      resolve: vi.fn().mockResolvedValue(undefined),
+      remember: vi.fn(),
+      list: vi.fn().mockResolvedValue([]),
+      listCached: vi.fn().mockReturnValue([]),
+      revoke: vi.fn(),
+      extendUndo: vi.fn(),
+      restore: vi.fn(),
+      prune: vi.fn(),
+      finalizeOwnerDeletion: vi.fn(),
+      subscribe: vi.fn().mockReturnValue(() => undefined)
+    } satisfies PermissionGrantRegistry
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      registry,
+      undefined,
+      {
+        persist: vi.fn(async () => true),
+        settleLive: vi.fn(async () => {
+          throw new Error('Session write failed')
+        })
+      }
+    )
+    const providerResponse = broker.requestPermission(shellRequest('session-1'), {
+      profile: 'ask',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    const projectOption = emitted[0].options.find((option) => option.scope === 'project')
+    await expect(
+      broker.respond({
+        requestId: emitted[0].requestId,
+        optionId: projectOption?.optionId
+      })
+    ).rejects.toThrow('Permission approval could not be saved')
+
+    expect(registry.remember).not.toHaveBeenCalled()
+    await expect(providerResponse).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+
   it('commits a Global grant before returning only the provider one-call decision', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-registry-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -380,7 +528,7 @@ describe('ACP permission broker with durable grants', () => {
     async (shellDialect, command, commandPrefix) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
       client = createProjectDbClient(storageRoot)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
       const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -422,7 +570,7 @@ describe('ACP permission broker with durable grants', () => {
   it('offers only provider Once for a command that executes a mutable script', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -487,7 +635,7 @@ describe('ACP permission broker with durable grants', () => {
       const proposedPrefix = args.length === 3 ? args[2] : undefined
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-command-group-'))
       client = createProjectDbClient(storageRoot)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
       const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -526,7 +674,7 @@ describe('ACP permission broker with durable grants', () => {
   it('offers durable scopes for a Codex-proposed command group', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-codex-command-group-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -612,7 +760,7 @@ describe('ACP permission broker with durable grants', () => {
     async (toolName) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-built-in-'))
       client = createProjectDbClient(storageRoot)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
       const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -655,7 +803,7 @@ describe('ACP permission broker with durable grants', () => {
     async (title) => {
       storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-title-only-'))
       client = createProjectDbClient(storageRoot)
-      await ensureProjectSchema(client)
+      await migrateApplicationDatabase(client)
       await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
       const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
       const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -687,7 +835,7 @@ describe('ACP permission broker with durable grants', () => {
   it('routes every registered customization and local executor identity into durable scopes', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-registered-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -738,10 +886,29 @@ describe('ACP permission broker with durable grants', () => {
     )
   })
 
+  it('uses a default Global customization grant without prompting', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-default-grant-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    await seedDefaultPermissionGrants(registry, client)
+    const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+    const broker = new AcpPermissionBroker((request) => emitted.push(request), undefined, registry)
+
+    await expect(
+      broker.requestPermission(registeredToolRequest('agent_create'), {
+        profile: 'ask',
+        projectId: 'project-1'
+      })
+    ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'provider-allow-once' } })
+    expect(emitted).toEqual([])
+  })
+
   it('reuses one app MCP grant across Claude Code, Codex, OpenCode, and runtime-trusted sparse requests', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-acp-mcp-aliases-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -799,7 +966,7 @@ describe('ACP permission broker with durable grants', () => {
   it('offers durable Ask scopes for Plan capabilities without sharing their grants', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-plan-grants-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -869,7 +1036,7 @@ describe('ACP permission broker with durable grants', () => {
   it('uses runtime-trusted identity to align sparse dynamic MCP requests', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-dynamic-mcp-aliases-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -914,7 +1081,7 @@ describe('ACP permission broker with durable grants', () => {
   it('rejects a trusted MCP identity outside the configured server set', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mismatched-mcp-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
@@ -941,7 +1108,7 @@ describe('ACP permission broker with durable grants', () => {
   it('projects and revokes a durable Session grant through the composer seam', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-composer-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
     const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
     const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []

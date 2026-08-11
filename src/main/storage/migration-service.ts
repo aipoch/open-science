@@ -32,6 +32,7 @@ import { validateProvenanceMigrationState } from './provenance-migration-validat
 import { disconnectProjectDbClient } from '../projects/prisma-client'
 import { createLogger, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
+import { inspectWindowsStoragePath, type WindowsStoragePathCapabilities } from './remote-data-root'
 
 export { DATA_ROOT_DIRS } from './data-directories'
 
@@ -93,7 +94,12 @@ export const maxManagedEnvRelativePath = (dataRoot: string): number => {
 // Optional injectable deps for classifyDataRoot, so its write probe can be exercised in tests without
 // depending on platform-specific filesystem permission semantics (chmod is a POSIX-only no-op on
 // Windows).
-type ClassifyDataRootDeps = { canWrite?: (dir: string) => Promise<boolean> }
+type ClassifyDataRootDeps = {
+  canWrite?: (dir: string) => Promise<boolean>
+  inspectPath?: (
+    dir: string
+  ) => WindowsStoragePathCapabilities | Promise<WindowsStoragePathCapabilities>
+}
 
 // Real write probe (create + delete a temp file) instead of only fs.access(W_OK): access() checks
 // POSIX bits but NOT macOS TCC (Documents/Desktop/Downloads/external & network volumes) or read-only
@@ -121,6 +127,28 @@ export const classifyDataRoot = async (
   const resolvedParent = resolve(parent)
   const current = resolve(currentDataRoot)
   const target = dataRootForPicked(parent)
+
+  const inspectPath = deps.inspectPath ?? inspectWindowsStoragePath
+  const validateWindowsStoragePath = async (path: string): Promise<ClassifyResult | undefined> => {
+    if (process.platform !== 'win32') return undefined
+
+    const capabilities = await inspectPath(path)
+    if (capabilities.isRemote) {
+      return {
+        kind: 'invalid',
+        error:
+          'Network folders are not supported as the Open Science data location on Windows. Choose a folder on a local drive.'
+      }
+    }
+    if (!capabilities.supportsHardLinks) {
+      return {
+        kind: 'invalid',
+        error:
+          "This drive's file system does not support safe atomic publication on Windows. Choose a folder on a drive that supports hard links, such as NTFS."
+      }
+    }
+    return undefined
+  }
 
   // Reject control characters on every platform (near-impossible from the OS picker, but the New
   // location field also accepts typed input). Spaces are handled per-platform below: allowed on
@@ -180,6 +208,13 @@ export const classifyDataRoot = async (
     return { kind: 'invalid', error: 'The selected folder does not exist.' }
   }
 
+  try {
+    const invalid = await validateWindowsStoragePath(resolvedParent)
+    if (invalid) return invalid
+  } catch {
+    return { kind: 'invalid', error: 'The selected folder is not usable.' }
+  }
+
   // Probing here surfaces TCC-denied, read-only, and out-of-space cases up front with a clear
   // message, before any migration starts (rather than failing mid-copy with a cryptic error).
   const canWrite = deps.canWrite ?? defaultCanWrite
@@ -207,6 +242,9 @@ export const classifyDataRoot = async (
     if (!targetStat.isDirectory()) {
       return { kind: 'invalid', error: 'The selected folder is not usable.' }
     }
+
+    const invalid = await validateWindowsStoragePath(target)
+    if (invalid) return invalid
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return { kind: 'move' }
     return { kind: 'invalid', error: 'The selected folder is not usable.' }

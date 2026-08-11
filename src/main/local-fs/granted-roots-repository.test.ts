@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SettingsRepository } from '../settings/repository'
 import {
   GrantedLocalRootsRepository,
@@ -35,7 +35,7 @@ const createRepository = async (
 ): Promise<GrantedLocalRootsRepository> => {
   storageRoot = await mkdtemp(join(tmpdir(), 'open-science-granted-roots-'))
   client = createProjectDbClient(storageRoot)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
 
   return new GrantedLocalRootsRepository(() => Promise.resolve(client!), legacy)
 }

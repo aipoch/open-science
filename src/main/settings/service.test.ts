@@ -2719,6 +2719,12 @@ describe('SettingsService: preflight & spawn config', () => {
         expect.objectContaining({
           type: 'function',
           function: expect.objectContaining({
+            name: 'mcp__open_science_notebook__ask_user_question'
+          })
+        }),
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
             name: 'mcp__open_science_notebook__notebook_execute',
             description: expect.stringContaining('MUST call host.mcp')
           })
@@ -3415,6 +3421,16 @@ describe('SettingsService: image-input capability', () => {
     })
     const claude = claudeSnapshot.providers.find((p) => p.vendorId === 'anthropic')
     expect(claude?.supportsImageInput).toBe(true)
+
+    // MiniMax defaults to the natively multimodal M3 model.
+    const minimaxSnapshot = await service.upsertProvider({
+      type: 'official',
+      name: 'MiniMax',
+      vendorId: 'minimax',
+      key: 'k'
+    })
+    const minimax = minimaxSnapshot.providers.find((p) => p.vendorId === 'minimax')
+    expect(minimax?.supportsImageInput).toBe(true)
 
     // DeepSeek's default model is text-only.
     const deepseekSnapshot = await service.upsertProvider({
@@ -5041,6 +5057,34 @@ describe('SettingsService: app icon variant', () => {
     expect(snapshot.appIconVariant).toBe('dark')
     expect(await service.getAppIconVariant()).toBe('dark')
     expect((await repository.getSettings()).appIconVariant).toBe('dark')
+  })
+})
+
+describe('SettingsService: default permission profile', () => {
+  it('projects ask when no profile is stored', async () => {
+    const service = createService()
+
+    expect((await service.getSettingsView()).defaultPermissionProfile).toBe('ask')
+  })
+
+  it('projects a valid profile from settings.json', async () => {
+    await writeFile(
+      join(storageRoot, 'settings.json'),
+      JSON.stringify({ defaultPermissionProfile: 'auto' }),
+      'utf8'
+    )
+    const service = createService()
+
+    expect((await service.getSettingsView()).defaultPermissionProfile).toBe('auto')
+  })
+
+  it('persists a profile and returns the refreshed snapshot', async () => {
+    const service = createService()
+
+    const snapshot = await service.setDefaultPermissionProfile('full')
+
+    expect(snapshot.defaultPermissionProfile).toBe('full')
+    expect((await repository.getSettings()).defaultPermissionProfile).toBe('full')
   })
 })
 

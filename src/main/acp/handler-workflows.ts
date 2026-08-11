@@ -3,6 +3,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
+  AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpStateSnapshot
@@ -10,6 +11,8 @@ import type {
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import { continueInterruptedTurn } from './interrupted-turn-continuation'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -30,6 +33,8 @@ type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
+  getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
+  startContinuation(request: AcpPromptRequest): Promise<void>
 }
 
 type PromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -49,7 +54,12 @@ type SessionArchiveAvailability = {
 type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
+  continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
   sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+}
+
+type InterruptedTurnSessionSource = {
+  loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
 }
 
 const safeRead = (value: object, key: string): unknown => {
@@ -110,7 +120,8 @@ const createAcpHandlerWorkflows = (
   runtime: AcpHandlerWorkflowRuntime,
   createSessionWorkflow: AcpCreateSessionWorkflow,
   taskNotifications?: PromptNotifications,
-  archiveAvailability?: SessionArchiveAvailability
+  archiveAvailability?: SessionArchiveAvailability,
+  interruptedTurnSessions?: InterruptedTurnSessionSource
 ): AcpHandlerWorkflows => ({
   async createSession(request): Promise<AcpCreateSessionResponse> {
     try {
@@ -160,6 +171,25 @@ const createAcpHandlerWorkflows = (
       })
       throw error
     }
+  },
+
+  async continueInterruptedTurn(request): Promise<AcpStateSnapshot> {
+    if (!interruptedTurnSessions) {
+      throw new Error('Interrupted turn continuation is not available.')
+    }
+    const run = (): Promise<AcpStateSnapshot> =>
+      continueInterruptedTurn(
+        {
+          runtime,
+          loadSession: (projectId, sessionId) =>
+            interruptedTurnSessions.loadSession(projectId, sessionId),
+          notifications: taskNotifications
+        },
+        request
+      )
+    return archiveAvailability
+      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, run)
+      : run()
   },
 
   async sendPrompt(request): Promise<AcpStateSnapshot> {

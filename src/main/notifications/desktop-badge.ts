@@ -66,7 +66,7 @@ export const createDesktopBadgeAdapter = <Overlay>(
         windowsOverlays.set(label, overlay)
       }
 
-      window.setOverlayIcon(overlay, `${count} unread ${count === 1 ? 'task' : 'tasks'}`)
+      window.setOverlayIcon(overlay, `${count} unread ${count === 1 ? 'message' : 'messages'}`)
     } catch (error) {
       deps.onError?.(error)
     }

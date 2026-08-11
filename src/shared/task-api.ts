@@ -3,7 +3,27 @@ import type { PermissionProfileId } from './permission-profiles'
 import type { Project } from './projects'
 import type { PersistedSessionStatus } from './session-persistence'
 
-export type TaskRunStatus = 'running' | 'completed' | 'failed'
+export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export type TaskRunProgressPhase =
+  | 'accepted'
+  | 'session-ready'
+  | 'prompt-dispatched'
+  | 'provider-accepted'
+  | 'first-visible-output'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type TaskRunProgressEvent = {
+  runId: string
+  sessionId: string
+  projectId: string
+  phase: TaskRunProgressPhase
+  timestamp: number
+  elapsedMs: number
+  heartbeat: boolean
+}
 
 export type StartTaskRunRequest = {
   project: string
@@ -19,6 +39,8 @@ export type TaskRun = {
   projectId: string
   status: TaskRunStatus
   startedAt: number
+  cancelRequestedAt?: number
+  cancelledAt?: number
   completedAt?: number
   output?: string
   error?: string

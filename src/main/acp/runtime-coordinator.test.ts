@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import type {
+  AcpPermissionRequest,
+  AcpPermissionResponse,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
@@ -9,12 +14,15 @@ import type { AgentModelChangeTarget } from '../agent-framework'
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
   resolve: (value: Value) => void
+  reject: (error: unknown) => void
 } => {
   let resolve!: (value: Value) => void
-  const promise = new Promise<Value>((promiseResolve) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<Value>((promiseResolve, promiseReject) => {
     resolve = promiseResolve
+    reject = promiseReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 const emptySnapshot = (): AcpStateSnapshot => ({
@@ -34,7 +42,7 @@ const runtimeEventId = (runtimeSequence: number, eventId: string): RegExp =>
   new RegExp(`^runtime-${runtimeSequence}-[0-9a-f-]{36}:${eventId}$`, 'u')
 
 const createFakeRuntime = (options: {
-  frameworkId: 'claude-code' | 'codex'
+  frameworkId: 'claude-code' | 'opencode' | 'codex'
   sessionIds: string[]
   callbacks: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
@@ -44,6 +52,8 @@ const createFakeRuntime = (options: {
   beforeResume?: () => Promise<void>
   afterResumeAttached?: () => Promise<void>
   eligibleAttachmentUri?: string
+  activePromptSessions?: { projectName: string; sessionId: string }[]
+  quitBlockingSessions?: { projectName: string; sessionId: string }[]
   prompt?: (sessionId: string) => Promise<unknown>
 }): {
   runtime: AcpRuntime
@@ -63,6 +73,7 @@ const createFakeRuntime = (options: {
   applyReasoningEffortChange: ReturnType<typeof vi.fn>
   applyModelChange: ReturnType<typeof vi.fn>
   respondToPermission: ReturnType<typeof vi.fn>
+  requestUserInput: ReturnType<typeof vi.fn>
   emitEvent: (event: AcpRuntimeEvent) => void
   emitPermission: (request: AcpPermissionRequest) => void
   emitState: (overrides: Partial<AcpStateSnapshot>) => void
@@ -122,7 +133,14 @@ const createFakeRuntime = (options: {
   const requestProviderReconnect = vi.fn(async () => undefined)
   const applyReasoningEffortChange = vi.fn(async () => true)
   const applyModelChange = vi.fn(async () => true)
-  const respondToPermission = vi.fn(() => snapshot)
+  const respondToPermission = vi.fn((response: AcpPermissionResponse) => {
+    options.callbacks.onPermissionSettled?.(
+      response.requestId,
+      response.cancelled ? 'cancelled' : 'resolved'
+    )
+    return snapshot
+  })
+  const requestUserInput = vi.fn(async () => ({ action: 'answered', answer: 'Minimal' }))
   const shutdown = vi.fn()
   const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
   const shutdownForUpdateGate = vi.fn(async () => ({ reaped: true }))
@@ -170,7 +188,8 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
-    getActivePromptSessions: () => [],
+    getActivePromptSessions: () => options.activePromptSessions ?? [],
+    getQuitBlockingPromptSessions: () => options.quitBlockingSessions ?? [],
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
@@ -210,6 +229,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     respondToPermission,
+    requestUserInput,
     shutdown,
     shutdownForQuit,
     shutdownForUpdateGate
@@ -233,6 +253,7 @@ const createFakeRuntime = (options: {
     applyReasoningEffortChange,
     applyModelChange,
     respondToPermission,
+    requestUserInput,
     emitEvent: (event) => {
       snapshot = { ...snapshot, events: [...snapshot.events, event] }
       options.callbacks.onEvent?.(event)
@@ -255,6 +276,85 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('publishes snapshots with a coordinator-wide monotonic revision', () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks
+        }).runtime
+    )
+
+    expect(coordinator.getSnapshot().revision).toBe(1)
+    expect(coordinator.getSnapshot().revision).toBe(2)
+  })
+
+  it('combines only the quit-blocking prompts reported by each runtime generation', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          quitBlockingSessions: [{ projectName: 'project-1', sessionId: 'session-running' }]
+        }).runtime
+    )
+    await coordinator.connect()
+
+    expect(coordinator.getQuitBlockingPromptSessions()).toEqual([
+      { projectName: 'project-1', sessionId: 'session-running' }
+    ])
+  })
+
+  it.each([
+    ['Claude Code', 'claude-code'],
+    ['OpenCode', 'opencode'],
+    ['Codex shared runtime', 'codex']
+  ] as const)(
+    'observes provider acceptance through %s without changing completion',
+    async (_route, frameworkId) => {
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({ frameworkId, sessionIds: ['session-1'], callbacks }).runtime
+      )
+      const session = await coordinator.createSession()
+      const onProviderPromptAccepted = vi.fn()
+
+      await coordinator.sendPromptObserved(
+        { sessionId: session.sessionId, text: 'Research this.' },
+        onProviderPromptAccepted
+      )
+
+      expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('does not report provider acceptance when dispatch fails before acceptance', async () => {
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeProviderPromptAccepted: async () => {
+            throw new Error('provider rejected before acceptance')
+          }
+        }).runtime
+    )
+    const session = await coordinator.createSession()
+    const onProviderPromptAccepted = vi.fn()
+
+    await expect(
+      coordinator.sendPromptObserved(
+        { sessionId: session.sessionId, text: 'Research this.' },
+        onProviderPromptAccepted
+      )
+    ).rejects.toThrow('provider rejected before acceptance')
+
+    expect(onProviderPromptAccepted).not.toHaveBeenCalled()
+  })
+
   it('retains a sanitized app-visible Specialist handoff failure until session deletion', async () => {
     const forwardedEvents: AcpRuntimeEvent[] = []
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -699,6 +799,61 @@ describe('AcpRuntimeCoordinator', () => {
     await running
     await preparing
     expect(prepared).toBe(true)
+  })
+
+  it('preserves a durable permission wait during quit preparation', async () => {
+    const prompt = createDeferred<unknown>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: () => prompt.promise,
+        activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+        quitBlockingSessions: []
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1'
+    })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
+    await Promise.resolve()
+
+    await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
+    expect(created.cancelPrompt).not.toHaveBeenCalled()
+
+    await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+    prompt.reject(new Error('provider connection closed during quit'))
+    await expect(running).resolves.toMatchObject({ stopReason: 'cancelled' })
+  })
+
+  it('preserves an unexpected durable prompt failure before provider quit teardown', async () => {
+    const prompt = createDeferred<unknown>()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        createFakeRuntime({
+          frameworkId: 'claude-code',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => prompt.promise,
+          activePromptSessions: [{ projectName: 'project-1', sessionId: 'session-1' }],
+          quitBlockingSessions: []
+        }).runtime
+    )
+    const session = await coordinator.createSession({
+      cwd: '/workspace',
+      projectName: 'project-1'
+    })
+    const running = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'wait for me' })
+    await Promise.resolve()
+
+    await expect(coordinator.prepareForQuit(1_000)).resolves.toBe('completed')
+    prompt.reject(new Error('unexpected persistence failure'))
+
+    await expect(running).rejects.toThrow('unexpected persistence failure')
   })
 
   it('bounds quit preparation when an agent never returns a terminal response', async () => {
@@ -2112,6 +2267,7 @@ describe('AcpRuntimeCoordinator', () => {
   it('namespaces events and routes permission responses to their owning runtime', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const forwardedEvents: AcpRuntimeEvent[] = []
+    const settleAuthorization = vi.fn()
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {
         const fake = createFakeRuntime({
@@ -2122,7 +2278,11 @@ describe('AcpRuntimeCoordinator', () => {
         created.push(fake)
         return fake.runtime
       },
-      { onEvent: (event) => forwardedEvents.push(event) }
+      {
+        onEvent: (event) => forwardedEvents.push(event),
+        onPermissionSettled: (requestId, state) =>
+          settleAuthorization('agent-tool', requestId, state)
+      }
     )
 
     await coordinator.createSession()
@@ -2159,13 +2319,32 @@ describe('AcpRuntimeCoordinator', () => {
     }
     created[0].emitPermission(permission)
     expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
-    coordinator.respondToPermission({ requestId: permission.requestId, cancelled: true })
+    await coordinator.respondToPermission({ requestId: permission.requestId, cancelled: true })
 
     expect(created[0].respondToPermission).toHaveBeenCalledWith({
       requestId: 'permission-1',
       cancelled: true
     })
     expect(created[1].respondToPermission).not.toHaveBeenCalled()
+    expect(settleAuthorization).toHaveBeenCalledWith(
+      'agent-tool',
+      permission.requestId,
+      'cancelled'
+    )
+
+    await expect(
+      coordinator.requestUserInput({
+        sessionId: 'session-1',
+        questions: [
+          {
+            question: 'Which approach?',
+            options: [{ label: 'Minimal' }, { label: 'Expanded' }]
+          }
+        ]
+      })
+    ).resolves.toEqual({ action: 'answered', answer: 'Minimal' })
+    expect(created[0].requestUserInput).toHaveBeenCalledOnce()
+    expect(created[1].requestUserInput).not.toHaveBeenCalled()
   })
 
   it('does not reuse persisted event namespaces across coordinator lifetimes', async () => {
