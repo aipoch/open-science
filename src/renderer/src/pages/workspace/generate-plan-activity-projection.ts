@@ -46,8 +46,7 @@ const contentHeading = (activity: ToolActivity, hasDurablePlanAuthority: boolean
     ? 'Creating execution Plan'
     : 'Created execution Plan'
 
-const parseGeneratePlanDocument = (rawInput: unknown): PlanDocumentV1 | undefined => {
-  const input = unwrapArguments(rawInput)
+const buildPlanDocument = (input: unknown): PlanDocumentV1 | undefined => {
   if (isRecord(input)) {
     const hasPlanContent = PLAN_CONTENT_FIELDS.some((field) => input[field] !== undefined)
     const hasDecisionInput = input.decision !== undefined || 'approve' in input
@@ -61,6 +60,9 @@ const parseGeneratePlanDocument = (rawInput: unknown): PlanDocumentV1 | undefine
     return undefined
   }
 }
+
+const parseGeneratePlanDocument = (rawInput: unknown): PlanDocumentV1 | undefined =>
+  buildPlanDocument(unwrapArguments(rawInput))
 
 const projectGeneratePlanActivity = (
   activity: ToolActivity,
@@ -111,7 +113,7 @@ const projectGeneratePlanActivity = (
     }
   }
 
-  const document = parseGeneratePlanDocument(activity.rawInput)
+  const document = buildPlanDocument(input)
   if (document) {
     const steps = document.phases.flatMap((phase) =>
       phase.delegations.flatMap((delegation) => delegation.steps)

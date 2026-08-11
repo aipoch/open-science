@@ -16,17 +16,10 @@ class SessionPlanContinuationOwner {
   constructor(private readonly sessions: SessionPlanContinuationSessions) {}
 
   async begin(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
-    const plan = context.plan
-    const continuation = plan?.continuation
-    if (!plan || continuation?.commandId !== commandId || continuation.state !== 'queued') {
-      return false
-    }
-
-    return this.patch(projectId, sessionId, context.revision, plan, {
+    return this.transitionTo(projectId, sessionId, commandId, 'queued', (continuation) => ({
       ...continuation,
       state: 'continuing'
-    })
+    }))
   }
 
   async rearmUndispatched(
@@ -34,42 +27,43 @@ class SessionPlanContinuationOwner {
     sessionId: string,
     commandId: string
   ): Promise<boolean> {
-    const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
-    const plan = context.plan
-    const continuation = plan?.continuation
-    if (!plan || continuation?.commandId !== commandId || continuation.state !== 'continuing') {
-      return false
-    }
-
-    return this.patch(projectId, sessionId, context.revision, plan, {
+    return this.transitionTo(projectId, sessionId, commandId, 'continuing', (continuation) => ({
       ...continuation,
       state: 'queued'
-    })
+    }))
   }
 
   async clear(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
-    const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
-    const plan = context.plan
-    const continuation = plan?.continuation
-    if (!plan || continuation?.commandId !== commandId || continuation.state !== 'continuing') {
-      return false
-    }
-
-    return this.patch(projectId, sessionId, context.revision, plan, undefined)
+    return this.transitionTo(projectId, sessionId, commandId, 'continuing', () => undefined)
   }
 
   async interrupt(projectId: string, sessionId: string, commandId: string): Promise<boolean> {
+    return this.transitionTo(projectId, sessionId, commandId, 'continuing', (continuation) => ({
+      ...continuation,
+      state: 'interrupted'
+    }))
+  }
+
+  private async transitionTo(
+    projectId: string,
+    sessionId: string,
+    commandId: string,
+    expectedState: SessionPlanContinuation['state'],
+    apply: (continuation: SessionPlanContinuation) => SessionPlanContinuation | undefined
+  ): Promise<boolean> {
     const context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
     const plan = context.plan
     const continuation = plan?.continuation
-    if (!plan || continuation?.commandId !== commandId || continuation.state !== 'continuing') {
+    if (
+      !plan ||
+      !continuation ||
+      continuation.commandId !== commandId ||
+      continuation.state !== expectedState
+    ) {
       return false
     }
 
-    return this.patch(projectId, sessionId, context.revision, plan, {
-      ...continuation,
-      state: 'interrupted'
-    })
+    return this.patch(projectId, sessionId, context.revision, plan, apply(continuation))
   }
 
   private async patch(
