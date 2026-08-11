@@ -11,6 +11,7 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
+type E2eWindowMode = 'hidden' | 'inactive' | 'normal'
 
 const electronLaunchTarget = (
   userDataRoot: string,
@@ -111,7 +112,8 @@ const launchEnvironment = (
   storageRoot: string,
   fakeAgentBinRoot?: string,
   inheritedEnvironment: NodeJS.ProcessEnv = process.env,
-  fakeRemoteItRoot?: string
+  fakeRemoteItRoot?: string,
+  windowMode: E2eWindowMode = 'hidden'
 ): Record<string, string> => {
   const environment: Record<string, string> = {}
 
@@ -121,6 +123,7 @@ const launchEnvironment = (
 
   environment.OPEN_SCIENCE_STORAGE_ROOT = storageRoot
   environment.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT = join(storageRoot, 'e2e-handoff-captures')
+  environment.OPEN_SCIENCE_E2E_WINDOW_MODE = windowMode
   if (environment.OPEN_SCIENCE_E2E_EXECUTABLE) {
     environment.OPEN_SCIENCE_E2E_STORAGE_ROOT = storageRoot
   }
@@ -145,7 +148,8 @@ const launchOpenScience = async (
   { storageRoot, userDataRoot, fakeAgentBinRoot }: LaunchRoots,
   fakeAgentEnabled: boolean,
   fakeRemoteItEnabled: boolean,
-  fakeRemoteItRoot: string
+  fakeRemoteItRoot: string,
+  windowMode: E2eWindowMode
 ): Promise<ElectronApplication> => {
   const application = await electron.launch({
     ...electronLaunchTarget(userDataRoot),
@@ -154,7 +158,8 @@ const launchOpenScience = async (
       storageRoot,
       fakeAgentEnabled ? fakeAgentBinRoot : undefined,
       process.env,
-      fakeRemoteItEnabled ? fakeRemoteItRoot : undefined
+      fakeRemoteItEnabled ? fakeRemoteItRoot : undefined,
+      windowMode
     )
   })
 
@@ -244,18 +249,23 @@ class ElectronAppHarness implements ElectronApp {
 
   private constructor(
     private readonly testRoot: string,
-    private readonly roots: LaunchRoots
+    private readonly roots: LaunchRoots,
+    private readonly windowMode: E2eWindowMode
   ) {}
 
-  static async create(): Promise<ElectronAppHarness> {
+  static async create(windowMode: E2eWindowMode): Promise<ElectronAppHarness> {
     const testRoot = await mkdtemp(join(tmpdir(), 'open-science-electron-e2e-'))
-    const harness = new ElectronAppHarness(testRoot, {
-      fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
-      fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
-      fakeRemoteItState: join(testRoot, 'storage', 'fake-remoteit-state.json'),
-      storageRoot: join(testRoot, 'storage'),
-      userDataRoot: join(testRoot, 'electron-profile')
-    })
+    const harness = new ElectronAppHarness(
+      testRoot,
+      {
+        fakeAgentBinRoot: join(testRoot, 'fake-agent-bin'),
+        fakeRemoteItRoot: join(testRoot, 'fake-remoteit'),
+        fakeRemoteItState: join(testRoot, 'storage', 'fake-remoteit-state.json'),
+        storageRoot: join(testRoot, 'storage'),
+        userDataRoot: join(testRoot, 'electron-profile')
+      },
+      windowMode
+    )
     try {
       await mkdir(harness.roots.storageRoot, { recursive: true })
       await writeFile(harness.roots.fakeRemoteItState, JSON.stringify({ services: [] }), 'utf8')
@@ -385,7 +395,8 @@ class ElectronAppHarness implements ElectronApp {
             this.roots.storageRoot,
             this.fakeAgentEnabled ? this.roots.fakeAgentBinRoot : undefined,
             process.env,
-            this.fakeRemoteItEnabled ? this.roots.fakeRemoteItRoot : undefined
+            this.fakeRemoteItEnabled ? this.roots.fakeRemoteItRoot : undefined,
+            this.windowMode
           ),
           stdio: 'ignore'
         }
@@ -509,7 +520,8 @@ class ElectronAppHarness implements ElectronApp {
       this.roots,
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
-      this.roots.fakeRemoteItRoot
+      this.roots.fakeRemoteItRoot,
+      this.windowMode
     )
     this.currentPage = await openMainWindow(this.application, this.rendererFailures)
   }
@@ -598,11 +610,11 @@ class ElectronAppHarness implements ElectronApp {
   }
 }
 
-const test = base.extend<{ app: ElectronApp }>({
+const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
+  windowMode: ['hidden', { option: true }],
   // Playwright fixture callbacks require an object pattern even when no base fixture is needed.
-  // eslint-disable-next-line no-empty-pattern
-  app: async ({}, install) => {
-    const app = await ElectronAppHarness.create()
+  app: async ({ windowMode }, install) => {
+    const app = await ElectronAppHarness.create(windowMode)
 
     try {
       await install(app)

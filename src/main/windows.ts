@@ -38,6 +38,7 @@ const icon = process.platform === 'win32' ? iconWindows : iconPng
 // same way in dev (project root) and packaged (asar root) via app.getAppPath().
 const findOverlayEntry = join(app.getAppPath(), 'resources/find-overlay/index.html')
 const log = createLogger('window')
+const E2E_WINDOW_MODE_ENV = 'OPEN_SCIENCE_E2E_WINDOW_MODE'
 const RENDERER_RECOVERY_WINDOW_MS = 60_000
 const MAX_AUTOMATIC_RENDERER_RECOVERIES = 2
 const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
@@ -58,6 +59,7 @@ const loadRenderer = (window: BrowserWindow): void => {
 }
 
 const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindow => {
+  const e2eWindowMode = process.env[E2E_WINDOW_MODE_ENV]
   const window = new BrowserWindow({
     show: false,
     autoHideMenuBar: true,
@@ -73,6 +75,11 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   })
 
   window.on('ready-to-show', () => {
+    if (e2eWindowMode === 'hidden') return
+    if (e2eWindowMode === 'inactive') {
+      window.showInactive()
+      return
+    }
     window.show()
   })
 

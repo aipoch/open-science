@@ -14,6 +14,7 @@ const openGeneralSettings = async (page: Page): Promise<Locator> => {
 
 test.describe('Windows window system', () => {
   test.skip(process.platform !== 'win32', 'Windows window behavior requires a Windows host.')
+  test.use({ windowMode: 'normal' })
 
   test('persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W', async ({ app }) => {
     let page = await app.completeOnboarding()

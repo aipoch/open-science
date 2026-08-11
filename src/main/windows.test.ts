@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
@@ -66,6 +66,8 @@ class FakeBrowserWindow {
   destroyMock = vi.fn()
   loadFileMock = vi.fn(() => Promise.resolve())
   sendMock = vi.fn()
+  showInactiveMock = vi.fn()
+  showMock = vi.fn()
   webContentsHandlers = new Map<string, WebContentsHandler>()
   handlers = new Map<string, Array<(event: CloseEvent) => void>>()
   hidden = false
@@ -109,6 +111,12 @@ class FakeBrowserWindow {
   }
 
   show(): void {
+    this.showMock()
+    this.hidden = false
+  }
+
+  showInactive(): void {
+    this.showInactiveMock()
     this.hidden = false
   }
 
@@ -189,6 +197,45 @@ const emitClose = (window: FakeBrowserWindow): CloseEvent => {
   if (!event.defaultPrevented) window.destroyed = true
   return event
 }
+
+describe('window presentation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('keeps E2E windows hidden when they become ready', () => {
+    vi.stubEnv('OPEN_SCIENCE_E2E_WINDOW_MODE', 'hidden')
+
+    createMainWindow()
+    const window = lastWindow!
+    for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
+
+    expect(window.showMock).not.toHaveBeenCalled()
+    expect(window.showInactiveMock).not.toHaveBeenCalled()
+  })
+
+  it('shows E2E windows without activating them in inactive mode', () => {
+    vi.stubEnv('OPEN_SCIENCE_E2E_WINDOW_MODE', 'inactive')
+
+    createMainWindow()
+    const window = lastWindow!
+    for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
+
+    expect(window.showMock).not.toHaveBeenCalled()
+    expect(window.showInactiveMock).toHaveBeenCalledOnce()
+  })
+
+  it('keeps normal application startup behavior when no E2E mode is set', () => {
+    vi.stubEnv('OPEN_SCIENCE_E2E_WINDOW_MODE', undefined)
+
+    createMainWindow()
+    const window = lastWindow!
+    for (const handler of window.handlers.get('ready-to-show') ?? []) handler({} as CloseEvent)
+
+    expect(window.showMock).toHaveBeenCalledOnce()
+    expect(window.showInactiveMock).not.toHaveBeenCalled()
+  })
+})
 
 describe('window navigation policy', () => {
   it('allows only explicit external URL protocols', async () => {
