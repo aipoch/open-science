@@ -1251,28 +1251,16 @@ const createApplicationModules = async (
     onPublishedSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
   })
   const hostLlmLog = createLogger('notebook:host-llm')
-  const hostLlmService = await modules.add(
-    new HostLlmService({
-      captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
-      runner: new RestrictedInferenceRunner({
-        appVersion: app.getVersion(),
-        configRoot,
-        profileNamespace: 'host-llm',
-        resolveTarget: (target, context) =>
-          settingsService.resolveExplicitAgentBackend(target, context)
-      })
-    }),
-    (service) => ({
-      name: 'host-llm-service',
-      capability: service,
-      dispose: () => service.shutdown()
+  const hostLlmService = new HostLlmService({
+    captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+    runner: new RestrictedInferenceRunner({
+      appVersion: app.getVersion(),
+      configRoot,
+      profileNamespace: 'host-llm',
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context)
     })
-  )
-  void hostLlmService
-    .sweepStaleProfiles()
-    .catch((error) =>
-      hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
-    )
+  })
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
@@ -1328,6 +1316,17 @@ const createApplicationModules = async (
     }),
     createNotebookLocalRpcModule
   )
+  // Reverse module disposal cancels active inference before the RPC server waits for its handlers.
+  await modules.add(hostLlmService, (service) => ({
+    name: 'host-llm-service',
+    capability: service,
+    dispose: () => service.shutdown()
+  }))
+  void hostLlmService
+    .sweepStaleProfiles()
+    .catch((error) =>
+      hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
+    )
   // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
   // through the coordinator first, then releases the local bridge without creating a second runtime
   // shutdown owner; rollback also closes a server started during partial composition.

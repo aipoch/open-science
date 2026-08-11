@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRuntimeServiceOptions } from './runtime-service'
@@ -152,6 +154,15 @@ describe('Notebook application composition', () => {
 
     expect(order).toEqual(['backend-shutdown-coordinator', 'local-rpc', 'application-events'])
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('registers Host LLM after local RPC so reverse disposal cancels inference first', () => {
+    const source = readFileSync(resolve(__dirname, '../ipc.ts'), 'utf8')
+    const localRpcRegistration = source.indexOf('const notebookRpcServer = await modules.add(')
+    const hostLlmRegistration = source.indexOf("name: 'host-llm-service'")
+
+    expect(localRpcRegistration).toBeGreaterThan(-1)
+    expect(hostLlmRegistration).toBeGreaterThan(localRpcRegistration)
   })
 
   it('closes local RPC once when later composition rolls back', async () => {
