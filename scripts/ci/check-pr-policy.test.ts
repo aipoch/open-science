@@ -131,7 +131,53 @@ const MIGRATION_MANIFEST = [
         }
       })
     ).toEqual([
-      expect.objectContaining({ subject: expect.stringContaining('preserve the existing order') })
+      expect.objectContaining({ subject: expect.stringContaining('preserve existing entries') })
+    ])
+  })
+
+  it('keeps every existing migration manifest entry immutable', () => {
+    const baseSource = `const MIGRATION_MANIFEST = [
+  {
+    ...runtimeSchemaBaselineMigration,
+    checksum: BASELINE_CHECKSUM,
+    backupOnApply: 'required'
+  }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+    const changedSource = baseSource.replace("backupOnApply: 'required'", "backupOnApply: 'none'")
+
+    expect(
+      checkDatabaseMigrationPolicy({
+        changes: [{ path: 'src/main/database/migration-service.ts', status: 'modified' }],
+        baseMigrationPaths: baselineMigrations,
+        baseFiles: { 'src/main/database/migration-service.ts': baseSource },
+        headFiles: { 'src/main/database/migration-service.ts': changedSource }
+      })
+    ).toEqual([
+      expect.objectContaining({ subject: expect.stringContaining('preserve existing entries') })
+    ])
+  })
+
+  it('keeps imports for existing migration manifest entries immutable', () => {
+    const baseSource = `import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
+const MIGRATION_MANIFEST = [
+  { ...runtimeSchemaBaselineMigration }
+] as const satisfies readonly MigrationManifestEntry[]
+`
+    const changedSource = baseSource.replace(
+      './migrations/0001-runtime-schema-baseline',
+      './migrations/0002-project-agent-context'
+    )
+
+    expect(
+      checkDatabaseMigrationPolicy({
+        changes: [{ path: 'src/main/database/migration-service.ts', status: 'modified' }],
+        baseMigrationPaths: baselineMigrations,
+        baseFiles: { 'src/main/database/migration-service.ts': baseSource },
+        headFiles: { 'src/main/database/migration-service.ts': changedSource }
+      })
+    ).toEqual([
+      expect.objectContaining({ subject: expect.stringContaining('preserve existing entries') })
     ])
   })
 
@@ -153,7 +199,7 @@ const MIGRATION_MANIFEST = [
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ subject: expect.stringContaining('declare migration id') }),
-        expect.objectContaining({ subject: expect.stringContaining('preserve the existing order') })
+        expect.objectContaining({ subject: expect.stringContaining('preserve existing entries') })
       ])
     )
   })

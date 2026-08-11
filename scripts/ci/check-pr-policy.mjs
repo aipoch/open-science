@@ -104,13 +104,73 @@ const sanitizePolicySource = (source, { maskStrings = false } = {}) => {
   return result
 }
 
-const manifestMigrationNames = (source) => {
-  const manifest = sanitizePolicySource(source, { maskStrings: true }).match(
+const manifestEntries = (source) => {
+  const sanitized = sanitizePolicySource(source, { maskStrings: true })
+  const match = sanitized.match(
     /(?:^|\n)\s*const MIGRATION_MANIFEST = \[([\s\S]*?)\]\s+as const satisfies/m
-  )?.[1]
-  return manifest
-    ? [...manifest.matchAll(/\.\.\.([A-Za-z_$][\w$]*)\b/g)].map((match) => match[1])
-    : []
+  )
+  if (!match) return []
+
+  const bodyStart = match.index + match[0].indexOf('[') + 1
+  const bodyEnd = bodyStart + match[1].length
+  const entries = []
+  const depth = { brace: 0, bracket: 0, parenthesis: 0 }
+  let entryStart = bodyStart
+  for (let index = bodyStart; index < bodyEnd; index += 1) {
+    switch (sanitized[index]) {
+      case '{':
+        depth.brace += 1
+        break
+      case '}':
+        depth.brace -= 1
+        break
+      case '[':
+        depth.bracket += 1
+        break
+      case ']':
+        depth.bracket -= 1
+        break
+      case '(':
+        depth.parenthesis += 1
+        break
+      case ')':
+        depth.parenthesis -= 1
+        break
+      case ',':
+        if (depth.brace === 0 && depth.bracket === 0 && depth.parenthesis === 0) {
+          const entry = source.slice(entryStart, index).trim()
+          if (entry) entries.push(entry)
+          entryStart = index + 1
+        }
+        break
+    }
+  }
+  const finalEntry = source.slice(entryStart, bodyEnd).trim()
+  if (finalEntry) entries.push(finalEntry)
+  return entries
+}
+
+const manifestMigrationNames = (source) =>
+  manifestEntries(source).flatMap((entry) =>
+    [
+      ...sanitizePolicySource(entry, { maskStrings: true }).matchAll(/\.\.\.([A-Za-z_$][\w$]*)\b/g)
+    ].map((match) => match[1])
+  )
+
+const namedImports = (source) => {
+  const imports = new Map()
+  const sanitized = sanitizePolicySource(source)
+  for (const match of sanitized.matchAll(
+    /(?:^|\n)\s*import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gm
+  )) {
+    for (const specifier of match[1].split(',')) {
+      const names = specifier
+        .trim()
+        .match(/^(?:type\s+)?([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/)
+      if (names) imports.set(names[2] ?? names[1], `${names[1]}\0${match[2]}`)
+    }
+  }
+  return imports
 }
 
 export function checkDatabaseMigrationPolicy({
@@ -210,18 +270,24 @@ export function checkDatabaseMigrationPolicy({
   }
 
   if (Object.hasOwn(baseFiles, migrationServicePath)) {
-    const expectedManifestNames = [
-      ...manifestMigrationNames(baseFiles[migrationServicePath]),
-      ...addedMigrationNames
-    ]
+    const baseServiceSource = baseFiles[migrationServicePath]
+    const baseManifestEntries = manifestEntries(baseServiceSource)
+    const headManifestEntries = manifestEntries(headFiles[migrationServicePath] ?? '')
+    const baseManifestNames = manifestMigrationNames(baseServiceSource)
+    const expectedManifestNames = [...baseManifestNames, ...addedMigrationNames]
+    const baseImports = namedImports(baseServiceSource)
+    const headImports = namedImports(headFiles[migrationServicePath] ?? '')
     if (
+      headManifestEntries.length !== baseManifestEntries.length + addedMigrationNames.length ||
+      baseManifestEntries.some((entry, index) => headManifestEntries[index] !== entry) ||
+      baseManifestNames.some((name) => baseImports.get(name) !== headImports.get(name)) ||
       expectedManifestNames.length !== headManifestNames.length ||
       expectedManifestNames.some((name, index) => headManifestNames[index] !== name)
     ) {
       violations.push({
         kind: 'database-migration',
         subject:
-          'MIGRATION_MANIFEST must preserve the existing order and append new migrations in version order'
+          'MIGRATION_MANIFEST must preserve existing entries and imports exactly and append new migrations in version order'
       })
     }
   }
