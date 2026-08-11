@@ -417,6 +417,34 @@ describe('ConnectorsPanel (groups)', () => {
     await act(async () => finishRetry())
   })
 
+  it('directs invalid custom Connector configurations to Edit without offering Retry', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'invalid-mcp',
+          slug: 'invalid-mcp',
+          name: 'Invalid MCP',
+          transport: 'stdio',
+          enabled: false,
+          availability: 'unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+
+    expect(document.body.textContent).toContain('Unavailable')
+    expect(
+      Array.from(document.body.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Retry'
+      )
+    ).toBe(false)
+
+    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit Invalid MCP"]')
+    act(() => edit?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'invalid-mcp' })
+  })
+
   it('shows checking while background discovery is still pending', () => {
     useSettingsStore.setState({
       customServers: [

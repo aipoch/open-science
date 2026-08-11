@@ -168,6 +168,47 @@ describe('settings Connectors slice', () => {
     expect(store.getState().customServers).toEqual([server('custom', false)])
   })
 
+  it('defers runtime refreshes until an in-flight mutation has reconciled', async () => {
+    let runtimeChanged: (() => void) | undefined
+    let settleMutation!: (result: ConnectorsSnapshot) => void
+    let settleDeferredRefresh!: (result: ConnectorsSnapshot) => void
+    const mutation = new Promise<ConnectorsSnapshot>((resolve) => {
+      settleMutation = resolve
+    })
+    const deferredRefresh = new Promise<ConnectorsSnapshot>((resolve) => {
+      settleDeferredRefresh = resolve
+    })
+    const runtimeCommands: ConnectorCommands = {
+      ...createCommands(),
+      listConnectors: vi
+        .fn()
+        .mockResolvedValueOnce(snapshot([], [server('custom')]))
+        .mockReturnValueOnce(deferredRefresh),
+      setCustomServerEnabled: vi.fn(() => mutation),
+      onConnectorRuntimeChanged: vi.fn((listener: () => void) => {
+        runtimeChanged = listener
+        return () => undefined
+      })
+    }
+    ;({ store, commands } = createHarness(runtimeCommands))
+
+    await store.getState().loadConnectors()
+    const pendingMutation = store.getState().setCustomServerEnabled('custom', false)
+    runtimeChanged?.()
+
+    expect(commands.listConnectors).toHaveBeenCalledOnce()
+    settleMutation(snapshot([], [server('custom', false)]))
+    await pendingMutation
+
+    expect(store.getState().customServers).toEqual([server('custom', false)])
+    await vi.waitFor(() => expect(commands.listConnectors).toHaveBeenCalledTimes(2))
+
+    settleDeferredRefresh(snapshot([], [server('custom', false)]))
+    await vi.waitFor(() =>
+      expect(store.getState().customServers).toEqual([server('custom', false)])
+    )
+  })
+
   it('optimistically enables a Connector before authoritative reconciliation', async () => {
     let settle!: (result: ConnectorsSnapshot) => void
     vi.mocked(commands.setConnectorEnabled).mockReturnValue(

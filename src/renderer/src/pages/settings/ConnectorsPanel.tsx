@@ -561,7 +561,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         onClick={() => void requestRemoval(server)}
                         danger
                       />
-                      {server.availability === 'unavailable' ? (
+                      {server.availability === 'unavailable' && server.enabled ? (
                         <Button
                           type="button"
                           size="sm"
