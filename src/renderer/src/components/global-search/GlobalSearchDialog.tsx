@@ -5,7 +5,7 @@
  * contrast: inherited from the app's verified semantic tokens · slop: pass
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, AtSign, Hash, MessageCircle, Search, Zap } from 'lucide-react'
+import { ArrowUpRight, AtSign, Hash, LoaderCircle, MessageCircle, Search, Zap } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -126,6 +126,7 @@ export const GlobalSearchDialog = ({
 }: GlobalSearchDialogProps): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null)
   const requestVersionRef = useRef(0)
+  const keyboardNavigationRef = useRef(false)
   const listboxId = useId()
   const [query, setQuery] = useState('')
   const [visibleSessionCount, setVisibleSessionCount] = useState(GLOBAL_SEARCH_PAGE_SIZE)
@@ -334,11 +335,12 @@ export const GlobalSearchDialog = ({
     setQuery(nextQuery)
     setVisibleSessionCount(GLOBAL_SEARCH_PAGE_SIZE)
     setArtifacts(emptyArtifactState)
-    setArtifactStatus('idle')
+    setArtifactStatus(nextQuery.trim() ? 'loading' : 'idle')
     setArtifactError(undefined)
     setFailedArtifactCursor(undefined)
     setActionError(undefined)
     setActiveIndex(0)
+    keyboardNavigationRef.current = false
   }
 
   useEffect(() => {
@@ -364,6 +366,8 @@ export const GlobalSearchDialog = ({
           ),
     [artifacts.items, artifacts.other, isProjectScope]
   )
+  const isSearchPending =
+    isSearchMode && artifactStatus === 'loading' && displayedArtifacts.length === 0
   const otherRows = useMemo<SelectableRow[]>(() => {
     if (!isProjectScope || !isSearchMode) return []
     return [
@@ -383,6 +387,7 @@ export const GlobalSearchDialog = ({
       ? ({ kind: 'new-session' } as const)
       : ({ kind: 'new-project' } as const)
     if (!primaryProject) return isProjectScope ? [] : [command]
+    if (isSearchPending) return []
     if (!isSearchMode) {
       return [
         ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
@@ -404,6 +409,7 @@ export const GlobalSearchDialog = ({
     artifactError,
     displayedArtifacts,
     isProjectScope,
+    isSearchPending,
     isSearchMode,
     otherRows,
     primaryProject,
@@ -412,10 +418,13 @@ export const GlobalSearchDialog = ({
     sessionMoreCount
   ])
 
-  const activeRowIndex = Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
+  const activeRowIndex =
+    selectableRows.length === 0 ? -1 : Math.max(0, Math.min(activeIndex, selectableRows.length - 1))
   const activeRowId = `global-search-option-${activeRowIndex}`
 
   useEffect(() => {
+    if (!keyboardNavigationRef.current) return
+    keyboardNavigationRef.current = false
     if (!open || selectableRows.length === 0) return
     document.getElementById(activeRowId)?.scrollIntoView?.({ block: 'nearest' })
   }, [activeRowId, open, selectableRows.length])
@@ -526,20 +535,30 @@ export const GlobalSearchDialog = ({
       if (selectableRows.length === 0) return
       setActiveIndex((current) => {
         const normalized = Math.max(0, Math.min(current, selectableRows.length - 1))
-        return event.key === 'ArrowDown'
-          ? (normalized + 1) % selectableRows.length
-          : (normalized - 1 + selectableRows.length) % selectableRows.length
+        const nextIndex =
+          event.key === 'ArrowDown'
+            ? (normalized + 1) % selectableRows.length
+            : (normalized - 1 + selectableRows.length) % selectableRows.length
+        keyboardNavigationRef.current = nextIndex !== current
+        return nextIndex
       })
       return
     }
     if (event.key === 'Home') {
       event.preventDefault()
-      setActiveIndex(0)
+      setActiveIndex((current) => {
+        keyboardNavigationRef.current = current !== 0
+        return 0
+      })
       return
     }
     if (event.key === 'End') {
       event.preventDefault()
-      setActiveIndex(Math.max(0, selectableRows.length - 1))
+      setActiveIndex((current) => {
+        const nextIndex = Math.max(0, selectableRows.length - 1)
+        keyboardNavigationRef.current = nextIndex !== current
+        return nextIndex
+      })
       return
     }
     if (event.key === 'Enter') {
@@ -553,10 +572,12 @@ export const GlobalSearchDialog = ({
     }
   }
 
-  const resultCount = isSearchMode
-    ? (sessionGroups?.primaryTotalCount ?? 0) +
-      (isProjectScope ? artifacts.totalCount + otherRows.length : displayedArtifacts.length)
-    : displayedArtifacts.length + recentSessions.length
+  const resultCount = isSearchPending
+    ? 0
+    : isSearchMode
+      ? (sessionGroups?.primaryTotalCount ?? 0) +
+        (isProjectScope ? artifacts.totalCount + otherRows.length : displayedArtifacts.length)
+      : displayedArtifacts.length + recentSessions.length
   const renderSessionRow = (session: SessionSearchResult, rowIndex: number): React.JSX.Element => {
     const active = rowIndex === activeRowIndex
     return (
@@ -780,9 +801,16 @@ export const GlobalSearchDialog = ({
                       {displayedArtifacts.map((artifact) =>
                         renderArtifactRow(artifact, nextIndex())
                       )}
-                      {artifactStatus === 'loading' && displayedArtifacts.length === 0 ? (
-                        <p className="px-4 py-3 text-sm text-muted-foreground">
-                          Searching artifacts…
+                      {isSearchPending ? (
+                        <p
+                          role="status"
+                          className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"
+                        >
+                          <LoaderCircle
+                            className="size-3.5 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                          Searching…
                         </p>
                       ) : null}
                       {artifactError ? (
@@ -821,7 +849,7 @@ export const GlobalSearchDialog = ({
                       ) : null}
                     </section>
                   ) : null}
-                  {sessionGroups?.primary.length ? (
+                  {!isSearchPending && sessionGroups?.primary.length ? (
                     <section role="group" aria-label="Sessions">
                       <h2 className={sectionTitleClassName}>Sessions</h2>
                       {sessionGroups.primary.map((session) =>
@@ -846,7 +874,7 @@ export const GlobalSearchDialog = ({
                       ) : null}
                     </section>
                   ) : null}
-                  {otherRows.length > 0 ? (
+                  {!isSearchPending && otherRows.length > 0 ? (
                     <section role="group" aria-label="Other projects">
                       <h2 className={sectionTitleClassName}>Other projects</h2>
                       {otherRows.map((row) =>
