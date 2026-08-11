@@ -11,8 +11,9 @@ const log = createLogger('skills')
 // and never touches imported/personal/user skills that may live alongside them later.
 const OS_SKILL_PREFIX = 'os-'
 
-// Tracks the version (updatedAt) last materialized per managed dir so unchanged skills are skipped
-// instead of recopied on every spawn. Not a skill dir, so the claude skill loader ignores it.
+// Tracks the content compatibility (falling back to updatedAt) last materialized per managed dir so
+// unchanged skills are skipped instead of recopied on every spawn. Not a skill dir, so the Claude
+// Skill loader ignores it.
 const VERSION_MANIFEST = '.os-versions.json'
 
 // Marker line in an injected notice, used to keep injection idempotent.
@@ -145,10 +146,10 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
       }
     }
 
-    // Copy new or changed skills. A skill with a stable, unchanged version whose dir already exists is
-    // skipped; one with no version (empty updatedAt) is always recopied.
+    // Copy new or changed skills. Registry content compatibility prevents stale copies when updatedAt
+    // metadata was not bumped; non-registry callers retain the existing updatedAt fallback.
     for (const [name, skill] of wanted) {
-      const version = skill.updatedAt || ''
+      const version = skill.compatibility || skill.updatedAt || ''
       const unchanged = version !== '' && existingDirs.has(name) && versions[name] === version
       if (unchanged) continue
 
