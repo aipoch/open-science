@@ -56,7 +56,8 @@ describe('buildAnalysisPrompt', () => {
     const prompt = buildAnalysisPrompt([job])
     expect(prompt).toContain('job-abc')
     expect(prompt).toContain('hpc/job-abc/featured/out.txt')
-    expect(prompt).toContain('attach_job')
+    expect(prompt).toContain('attachJob')
+    expect(prompt).not.toContain('attach_job')
     expect(prompt).toContain('result()')
   })
 

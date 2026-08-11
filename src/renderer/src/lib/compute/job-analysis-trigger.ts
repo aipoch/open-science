@@ -39,7 +39,7 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
 
     lines.push('')
     lines.push(
-      `Please use \`attach_job("${job.job_id}").result()\` to retrieve the full result dictionary, ` +
+      `Please use \`attachJob("${job.job_id}").result()\` to retrieve the full result dictionary, ` +
         `examine the output files, and call \`write_artifact_file\` to publish any results worth preserving.`
     )
 
