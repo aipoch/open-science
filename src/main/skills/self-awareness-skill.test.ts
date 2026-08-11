@@ -42,7 +42,7 @@ describe('self-awareness bundled Skill', () => {
       'caps.artifacts === true',
       'caps.frames === true',
       'await host.artifacts(options)',
-      'await host.artifact_path',
+      'await host.artifactPath',
       'await host.frames.list(options)',
       'await host.frames.get(frameId, options)',
       'current Project',
@@ -58,6 +58,13 @@ describe('self-awareness bundled Skill', () => {
       'await host.llm',
       'await host.lineage.graph(versionId)',
       'await host.lineage.get(versionId)',
+      '`versionId`',
+      '`sessionId`',
+      '`contentType`',
+      '`maxDepth`',
+      '`maxNodes`',
+      '`rootsOnly`',
+      '`branchId`',
       'graph discovery',
       'session-bound control token',
       'another Session',
@@ -68,6 +75,9 @@ describe('self-awareness bundled Skill', () => {
     ]) {
       expect(body).toContain(phrase)
     }
+    expect(body).not.toMatch(
+      /host\.artifact_path|`(?:version_id|session_id|content_type|max_depth|max_nodes|roots_only|branch_id)`/
+    )
     expect(body).not.toMatch(/host\.(query|artifact_read)/)
   })
 })

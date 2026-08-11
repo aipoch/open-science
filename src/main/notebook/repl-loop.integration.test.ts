@@ -57,6 +57,58 @@ const startLoop = (
 }
 
 describe('repl_loop local RPC transport', () => {
+  it('exposes only the camelCase public method names', async () => {
+    const { child, send } = startLoop({})
+    try {
+      const result = await send(
+        "const c = host.compute.create('ssh:x'); " +
+          'return JSON.stringify({' +
+          "artifactPath: 'artifactPath' in host, artifact_path: 'artifact_path' in host, " +
+          "listSkills: 'listSkills' in host.agents, list_skills: 'list_skills' in host.agents, " +
+          "listConnectors: 'listConnectors' in host.agents, list_connectors: 'list_connectors' in host.agents, " +
+          "attachSkill: 'attachSkill' in host.agents, attach_skill: 'attach_skill' in host.agents, " +
+          "detachSkill: 'detachSkill' in host.agents, detach_skill: 'detach_skill' in host.agents, " +
+          "attachConnector: 'attachConnector' in host.agents, attach_connector: 'attach_connector' in host.agents, " +
+          "detachConnector: 'detachConnector' in host.agents, detach_connector: 'detach_connector' in host.agents, " +
+          "listCompute: 'listCompute' in host.compute, list_compute: 'list_compute' in host.compute, " +
+          "callCommand: 'callCommand' in c, call_command: 'call_command' in c, " +
+          "submitJob: 'submitJob' in c, submit_job: 'submit_job' in c, " +
+          "attachJob: 'attachJob' in c, attach_job: 'attach_job' in c, " +
+          "setConcurrencyLimit: 'setConcurrencyLimit' in c, set_concurrency_limit: 'set_concurrency_limit' in c" +
+          '})'
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        artifactPath: true,
+        artifact_path: false,
+        listSkills: true,
+        list_skills: false,
+        listConnectors: true,
+        list_connectors: false,
+        attachSkill: true,
+        attach_skill: false,
+        detachSkill: true,
+        detach_skill: false,
+        attachConnector: true,
+        attach_connector: false,
+        detachConnector: true,
+        detach_connector: false,
+        listCompute: true,
+        list_compute: false,
+        callCommand: true,
+        call_command: false,
+        submitJob: true,
+        submit_job: false,
+        attachJob: true,
+        attach_job: false,
+        setConcurrencyLimit: true,
+        set_concurrency_limit: false
+      })
+    } finally {
+      child.kill()
+    }
+  })
+
   it('echoes a trailing expression when the call spans multiple lines', async () => {
     const { child, send } = startLoop({})
 
@@ -1070,8 +1122,8 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const projection = await send(
-        "const first = await host.lineage.graph('artifact-v1', { max_depth: 0 }); " +
-          "const second = await host.lineage.graph('artifact-v1', { max_depth: 0 }); " +
+        "const first = await host.lineage.graph('artifact-v1', { direction: 'down', maxDepth: 0, maxNodes: 5 }); " +
+          "const second = await host.lineage.graph('artifact-v1', { direction: 'down', maxDepth: 0, maxNodes: 5 }); " +
           "const core = await host.lineage.get('artifact-v1'); " +
           'return JSON.stringify({ firstFrozen: Object.isFrozen(first), ' +
           'nodesFrozen: Object.isFrozen(first.nodes), nodeFrozen: Object.isFrozen(first.nodes[0]), ' +
@@ -1081,7 +1133,8 @@ describe('repl_loop local RPC transport', () => {
           'packagesFrozen: Object.isFrozen(core.environment.packages), ' +
           'packageFrozen: Object.isFrozen(core.environment.packages[0]), ' +
           'opLogFrozen: Object.isFrozen(core.environment.op_log), ' +
-          'attemptFrozen: Object.isFrozen(core.environment.op_log[0].attempts[0]) })'
+          'attemptFrozen: Object.isFrozen(core.environment.op_log[0].attempts[0]), ' +
+          'returnFields: [first.root_version_id, first.nodes[0].version_id, core.version_id] })'
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toEqual({
@@ -1096,16 +1149,25 @@ describe('repl_loop local RPC transport', () => {
         packagesFrozen: true,
         packageFrozen: true,
         opLogFrozen: true,
-        attemptFrozen: true
+        attemptFrozen: true,
+        returnFields: ['artifact-v1', 'artifact-v1', 'artifact-v1']
       })
       expect(requests).toEqual([
         {
           method: 'lineageCall',
-          params: { op: 'graph', version_id: 'artifact-v1', options: { max_depth: 0 } }
+          params: {
+            op: 'graph',
+            version_id: 'artifact-v1',
+            options: { direction: 'down', max_depth: 0, max_nodes: 5 }
+          }
         },
         {
           method: 'lineageCall',
-          params: { op: 'graph', version_id: 'artifact-v1', options: { max_depth: 0 } }
+          params: {
+            op: 'graph',
+            version_id: 'artifact-v1',
+            options: { direction: 'down', max_depth: 0, max_nodes: 5 }
+          }
         },
         { method: 'lineageCall', params: { op: 'get', version_id: 'artifact-v1' } }
       ])
@@ -1114,7 +1176,19 @@ describe('repl_loop local RPC transport', () => {
         "try { await host.lineage.get('artifact-v1', {}); return 'no error' } " +
           "catch (error) { return error.name + ': ' + error.message }"
       )
-      expect(extraArgument.result).toBe('TypeError: host.lineage.get accepts one version_id')
+      expect(extraArgument.result).toBe('TypeError: host.lineage.get accepts one versionId')
+      expect(requests).toHaveLength(3)
+
+      const oldOptions = await send(
+        "const errors = []; for (const [key, value] of [['max_depth', 0], ['max_nodes', 5]]) { " +
+          "try { await host.lineage.graph('artifact-v1', { [key]: value }) } " +
+          "catch (error) { errors.push(error.name + ': ' + error.message) } } " +
+          'return JSON.stringify(errors)'
+      )
+      expect(JSON.parse(oldOptions.result ?? '[]')).toEqual([
+        'TypeError: host.lineage.graph options unknown option: max_depth',
+        'TypeError: host.lineage.graph options unknown option: max_nodes'
+      ])
       expect(requests).toHaveLength(3)
 
       const invalidProjection = await send(
@@ -1243,7 +1317,7 @@ describe('repl_loop local RPC transport', () => {
       })
 
       const batch = await send(
-        "const value = await host.llm(['a', { prompt: 'b' }], { max_concurrency: 2 }); " +
+        "const value = await host.llm(['a', { prompt: 'b' }], { maxConcurrency: 2 }); " +
           'return JSON.stringify({ value, frozen: Object.isFrozen(value), itemFrozen: value.every(Object.isFrozen) })'
       )
       expect(batch.error).toBeNull()
@@ -1264,7 +1338,7 @@ describe('repl_loop local RPC transport', () => {
       ])
 
       const invalidOptions = await send(
-        "try { await host.llm('single', { max_concurrency: 2 }); return 'no error' } " +
+        "try { await host.llm('single', { maxConcurrency: 2 }); return 'no error' } " +
           "catch (error) { return error.name + ': ' + error.message }"
       )
       expect(invalidOptions.result).toBe(
@@ -1282,11 +1356,20 @@ describe('repl_loop local RPC transport', () => {
       expect(requests).toHaveLength(2)
 
       const invalidBatchOptions = await send(
-        "try { await host.llm(['x'], { max_concurrency: 2, extra: undefined }); return 'no error' } " +
+        "try { await host.llm(['x'], { maxConcurrency: 2, extra: undefined }); return 'no error' } " +
           "catch (error) { return error.name + ': ' + error.message }"
       )
       expect(invalidBatchOptions.result).toBe(
-        'TypeError: host.llm batch options only accept max_concurrency.'
+        'TypeError: host.llm batch options unknown option: extra'
+      )
+      expect(requests).toHaveLength(2)
+
+      const oldBatchOption = await send(
+        "try { await host.llm(['x'], { max_concurrency: 2 }); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(oldBatchOption.result).toBe(
+        'TypeError: host.llm batch options unknown option: max_concurrency'
       )
       expect(requests).toHaveLength(2)
 
@@ -1320,12 +1403,12 @@ describe('repl_loop local RPC transport', () => {
       })
 
       const throwingOptionsAccessor = await send(
-        "const options = {}; Object.defineProperty(options, 'max_concurrency', { get() { throw new Error('raw getter detail') } }); " +
+        "const options = {}; Object.defineProperty(options, 'maxConcurrency', { get() { throw new TypeError('unknown option: raw getter detail') } }); " +
           "try { await host.llm(['x'], options); return 'no error' } " +
           "catch (error) { return error.name + ': ' + error.message }"
       )
       expect(throwingOptionsAccessor.result).toBe(
-        'TypeError: host.llm batch options only accept max_concurrency.'
+        'TypeError: host.llm batch options only accept maxConcurrency.'
       )
       expect(requests).toHaveLength(4)
 
@@ -1348,7 +1431,7 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('validates and freezes host.artifacts results and resolves host.artifact_path', async () => {
+  it('validates and freezes host.artifacts results and resolves host.artifactPath', async () => {
     const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
     const managedPath = join(tmpdir(), 'managed', 'report.pdf')
     const server = createServer((request, response) => {
@@ -1409,26 +1492,58 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const projection = await send(
-        "const page = await host.artifacts({ search: 'report', limit: 2 }); " +
-          'const localPath = await host.artifact_path(page.artifacts[1].latest_version_id); ' +
+        "const page = await host.artifacts({ search: 'report', sessionId: 'session-a', contentType: 'text/csv', limit: 2 }); " +
+          "await host.artifacts({ versionId: 'artifact-version-1' }); " +
+          'const localPath = await host.artifactPath(page.artifacts[1].latest_version_id); ' +
           'return JSON.stringify({ page, localPath, pageFrozen: Object.isFrozen(page), ' +
           'artifactsFrozen: Object.isFrozen(page.artifacts), itemFrozen: Object.isFrozen(page.artifacts[0]) })'
       )
       expect(projection.error).toBeNull()
-      expect(JSON.parse(projection.result ?? '{}')).toMatchObject({
-        page: { count: 2, project_id: 'project-a', truncated: false },
+      const projected = JSON.parse(projection.result ?? '{}')
+      expect(projected).toMatchObject({
+        page: {
+          count: 2,
+          project_id: 'project-a',
+          truncated: false
+        },
         localPath: managedPath,
         pageFrozen: true,
         artifactsFrozen: true,
         itemFrozen: true
       })
+      expect(projected.page.artifacts[0].latest_version_id).toBe('artifact-version-1')
       expect(requests).toEqual([
         {
           method: 'artifactsCall',
-          params: { op: 'list', options: { search: 'report', limit: 2 } }
+          params: {
+            op: 'list',
+            options: {
+              search: 'report',
+              session_id: 'session-a',
+              content_type: 'text/csv',
+              limit: 2
+            }
+          }
+        },
+        {
+          method: 'artifactsCall',
+          params: { op: 'list', options: { version_id: 'artifact-version-1' } }
         },
         { method: 'artifactsCall', params: { op: 'path', version_id: 'upload-version-1' } }
       ])
+
+      const oldOptions = await send(
+        "const errors = []; for (const [key, value] of [['version_id', 'artifact-version-1'], ['session_id', 'session-a'], ['content_type', 'text/csv']]) { " +
+          'try { await host.artifacts({ [key]: value }) } ' +
+          "catch (error) { errors.push(error.name + ': ' + error.message) } } " +
+          'return JSON.stringify(errors)'
+      )
+      expect(JSON.parse(oldOptions.result ?? '[]')).toEqual([
+        'TypeError: host.artifacts options unknown option: version_id',
+        'TypeError: host.artifacts options unknown option: session_id',
+        'TypeError: host.artifacts options unknown option: content_type'
+      ])
+      expect(requests).toHaveLength(3)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>
@@ -1536,8 +1651,8 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const projection = await send(
-        "const page = await host.frames.list({ search: 'research' }); " +
-          "const detail = await host.frames.get('frame-1', { branch_id: 'branch-1' }); " +
+        "const page = await host.frames.list({ search: 'research', sessionId: 'session-a', rootsOnly: false }); " +
+          "const detail = await host.frames.get('frame-1', { sessionId: 'session-a', branchId: 'branch-1' }); " +
           'return JSON.stringify({ page, detail, pageFrozen: Object.isFrozen(page), ' +
           'framesFrozen: Object.isFrozen(page.frames), frameFrozen: Object.isFrozen(page.frames[0]), ' +
           'detailFrozen: Object.isFrozen(detail), transcriptFrozen: Object.isFrozen(detail.transcript), ' +
@@ -1573,13 +1688,37 @@ describe('repl_loop local RPC transport', () => {
       expect(requests).toEqual([
         {
           method: 'framesCall',
-          params: { op: 'list', options: { search: 'research' } }
+          params: {
+            op: 'list',
+            options: { search: 'research', session_id: 'session-a', roots_only: false }
+          }
         },
         {
           method: 'framesCall',
-          params: { op: 'get', frame_id: 'frame-1', options: { branch_id: 'branch-1' } }
+          params: {
+            op: 'get',
+            frame_id: 'frame-1',
+            options: { session_id: 'session-a', branch_id: 'branch-1' }
+          }
         }
       ])
+
+      const oldOptions = await send(
+        'const errors = []; for (const call of [' +
+          "() => host.frames.list({ session_id: 'session-a' }), " +
+          '() => host.frames.list({ roots_only: false }), ' +
+          "() => host.frames.get('frame-1', { session_id: 'session-a' }), " +
+          "() => host.frames.get('frame-1', { branch_id: 'branch-1' })]) { " +
+          "try { await call() } catch (error) { errors.push(error.name + ': ' + error.message) } } " +
+          'return JSON.stringify(errors)'
+      )
+      expect(JSON.parse(oldOptions.result ?? '[]')).toEqual([
+        'TypeError: host.frames.list options unknown option: session_id',
+        'TypeError: host.frames.list options unknown option: roots_only',
+        'TypeError: host.frames.get options unknown option: session_id',
+        'TypeError: host.frames.get options unknown option: branch_id'
+      ])
+      expect(requests).toHaveLength(2)
 
       const invalid = await send(
         "try { await host.frames.list(); return 'no error' } " +
@@ -2026,7 +2165,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('create().call_command() posts op=call_command with defaults and returns the ExecResult', async () => {
+  it('create().callCommand() posts op=call_command with defaults and returns the ExecResult', async () => {
     next = {
       status: 200,
       body: { result: { exit_code: 0, stdout: 'hi', stderr: '', truncated: false } }
@@ -2037,7 +2176,7 @@ gate('repl_loop.js host.compute', () => {
     })
     try {
       const r = await send(
-        "const c = host.compute.create('ssh:biowulf'); const res = await c.call_command('echo hi', 'probe'); return res.stdout"
+        "const c = host.compute.create('ssh:biowulf'); const res = await c.callCommand('echo hi', 'probe'); return res.stdout"
       )
       expect(r.error).toBeNull()
       expect(r.result).toContain('hi')
@@ -2045,7 +2184,7 @@ gate('repl_loop.js host.compute', () => {
       expect(received.params?.provider_id).toBe('ssh:biowulf')
       expect(received.params?.cmd).toBe('echo hi')
       expect(received.params?.intent).toBe('probe')
-      // login_shell defaults to true; timeout_seconds omitted -> the service applies its own default.
+      // Public loginShell defaults to true; omitted timeoutSeconds stays omitted on the wire.
       expect(received.params?.login_shell).toBe(true)
       expect(received.params?.timeout_seconds).toBeUndefined()
     } finally {
@@ -2072,7 +2211,7 @@ gate('repl_loop.js host.compute', () => {
     try {
       const r = await send(
         "const c = host.compute.create('ssh:x');\n" +
-          'try { await c.call_command("id", "probe") }\n' +
+          'try { await c.callCommand("id", "probe") }\n' +
           'catch (e) { return JSON.stringify({ code: e.error_code, retry: e.retry_after_user_action, msg: e.message }) }'
       )
       expect(r.error).toBeNull()
@@ -2085,7 +2224,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('details() posts op=details with mode/text/old_text and returns the result', async () => {
+  it('details() maps public oldText to wire old_text and returns the result', async () => {
     next = { status: 200, body: { result: { doc: 'the doc', isSkeleton: false } } }
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
@@ -2102,10 +2241,10 @@ gate('repl_loop.js host.compute', () => {
       expect(received.params?.provider_id).toBe('ssh:biowulf')
       expect(received.params?.mode).toBe('read')
 
-      // replace: text + old_text are forwarded (snake_case matches the RPC contract).
+      // Public oldText maps immediately to the unchanged snake_case RPC field.
       next = { status: 200, body: { result: { ok: true } } }
       const replace = await send(
-        "await host.compute.details('ssh:biowulf', { mode: 'replace', text: 'new', old_text: 'old' }); return 'done'"
+        "await host.compute.details('ssh:biowulf', { mode: 'replace', text: 'new', oldText: 'old' }); return 'done'"
       )
       expect(replace.error).toBeNull()
       expect(received.params?.mode).toBe('replace')
@@ -2116,7 +2255,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('threads session/project identity from the spawn env into the call_command payload', async () => {
+  it('threads session/project identity from the spawn env into the callCommand payload', async () => {
     next = {
       status: 200,
       body: { result: { exit_code: 0, stdout: '', stderr: '', truncated: false } }
@@ -2129,7 +2268,7 @@ gate('repl_loop.js host.compute', () => {
     })
     try {
       const r = await send(
-        "await host.compute.create('ssh:biowulf').call_command('id', 'probe'); return 'ok'"
+        "await host.compute.create('ssh:biowulf').callCommand('id', 'probe'); return 'ok'"
       )
       expect(r.error).toBeNull()
       expect(received.params?.session_id).toBe('session-42')
@@ -2157,7 +2296,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('create().set_concurrency_limit(k) posts op=set_concurrency_limit with session_id and limit', async () => {
+  it('create().setConcurrencyLimit(k) posts op=set_concurrency_limit with session_id and limit', async () => {
     next = { status: 200, body: { result: null } }
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
@@ -2166,7 +2305,7 @@ gate('repl_loop.js host.compute', () => {
     })
     try {
       const r = await send(
-        "const c = host.compute.create('ssh:biowulf'); await c.set_concurrency_limit(5); return 'ok'"
+        "const c = host.compute.create('ssh:biowulf'); await c.setConcurrencyLimit(5); return 'ok'"
       )
       expect(r.error).toBeNull()
       expect(r.result).toContain('ok')
@@ -2178,7 +2317,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('create().set_concurrency_limit() validates that k is a positive integer', async () => {
+  it('create().setConcurrencyLimit() validates that k is a positive integer', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
@@ -2187,19 +2326,19 @@ gate('repl_loop.js host.compute', () => {
     try {
       // Negative number should throw
       const r1 = await send(
-        "const c = host.compute.create('ssh:biowulf'); try { await c.set_concurrency_limit(-1); return 'bad' } catch (e) { return e.message }"
+        "const c = host.compute.create('ssh:biowulf'); try { await c.setConcurrencyLimit(-1); return 'bad' } catch (e) { return e.message }"
       )
       expect(r1.result).toContain('positive integer')
 
       // Zero should throw
       const r2 = await send(
-        "const c2 = host.compute.create('ssh:biowulf'); try { await c2.set_concurrency_limit(0); return 'bad' } catch (e) { return e.message }"
+        "const c2 = host.compute.create('ssh:biowulf'); try { await c2.setConcurrencyLimit(0); return 'bad' } catch (e) { return e.message }"
       )
       expect(r2.result).toContain('positive integer')
 
       // Float should throw
       const r3 = await send(
-        "const c3 = host.compute.create('ssh:biowulf'); try { await c3.set_concurrency_limit(2.5); return 'bad' } catch (e) { return e.message }"
+        "const c3 = host.compute.create('ssh:biowulf'); try { await c3.setConcurrencyLimit(2.5); return 'bad' } catch (e) { return e.message }"
       )
       expect(r3.result).toContain('positive integer')
     } finally {

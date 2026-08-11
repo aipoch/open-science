@@ -82,16 +82,16 @@ and a pre-cached checkpoint directory, then:
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="scGPT embed 50k cells — 1×GPU, ~5 min",
     inputs=[
-        {"src": "dataset.h5ad", "dst_filename": "dataset.h5ad"},
-        {"src": "embed.py", "dst_filename": "embed.py"},
+        {"src": "dataset.h5ad", "dstFilename": "dataset.h5ad"},
+        {"src": "embed.py", "dstFilename": "embed.py"},
     ],
     command="python3 embed.py",
     environment=...,   # env name from compute_details
     outputs=["embedded.h5ad"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -109,7 +109,7 @@ handle, not on the job object:
 
 ```python
 h = host.compute.create(provider)
-res = h.attach_job(job_id).result()
+res = h.attachJob(job_id).result()
 h.close()
 ```
 

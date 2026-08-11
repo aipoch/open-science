@@ -97,16 +97,16 @@ and a torch-hub weight cache, then:
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="ESM-2 650M embeddings for 200 sequences — 1×GPU, ~2 min",
     inputs=[
-        {"src": "seqs.fasta", "dst_filename": "seqs.fasta"},
-        {"src": "embed_esm2.py", "dst_filename": "embed_esm2.py"},
+        {"src": "seqs.fasta", "dstFilename": "seqs.fasta"},
+        {"src": "embed_esm2.py", "dstFilename": "embed_esm2.py"},
     ],
     command="python3 embed_esm2.py",
     environment=...,   # env name from compute_details
     outputs=["embeddings.pt"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -119,7 +119,7 @@ save_artifacts(payload["featured_files"])   # paths under hpc/<job_id>/
 ```
 
 For the full result dict (`output_files`, `remote_workdir`, …), re-enter the
-kernel: `c.attach_job(job_id).result()` then `c.close()`. See the
+kernel: `c.attachJob(job_id).result()` then `c.close()`. See the
 `remote-compute-ssh` / `remote-compute-modal` skill for the orchestration
 details.
 

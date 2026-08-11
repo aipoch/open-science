@@ -52,11 +52,13 @@ describe('skill-creator bundled package', () => {
     const skill = await readFile(join(skillRoot, 'SKILL.md'), 'utf8')
     expect(skill).toContain('JavaScript control-plane REPL')
     expect(skill).toContain('host.skills.validate(')
+    expect(skill).toContain('host.agents.attachSkill(')
     expect(skill).toContain('references/schemas.md')
     expect(skill).toContain('agents/grader.md')
     expect(skill).toContain('eval-viewer/generate-review.js')
     expect(skill).not.toMatch(/python -m|\.py\b/)
     expect(skill).not.toMatch(/await host\.skills\.\w+\([^)]*=/)
+    expect(skill).not.toContain('host.agents.attach_skill(')
 
     const triggerReview = await readFile(join(skillRoot, 'assets', 'eval_review.html'), 'utf8')
     expect(triggerReview).toContain('schema_version: 1')

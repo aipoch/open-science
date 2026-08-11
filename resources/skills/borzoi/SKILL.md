@@ -63,12 +63,12 @@ environment with `borzoi-pytorch`, then:
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="Borzoi track prediction for 1 locus — 1×GPU, ~2 min",
-    inputs=[{"src": "borzoi_run.py", "dst_filename": "borzoi_run.py"}],
+    inputs=[{"src": "borzoi_run.py", "dstFilename": "borzoi_run.py"}],
     command="python3 borzoi_run.py",   # env selection is host-specific — see compute_details for your provider
     outputs=["tracks.npz"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -81,7 +81,7 @@ save_artifacts(payload["featured_files"])   # paths under hpc/<job_id>/
 ```
 
 For the full result dict (`output_files`, `remote_workdir`, …), re-enter the
-kernel: `c.attach_job(job_id).result()` then `c.close()`. See the
+kernel: `c.attachJob(job_id).result()` then `c.close()`. See the
 `remote-compute-ssh` / `remote-compute-modal` skill for the orchestration
 details.
 

@@ -20,7 +20,7 @@ The v1 result contains exactly eight boolean keys:
 - `compute` gates the `host.compute` namespace.
 - `agents` gates the `host.agents` namespace.
 - `skills` gates the `host.skills` namespace.
-- `artifacts` gates `host.artifacts` and `host.artifact_path`.
+- `artifacts` gates `host.artifacts` and `host.artifactPath`.
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
 - `llm` gates `host.llm` one-shot, tool-less inference.
@@ -51,21 +51,21 @@ call returns a fresh frozen projection.
 ## Discover managed Project files
 
 When `caps.artifacts === true`, use `await host.artifacts(options)` to list generated Artifacts and
-user Uploads across the current Project. Optional snake_case fields are `version_id`, `session_id`,
-`filename`, `exact`, `search`, `content_type`, `after`, `before`, `cursor`, and `limit` (default 20,
-maximum 100). `version_id` is exclusive; `exact` requires `filename`; `search` and `filename` cannot
+user Uploads across the current Project. Optional camelCase fields are `versionId`, `sessionId`,
+`filename`, `exact`, `search`, `contentType`, `after`, `before`, `cursor`, and `limit` (default 20,
+maximum 100). `versionId` is exclusive; `exact` requires `filename`; `search` and `filename` cannot
 be combined. Bare dates are UTC midnight, `after` is inclusive, and `before` is exclusive.
 
 ```javascript
 const page = await host.artifacts({ search: 'report', limit: 20 })
 const localPath = page.artifacts[0]
-  ? await host.artifact_path(page.artifacts[0].latest_version_id)
+  ? await host.artifactPath(page.artifacts[0].latest_version_id)
   : undefined
 ```
 
-`session_id` only narrows the token-owned current Project. There is no Project override or all-
+`sessionId` only narrows the token-owned current Project. There is no Project override or all-
 Projects scope. Results contain metadata and immutable Version identity, never content; use
-`host.artifact_path(version_id)` to resolve a checksum-validated local absolute path for an exact
+`host.artifactPath(versionId)` to resolve a checksum-validated local absolute path for an exact
 generated Artifact Version or Upload Version, then use the existing file workflow. Version ID
 collisions, missing Versions, cross-Project ownership, and checksum mismatches fail closed.
 
@@ -76,8 +76,8 @@ markers, or a content-read API.
 
 When `caps.lineage === true`, start with
 `await host.lineage.graph(versionId, options)` to inspect the dependency graph without reading
-Artifact content. `options` accepts only `direction` (`'up'` by default or `'down'`), `max_depth`
-(default 5, maximum 20), and `max_nodes` (default 100, maximum 500). Graphs use stable BFS order;
+Artifact content. `options` accepts only `direction` (`'up'` by default or `'down'`), `maxDepth`
+(default 5, maximum 20), and `maxNodes` (default 100, maximum 500). Graphs use stable BFS order;
 an Upload is an upstream leaf and may be a downstream root. A truncated result includes a reason
 and `frontier_version_ids` for a narrower follow-up query.
 
@@ -93,7 +93,7 @@ if (caps.lineage === true) {
 Use `await host.lineage.get(versionId)` only for a generated Artifact Version after graph discovery.
 It returns the existing immutable core provenance projection: reproduction code when available,
 producer and environment status/evidence, and typed input Version evidence. Upload Versions are
-rejected by `get`; obtain their metadata with `host.artifacts({ version_id: versionId })`.
+rejected by `get`; obtain their metadata with `host.artifacts({ versionId })`.
 
 Both calls are fresh, frozen reads scoped only by the session-bound control token to the current
 Project, including Versions created in another Session of that Project. They never accept Project or
@@ -105,13 +105,13 @@ client cache, Python/R `host`, or lineage API outside the JavaScript control REP
 ## Discover Agent Frames
 
 When `caps.frames === true`, use `await host.frames.list(options)` for a metadata-only catalog across
-Sessions in the token-owned current Project. It never searches message bodies. Optional snake_case
-fields are `search`, `session_id`, `roots_only` (default `true`), `kind`, `archived`
+Sessions in the token-owned current Project. It never searches message bodies. Optional camelCase
+fields are `search`, `sessionId`, `rootsOnly` (default `true`), `kind`, `archived`
 (`exclude`/`include`/`only`, default `exclude`), `after`, `before`, `cursor`, and `limit` (default 20,
 maximum 100). Metadata search fuzzily matches Session title, `agent_name`, and `delegate_name`.
 
 Use `await host.frames.get(frameId, options)` with an exact full Frame ID to read one visible
-conversation path. `session_id` may narrow or disambiguate within the current Project. `branch_id`
+conversation path. `sessionId` may narrow or disambiguate within the current Project. `branchId`
 selects a specific Branch; without it, the Frame's active Branch is used. The latest 40 messages are
 returned chronologically by default, with a maximum of 100. Pass `before` with the returned
 `previous_cursor` to page backward through older messages.

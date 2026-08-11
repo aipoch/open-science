@@ -158,10 +158,22 @@ describe('customize Skill: bundled source', () => {
       'host.agents.switch(',
       'host.agents.delete(',
       'host.agents.listSkills(',
-      'host.agents.listConnectors('
+      'host.agents.listConnectors(',
+      'host.agents.attachSkill(',
+      'host.agents.detachSkill(',
+      'host.agents.attachConnector(',
+      'host.agents.detachConnector('
     ]) {
       expect(raw).toContain(method)
     }
+    expect(raw).toContain('systemPrompt')
+    expect(raw).toContain('iconKey')
+    expect(raw).toContain('colorKey')
+    expect(raw).toContain('skillNames')
+    expect(raw).toContain('connectorNames')
+    expect(raw).not.toMatch(
+      /host\.agents\.(?:list_skills|list_connectors|attach_skill|detach_skill|attach_connector|detach_connector)|\b(?:system_prompt|icon_key|color_key|skill_names|connector_names)\b/
+    )
   })
 
   it('routes Skill requests to the internal native Skill Creator without using Artifacts', async () => {

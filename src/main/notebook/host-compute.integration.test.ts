@@ -15,25 +15,31 @@ const REPL_LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 const makeExecutor = (): NotebookKernelExecutor =>
   new NotebookKernelExecutor({ replLoopPath: REPL_LOOP })
 
-// Minimal stub computeCall RPC endpoint that captures the last params and returns a fixed ExecResult,
-// mirroring the main-process ComputeService's call_command result shape.
+// Minimal stub computeCall RPC endpoint that captures params and returns representative unchanged
+// snake_case result projections.
 const startStub = async (): Promise<{
   endpoint: string
   close: () => void
-  received: () => { params?: Record<string, unknown> }
+  received: () => Array<{ params?: Record<string, unknown> }>
 }> => {
   const { createServer } = await import('node:http')
-  let last: { params?: Record<string, unknown> } = {}
+  const requests: Array<{ params?: Record<string, unknown> }> = []
   const server = createServer((req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
     req.on('end', () => {
-      last = body ? JSON.parse(body) : {}
-      res
-        .writeHead(200, { 'content-type': 'application/json' })
-        .end(
-          JSON.stringify({ result: { exit_code: 0, stdout: 'ok', stderr: '', truncated: false } })
-        )
+      const request = body ? JSON.parse(body) : {}
+      requests.push(request)
+      const op = request.params?.op
+      const result =
+        op === 'submit_job'
+          ? { job_id: 'job-1', provider_id: 'ssh:x', status: 'submitted' }
+          : op === 'list_compute'
+            ? ['ssh:x']
+            : op === 'details'
+              ? { doc: 'details', is_skeleton: false }
+              : { exit_code: 0, stdout: 'ok', stderr: '', truncated: false }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ result }))
     })
   })
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
@@ -41,7 +47,7 @@ const startStub = async (): Promise<{
   return {
     endpoint: `http://127.0.0.1:${addr.port}`,
     close: () => server.close(),
-    received: () => last
+    received: () => requests
   }
 }
 
@@ -66,12 +72,12 @@ const baseRequest = (
 })
 
 gate('repl kernel host.compute', () => {
-  it('call_command posts to the computeCall RPC endpoint and returns the ExecResult', async () => {
+  it('callCommand posts unchanged call_command wire params and returns the ExecResult', async () => {
     const stub = await startStub()
     const exec = makeExecutor()
     const result = await exec.execute(
       baseRequest({
-        code: "const r = await host.compute.create('ssh:x').call_command('id','probe'); console.log(r.stdout)",
+        code: "const r = await host.compute.create('ssh:x').callCommand('id', 'probe', { loginShell: false, timeoutSeconds: 30 }); console.log(JSON.stringify(r))",
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok'
       })
@@ -80,8 +86,13 @@ gate('repl kernel host.compute', () => {
     stub.close()
     expect(result.status).toBe('completed')
     expect(result.stdout).toContain('ok')
-    expect(stub.received().params?.op).toBe('call_command')
-    expect(stub.received().params?.provider_id).toBe('ssh:x')
+    expect(result.stdout).toContain('"exit_code":0')
+    expect(stub.received()[0]?.params).toMatchObject({
+      op: 'call_command',
+      provider_id: 'ssh:x',
+      login_shell: false,
+      timeout_seconds: 30
+    })
   })
 
   it('forwards the request session/project identity into the call_command payload (buildEnv)', async () => {
@@ -89,7 +100,7 @@ gate('repl kernel host.compute', () => {
     const exec = makeExecutor()
     const result = await exec.execute(
       baseRequest({
-        code: "await host.compute.create('ssh:x').call_command('id','probe'); console.log('done')",
+        code: "await host.compute.create('ssh:x').callCommand('id','probe'); console.log('done')",
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
@@ -99,7 +110,102 @@ gate('repl kernel host.compute', () => {
     await exec.shutdown()
     stub.close()
     expect(result.status).toBe('completed')
-    expect(stub.received().params?.session_id).toBe('session-7')
-    expect(stub.received().params?.project_id).toBe('proj-x')
+    expect(stub.received()[0]?.params?.session_id).toBe('session-7')
+    expect(stub.received()[0]?.params?.project_id).toBe('proj-x')
+  })
+
+  it('maps listCompute, details, submitJob, attachJob, and setConcurrencyLimit to unchanged wire params', async () => {
+    const stub = await startStub()
+    const exec = makeExecutor()
+    const result = await exec.execute(
+      baseRequest({
+        code:
+          "const c = host.compute.create('ssh:x'); " +
+          'await host.compute.listCompute(); ' +
+          "await host.compute.details('ssh:x', { mode: 'replace', text: 'new', oldText: 'old' }); " +
+          "const job = await c.submitJob('analyze', 'run', { timeoutSeconds: 60, " +
+          "inputs: [{ src: 'in.dat', dstFilename: 'input.dat' }, { remotePath: '/remote/ref.dat', dstFilename: 'ref.dat' }], " +
+          "outputs: ['*.csv'], harvest: { exclude: ['tmp/**'], maxFileMb: 10, maxTotalMb: 20 } }); " +
+          'await c.attachJob(job.job_id).status(); await c.attachJob(job.job_id).result(); ' +
+          'await c.setConcurrencyLimit(2); console.log(JSON.stringify(job))',
+        mcpRpcEndpoint: stub.endpoint,
+        mcpRpcToken: 'tok',
+        sessionId: 'session-7',
+        projectName: 'proj-x'
+      })
+    )
+    await exec.shutdown()
+    stub.close()
+
+    expect(result.status).toBe('completed')
+    expect(result.stdout).toContain('"job_id":"job-1"')
+    expect(stub.received().map((request) => request.params)).toEqual([
+      { op: 'list_compute', session_id: 'session-7' },
+      {
+        op: 'details',
+        provider_id: 'ssh:x',
+        mode: 'replace',
+        text: 'new',
+        old_text: 'old'
+      },
+      {
+        op: 'submit_job',
+        provider_id: 'ssh:x',
+        intent: 'analyze',
+        command: 'run',
+        inputs: [
+          { src: 'in.dat', dst_filename: 'input.dat' },
+          { remote_path: '/remote/ref.dat', dst_filename: 'ref.dat' }
+        ],
+        outputs: ['*.csv'],
+        timeout_seconds: 60,
+        harvest: { exclude: ['tmp/**'], max_file_mb: 10, max_total_mb: 20 },
+        session_id: 'session-7',
+        project_id: 'proj-x',
+        workspace_cwd: process.cwd()
+      },
+      { op: 'job_status', job_id: 'job-1' },
+      { op: 'job_result', job_id: 'job-1' },
+      { op: 'set_concurrency_limit', session_id: 'session-7', limit: 2 }
+    ])
+  })
+
+  it('rejects every old compute input key before RPC', async () => {
+    const stub = await startStub()
+    const exec = makeExecutor()
+    const result = await exec.execute(
+      baseRequest({
+        code:
+          "const c = host.compute.create('ssh:x'); const errors = []; " +
+          'for (const call of [' +
+          "() => c.callCommand('id', 'probe', { login_shell: true }), " +
+          "() => c.callCommand('id', 'probe', { timeout_seconds: 1 }), " +
+          "() => host.compute.details('ssh:x', { old_text: 'old' }), " +
+          "() => c.submitJob('i', 'c', { timeout_seconds: 1 }), " +
+          "() => c.submitJob('i', 'c', { inputs: [{ src: 'a', dst_filename: 'a' }] }), " +
+          "() => c.submitJob('i', 'c', { inputs: [{ remote_path: '/a' }] }), " +
+          "() => c.submitJob('i', 'c', { harvest: { max_file_mb: 1 } }), " +
+          "() => c.submitJob('i', 'c', { harvest: { max_total_mb: 1 } })]) " +
+          '{ try { await call() } catch (error) { errors.push(error.message) } } ' +
+          'console.log(JSON.stringify(errors))',
+        mcpRpcEndpoint: stub.endpoint,
+        mcpRpcToken: 'tok'
+      })
+    )
+    await exec.shutdown()
+    stub.close()
+
+    expect(result.status).toBe('completed')
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      'host.compute.callCommand options unknown option: login_shell',
+      'host.compute.callCommand options unknown option: timeout_seconds',
+      'host.compute.details options unknown option: old_text',
+      'host.compute.submitJob options unknown option: timeout_seconds',
+      'host.compute.submitJob input unknown option: dst_filename',
+      'host.compute.submitJob input unknown option: remote_path',
+      'host.compute.submitJob harvest unknown option: max_file_mb',
+      'host.compute.submitJob harvest unknown option: max_total_mb'
+    ])
+    expect(stub.received()).toEqual([])
   })
 })

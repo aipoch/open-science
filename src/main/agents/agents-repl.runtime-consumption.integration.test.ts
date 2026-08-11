@@ -122,6 +122,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
   let token: string
   let profileStorage: string
   let runtimeStorage: string
+  let releaseControl: (() => void) | undefined
 
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-rt-profile-'))
@@ -150,12 +151,14 @@ gate('host.agents repl runtime whitelist consumption', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.ensureStarted()
+    const connection = await rpcServer.issueControlConnection('runtime-session', 'default-project')
     endpoint = connection.endpoint
     token = connection.token
+    releaseControl = connection.release
   })
 
   afterAll(async () => {
+    releaseControl?.()
     await rpcServer?.close()
     await rm(profileStorage, { recursive: true, force: true })
     await rm(runtimeStorage, { recursive: true, force: true })
@@ -256,7 +259,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
           )
         ).result ?? '{}'
       )
-      // Read-back resolved the connector reference to the stable id 'cust-1'.
+      // Read-back preserves the exact stable connector id.
       expect(created.selectedCapabilities.connectorIds).toEqual(['cust-1'])
       // The Connector gate consumes the post-write config: the provisioned `mcp-cust-1` connector
       // skill is allowed, any other connector is filtered out.

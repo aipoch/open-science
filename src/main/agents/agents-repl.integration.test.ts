@@ -117,6 +117,7 @@ gate('host.agents repl integration', () => {
   let runtimeStorage: string
   let agentsService: AgentsService
   let capturedSessionId: string | undefined
+  let releaseControl: (() => void) | undefined
 
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-profile-'))
@@ -151,15 +152,17 @@ gate('host.agents repl integration', () => {
         }
       }
     })
-    const connection = await rpcServer.ensureStarted()
+    const connection = await rpcServer.issueControlConnection('session-trusted', 'default-project')
     endpoint = connection.endpoint
     token = connection.token
+    releaseControl = connection.release
 
     // Seed a specialist profile directly through the authoritative ProfileService.
     await profileService.create({ name: 'Bio Expert', description: 'secret: apikey=XYZ' })
   })
 
   afterAll(async () => {
+    releaseControl?.()
     await rpcServer?.close()
     await rm(profileStorage, { recursive: true, force: true })
     await rm(runtimeStorage, { recursive: true, force: true })
@@ -331,7 +334,7 @@ gate('host.agents repl integration', () => {
       // Even via a legitimate call, the trusted identity is the captured one.
       const r2 = await send('return JSON.stringify(await host.agents.list())')
       expect(r2.error).toBeNull()
-      expect(capturedSessionId).toBe('session-real')
+      expect(capturedSessionId).toBe('session-trusted')
     } finally {
       child.kill()
     }

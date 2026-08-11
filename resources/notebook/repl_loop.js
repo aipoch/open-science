@@ -1082,21 +1082,39 @@ const normalizedHostLlmRequest = (value) => {
   }
 }
 
+const remappedHostObject = (value, label, keyMap) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object.`)
+  }
+  const keys = Reflect.ownKeys(value)
+  const unknown = keys.find(
+    (key) => typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(keyMap, key)
+  )
+  if (unknown !== undefined) throw new TypeError(`${label} unknown option: ${String(unknown)}`)
+  return Object.fromEntries(keys.map((key) => [keyMap[key], value[key]]))
+}
+
 const normalizedHostLlmOptions = (value) => {
   if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
+  }
+  let keys
+  try {
+    keys = Reflect.ownKeys(value)
+  } catch {
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
+  }
+  const unknown = keys.find((key) => key !== 'maxConcurrency')
+  if (unknown !== undefined) {
+    throw new TypeError(`host.llm batch options unknown option: ${String(unknown)}`)
+  }
+  if (keys.length === 0) return {}
   let concurrency
   try {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new TypeError('host.llm batch options only accept max_concurrency.')
-    }
-    const keys = Reflect.ownKeys(value)
-    if (keys.some((key) => key !== 'max_concurrency')) {
-      throw new TypeError('host.llm batch options only accept max_concurrency.')
-    }
-    if (keys.length === 0) return {}
-    concurrency = value.max_concurrency
+    concurrency = value.maxConcurrency
   } catch {
-    throw new TypeError('host.llm batch options only accept max_concurrency.')
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
   }
   if (
     typeof concurrency !== 'number' ||
@@ -1104,7 +1122,7 @@ const normalizedHostLlmOptions = (value) => {
     concurrency < 1 ||
     concurrency > 4
   ) {
-    throw new TypeError('host.llm max_concurrency must be an integer from 1 through 4.')
+    throw new TypeError('host.llm maxConcurrency must be an integer from 1 through 4.')
   }
   return { max_concurrency: concurrency }
 }
@@ -1162,7 +1180,7 @@ async function hostLlm(request, options = undefined) {
 async function artifactsRpc(op, params) {
   if (!RPC_ENDPOINT)
     throw new Error(
-      `host.${op === 'list' ? 'artifacts' : 'artifact_path'} is unavailable: RPC endpoint not set`
+      `host.${op === 'list' ? 'artifacts' : 'artifactPath'} is unavailable: RPC endpoint not set`
     )
   const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
@@ -1172,7 +1190,7 @@ async function artifactsRpc(op, params) {
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
     throw new Error(
-      `host.${op === 'list' ? 'artifacts' : 'artifact_path'}: ${body.error || 'HTTP ' + res.status}`
+      `host.${op === 'list' ? 'artifacts' : 'artifactPath'}: ${body.error || 'HTTP ' + res.status}`
     )
   }
   return body.result
@@ -1189,6 +1207,18 @@ const HOST_ARTIFACT_REQUIRED_KEYS = [
   'latest_version_created_at'
 ]
 const HOST_ARTIFACT_OPTIONAL_KEYS = ['content_type', 'checksum']
+const HOST_ARTIFACT_INPUT_KEYS = {
+  versionId: 'version_id',
+  sessionId: 'session_id',
+  filename: 'filename',
+  exact: 'exact',
+  search: 'search',
+  contentType: 'content_type',
+  after: 'after',
+  before: 'before',
+  cursor: 'cursor',
+  limit: 'limit'
+}
 
 const validatedHostArtifact = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1226,7 +1256,9 @@ const validatedHostArtifact = (value) => {
 
 async function hostArtifacts(options = {}) {
   if (arguments.length > 1) throw new TypeError('host.artifacts accepts at most one options object')
-  const result = await artifactsRpc('list', { options })
+  const result = await artifactsRpc('list', {
+    options: remappedHostObject(options, 'host.artifacts options', HOST_ARTIFACT_INPUT_KEYS)
+  })
   if (
     !result ||
     typeof result !== 'object' ||
@@ -1255,10 +1287,10 @@ async function hostArtifacts(options = {}) {
 }
 
 async function hostArtifactPath(versionId) {
-  if (arguments.length !== 1) throw new TypeError('host.artifact_path accepts one version_id')
+  if (arguments.length !== 1) throw new TypeError('host.artifactPath accepts one versionId')
   const result = await artifactsRpc('path', { version_id: versionId })
   if (typeof result !== 'string' || !path.isAbsolute(result)) {
-    throw new Error('host.artifact_path returned an invalid path')
+    throw new Error('host.artifactPath returned an invalid path')
   }
   return result
 }
@@ -2148,13 +2180,22 @@ const validatedHostLineageVersion = (value) => {
 
 async function hostLineageGraph(versionId, options = {}) {
   if (arguments.length < 1 || arguments.length > 2) {
-    throw new TypeError('host.lineage.graph accepts version_id and at most one options object')
+    throw new TypeError('host.lineage.graph accepts versionId and at most one options object')
   }
-  return validatedHostLineageGraph(await lineageRpc('graph', { version_id: versionId, options }))
+  return validatedHostLineageGraph(
+    await lineageRpc('graph', {
+      version_id: versionId,
+      options: remappedHostObject(options, 'host.lineage.graph options', {
+        direction: 'direction',
+        maxDepth: 'max_depth',
+        maxNodes: 'max_nodes'
+      })
+    })
+  )
 }
 
 async function hostLineageGet(versionId) {
-  if (arguments.length !== 1) throw new TypeError('host.lineage.get accepts one version_id')
+  if (arguments.length !== 1) throw new TypeError('host.lineage.get accepts one versionId')
   return validatedHostLineageVersion(await lineageRpc('get', { version_id: versionId }))
 }
 
@@ -2163,7 +2204,19 @@ const hostLineage = Object.freeze({ graph: hostLineageGraph, get: hostLineageGet
 async function hostFramesList(options = {}) {
   if (arguments.length > 1)
     throw new TypeError('host.frames.list accepts at most one options object')
-  const result = await framesRpc('list', { options })
+  const result = await framesRpc('list', {
+    options: remappedHostObject(options, 'host.frames.list options', {
+      sessionId: 'session_id',
+      rootsOnly: 'roots_only',
+      kind: 'kind',
+      archived: 'archived',
+      search: 'search',
+      after: 'after',
+      before: 'before',
+      limit: 'limit',
+      cursor: 'cursor'
+    })
+  })
   const required = ['project_id', 'frames', 'total_count']
   const optional = ['next_cursor']
   if (
@@ -2186,9 +2239,17 @@ async function hostFramesList(options = {}) {
 
 async function hostFramesGet(frameId, options = {}) {
   if (arguments.length < 1 || arguments.length > 2) {
-    throw new TypeError('host.frames.get accepts frame_id and at most one options object')
+    throw new TypeError('host.frames.get accepts frameId and at most one options object')
   }
-  const result = await framesRpc('get', { frame_id: frameId, options })
+  const result = await framesRpc('get', {
+    frame_id: frameId,
+    options: remappedHostObject(options, 'host.frames.get options', {
+      sessionId: 'session_id',
+      branchId: 'branch_id',
+      before: 'before',
+      limit: 'limit'
+    })
+  })
   const keys = ['project_id', 'session', 'frame', 'branch', 'transcript', 'runtime_segments']
   if (
     !exactObject(result, keys) ||
@@ -2479,20 +2540,6 @@ async function delegatedMessageRpc(op, params) {
 // post-write camelCase Profile read-back and never echo requested input. switch/delete are the
 // privileged surface (issue 04/05): authorized this milestone by the /customize Skill's chat-text
 // confirmation + the pass-through SDK approval gateway (design.md §7/§14), not the standard card.
-function agentsWriteParams(value) {
-  const names = {
-    displayName: 'display_name',
-    systemPrompt: 'system_prompt',
-    iconKey: 'icon_key',
-    colorKey: 'color_key',
-    skillNames: 'skill_names',
-    connectorNames: 'connector_names'
-  }
-  return Object.fromEntries(
-    Object.entries(value || {}).map(([key, entry]) => [names[key] || key, entry])
-  )
-}
-
 const hostAgents = {
   async list() {
     return agentsRpc('list')
@@ -2507,10 +2554,38 @@ const hostAgents = {
     return agentsRpc('list_connectors', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
   },
   async create(input) {
-    return agentsRpc('create', agentsWriteParams(input))
+    return agentsRpc(
+      'create',
+      remappedHostObject(input || {}, 'host.agents.create input', {
+        name: 'name',
+        displayName: 'display_name',
+        description: 'description',
+        systemPrompt: 'system_prompt',
+        iconKey: 'icon_key',
+        colorKey: 'color_key',
+        enabled: 'enabled',
+        unrestricted: 'unrestricted',
+        skillNames: 'skill_names',
+        connectorNames: 'connector_names'
+      })
+    )
   },
   async update(name, patch) {
-    return agentsRpc('update', { name, patch: agentsWriteParams(patch) })
+    return agentsRpc('update', {
+      name,
+      patch: remappedHostObject(patch || {}, 'host.agents.update patch', {
+        displayName: 'display_name',
+        revision: 'revision',
+        description: 'description',
+        systemPrompt: 'system_prompt',
+        iconKey: 'icon_key',
+        colorKey: 'color_key',
+        enabled: 'enabled',
+        unrestricted: 'unrestricted',
+        skillNames: 'skill_names',
+        connectorNames: 'connector_names'
+      })
+    })
   },
   async attachSkill(name, skillRef, options) {
     return agentsRpc('attach_skill', { name, skill_ref: skillRef, ...(options || {}) })
@@ -2572,12 +2647,12 @@ const hostSkills = {
   async validate(name) {
     return skillsRpc('validate', { name })
   },
-  async edit(name, path, content, old_string = undefined) {
+  async edit(name, path, content, oldString = undefined) {
     return skillsRpc('edit', {
       name,
       path,
       content,
-      ...(old_string !== undefined ? { old_string } : {})
+      ...(oldString !== undefined ? { old_string: oldString } : {})
     })
   },
   async publish(name, overwrite = false) {
@@ -2607,8 +2682,8 @@ function computeError(raw) {
   return new Error(String(raw))
 }
 
-// host.compute namespace mirroring the spec's Python API surface (kept snake_case on purpose — a JS
-// camelCase pass is a deferred one-shot rename once the whole compute feature lands; see roadmap §8).
+// host.compute namespace. Public methods and input keys are camelCase; the adapter immediately maps
+// them to the existing snake_case computeCall RPC contract.
 const hostCompute = {
   // Enumerate registered compute hosts for discovery. No approval, no session context.
   async list() {
@@ -2617,52 +2692,82 @@ const hostCompute = {
 
   // Returns session-enabled compute hosts (≠ list() which returns all registered hosts).
   // Uses COMPUTE_SESSION_ID from spawn env so the registry lookup is always session-scoped.
-  async list_compute() {
+  async listCompute() {
     return computeRpc({ op: 'list_compute', session_id: COMPUTE_SESSION_ID })
   },
-  // Bind a thin handle to one provider (no network call). call_command runs one short remote command;
-  // login_shell defaults to true (runs login profiles, then attempts a readable ~/.bashrc, before the
+  // Bind a thin handle to one provider (no network call). callCommand runs one short remote command;
+  // loginShell defaults to true (runs login profiles, then attempts a readable ~/.bashrc, before the
   // command). A .bashrc can deliberately return early for non-interactive shells. false performs no
   // shell initialization.
-  // timeout_seconds
+  // timeoutSeconds
   // is optional (the service applies its own default when omitted). Session/project context is threaded
   // from the spawn env so the approval broker can remember a grant for this conversation/project.
   //
-  // submit_job: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
+  // submitJob: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
   // remote_workdir} immediately, before any SSH. Background dispatch runs the job detached.
-  // attach_job: returns a handle with .status() to read job state from DB without SSH.
+  // attachJob: returns a handle with .status() to read job state from DB without SSH.
   create(providerId) {
     return {
       provider_id: providerId,
-      async call_command(cmd, intent, options = {}) {
+      async callCommand(cmd, intent, options = {}) {
+        const normalized = remappedHostObject(options, 'host.compute.callCommand options', {
+          loginShell: 'login_shell',
+          timeoutSeconds: 'timeout_seconds'
+        })
         return computeRpc({
           op: 'call_command',
           provider_id: providerId,
           cmd,
           intent,
-          login_shell: options.login_shell !== undefined ? options.login_shell : true,
-          timeout_seconds: options.timeout_seconds,
+          login_shell: normalized.login_shell !== undefined ? normalized.login_shell : true,
+          timeout_seconds: normalized.timeout_seconds,
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_NAME
         })
       },
 
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
-      // options: { environment?, resources?, inputs?, outputs?, timeout_seconds?, harvest? }
+      // options: { environment?, resources?, inputs?, outputs?, timeoutSeconds?, harvest? }
       // Session/project context is always threaded from spawn env for grant-scope memory.
       // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
-      async submit_job(intent, command, options = {}) {
+      async submitJob(intent, command, options = {}) {
+        const normalized = remappedHostObject(options, 'host.compute.submitJob options', {
+          environment: 'environment',
+          resources: 'resources',
+          inputs: 'inputs',
+          outputs: 'outputs',
+          timeoutSeconds: 'timeout_seconds',
+          harvest: 'harvest'
+        })
+        if (normalized.inputs !== undefined && !Array.isArray(normalized.inputs)) {
+          throw new TypeError('host.compute.submitJob inputs must be an array.')
+        }
+        const inputs = normalized.inputs?.map((input) =>
+          remappedHostObject(input, 'host.compute.submitJob input', {
+            src: 'src',
+            dstFilename: 'dst_filename',
+            remotePath: 'remote_path'
+          })
+        )
+        const harvest =
+          normalized.harvest === undefined
+            ? undefined
+            : remappedHostObject(normalized.harvest, 'host.compute.submitJob harvest', {
+                exclude: 'exclude',
+                maxFileMb: 'max_file_mb',
+                maxTotalMb: 'max_total_mb'
+              })
         return computeRpc({
           op: 'submit_job',
           provider_id: providerId,
           intent,
           command,
-          environment: options.environment,
-          resources: options.resources,
-          inputs: options.inputs,
-          outputs: options.outputs,
-          timeout_seconds: options.timeout_seconds,
-          harvest: options.harvest,
+          environment: normalized.environment,
+          resources: normalized.resources,
+          inputs,
+          outputs: normalized.outputs,
+          timeout_seconds: normalized.timeout_seconds,
+          harvest,
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_NAME,
           workspace_cwd: process.cwd()
@@ -2672,7 +2777,7 @@ const hostCompute = {
       // Attaches to an existing job by job_id. .status() reads from DB only (no SSH).
       // .result() returns the full JobResult (spec §11.4): scans the local harvest directory,
       // returns workspace-relative file paths, never triggers harvest or SSH (design §9).
-      attach_job(jobId) {
+      attachJob(jobId) {
         return {
           job_id: jobId,
           async status() {
@@ -2687,9 +2792,9 @@ const hostCompute = {
       // Set session-level concurrency limit (Phase 3c). Limits the number of non-terminal jobs
       // that can run simultaneously across all providers in this session. Jobs exceeding the limit
       // enter 'queued' state and auto-dispatch when slots free up.
-      async set_concurrency_limit(k) {
+      async setConcurrencyLimit(k) {
         if (typeof k !== 'number' || k <= 0 || k > 500 || !Number.isInteger(k)) {
-          throw new Error('set_concurrency_limit: k must be a positive integer between 1 and 500')
+          throw new Error('setConcurrencyLimit: k must be a positive integer between 1 and 500')
         }
         return computeRpc({
           op: 'set_concurrency_limit',
@@ -2710,15 +2815,20 @@ const hostCompute = {
     }
   },
   // Read/append/replace the host knowledge doc. mode defaults to 'read'; append needs `text`; replace
-  // needs `text` + `old_text` (old_text must match the current doc exactly, guarding against clobbering
-  // a concurrent edit). Snake_case option keys mirror the RPC contract and the spec's Python surface.
+  // needs `text` + `oldText` (oldText must match the current doc exactly, guarding against clobbering
+  // a concurrent edit).
   async details(providerId, options = {}) {
+    const normalized = remappedHostObject(options, 'host.compute.details options', {
+      mode: 'mode',
+      text: 'text',
+      oldText: 'old_text'
+    })
     return computeRpc({
       op: 'details',
       provider_id: providerId,
-      mode: options.mode || 'read',
-      text: options.text,
-      old_text: options.old_text
+      mode: normalized.mode || 'read',
+      text: normalized.text,
+      old_text: normalized.old_text
     })
   }
 }
@@ -2743,7 +2853,7 @@ const sandbox = {
     capabilities: hostCapabilities,
     llm: hostLlm,
     artifacts: hostArtifacts,
-    artifact_path: hostArtifactPath,
+    artifactPath: hostArtifactPath,
     lineage: hostLineage,
     frames: hostFrames,
     mcp: hostMcp,

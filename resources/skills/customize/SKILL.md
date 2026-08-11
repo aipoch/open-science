@@ -150,9 +150,9 @@ confirmation before executing. The review must show:
 
 For an update, also identify the changed fields.
 
-For multi-field capability edits, prefer **one atomic `update`** over a loop of `attach_*`/`detach_*`
-calls that could partially succeed. Use `attach_*`/`detach_*` only for a single incremental collection
-move.
+For multi-field capability edits, prefer **one atomic `update`** over a loop of attach/detach calls
+that could partially succeed. Use `attachSkill`/`detachSkill` or
+`attachConnector`/`detachConnector` only for a single incremental collection move.
 
 ## Confirmation boundaries
 
@@ -174,8 +174,8 @@ When you describe one of these privileged actions, explain:
 
 ## Revision and stale drafts
 
-Carry the reviewed `revision` into `update`/`delete`/`attach_*`/`detach_*`. A stale revision fails
-**without merge or retry**. When it fails, re-read, rebuild the complete draft, and ask for
+Carry the reviewed `revision` into `update`, `delete`, and the attach/detach methods. A stale revision
+fails **without merge or retry**. When it fails, re-read, rebuild the complete draft, and ask for
 confirmation again. A changed draft also invalidates the user's earlier confirmation — re-review after
 the user edits the draft. Do not automatically retry declined or stale privileged operations.
 

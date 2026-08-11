@@ -253,7 +253,7 @@ class HostArtifactsService {
 
   async resolvePath(versionIdValue: unknown, context: HostArtifactReadContext): Promise<string> {
     if (typeof versionIdValue !== 'string' || !versionIdValue || versionIdValue.length > 512) {
-      throw new Error('host.artifact_path version_id must be a non-empty string.')
+      throw new Error('host.artifactPath versionId must be a non-empty string.')
     }
     const [item] = await this.catalog.readHostArtifactCatalog({
       projectId: context.projectId,
