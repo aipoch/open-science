@@ -574,7 +574,10 @@ const WorkspaceSidebarView = ({
                                   </span>
                                   <span className="flex-1">Export conversation</span>
                                 </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent aria-label="Export conversation formats">
+                                <DropdownMenuSubContent
+                                  aria-label="Export conversation formats"
+                                  className={mobileMode ? 'z-[80]' : undefined}
+                                >
                                   <DropdownMenuItem
                                     className="gap-2"
                                     onSelect={() => onExportSession(session, 'markdown')}
