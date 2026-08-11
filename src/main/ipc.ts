@@ -720,7 +720,7 @@ const createApplicationModules = async (
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
-      sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds)
+      await sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds)
       await (sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve())
     }
   })

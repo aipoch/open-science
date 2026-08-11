@@ -65,8 +65,10 @@ class SessionEnabledComputeHostsOwner {
     this.options.registry.set(session.id, session.enabledComputeHosts ?? [])
   }
 
-  clear(sessionIds: readonly string[]): void {
-    for (const sessionId of sessionIds) this.options.registry.clear(sessionId)
+  clear(sessionIds: readonly string[]): Promise<void> {
+    return this.enqueue(async () => {
+      for (const sessionId of sessionIds) this.options.registry.clear(sessionId)
+    })
   }
 
   pruneProvider(

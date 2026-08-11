@@ -231,7 +231,7 @@ describe('SessionEnabledComputeHostsOwner', () => {
     expect(owner.get('unseen-session')).toEqual(['ssh:cluster'])
   })
 
-  it('clears deleted Sessions from the cache', () => {
+  it('clears deleted Sessions from the cache', async () => {
     const registry = new EnabledComputeHostsRegistry()
     registry.set('session-1', ['ssh:cluster'])
     const owner = new SessionEnabledComputeHostsOwner({
@@ -248,7 +248,44 @@ describe('SessionEnabledComputeHostsOwner', () => {
       withDataRootWrite: passthroughDataRootWrite
     })
 
-    owner.clear(['session-1'])
+    await owner.clear(['session-1'])
+
+    expect(owner.get('session-1')).toEqual([])
+  })
+
+  it('serializes Session deletion cache clears after in-flight reconciliation', async () => {
+    const registry = new EnabledComputeHostsRegistry()
+    registry.set('session-1', ['ssh:cluster'])
+    let finishHostList: ((providerIds: readonly string[]) => void) | undefined
+    const listHostIds = vi.fn(
+      () =>
+        new Promise<readonly string[]>((resolve) => {
+          finishHostList = resolve
+        })
+    )
+    const owner = new SessionEnabledComputeHostsOwner({
+      registry,
+      hostExists: async () => true,
+      listHostIds,
+      sessionAuthority: {
+        sessionProjectId: async () => undefined,
+        setSessionEnabledComputeHosts: async () => {
+          throw new Error('not expected')
+        },
+        pruneSessionEnabledComputeHosts: async () => createPruneResult()
+      },
+      withDataRootWrite: passthroughDataRootWrite
+    })
+
+    const reconciling = owner.reconcile(
+      [createSession({ enabledComputeHosts: ['ssh:cluster'] })],
+      true
+    )
+    await vi.waitFor(() => expect(listHostIds).toHaveBeenCalledOnce())
+    const clearing = owner.clear(['session-1'])
+    finishHostList?.(['ssh:cluster'])
+
+    await Promise.all([reconciling, clearing])
 
     expect(owner.get('session-1')).toEqual([])
   })
