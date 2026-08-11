@@ -106,7 +106,7 @@ export const createSettingsConnectorsSlice = ({
       }
     }
   }
-  const reconcileMutation = (command: () => Promise<SettingsConnectorsProjection>) =>
+  const reconcileMutation = (command: () => Promise<SettingsConnectorsProjection>): Promise<void> =>
     runMutation(() => reconcile(command))
   let removeRuntimeChangedListener: (() => void) | undefined
   const subscribeToRuntimeChanges = (): void => {
