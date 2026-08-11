@@ -267,7 +267,9 @@ export const ComposerYourFilesMenu = ({
               const isExpanded = expandedDirs[root.path] === true
               return (
                 <div key={root.id} data-testid={`your-files-root-${root.id}`}>
-                  <div className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200">
+                  {/* Fixed height + opacity-based reveal for the × action: hover only changes the
+                      background, so the row (and the list below it) never shifts. */}
+                  <div className="group flex h-[30px] items-center gap-1.5 rounded-md pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200">
                     <button
                       type="button"
                       aria-expanded={isExpanded}
@@ -303,7 +305,7 @@ export const ComposerYourFilesMenu = ({
                         event.preventDefault()
                         void remove(root.id).catch(() => undefined)
                       }}
-                      className="hidden size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 hover:bg-bg-300 hover:text-text-000 group-hover:inline-flex"
+                      className="flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-0 transition-opacity hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100"
                     >
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </button>
