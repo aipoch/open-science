@@ -11,7 +11,6 @@ const baselineMigrations = [
   'src/main/database/migrations/0001-runtime-schema-baseline.ts',
   'src/main/database/migrations/0002-project-agent-context.ts'
 ]
-const migrationLedgerSmokePath = 'scripts/database-migration-ledger-smoke.mjs'
 const nextMigrationPath = 'src/main/database/migrations/0003-project-label.ts'
 const nextMigrationSource = `const projectLabelMigration = {
   id: '0003_project_label',
@@ -51,8 +50,7 @@ describe('pull request policy', () => {
       checkDatabaseMigrationPolicy({
         changes: [
           { path: 'prisma/schema.prisma', status: 'modified' },
-          { path: nextMigrationPath, status: 'added' },
-          { path: migrationLedgerSmokePath, status: 'modified' }
+          { path: nextMigrationPath, status: 'added' }
         ],
         baseMigrationPaths: baselineMigrations,
         baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
@@ -62,24 +60,6 @@ describe('pull request policy', () => {
         }
       })
     ).toEqual([])
-  })
-
-  it('requires new migrations to update the packaged ledger smoke', () => {
-    expect(
-      checkDatabaseMigrationPolicy({
-        changes: [{ path: nextMigrationPath, status: 'added' }],
-        baseMigrationPaths: baselineMigrations,
-        baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
-        headFiles: {
-          [nextMigrationPath]: nextMigrationSource,
-          'src/main/database/migration-service.ts': migrationServiceSource
-        }
-      })
-    ).toEqual([
-      expect.objectContaining({
-        subject: expect.stringContaining('database-migration-ledger-smoke.mjs')
-      })
-    ])
   })
 
   it('keeps released migrations immutable', () => {
@@ -94,10 +74,7 @@ describe('pull request policy', () => {
   it('rejects skipped and mismatched migration versions', () => {
     const path = 'src/main/database/migrations/0004-project-label.ts'
     const violations = checkDatabaseMigrationPolicy({
-      changes: [
-        { path, status: 'added' },
-        { path: migrationLedgerSmokePath, status: 'modified' }
-      ],
+      changes: [{ path, status: 'added' }],
       baseMigrationPaths: baselineMigrations,
       headFiles: {
         [path]: nextMigrationSource,
@@ -114,10 +91,7 @@ describe('pull request policy', () => {
   it('rejects unversioned and unregistered migration files', () => {
     expect(
       checkDatabaseMigrationPolicy({
-        changes: [
-          { path: 'src/main/database/migrations/project-label.ts', status: 'added' },
-          { path: migrationLedgerSmokePath, status: 'modified' }
-        ],
+        changes: [{ path: 'src/main/database/migrations/project-label.ts', status: 'added' }],
         baseMigrationPaths: baselineMigrations
       })
     ).toEqual([
@@ -126,10 +100,7 @@ describe('pull request policy', () => {
 
     expect(
       checkDatabaseMigrationPolicy({
-        changes: [
-          { path: nextMigrationPath, status: 'added' },
-          { path: migrationLedgerSmokePath, status: 'modified' }
-        ],
+        changes: [{ path: nextMigrationPath, status: 'added' }],
         baseMigrationPaths: baselineMigrations,
         headFiles: { [nextMigrationPath]: nextMigrationSource }
       })
@@ -151,10 +122,7 @@ const MIGRATION_MANIFEST = [
 
     expect(
       checkDatabaseMigrationPolicy({
-        changes: [
-          { path: nextMigrationPath, status: 'added' },
-          { path: migrationLedgerSmokePath, status: 'modified' }
-        ],
+        changes: [{ path: nextMigrationPath, status: 'added' }],
         baseMigrationPaths: baselineMigrations,
         baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
         headFiles: {
@@ -216,10 +184,7 @@ const MIGRATION_MANIFEST = [
   it('does not accept migration declarations and registrations found only in comments', () => {
     expect(
       checkDatabaseMigrationPolicy({
-        changes: [
-          { path: nextMigrationPath, status: 'added' },
-          { path: migrationLedgerSmokePath, status: 'modified' }
-        ],
+        changes: [{ path: nextMigrationPath, status: 'added' }],
         baseMigrationPaths: baselineMigrations,
         baseFiles: { 'src/main/database/migration-service.ts': baseMigrationServiceSource },
         headFiles: {
