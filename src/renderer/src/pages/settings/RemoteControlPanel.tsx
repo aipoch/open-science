@@ -88,9 +88,11 @@ const providerStatus = (snapshot: RemoteAccessSnapshot): string => {
 }
 
 const loadRemoteAccessSnapshot = async (
-  onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined
+  onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined,
+  isActive: () => boolean = () => true
 ): Promise<RemoteAccessSnapshot> => {
   const initial = await window.api.remoteAccess.getSnapshot()
+  if (!isActive()) return initial
   onInitial(initial)
   return initial.canManage ? window.api.remoteAccess.detect() : initial
 }
@@ -123,6 +125,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
   const operationTriggerRef = useRef<HTMLElement | null>(null)
   const initialLoadRetryRef = useRef(false)
+  const mountedRef = useRef(false)
   const refresh = async (detect = false, completesBusyOperation = true): Promise<void> => {
     try {
       const next = detect
@@ -139,9 +142,13 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
   useEffect(() => {
     let active = true
-    void loadRemoteAccessSnapshot((initial) => {
-      if (active) setSnapshot(initial)
-    })
+    mountedRef.current = true
+    void loadRemoteAccessSnapshot(
+      (initial) => {
+        if (active) setSnapshot(initial)
+      },
+      () => active
+    )
       .then((next) => {
         if (!active) return
         setSnapshot(next)
@@ -159,6 +166,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     })
     return () => {
       active = false
+      mountedRef.current = false
       unsubscribe()
     }
   }, [])
@@ -185,7 +193,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const retryInitialLoad = (): void => {
     if (initialLoadRetryRef.current) return
     initialLoadRetryRef.current = true
-    void run('loading', () => loadRemoteAccessSnapshot(setSnapshot)).finally(() => {
+    void run('loading', () =>
+      loadRemoteAccessSnapshot(setSnapshot, () => mountedRef.current)
+    ).finally(() => {
       initialLoadRetryRef.current = false
     })
   }
