@@ -3247,6 +3247,7 @@ describe('SettingsService: official vendors', () => {
 
   it('refreshes models from the vendor and persists them over the bundled catalog', async () => {
     const service = createService()
+    mockedNet.fetch.mockClear()
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -3269,6 +3270,10 @@ describe('SettingsService: official vendors', () => {
 
     const result = await service.refreshProviderModels({ providerId: created.id })
     expect(result).toMatchObject({ ok: true, models: ['deepseek-v5', 'deepseek-v4-pro'] })
+    expect(mockedNet.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/models$/),
+      expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
+    )
 
     // The fetched list now backs the provider view (and persists).
     const view = (await service.getSettingsView()).providers[0]

@@ -4,10 +4,16 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { netFetchStandard } = vi.hoisted(() => ({ netFetchStandard: vi.fn() }))
+
+vi.mock('../skills/net-fetch', () => ({ netFetchStandard }))
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
+  defaultFetchJson,
+  defaultFetchTarball,
   downloadAndVerify,
   extractFileFromTgz,
   getManagedPlatform,
@@ -51,6 +57,47 @@ const buildTgz = (entries: { name: string; content: Buffer }[]): Buffer => {
 
 const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
+
+describe('managed-claude: default transport', () => {
+  beforeEach(() => netFetchStandard.mockReset())
+
+  it('loads registry metadata through Electron net.fetch', async () => {
+    netFetchStandard.mockResolvedValue(
+      new Response(JSON.stringify({ version: '1.2.3' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+
+    await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
+      version: '1.2.3'
+    })
+    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package', {
+      redirect: 'follow',
+      signal: expect.any(AbortSignal)
+    })
+  })
+
+  it('streams tarballs through Electron net.fetch and preserves content length', async () => {
+    const payload = Buffer.from('managed-runtime-tarball')
+    netFetchStandard.mockResolvedValue(
+      new Response(payload, {
+        status: 200,
+        headers: { 'content-length': String(payload.length) }
+      })
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/package.tgz')
+    const chunks: Buffer[] = []
+    for await (const chunk of result.stream) chunks.push(Buffer.from(chunk as Uint8Array))
+
+    expect(Buffer.concat(chunks)).toEqual(payload)
+    expect(result.totalBytes).toBe(payload.length)
+    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package.tgz', {
+      redirect: 'follow'
+    })
+  })
+})
 
 describe('managed-claude: platform key', () => {
   it('maps darwin arm64', () => {

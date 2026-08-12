@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, mkdir, rm } from 'node:fs/promises'
-import { get } from 'node:https'
-import type { IncomingMessage } from 'node:http'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { Transform, Writable } from 'node:stream'
+import { Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
+import { netFetchStandard } from '../skills/net-fetch'
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency
@@ -514,57 +514,33 @@ const installManagedClaude = async ({
   return { result: { installId, ok: false, error: lastError } }
 }
 
-// ---- Default HTTPS transport (redirect-following) --------------------------------------------------
+// ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------
 
-const httpsGetFollow = (
-  url: string,
-  { timeoutMs = 20_000, maxRedirects = 5 } = {}
-): Promise<IncomingMessage> =>
-  new Promise((resolve, reject) => {
-    const visit = (target: string, redirectsLeft: number): void => {
-      const req = get(target, (res) => {
-        const status = res.statusCode ?? 0
-
-        if (status >= 300 && status < 400 && res.headers.location) {
-          res.resume()
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects for ${target}`))
-            return
-          }
-          visit(new URL(res.headers.location, target).toString(), redirectsLeft - 1)
-          return
-        }
-
-        if (status < 200 || status >= 300) {
-          res.resume()
-          reject(new Error(`HTTP ${status} for ${target}`))
-          return
-        }
-
-        resolve(res)
-      })
-
-      req.setTimeout(timeoutMs, () => req.destroy(new Error(`Request timed out for ${target}`)))
-      req.on('error', reject)
-    }
-
-    visit(url, maxRedirects)
-  })
+const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise<Response> => {
+  const response = await netFetchStandard(url, { redirect: 'follow', ...init })
+  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`)
+  return response
+}
 
 const defaultFetchJson: FetchJson = async (url) => {
-  const res = await httpsGetFollow(url)
-  const chunks: Buffer[] = []
-
-  for await (const chunk of res) chunks.push(chunk as Buffer)
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  const response = await fetchSuccessfulResponse(url, { signal: AbortSignal.timeout(20_000) })
+  return (await response.json()) as unknown
 }
 
 const defaultFetchTarball: FetchTarball = async (url) => {
-  const res = await httpsGetFollow(url)
-  const length = Number(res.headers['content-length'])
+  const response = await fetchSuccessfulResponse(url)
+  if (!response.body) throw new Error(`Empty response body for ${url}`)
 
-  return { stream: res, totalBytes: Number.isFinite(length) ? length : undefined }
+  const contentLength = response.headers.get('content-length')
+  const length = contentLength === null ? undefined : Number(contentLength)
+  const stream = Readable.fromWeb(
+    response.body as unknown as NodeReadableStream<Uint8Array>
+  ) as NodeJS.ReadableStream
+
+  return {
+    stream,
+    totalBytes: length !== undefined && Number.isFinite(length) ? length : undefined
+  }
 }
 
 export {

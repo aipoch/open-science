@@ -60,6 +60,7 @@ import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
+import { ParserEngine } from './connectors/engine'
 import { McpClientManager } from './connectors/mcp-client-manager'
 import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
@@ -218,6 +219,7 @@ import {
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
 import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
 import { saveSkillExport } from './skills/export'
+import { netFetchStandard } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -1136,6 +1138,7 @@ const createApplicationModules = async (
     }
   })
   const connectorService = new ConnectorService({
+    engine: new ParserEngine({ fetchImpl: netFetchStandard }),
     getConnectors: () => connectorRuntimeSettings.current(),
     getConnectorsFresh: () => settingsService.getConnectors(),
     resolveApiKey: (ref) => tryDecryptKey(ref),
