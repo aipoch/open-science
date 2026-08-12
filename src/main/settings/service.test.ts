@@ -2684,9 +2684,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
-        type: 'official',
-        name: 'DeepSeek',
-        vendorId: 'deepseek',
+        type: 'custom',
+        name: 'Chat Gateway',
+        apiEndpoints: ['openai'],
+        baseUrl: 'https://api.deepseek.com/v1',
+        model: 'deepseek-v4-pro',
+        contextWindow: 1_000_000,
+        reasoningEffortPreset: 'none-high',
+        reasoningEffortTransport: 'deepseek',
         key: 'test-key'
       })
     ).providers[0]
@@ -2695,9 +2700,7 @@ describe('SettingsService: preflight & spawn config', () => {
       ...storedProvider,
       lastValidatedAt: Date.now()
     })
-    // deepseek-v4-pro does not yet support the native Responses API, so it drives the Chat Completions
-    // bridge (the test's whole purpose). deepseek-v4-flash would route to native Responses instead.
-    await service.setActiveProvider(provider.id, 'deepseek-v4-pro')
+    await service.setActiveProvider(provider.id)
     await repository.setReasoningEffort('low')
 
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
