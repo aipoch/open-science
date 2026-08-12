@@ -52,10 +52,12 @@ const renderStep = async (): Promise<RenderResult> => {
     return (
       <LocationStep
         dataRootInfo={storageInfo()}
+        dataRootError={undefined}
         locationDraft={locationDraft}
         onLocationDraftChange={setLocationDraft}
         relaunchError={relaunchError}
         onRelaunchErrorChange={setRelaunchError}
+        onRetryDataRootInfo={vi.fn()}
         onBack={onBack}
         setIsRelaunching={setIsRelaunching}
       />
@@ -68,6 +70,14 @@ const renderStep = async (): Promise<RenderResult> => {
 }
 
 describe('LocationStep', () => {
+  it('stacks the data path and Browse control on narrow screens', async () => {
+    await renderStep()
+
+    const controls = container.querySelector('[aria-label="Data location path"]')?.parentElement
+    expect(controls?.className).toContain('flex-col')
+    expect(controls?.className).toContain('sm:flex-row')
+  })
+
   it('returns to the notebook step from the Back button', async () => {
     const { onBack } = await renderStep()
 
@@ -163,6 +173,17 @@ describe('LocationStep', () => {
     expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
+  it('a rejected default completion stays recoverable and shows the failure', async () => {
+    useSettingsStore.setState({
+      completeOnboarding: vi.fn().mockRejectedValue(new Error('Settings write failed.'))
+    })
+    await renderStep()
+
+    await clickButton(/finish/i)
+
+    expect(container.textContent).toContain('Settings write failed.')
+    expect(container.querySelector('section[aria-label="Choose data location"]')).not.toBeNull()
+  })
   it('Finish with a chosen non-default path shows a restart confirm dialog', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
@@ -227,6 +248,24 @@ describe('LocationStep', () => {
     // the wizard - not Home - is still what's rendered, with the error visible on Location.
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
     expect(container.textContent).toContain('Disk is full.')
+    expect(container.querySelector('section[aria-label="Choose data location"]')).not.toBeNull()
+    expect(setIsRelaunching).toHaveBeenLastCalledWith(false)
+  })
+
+  it('a rejected setDataRootAndRelaunch call shows the inline error and resets the relaunch flag', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    window.api.storage.setDataRootAndRelaunch = vi
+      .fn()
+      .mockRejectedValue(new Error('Relaunch IPC failed.'))
+    const { setIsRelaunching } = await renderStep()
+    await clickButton(/browse/i)
+    await clickButton(/finish/i)
+    await clickButton(/^restart$/i)
+
+    expect(container.textContent).toContain('Relaunch IPC failed.')
     expect(container.querySelector('section[aria-label="Choose data location"]')).not.toBeNull()
     expect(setIsRelaunching).toHaveBeenLastCalledWith(false)
   })

@@ -19,14 +19,17 @@ import { Separator } from '@/components/ui/separator'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useSettingsStore } from '@/stores/settings-store'
 import { DataRootWarning } from '@/components/DataRootWarning'
+import { onboardingErrorMessage } from './onboarding-error'
 
 type LocationStepProps = {
   // Fetched once by the wizard shell up front, so this step has the default location to show.
   dataRootInfo: StorageInfo | null
+  dataRootError: string | undefined
   locationDraft: LocationDraft
   onLocationDraftChange: (draft: LocationDraft) => void
   relaunchError: string | undefined
   onRelaunchErrorChange: (error: string | undefined) => void
+  onRetryDataRootInfo: () => void
   onBack: () => void
   // Relaunch replaces the whole wizard with a bare "Setting up…" screen, so the flag lives in the
   // shell and this step only reports it.
@@ -38,16 +41,17 @@ type LocationDraft = {
   chosenDataRoot: string
   chosenKind: 'move' | 'adopt' | null
 }
-
 // Final step (doubles as Finish): pick where large data lives, then either completeOnboarding
 // (default kept) or confirm a restart that applies the new root. Only `dataRoot` is ever touched
 // here — the config root (settings, sessions, db, claude, skills) always stays at its fixed default.
 const LocationStep = ({
   dataRootInfo,
+  dataRootError,
   locationDraft,
   onLocationDraftChange,
   relaunchError,
   onRelaunchErrorChange,
+  onRetryDataRootInfo,
   onBack,
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
@@ -86,6 +90,17 @@ const LocationStep = ({
     setLocationError(undefined)
   }
 
+  const completeWithDefaultLocation = async (): Promise<void> => {
+    onRelaunchErrorChange(undefined)
+    try {
+      await completeOnboarding()
+    } catch (error) {
+      onRelaunchErrorChange(
+        onboardingErrorMessage(error, 'Could not finish setup with the default data location.')
+      )
+    }
+  }
+
   const handleFinishLocation = async (): Promise<void> => {
     if (chosenParent) {
       // A custom location was chosen: gate completeOnboarding behind the user's confirmation.
@@ -94,7 +109,7 @@ const LocationStep = ({
       setConfirmRestart(true)
     } else {
       // Default kept: nothing more to do, the App gate takes it from here — no relaunch.
-      await completeOnboarding()
+      await completeWithDefaultLocation()
     }
   }
 
@@ -106,7 +121,7 @@ const LocationStep = ({
     if (isRestartingRef.current) return
 
     setConfirmRestart(false)
-    await completeOnboarding()
+    await completeWithDefaultLocation()
   }
 
   const handleRestart = async (): Promise<void> => {
@@ -121,19 +136,27 @@ const LocationStep = ({
     // would turn the failure branch below into dead code. Instead the main-process handler marks
     // onboarding complete itself, in the same step as setDataRoot, right before it relaunches -
     // so the gate only flips once the new location is actually persisted.
-    const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
-    if (!result.ok) {
+    try {
+      const result = await window.api.storage.setDataRootAndRelaunch(chosenParent, true)
+      if (result.ok) return
+
       // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
       // surface the error here and let the user retry or fall back to Keep default.
       isRestartingRef.current = false
       setIsRelaunching(false)
       onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
+    } catch (error) {
+      isRestartingRef.current = false
+      setIsRelaunching(false)
+      onRelaunchErrorChange(
+        onboardingErrorMessage(error, 'Could not restart to apply the new location.')
+      )
     }
   }
 
   return (
     <>
-      <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
+      <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
         <CardTitle className="text-[15px] font-semibold">
           Where should Open Science store your data?
         </CardTitle>
@@ -144,31 +167,49 @@ const LocationStep = ({
       </CardHeader>
       <Separator className="bg-border-200" />
 
-      <CardContent className="flex-1 px-6 py-5">
+      <CardContent className="flex-1 px-4 py-5 sm:px-6">
         <section aria-label="Choose data location" className="space-y-5">
+          {dataRootError ? (
+            <div
+              className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between"
+              role="alert"
+            >
+              <span>Could not load the default data location: {dataRootError}</span>
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                onClick={onRetryDataRootInfo}
+                className="h-auto self-start p-0 text-destructive hover:text-text-000 sm:self-auto"
+              >
+                Retry
+              </Button>
+            </div>
+          ) : null}
+
           {relaunchError ? (
             <p
               className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               role="alert"
             >
-              Could not switch to the new location: {relaunchError} You can retry or keep the
-              default location.
+              Could not finish setting up storage: {relaunchError} You can retry or keep the default
+              location.
             </p>
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">
             <span className="text-xs font-medium text-text-100">Location</span>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-1 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <p
                 aria-label="Data location path"
-                className="flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
+                className="min-w-0 flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
               >
                 {chosenDataRoot || dataRootInfo?.dataRoot || ''}
               </p>
               <button
                 type="button"
                 onClick={() => void handleBrowseLocation()}
-                className="inline-flex shrink-0 items-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
+                className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
               >
                 Browse…
               </button>
@@ -205,7 +246,7 @@ const LocationStep = ({
           <DataRootWarning />
         </section>
       </CardContent>
-      <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-4 py-3 sm:px-6">
         <Button type="button" variant="outline" onClick={onBack}>
           Back
         </Button>
