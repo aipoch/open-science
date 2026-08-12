@@ -215,9 +215,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'deepseek-v4-pro[1m]', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
     ],
-    // DeepSeek serves a native Responses API for deepseek-v4-flash only; deepseek-v4-pro does not yet
-    // implement /v1/responses (planned for early August 2026), so it stays on the Chat Completions bridge.
-    responsesModels: ['deepseek-v4-flash']
+    // Both DeepSeek V4 models serve the native Responses API. Keep the explicit list because the
+    // vendor also exposes non-Responses models through its live model catalog.
+    responsesModels: ['deepseek-v4-pro', 'deepseek-v4-pro[1m]', 'deepseek-v4-flash']
     // DeepSeek's chat models are text-only, so no `multimodal` rule (image input stays disabled).
   },
   {
