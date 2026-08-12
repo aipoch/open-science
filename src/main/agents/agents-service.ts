@@ -67,8 +67,8 @@ export type AgentsServiceDeps = {
   // optional resolver lets host.agents share the authoritative custom MCP status without owning
   // the connector runtime or forcing read-only tests to construct it.
   customServerAvailability?: (id: string) => CustomMcpFailureAvailability | undefined
-  // Injected (fake-able) seams consumed by the future privileged-mutation and switch slices
-  // (issues 04/05). The read slice leaves these unset; the dispatcher routes privileged ops through
+  // Injected (fake-able) seams for privileged mutations and Specialist switches. Read-only callers
+  // may leave these unset; the dispatcher routes privileged ops through
   // `approvalGateway` and signals approved switches via `switchNotifier`. They are SERVER-supplied
   // — never reachable from sandbox request params (the RPC route strips reserved keys first).
   approvalGateway?: ApprovalGateway
@@ -77,7 +77,7 @@ export type AgentsServiceDeps = {
     onAwaitingApproval(context: HandoffApprovalContext): void
     settleApproval(context: HandoffApprovalContext, approved: boolean): void
   }
-  // The durable switch lifecycle (issue 05) reuses the EXISTING SessionBindingService (in-memory
+  // The durable switch lifecycle reuses the existing SessionBindingService (in-memory
   // binding) and the EXISTING durable session-file persistence seam — there is no parallel switch
   // service. They are optional so the read slice and its tests can omit them; the dispatcher fails
   // closed if a `switch` op arrives without them configured.
@@ -86,7 +86,7 @@ export type AgentsServiceDeps = {
   // Invalidates the runtime catalog (Settings/picker/runtime capability resolution) after a successful
   // privileged mutation (delete). Ordinary mutations already invalidate via the
   // existing ProfileService/catalog-change broadcast path; the privileged delete runs through a
-  // dedicated module that calls this only on success. Wired in issue 08.
+  // dedicated module that calls this only on success.
   invalidateCatalog?: () => Promise<void> | void
   deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
 }
@@ -189,9 +189,9 @@ export class AgentsService {
 
   constructor(private readonly deps: AgentsServiceDeps) {}
 
-  // The extensible operation dispatcher (issue 02 round 2). This is the single entry point the RPC
-  // route should call so that adding a new operation (create/update/delete/switch later) requires NO
-  // change to the auth/token transport path in local-rpc-server.ts.
+  // The extensible operation dispatcher is the single RPC entry point for reads, mutations, deletes,
+  // and switches. Adding another operation requires no change to the auth/token transport path in
+  // local-rpc-server.ts.
   //
   // EXTENSION POINT — to add a new operation:
   //   1. Add its name to AgentsOpName in src/shared/agents-contract.ts.
@@ -201,7 +201,6 @@ export class AgentsService {
   // You do NOT touch local-rpc-server.ts: it already strips reserved routing/identity keys, forwards
   // the op, and passes the trusted calling session as `context`.
   async dispatch(op: unknown, context: TrustedCallingSession = {}): Promise<unknown> {
-    void context // reserved for the future switch/privileged-mutation slices; unused by reads.
     if (!op || typeof op !== 'object' || !('op' in op)) {
       throw new AgentsCallError('unknown', 'Invalid request')
     }

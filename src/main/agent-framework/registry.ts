@@ -9,11 +9,11 @@ const FRAMEWORKS: Record<AgentFrameworkId, AgentFramework> = {
   codex: codexFramework
 }
 
-// The default framework until framework selection is wired into settings.
+// Fallback for settings documents created before framework selection was persisted.
 export const DEFAULT_AGENT_FRAMEWORK_ID: AgentFrameworkId = 'claude-code'
 
 // Resolves a framework by id for the runtime/settings; ids come from a fixed union so this is total.
 export const getAgentFramework = (id: AgentFrameworkId): AgentFramework => FRAMEWORKS[id]
 
-// Lists every registered framework for the (future) settings selector.
+// Lists every registered framework for Settings and runtime capability projection.
 export const listAgentFrameworks = (): AgentFramework[] => Object.values(FRAMEWORKS)

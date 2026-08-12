@@ -229,7 +229,7 @@ export type SpecialistPermissionCardPayload =
 // Trusted calling-session + pending-switch/reconfigure notification seam
 // ---------------------------------------------------------------------------
 
-// The pending-switch state the switch slice (issue 05) persists and the renderer (issue 07) renders.
+// The pending-switch state persisted by the switch lifecycle and rendered by handoff surfaces.
 // Mirrors design.md §9 / PRD §8: the approved target is persisted immediately and takes effect on
 // the NEXT message, surviving restart.
 export type PendingSwitch = {
@@ -251,10 +251,9 @@ export type ApprovedSwitchReadback = {
   pendingReconfigure: PendingSwitch
 }
 
-// INJECTED seam consumed by the future switch + renderer slices. It is supplied server-side (in the
-// dispatch context), and sandbox request params must NEVER be able to supply or override it. The
-// switch module (issue 05) will call `notify` after an approved switch; the renderer module
-// (issue 07) will subscribe. This type only defines the sink; wiring is deferred to issue 08.
+// Server-injected sink used by SwitchOperation and the completion handoff pipeline. Sandbox request
+// params must NEVER be able to supply or override it. Downstream lifecycle projections publish an
+// approved switch to the renderer.
 export type SwitchNotifier = {
   authority?: 'completion-gate'
   notify(pending: PendingSwitch): Promise<void> | void

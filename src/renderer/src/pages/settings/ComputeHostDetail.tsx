@@ -591,7 +591,7 @@ export function ComputeHostDetail({
           <div className="min-w-0">
             <h4 className="text-sm font-medium text-foreground">Concurrent job limit</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Maximum jobs running at the same time on this host (1–500). Not yet enforced.
+              Maximum jobs running at the same time on this host (1–500).
             </p>
           </div>
           {!isEditingConcurrency ? (
@@ -655,7 +655,7 @@ export function ComputeHostDetail({
         ) : (
           <div className="mt-3 rounded-lg border border-border bg-muted/20 px-3.5 py-2.5">
             <span className="font-mono text-xs text-muted-foreground">
-              {host.concurrencyLimit != null ? host.concurrencyLimit : '100 (default)'}
+              {host.concurrencyLimit != null ? host.concurrencyLimit : '10 (default)'}
             </span>
           </div>
         )}

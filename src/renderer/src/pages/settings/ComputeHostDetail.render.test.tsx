@@ -129,7 +129,8 @@ describe('ComputeHostDetail', () => {
       root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
     })
 
-    expect(container.textContent).toContain('(default)')
+    expect(container.textContent).toContain('10 (default)')
+    expect(container.textContent).not.toContain('Not yet enforced')
   })
 
   it('shows concurrencyLimit value when set', () => {

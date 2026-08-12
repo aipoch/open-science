@@ -291,8 +291,8 @@ export const registerSpecialistIpcHandlers = (
     ipcMainHandle(SPECIALIST_IPC.EXPORT_CONTRIBUTION_TEMPLATE, exportContributionTemplate)
   }
 
-  // Session switching. This handler is a named seam: the future host.agents.switch() SDK (issue 08)
-  // will resolve name→UUID and call this same channel, not a parallel path.
+  // Renderer-initiated session switching. host.agents.switch reuses the same SessionBindingService
+  // and persistence seam through SwitchOperation instead of routing through renderer IPC.
   ipcMainHandle(
     SPECIALIST_IPC.SET_SESSION_SPECIALIST,
     async (_event, request: SetSessionSpecialistRequest): Promise<SetSessionSpecialistResponse> => {

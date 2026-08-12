@@ -31,7 +31,7 @@ export type ArtifactReference = {
   path: string
   source: 'upload' | 'artifact'
   mimeType?: string
-  // Reserved for a future version switcher; no version UI ships yet.
+  // Carries immutable version identity when the selected artifact has native provenance.
   versionId?: string
 }
 
