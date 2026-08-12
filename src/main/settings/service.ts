@@ -32,6 +32,7 @@ import type {
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
   SetPackageMirrorRequest,
+  SetNetworkProxyRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
@@ -60,6 +61,7 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import { resolveNetworkProxySettings, type NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -157,6 +159,9 @@ export type SettingsServiceOptions = {
   // Resolves the user's current native/PAC proxy for Codex subscription traffic. Injectable so
   // tests do not depend on the host machine's Electron session configuration.
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
+  // Projects a persisted proxy preference into the live Electron Session and future child process
+  // environment. Tests omit it to keep SettingsService free of host-global side effects.
+  applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -180,6 +185,7 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly subagentModels: SubagentModelOwner
   private readonly storageRoot: string
+  private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   private readonly userClaudeDir: string
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
@@ -187,6 +193,7 @@ class SettingsService {
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
+    this.applyNetworkProxy = options.applyNetworkProxy ?? (async () => undefined)
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
     this.connectors = new ConnectorSettingsModule(this.repository)
@@ -289,6 +296,7 @@ class SettingsService {
       ),
       onboardingCompletedAt: preferences.onboardingCompletedAt,
       packageMirror: settings.packageMirror,
+      networkProxy: resolveNetworkProxySettings(settings.networkProxy),
       reasoningEffort: preferences.reasoningEffort,
       subagentModel: settings.subagentModel ?? { mode: 'inherit' },
       notificationsEnabled: preferences.notificationsEnabled,
@@ -372,6 +380,13 @@ class SettingsService {
 
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
     return this.notebookRuntimeSettings.setPackageMirror(request)
+  }
+
+  async setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
+    const settings = await this.repository.setNetworkProxy(request)
+    const networkProxy = resolveNetworkProxySettings(settings.networkProxy)
+    await this.applyNetworkProxy(networkProxy)
+    return networkProxy
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {

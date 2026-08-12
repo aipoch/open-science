@@ -13,6 +13,7 @@ import {
   type SubagentModelConfiguration
 } from '../../shared/settings'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
+import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -255,6 +256,8 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (connectors) settings.connectors = connectors
   const packageMirror = sanitizePackageMirror(value.packageMirror)
   if (packageMirror) settings.packageMirror = packageMirror
+  const networkProxy = normalizeNetworkProxySettings(value.networkProxy)
+  if (networkProxy && networkProxy.mode !== 'system') settings.networkProxy = networkProxy
 
   const pathsNormalizedAt = asNumber(value.pathsNormalizedAt)
   if (pathsNormalizedAt !== undefined) settings.pathsNormalizedAt = pathsNormalizedAt

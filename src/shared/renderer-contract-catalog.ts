@@ -344,6 +344,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['setConversationSkillImportEnabled', 'settings:set-conversation-skill-import-enabled'], ['setCustomServerEnabled', 'settings:set-custom-server-enabled'],
     ['setNcbiCredentials', 'settings:set-ncbi-credentials'], ['setNotificationsEnabled', 'settings:set-notifications-enabled', LOCAL],
     ['setPackageMirror', 'settings:set-package-mirror', LOCAL], ['setProjectFilesFilter', 'settings:set-project-files-filter', LOCAL],
+    ['setNetworkProxy', 'settings:set-network-proxy', LOCAL],
     ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setSubagentModel', 'settings:set-subagent-model'],
     ['setSkillEnabled', 'settings:set-skill-enabled'], ['setToolPermission', 'settings:set-tool-permission'],
     ['uninstallClaude', 'settings:uninstall-claude', LOCAL], ['uninstallCodex', 'settings:uninstall-codex', LOCAL],

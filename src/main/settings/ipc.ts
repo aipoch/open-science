@@ -38,6 +38,7 @@ import {
   type SetConnectorEnabledRequest,
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
+  type SetNetworkProxyRequest,
   type SetClosePreferenceRequest,
   type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
@@ -244,6 +245,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:get-package-mirror', () => service.getPackageMirror())
   ipcMainHandle('settings:set-package-mirror', (_event, request: SetPackageMirrorRequest) =>
     service.setPackageMirror(request)
+  )
+  ipcMainHandle('settings:set-network-proxy', (_event, request: SetNetworkProxyRequest) =>
+    service.setNetworkProxy(request)
   )
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())

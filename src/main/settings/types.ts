@@ -19,6 +19,7 @@ import type {
   ReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
+import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
@@ -194,6 +195,8 @@ export type StoredSettings = {
   connectors?: StoredConnectors
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror
+  // Application-wide proxy preference. Absent in historical documents means follow the system.
+  networkProxy?: NetworkProxySettings
   // Absolute path of the relocatable data root (artifacts/notebooks/runtime/uploads). Absent means
   // "use the config root" (default). Only written after a successful migration; a change needs a restart.
   dataRoot?: string

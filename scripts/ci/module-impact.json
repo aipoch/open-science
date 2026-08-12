@@ -284,6 +284,7 @@
       ],
       "interfacePaths": [
         "src/main/settings/repository.ts",
+        "src/shared/network-proxy.ts",
         "src/main/settings/compute-grant-port.ts"
       ],
       "consumerModules": [
@@ -301,7 +302,8 @@
           "src/main/settings/compute-grants.test.ts",
           "src/main/settings/connectors-settings.test.ts",
           "src/main/settings/custom-mcp-settings.test.ts",
-          "src/main/settings/mirror-settings.test.ts"
+          "src/main/settings/mirror-settings.test.ts",
+          "src/main/settings/network-proxy-settings.test.ts"
         ],
         "contract": ["src/shared/settings.test.ts"],
         "consumer": [
@@ -362,6 +364,12 @@
         "src/main/settings/backend-resolver.ts",
         "src/main/settings/backend-selection-owner.ts",
         "src/main/settings/backend-route-planner.ts",
+        "src/main/settings/network-proxy-runtime.ts",
+        "src/main/settings/environment-check.ts",
+        "src/main/settings/system-proxy.ts",
+        "src/main/settings/native-responses-compatibility.ts",
+        "src/main/settings/anthropic-provider-bridge.ts",
+        "src/main/settings/openai-provider-bridge.ts",
         "src/main/settings/provider-loopback-http-host.ts",
         "src/main/settings/provider-transport-owner.ts",
         "src/main/settings/responses-bridge.ts",
@@ -399,9 +407,12 @@
           "src/main/settings/native-responses-compatibility.test.ts",
           "src/main/settings/anthropic-provider-bridge.test.ts",
           "src/main/settings/openai-provider-bridge.test.ts",
-          "src/main/settings/system-proxy.test.ts"
+          "src/main/settings/system-proxy.test.ts",
+          "src/main/settings/network-proxy-runtime.test.ts",
+          "src/main/settings/environment-check-proxy.test.ts"
         ],
         "contract": [
+          "src/main/agent-framework/claude-code.test.ts",
           "src/main/agent-framework/codex.test.ts",
           "src/main/agent-framework/opencode.test.ts",
           "src/main/agent-framework/registry.test.ts"

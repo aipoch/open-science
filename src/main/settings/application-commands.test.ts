@@ -50,6 +50,7 @@ const expectedChannels = [
   'settings:set-default-permission-profile',
   'settings:set-notifications-enabled',
   'settings:set-package-mirror',
+  'settings:set-network-proxy',
   'settings:set-project-files-filter',
   'settings:set-subagent-model',
   'settings:validate-provider'
@@ -208,7 +209,8 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.setClosePreference, [{ preference: 'quit' }]],
       [settingsCoreApplicationCommands.setDefaultPermissionProfile, [{ profile: 'auto' }]],
       [settingsCoreApplicationCommands.setNotificationsEnabled, [{ enabled: true }]],
-      [settingsCoreApplicationCommands.setPackageMirror, [{}]]
+      [settingsCoreApplicationCommands.setPackageMirror, [{}]],
+      [settingsCoreApplicationCommands.setNetworkProxy, [{ mode: 'direct' }]]
     ] as const
 
     for (const [command, args] of attempts) {
@@ -314,6 +316,11 @@ describe('Settings core application commands', () => {
 
     expect(serviceMethod('cancelClaudeLogin')).toHaveBeenCalledOnce()
     expect(serviceMethod('cancelCodexLogin')).toHaveBeenCalledOnce()
+    const networkProxy = { mode: 'direct' as const }
+    await router.dispatcher.invoke(
+      settingsCoreApplicationCommands.setNetworkProxy,
+      invocation([networkProxy] as const)
+    )
     expect(serviceMethod('cancelClaudeIsolatedLogin')).toHaveBeenCalledOnce()
     expect(serviceMethod('installClaude')).toHaveBeenCalledWith(
       { source: 'managed' },
@@ -338,6 +345,7 @@ describe('Settings core application commands', () => {
     expect(serviceMethod('setDefaultPermissionProfile')).toHaveBeenCalledWith('auto')
     expect(serviceMethod('setNotificationsEnabled')).toHaveBeenCalledWith(false)
     expect(serviceMethod('setPackageMirror')).toHaveBeenCalledWith(mirror)
+    expect(serviceMethod('setNetworkProxy')).toHaveBeenCalledWith(networkProxy)
   })
 
   it('preserves exact validation errors before Settings or appearance owners run', async () => {

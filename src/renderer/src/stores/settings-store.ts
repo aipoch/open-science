@@ -9,6 +9,10 @@ import {
 import { buildConfiguredModelInventory } from '../../../shared/configured-model-catalog'
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import type { PackageMirror } from '../../../shared/mirror'
+import {
+  DEFAULT_NETWORK_PROXY_SETTINGS,
+  type NetworkProxySettings
+} from '../../../shared/network-proxy'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -103,6 +107,7 @@ type SettingsStoreData = RuntimeSetupState &
     encryptionAvailable: boolean
     // Configured package mirror (conda/pip); undefined means public hosts (unconfigured).
     packageMirror?: PackageMirror
+    networkProxy: NetworkProxySettings
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
     subagentModel: SubagentModelConfiguration
@@ -162,6 +167,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   onboardingCompletedAt: undefined,
   encryptionAvailable: true,
   packageMirror: undefined,
+  networkProxy: DEFAULT_NETWORK_PROXY_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   subagentModel: { mode: 'inherit' },
   subagentModelPending: false,
@@ -182,6 +188,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   providers: snapshot.providers,
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
+  networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not

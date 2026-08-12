@@ -281,7 +281,7 @@ const productionSourcePaths = productionSources()
 describe('Settings backend ownership architecture', () => {
   it('locks the final facade ceilings and every internal owner below the hard limit', () => {
     // Repository remains one atomic mutation facade; Subagent validation runs inside its CAS write.
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(664)
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(683)
     expect(rawLineCount(readSource(settingsPaths.subagentModelSettings))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
@@ -303,8 +303,8 @@ describe('Settings backend ownership architecture', () => {
       660
     )
     expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
-    // Main's 1023-line facade plus four typed Subagent forwarding operations and owner composition.
-    expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1036)
+    // Main's facade plus typed Subagent forwarding, proxy projection, and owner composition.
+    expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1050)
   })
 
   it('locks the stable module export inventories', () => {
@@ -410,6 +410,7 @@ describe('Settings backend ownership architecture', () => {
       'setGitHubToken',
       'setManualInterpreters',
       'setNcbiCredentials',
+      'setNetworkProxy',
       'setNotificationsEnabled',
       'setOpencodeInfo',
       'setPackageMirror',
@@ -512,7 +513,7 @@ describe('Settings backend ownership architecture', () => {
         setComputeBookmarks setConnectorAutoAllow setConnectorEnabled
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
-        setCustomServerRuntimeProjectionProvider setNcbiCredentials setNotificationsEnabled
+        setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
         setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSubagentModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
@@ -666,6 +667,7 @@ describe('Settings backend ownership architecture', () => {
       'githubTokenRef',
       'grantedLocalRoots',
       'legacyDataMovePromptDismissedAt',
+      'networkProxy',
       'notebookManualInterpreters',
       'notebookRuntimeEnablement',
       'notebookRuntimes',
@@ -721,7 +723,9 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.hasComputeGrant(grant)')
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
-    expect(mainIpc).toContain('new SettingsService({ repository: settingsRepository })')
+    expect(mainIpc).toContain(
+      'capability: new SettingsService({\n      repository: settingsRepository,\n      applyNetworkProxy:'
+    )
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })
 
@@ -737,6 +741,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(manifest.modules.settings_repository.interfacePaths).toEqual([
       'src/main/settings/repository.ts',
+      'src/shared/network-proxy.ts',
       'src/main/settings/compute-grant-port.ts'
     ])
     expect(manifest.modules.settings_provider_accounts.ownerPaths).toEqual([
@@ -751,6 +756,12 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/backend-route-planner.ts',
+      'src/main/settings/network-proxy-runtime.ts',
+      'src/main/settings/environment-check.ts',
+      'src/main/settings/system-proxy.ts',
+      'src/main/settings/native-responses-compatibility.ts',
+      'src/main/settings/anthropic-provider-bridge.ts',
+      'src/main/settings/openai-provider-bridge.ts',
       'src/main/settings/provider-loopback-http-host.ts',
       'src/main/settings/provider-transport-owner.ts',
       'src/main/settings/responses-bridge.ts',

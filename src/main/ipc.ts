@@ -9,6 +9,7 @@ import {
   net,
   Notification,
   protocol,
+  session,
   shell,
   webContents,
   type WebContents
@@ -195,6 +196,7 @@ import { LocalFsService } from './local-fs/service'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createProductionDelegatedWorkComposition } from './delegation/production-composition'
@@ -377,11 +379,19 @@ const createApplicationModules = async (
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsRepository = new SettingsRepository(resolveStorageRoot())
+  const networkProxyRuntime = new NetworkProxyRuntime({
+    setProxy: (config) => session.defaultSession.setProxy(config),
+    resolveProxy: (url) => session.defaultSession.resolveProxy(url)
+  })
   const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({ repository: settingsRepository })
+    capability: new SettingsService({
+      repository: settingsRepository,
+      applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined)
+    })
   }))
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
+  await networkProxyRuntime.apply(storedSettings.networkProxy)
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)

@@ -17,6 +17,11 @@ import {
 } from '../../shared/settings'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { PackageMirror } from '../../shared/mirror'
+import {
+  networkProxyValidationMessage,
+  normalizeNetworkProxySettings,
+  type NetworkProxySettings
+} from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -247,6 +252,21 @@ class SettingsRepository {
     const sanitized = sanitizePackageMirror(mirror)
 
     return this.mutate((settings) => ({ ...settings, packageMirror: sanitized }))
+  }
+
+  async setNetworkProxy(value: NetworkProxySettings): Promise<StoredSettings> {
+    const validationMessage = networkProxyValidationMessage(value)
+    const networkProxy = normalizeNetworkProxySettings(value)
+    if (validationMessage || !networkProxy) {
+      throw new Error(validationMessage ?? 'The proxy configuration is invalid.')
+    }
+
+    return this.mutate((settings) => {
+      if (networkProxy.mode !== 'system') return { ...settings, networkProxy }
+      const next = { ...settings }
+      delete next.networkProxy
+      return next
+    })
   }
 
   async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {

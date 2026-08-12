@@ -70,10 +70,16 @@ export class AnthropicProviderBridge {
   private readonly targets: ReadonlyMap<string, AnthropicProviderBridgeTarget>
   private readonly host: ProviderLoopbackHttpHost<AnthropicProviderBridgeConnection>
   private target: AnthropicProviderBridgeTarget
+  private readonly fetchImpl: typeof fetch
 
-  constructor(targets: readonly AnthropicProviderBridgeTarget[], initialTargetId: string) {
+  constructor(
+    targets: readonly AnthropicProviderBridgeTarget[],
+    initialTargetId: string,
+    fetchImpl: typeof fetch = fetch
+  ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
+    this.fetchImpl = fetchImpl
     if (!initial) throw new Error('The initial Anthropic bridge target is not registered.')
     this.target = initial
     this.host = new ProviderLoopbackHttpHost({
@@ -138,7 +144,7 @@ export class AnthropicProviderBridge {
     const body = JSON.stringify({ ...parsed, model: target.model })
     const baseUrl = normalizeAnthropicBaseUrl(target.baseUrl)
     if (!baseUrl) throw new Error('The Anthropic provider target has no valid base URL.')
-    const upstream = await fetch(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
+    const upstream = await this.fetchImpl(`${baseUrl}${requestUrl.pathname}${requestUrl.search}`, {
       method: 'POST',
       headers: requestHeaders(request, target.key),
       body,

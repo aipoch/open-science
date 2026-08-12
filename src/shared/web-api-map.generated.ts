@@ -208,6 +208,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setCustomServerEnabled': 'settings:set-custom-server-enabled',
   'settings.setDefaultPermissionProfile': 'settings:set-default-permission-profile',
   'settings.setNcbiCredentials': 'settings:set-ncbi-credentials',
+  'settings.setNetworkProxy': 'settings:set-network-proxy',
   'settings.setNotificationsEnabled': 'settings:set-notifications-enabled',
   'settings.setPackageMirror': 'settings:set-package-mirror',
   'settings.setProjectFilesFilter': 'settings:set-project-files-filter',

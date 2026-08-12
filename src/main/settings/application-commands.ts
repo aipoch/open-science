@@ -15,6 +15,7 @@ import type {
   SetDefaultPermissionProfileRequest,
   SetNotificationsEnabledRequest,
   SetPackageMirrorRequest,
+  SetNetworkProxyRequest,
   SetProjectFilesFilterRequest,
   SetSubagentModelRequest,
   ValidateProviderRequest
@@ -72,6 +73,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setDefaultPermissionProfile'
   | 'setNotificationsEnabled'
   | 'setPackageMirror'
+  | 'setNetworkProxy'
   | 'setProjectFilesFilter'
   | 'setSubagentModel'
   | 'validateProvider'
@@ -252,6 +254,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetPackageMirrorRequest],
     StoreResult<'setPackageMirror'>
   >('settings:set-package-mirror'),
+  setNetworkProxy: defineApplicationCommand<
+    'settings:set-network-proxy',
+    readonly [request: SetNetworkProxyRequest],
+    StoreResult<'setNetworkProxy'>
+  >('settings:set-network-proxy'),
   setProjectFilesFilter: defineApplicationCommand<
     'settings:set-project-files-filter',
     readonly [request: SetProjectFilesFilterRequest],
@@ -304,6 +311,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setDefaultPermissionProfile,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setPackageMirror,
+  settingsCoreApplicationCommands.setNetworkProxy,
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.validateProvider
@@ -411,6 +419,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-package-mirror': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-package-mirror')
         return dependencies.service.setPackageMirror(args[0])
+      },
+      'settings:set-network-proxy': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-network-proxy')
+        return dependencies.service.setNetworkProxy(args[0])
       },
       'settings:set-project-files-filter': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-project-files-filter')

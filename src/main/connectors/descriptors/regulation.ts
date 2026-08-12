@@ -1,4 +1,5 @@
 import type { ToolContext, ToolDescriptor } from '../types'
+import { netFetchStandard } from '../../skills/net-fetch'
 
 // Gene-regulation domain connector aggregating three public REST APIs, mirroring the upstream
 // mcp-regulation server: ENCODE portal (functional-genomics experiments/biosamples/files), JASPAR
@@ -52,7 +53,7 @@ async function encodeFetchJson(url: string): Promise<unknown> {
     const timer = setTimeout(() => controller.abort(), ENCODE_TIMEOUT_MS)
     let res: Response
     try {
-      res = await fetch(url, {
+      res = await netFetchStandard(url, {
         headers: { accept: 'application/json', 'user-agent': ENCODE_UA },
         signal: controller.signal
       })

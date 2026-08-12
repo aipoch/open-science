@@ -1,4 +1,5 @@
 import type { ToolDescriptor } from '../types'
+import { netFetchStandard } from '../../skills/net-fetch'
 
 // Reactome AnalysisService (over-representation / pathway projection).
 //
@@ -48,7 +49,7 @@ async function reactomeFetch(url: string, init?: RequestInit): Promise<Response>
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
   try {
-    return await fetch(url, {
+    return await netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, accept: 'application/json', ...init?.headers },
       signal: controller.signal

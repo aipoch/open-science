@@ -216,6 +216,7 @@ import type {
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
+  SetNetworkProxyRequest,
   SetAgentFrameworkRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
@@ -277,6 +278,7 @@ import type {
   ValidateProviderResult
 } from '../shared/settings'
 import type { PackageMirror } from '../shared/mirror'
+import type { NetworkProxySettings } from '../shared/network-proxy'
 import type { NetworkInfo } from '../shared/network'
 import type {
   ActiveSessionInfo,
@@ -483,6 +485,7 @@ export interface OpenScienceAPI {
     markOnboardingComplete(): Promise<SettingsSnapshot>
     getPackageMirror(): Promise<PackageMirror>
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
+    setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings>
     listSkills(): Promise<SkillView[]>
     getGitHubTokenStatus(): Promise<GitHubTokenStatus>
     saveGitHubToken(request: SaveGitHubTokenRequest): Promise<GitHubTokenStatus>

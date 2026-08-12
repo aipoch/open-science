@@ -1,4 +1,5 @@
 import type { PackageMirror } from '../../shared/mirror'
+import { netFetchStandard } from '../skills/net-fetch'
 import { CURATED_MIRRORS, effectiveMirror } from './mirror'
 
 // A candidate mirror bundle + cheap URLs to measure both required conda channels. Public endpoints
@@ -56,7 +57,10 @@ export type LatencyProbe = (url: string, timeoutMs: number) => Promise<number>
 
 const defaultProbe: LatencyProbe = async (url, timeoutMs) => {
   const started = Date.now()
-  const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(timeoutMs) })
+  const res = await netFetchStandard(url, {
+    method: 'HEAD',
+    signal: AbortSignal.timeout(timeoutMs)
+  })
   if (!res.ok) throw new Error(`probe failed ${res.status}`)
   return Date.now() - started
 }

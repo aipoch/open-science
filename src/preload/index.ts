@@ -259,6 +259,8 @@ const api: OpenScienceAPI = {
     getPackageMirror: () => electronRendererContracts.invoke('settings.getPackageMirror'),
     setPackageMirror: (request) =>
       electronRendererContracts.invoke('settings.setPackageMirror', request),
+    setNetworkProxy: (request) =>
+      electronRendererContracts.invoke('settings.setNetworkProxy', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
     getGitHubTokenStatus: () => electronRendererContracts.invoke('settings.getGitHubTokenStatus'),
     saveGitHubToken: (request: SaveGitHubTokenRequest) =>
