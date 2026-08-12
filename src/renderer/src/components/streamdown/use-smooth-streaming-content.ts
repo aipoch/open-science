@@ -116,13 +116,6 @@ const useSmoothStreamingContent = (
         pendingGraphemesRef.current.push(...appended)
         lastTargetUpdateAtRef.current = now
       }
-    } else if (content.startsWith(visibleContentRef.current)) {
-      pendingGraphemesRef.current = splitGraphemes(content.slice(visibleContentRef.current.length))
-      pendingIndexRef.current = 0
-      playbackStartedRef.current = false
-      presentationSpeedRef.current = 1
-      bufferingStartedAtRef.current = now
-      lastTargetUpdateAtRef.current = now
     } else {
       resetPending()
       commit(content)

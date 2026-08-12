@@ -233,6 +233,29 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('流')
   })
 
+  it('flushes a non-append correction that preserves the visible prefix', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content="abcdef" isAnimating />)
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(544))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('abc')
+
+    await act(async () => {
+      root.render(<AgentMarkdown content="abcXYZ" isAnimating />)
+    })
+
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('abcXYZ')
+  })
+
   it('uses one lazy, no-referrer favicon source per hostname and falls back on failure', async () => {
     await act(async () => {
       root.render(
