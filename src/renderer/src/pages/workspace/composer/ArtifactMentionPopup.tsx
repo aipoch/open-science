@@ -223,7 +223,7 @@ export const ArtifactMentionPopup = ({
         <span className="flex min-w-0 flex-1 font-medium">
           {row.positions?.length ? (
             <>
-              <span className="min-w-0 flex-1 truncate">
+              <span className="min-w-0 shrink truncate">
                 <HighlightedText text={parts.head} positions={headPositions} />
               </span>
               <span className="shrink-0">
