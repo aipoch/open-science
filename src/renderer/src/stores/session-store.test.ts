@@ -200,6 +200,34 @@ describe('session store', () => {
     })
   })
 
+  it('keeps artifact finalization idempotent across independent renderer projections', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    const initialSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const input = {
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Hello'
+    }
+
+    const firstProjection = useSessionStore.getState().appendAgentMessageChunk(input)
+    useSessionStore.getState().hydrateSessions([initialSession])
+    const secondProjection = useSessionStore.getState().appendAgentMessageChunk(input)
+    let finalizedMessageId: string | undefined
+    const finalize = (messageId: string | undefined): void => {
+      if (finalizedMessageId && finalizedMessageId !== messageId) {
+        throw new Error(`Artifact run claim already finalized for message: ${finalizedMessageId}`)
+      }
+      finalizedMessageId = messageId
+    }
+
+    finalize(firstProjection?.messageId)
+    expect(() => finalize(secondProjection?.messageId)).not.toThrow()
+  })
+
   it('keeps waiting through whitespace-only Agent chunks', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -3514,6 +3542,28 @@ describe('session store', () => {
       parentMessageId: userMessage?.messageId,
       artifactIds: ['artifact-session-1:run-1:result.txt']
     })
+  })
+
+  it('keeps file-only artifact ownership stable across independent renderer projections', () => {
+    const userMessage = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create an image'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const initialSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const input = {
+      sessionId: 'transport-session-1',
+      runId: 'run-1',
+      promptMessageId: userMessage?.messageId,
+      eventId: 'artifact-event-1',
+      artifacts: [createArtifactFile({ name: 'image.png', mimeType: 'image/png' })]
+    }
+
+    const firstProjection = useSessionStore.getState().attachRunArtifacts(input)
+    useSessionStore.getState().hydrateSessions([initialSession])
+    const secondProjection = useSessionStore.getState().attachRunArtifacts(input)
+
+    expect(secondProjection?.messageId).toBe(firstProjection?.messageId)
   })
 
   it('replaces pending artifact metadata with finalized message files', () => {
