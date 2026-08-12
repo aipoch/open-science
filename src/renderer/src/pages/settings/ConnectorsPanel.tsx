@@ -369,20 +369,13 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       </SettingsSection>
 
       <div
-        className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-center"
+        className="mb-4 grid grid-cols-[9rem_minmax(0,1fr)] gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center"
         data-testid="connectors-toolbar"
       >
-        <SettingsSearchInput
-          aria-label="Search connectors"
-          containerClassName="col-span-2 min-w-0 sm:col-span-1 sm:col-start-1 sm:row-start-1"
-          placeholder="Search connectors…"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
           <SelectTrigger
             aria-label="Filter connectors by group"
-            className="w-full sm:col-start-2 sm:row-start-1"
+            className="w-full sm:col-start-1 sm:row-start-1"
           >
             <span>{FILTER_LABELS[filter]}</span>
           </SelectTrigger>
@@ -393,11 +386,18 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <SelectItem value="custom">Custom</SelectItem>
           </SelectContent>
         </Select>
+        <SettingsSearchInput
+          aria-label="Search connectors"
+          containerClassName="min-w-0 sm:col-start-2 sm:row-start-1"
+          placeholder="Search connectors…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
-              className="w-full justify-center sm:col-start-3 sm:row-start-1 sm:w-auto sm:shrink-0"
+              className="col-span-2 row-start-2 w-full justify-center sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:w-auto sm:shrink-0"
             >
               <Plus data-icon="inline-start" aria-hidden="true" />
               Add connector

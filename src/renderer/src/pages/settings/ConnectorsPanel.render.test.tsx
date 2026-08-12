@@ -246,7 +246,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('uses a two-row narrow toolbar with full-width search and paired actions', () => {
+  it('orders the group filter before search and keeps the narrow toolbar contained', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -260,11 +260,14 @@ describe('ConnectorsPanel (groups)', () => {
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.includes('Add connector'))
 
-    expect(toolbar?.className).toContain('grid-cols-2')
-    expect(toolbar?.className).toContain('sm:grid-cols-[minmax(0,1fr)_9rem_auto]')
-    expect(search?.parentElement?.className).toContain('col-span-2')
-    expect(search?.parentElement?.className).toContain('sm:col-span-1')
+    expect(toolbar?.className).toContain('grid-cols-[9rem_minmax(0,1fr)]')
+    expect(toolbar?.className).toContain('sm:grid-cols-[9rem_minmax(0,1fr)_auto]')
+    expect(filter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(search?.parentElement?.className).toContain('min-w-0')
+    expect(search?.parentElement?.className).toContain('sm:col-start-2')
     expect(filter?.className).toContain('w-full')
+    expect(addConnector?.className).toContain('col-span-2')
     expect(addConnector?.className).toContain('w-full')
   })
 
