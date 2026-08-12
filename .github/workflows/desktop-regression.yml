@@ -2,7 +2,8 @@ name: Desktop Regression
 
 # Advisory desktop behavior checks. Packaged P0 consumes the immutable ARM64 release artifact while
 # visual regression uses the same macos-14 source-build environment that owns the canonical Darwin
-# baselines. The independent jobs can be re-run without rebuilding or re-signing release packages.
+# baselines. Release and Nightly call this reusable workflow inside their existing low-privilege run,
+# so the independent jobs can be retried without a privileged workflow_run checkout boundary.
 on:
   workflow_call:
     inputs:
@@ -16,12 +17,6 @@ on:
         required: false
         type: string
         default: ''
-  workflow_run:
-    workflows:
-      - Release
-      - Nightly
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       run_id:
@@ -36,9 +31,6 @@ permissions:
 jobs:
   source:
     name: Resolve source build
-    if: >-
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.event != 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       available: ${{ steps.resolve.outputs.available }}
@@ -49,13 +41,11 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
           MANUAL_RUN_ID: ${{ inputs.run_id }}
-          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           CURRENT_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          run_id="${MANUAL_RUN_ID:-${SOURCE_RUN_ID:-$CURRENT_RUN_ID}}"
+          run_id="${MANUAL_RUN_ID:-$CURRENT_RUN_ID}"
           if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
             echo "Source run ID must be numeric." >&2
             exit 1
@@ -71,7 +61,7 @@ jobs:
           available=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
             --jq 'any(.artifacts[]; .name == "macos-arm64" and (.expired | not))')
           echo "available=$available" >> "$GITHUB_OUTPUT"
-          if [ "$available" != "true" ] && [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$available" != "true" ]; then
             echo "Source run $run_id has no active macos-arm64 artifact." >&2
             exit 1
           fi
@@ -163,15 +153,9 @@ jobs:
       - name: Build Electron application
         run: npm run build:e2e
 
-      # The pre-PR Release dry-run keeps Playwright's single retry as its existing acceptance rule.
-      # A completed Release/Nightly triggers the stricter advisory lane below, where retry-passes
-      # remain visible as flaky without blocking publication.
-      - name: Run visual regression
-        if: github.event_name != 'workflow_run'
-        run: npm run test:e2e:visual
-
+      # Preserve Playwright's single retry, but keep retry-passes visible as flaky. The caller marks
+      # this job advisory, so the signal cannot block Release or Nightly publication.
       - name: Run visual stability regression
-        if: github.event_name == 'workflow_run'
         run: npm run test:e2e:visual -- --fail-on-flaky-tests
 
       - name: Upload visual diagnostics

@@ -218,12 +218,7 @@ describe('post-merge Windows validation', () => {
     expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
     expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
-    expect(findStep(visualRegression, 'Run visual regression')).toMatchObject({
-      if: "github.event_name != 'workflow_run'",
-      run: 'npm run test:e2e:visual'
-    })
     expect(findStep(visualRegression, 'Run visual stability regression')).toMatchObject({
-      if: "github.event_name == 'workflow_run'",
       run: 'npm run test:e2e:visual -- --fail-on-flaky-tests'
     })
     expect(findStep(visualRegression, 'Upload visual diagnostics').if).toBe('always()')
@@ -269,29 +264,22 @@ describe('post-merge Windows validation', () => {
       uses: './.github/workflows/package-smoke.yml'
     })
     expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
-    expect(regression.on?.workflow_run).toMatchObject({
-      workflows: ['Release', 'Nightly'],
-      types: ['completed']
-    })
+    expect(regression.on).not.toHaveProperty('workflow_run')
     expect(regression.on).toHaveProperty('workflow_dispatch')
     expect(regression.on).toHaveProperty('workflow_call')
-    expect(regression.jobs.source.if).toContain(
-      "github.event.workflow_run.event != 'workflow_dispatch'"
-    )
     expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(
       '.name == "macos-arm64" and (.expired | not)'
     )
-    expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(
-      'EVENT_NAME" = "workflow_dispatch"'
-    )
-    expect(release.jobs['regression-dry-run']).toMatchObject({
+    expect(release.jobs.regression).toMatchObject({
       needs: ['build', 'package-smoke'],
-      if: "github.event_name == 'workflow_dispatch'",
       uses: './.github/workflows/desktop-regression.yml',
       with: { allow_failure: true }
     })
-    expect(release.jobs.regression).toBeUndefined()
-    expect(nightly.jobs.regression).toBeUndefined()
+    expect(nightly.jobs.regression).toMatchObject({
+      needs: ['build', 'package-smoke'],
+      uses: './.github/workflows/desktop-regression.yml',
+      with: { allow_failure: true }
+    })
   })
 
   it('builds every platform without repeating the verified typecheck', () => {
