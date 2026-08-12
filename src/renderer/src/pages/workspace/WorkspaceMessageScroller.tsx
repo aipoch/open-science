@@ -1056,7 +1056,7 @@ const WorkspaceMessageScrollerImpl = ({
 
           {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
           <div
-            role="alert"
+            data-testid="mention-notice-live-region"
             aria-live="assertive"
             aria-atomic="true"
             className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"

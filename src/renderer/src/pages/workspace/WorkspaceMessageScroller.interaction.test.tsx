@@ -2347,11 +2347,12 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
-    const mentionAlert = container.querySelector('[role="alert"]')
-    expect(mentionAlert).not.toBeNull()
-    expect(mentionAlert?.getAttribute('aria-live')).toBe('assertive')
-    expect(mentionAlert?.getAttribute('aria-atomic')).toBe('true')
-    expect(mentionAlert?.textContent).toBe('')
+    const mentionLiveRegion = container.querySelector('[data-testid="mention-notice-live-region"]')
+    expect(mentionLiveRegion).not.toBeNull()
+    expect(mentionLiveRegion?.getAttribute('role')).toBeNull()
+    expect(mentionLiveRegion?.getAttribute('aria-live')).toBe('assertive')
+    expect(mentionLiveRegion?.getAttribute('aria-atomic')).toBe('true')
+    expect(mentionLiveRegion?.textContent).toBe('')
     const pill = container.querySelector<HTMLButtonElement>('[aria-label="Preview sin.png"]')
     expect(pill).not.toBeNull()
     await act(async () => {
@@ -2405,9 +2406,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain(
       'Linked-folder files are not available until the folder is connected.'
     )
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Linked-folder files are not available until the folder is connected.'
-    )
+    expect(
+      container.querySelector('[data-testid="mention-notice-live-region"]')?.textContent
+    ).toContain('Linked-folder files are not available until the folder is connected.')
   })
 
   it('does not read a generated text thumbnail until its card approaches the viewport', async () => {
