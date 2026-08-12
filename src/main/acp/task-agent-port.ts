@@ -56,7 +56,8 @@ const createAcpTaskAgentPort = (
   createSession: (request) =>
     createSessionWorkflow.create({
       projectName: request.projectId,
-      permissionProfile: request.permissionProfile
+      permissionProfile: request.permissionProfile,
+      ...(request.cwd ? { cwd: request.cwd } : {})
     }),
   resumeSession: (request) =>
     runtime.resumeSession({

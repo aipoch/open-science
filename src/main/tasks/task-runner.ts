@@ -1,3 +1,7 @@
+import { constants } from 'node:fs'
+import { access, realpath, stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
+
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import {
   getAcpRuntimeEventImage,
@@ -68,6 +72,7 @@ type TaskAgentSession = {
 type TaskAgentCreateSessionRequest = {
   projectId: string
   permissionProfile: PermissionProfileId
+  cwd?: string
 }
 
 type TaskAgentResumeSessionRequest = {
@@ -177,6 +182,7 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   id: run.id,
   sessionId: run.sessionId,
   projectId: run.projectId,
+  cwd: run.cwd,
   status: run.status,
   startedAt: run.startedAt,
   cancelRequestedAt: run.cancelRequestedAt,
@@ -271,6 +277,52 @@ class TaskRunnerError extends Error {
   }
 }
 
+const isMissingPathError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
+
+const canonicalizeTaskWorkingDirectory = async (value: string): Promise<string> => {
+  const cwd = value.trim()
+  if (!cwd) {
+    throw new TaskRunnerError(
+      'invalid_request',
+      'Working directory is required when cwd is supplied.'
+    )
+  }
+  if (!isAbsolute(cwd)) {
+    throw new TaskRunnerError('invalid_request', 'Working directory must be an absolute path.')
+  }
+  let canonicalCwd: string
+  try {
+    canonicalCwd = await realpath(cwd)
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new TaskRunnerError('invalid_request', `Working directory does not exist: ${cwd}`)
+    }
+    throw new TaskRunnerError('invalid_request', `Working directory is not accessible: ${cwd}`)
+  }
+  let metadata: Awaited<ReturnType<typeof stat>>
+  try {
+    metadata = await stat(canonicalCwd)
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new TaskRunnerError('invalid_request', `Working directory does not exist: ${cwd}`)
+    }
+    throw new TaskRunnerError('invalid_request', `Working directory is not accessible: ${cwd}`)
+  }
+  if (!metadata.isDirectory()) {
+    throw new TaskRunnerError('invalid_request', `Working directory is not a directory: ${cwd}`)
+  }
+  try {
+    await access(canonicalCwd, constants.R_OK | constants.W_OK)
+  } catch {
+    throw new TaskRunnerError(
+      'invalid_request',
+      `Working directory must be readable and writable: ${cwd}`
+    )
+  }
+  return canonicalCwd
+}
+
 class TaskRunner {
   private readonly runs = new Map<string, MutableTaskRun>()
   private readonly activeRunBySession = new Map<string, string>()
@@ -359,6 +411,9 @@ class TaskRunner {
     if (request.sessionId !== undefined && typeof request.sessionId !== 'string') {
       throw new TaskRunnerError('invalid_request', 'Session id must be a string.')
     }
+    if (request.cwd !== undefined && typeof request.cwd !== 'string') {
+      throw new TaskRunnerError('invalid_request', 'Working directory must be a string.')
+    }
     if (
       request.permissionProfile !== undefined &&
       !['ask', 'auto', 'full'].includes(request.permissionProfile)
@@ -374,6 +429,9 @@ class TaskRunner {
     }
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : ''
     if (!prompt) throw new TaskRunnerError('invalid_request', 'Prompt is required.')
+    const cwd =
+      request.cwd === undefined ? undefined : await canonicalizeTaskWorkingDirectory(request.cwd)
+    const normalizedRequest: StartTaskRunRequest = cwd === undefined ? request : { ...request, cwd }
 
     const project = await this.resolveProject(request.project)
     const sessions = await this.dependencies.sessions.list()
@@ -389,13 +447,22 @@ class TaskRunner {
         `Session ${existing.id} does not belong to project ${project.id}.`
       )
     }
+    if (existing && cwd !== undefined) {
+      const existingCwd = await canonicalizeTaskWorkingDirectory(existing.cwd)
+      if (cwd !== existingCwd) {
+        throw new TaskRunnerError(
+          'invalid_request',
+          `Working directory does not match Session ${existing.id}.`
+        )
+      }
+    }
     const userMessageId = this.dependencies.createId()
     const runId = this.dependencies.createId()
     if (existing) this.reserveSession(existing.id, runId)
     let prepared: Awaited<ReturnType<TaskRunner['prepareSession']>>
     try {
       const prepare = (): ReturnType<TaskRunner['prepareSession']> =>
-        this.prepareSession(project, existing, request, prompt, userMessageId)
+        this.prepareSession(project, existing, normalizedRequest, prompt, userMessageId)
       prepared = existing
         ? await this.dependencies.agent.withSessionAvailable(project.id, existing.id, prepare)
         : await prepare()
@@ -409,6 +476,7 @@ class TaskRunner {
       id: runId,
       sessionId: session.id,
       projectId: project.id,
+      cwd: session.cwd,
       status: 'running' as const,
       startedAt: this.dependencies.now(),
       artifacts: [],
@@ -428,7 +496,7 @@ class TaskRunner {
     run.completion = this.executeRun(
       run,
       session,
-      request,
+      normalizedRequest,
       prompt,
       prepared.historyPreamble,
       prepared.contextReset,
@@ -546,7 +614,8 @@ class TaskRunner {
     } else {
       sessionInfo = await this.dependencies.agent.createSession({
         projectId: project.id,
-        permissionProfile
+        permissionProfile,
+        ...(request.cwd ? { cwd: request.cwd } : {})
       })
     }
 
@@ -570,7 +639,7 @@ class TaskRunner {
           id: sessionInfo.sessionId,
           projectId: project.id,
           title: createTitle(prompt),
-          cwd: sessionInfo.cwd ?? '',
+          cwd: request.cwd ?? sessionInfo.cwd ?? '',
           status: 'running',
           permissionProfile,
           agentFrameworkId: sessionInfo.frameworkId,

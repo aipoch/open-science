@@ -15,11 +15,18 @@ const client = await connectToOpenScience()
 const run = await client.startRun({
   project: 'systematic-review',
   prompt: 'Summarize the evidence.',
+  cwd: '/absolute/path/to/research',
   permissionProfile: 'auto'
 })
 const result = await client.waitForRun(run.id)
 console.log(result.output)
 ```
+
+SDK and HTTP callers must supply an absolute `cwd`. Open Science canonicalizes and validates it,
+persists it as the Session working directory, and returns the effective path on every Run. Supplying
+`cwd` with `sessionId` is allowed only when both paths resolve to the same directory. Omit `cwd` to
+use a managed workspace. External working directories remain caller-owned and are never removed by
+Open Science.
 
 For live automation feedback, subscribe before starting the Run. `run.progress` reports ordered
 provider-neutral phases and emits a heartbeat every ten seconds until the first visible provider

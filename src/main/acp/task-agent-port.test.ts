@@ -55,7 +55,11 @@ describe('ACP Task Agent port', () => {
     )
     await expect(port.listAttachedSessionIds()).resolves.toEqual(['session-attached'])
     await expect(
-      port.createSession({ projectId: 'project-1', permissionProfile: 'auto' })
+      port.createSession({
+        projectId: 'project-1',
+        permissionProfile: 'auto',
+        cwd: '/workspace/external'
+      })
     ).resolves.toMatchObject({
       sessionId: 'session-created',
       frameworkId: 'codex',
@@ -88,7 +92,8 @@ describe('ACP Task Agent port', () => {
 
     expect(create).toHaveBeenCalledWith({
       projectName: 'project-1',
-      permissionProfile: 'auto'
+      permissionProfile: 'auto',
+      cwd: '/workspace/external'
     })
     expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
     expect(runtime.resumeSession).toHaveBeenCalledWith({

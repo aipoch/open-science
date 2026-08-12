@@ -30,6 +30,7 @@ import { isWebRpcChannel, isWebRpcEventChannel } from './web-rpc-contract'
 const TASK_RUN_REQUEST_FIELDS = {
   project: true,
   prompt: true,
+  cwd: true,
   sessionId: true,
   permissionProfile: true,
   skillIds: true
@@ -214,6 +215,7 @@ describe('renderer surface compatibility matrix', () => {
       )
     ).toBe(false)
     expect(Object.keys(TASK_RUN_REQUEST_FIELDS).sort()).toEqual([
+      'cwd',
       'permissionProfile',
       'project',
       'prompt',

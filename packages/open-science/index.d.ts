@@ -33,6 +33,7 @@ export type Run = {
   id: string
   sessionId: string
   projectId: string
+  cwd: string
   status: RunStatus
   startedAt: number
   cancelRequestedAt?: number
@@ -90,6 +91,7 @@ export class OpenScienceClient {
   startRun(request: {
     project: string
     prompt: string
+    cwd?: string
     sessionId?: string
     permissionProfile?: PermissionProfile
     skillIds?: string[]
