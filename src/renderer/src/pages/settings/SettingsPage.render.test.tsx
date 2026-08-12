@@ -1163,6 +1163,43 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledOnce()
   })
 
+  it('exits loading when the initial remote access snapshot fails', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    remoteAccess.getSnapshot.mockRejectedValueOnce(new Error('Remote access is unavailable.'))
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).not.toContain('Loading remote access')
+    expect(document.body.textContent).toContain('Remote access is unavailable.')
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Try again')
+    )
+    expect(retryButton).not.toBeUndefined()
+
+    await act(async () => {
+      retryButton?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).not.toContain('Remote access is unavailable.')
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Remote access is off'
+    )
+  })
+
   it('covers the whole app while a remote mode system command is still running', async () => {
     const remoteAccess = (
       window as unknown as {
@@ -1217,10 +1254,16 @@ describe('SettingsPage layout', () => {
 
     expect(remoteAccess.setMode).toHaveBeenCalledTimes(1)
     const overlay = document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    const scrim = document.body.querySelector('[data-testid="remote-access-operation-scrim"]')
+    expect(scrim).not.toBeNull()
+
     expect(overlay).not.toBeNull()
     expect(overlay?.textContent).toContain('Applying remote access settings')
-    expect(overlay?.className).toContain('fixed')
-    expect(overlay?.className).toContain('inset-0')
+    expect(scrim?.className).toContain('fixed')
+    expect(scrim?.className).toContain('inset-0')
+    expect(overlay?.getAttribute('role')).toBe('dialog')
+    expect(overlay?.getAttribute('aria-modal')).toBe('true')
+    expect(overlay?.contains(document.activeElement)).toBe(true)
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'Changing access mode…'
     )
@@ -1252,6 +1295,7 @@ describe('SettingsPage layout', () => {
     expect(
       document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
     ).toBeNull()
+    expect(document.activeElement).toBe(remoteItMode)
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'App access is on'
     )
