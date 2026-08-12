@@ -19,6 +19,7 @@ import 'katex/dist/katex.min.css'
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
 import { normalizeAgentMarkdown } from './normalize-agent-markdown'
+import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 
 type AgentMarkdownProps = {
@@ -130,7 +131,7 @@ type AgentMarkdownErrorBoundaryProps = {
 }
 
 type AgentMarkdownErrorBoundaryState = {
-  content: string
+  failedContent: string | null
   hasError: boolean
 }
 
@@ -188,7 +189,7 @@ class AgentMarkdownErrorBoundary extends Component<
   AgentMarkdownErrorBoundaryState
 > {
   state: AgentMarkdownErrorBoundaryState = {
-    content: this.props.content,
+    failedContent: null,
     hasError: false
   }
 
@@ -196,17 +197,20 @@ class AgentMarkdownErrorBoundary extends Component<
     props: AgentMarkdownErrorBoundaryProps,
     state: AgentMarkdownErrorBoundaryState
   ): AgentMarkdownErrorBoundaryState | null {
-    if (props.content === state.content) return null
+    if (!state.hasError || state.failedContent === null || props.content === state.failedContent) {
+      return null
+    }
 
     // A changed message gets a fresh rich-render attempt instead of inheriting the previous failure.
-    return { content: props.content, hasError: false }
+    return { failedContent: null, hasError: false }
   }
 
   static getDerivedStateFromError(): Partial<AgentMarkdownErrorBoundaryState> {
-    return { hasError: true }
+    return { failedContent: null, hasError: true }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    this.setState({ failedContent: this.props.content })
     console.error('Failed to render rich Markdown; showing plain text fallback.', error, errorInfo)
   }
 
@@ -253,6 +257,7 @@ const RichAgentMarkdown = memo(
           mode={isAnimating ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
+          caret={isAnimating ? 'block' : undefined}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={AGENT_ALLOWED_TAGS}
@@ -269,8 +274,9 @@ const RichAgentMarkdown = memo(
 
 RichAgentMarkdown.displayName = 'RichAgentMarkdown'
 
-// Keeps renderer-specific failures from unmounting the surrounding workspace.
-const AgentMarkdown = memo(
+// Renders already-paced content. Message surfaces that own a broader visual lifecycle can use this
+// directly so their cursor and terminal chrome settle in the same render.
+const PresentedAgentMarkdown = memo(
   ({
     content,
     isAnimating = false,
@@ -288,6 +294,29 @@ const AgentMarkdown = memo(
   )
 )
 
+PresentedAgentMarkdown.displayName = 'PresentedAgentMarkdown'
+
+// Keeps renderer-specific failures from unmounting the surrounding workspace.
+const AgentMarkdown = memo(
+  ({
+    content,
+    isAnimating = false,
+    allowMedia = true,
+    sessionLinks = false
+  }: AgentMarkdownProps): React.JSX.Element => {
+    const presentation = useSmoothStreamingContent(content, isAnimating)
+
+    return (
+      <PresentedAgentMarkdown
+        content={presentation.content}
+        isAnimating={presentation.isPresenting}
+        allowMedia={allowMedia}
+        sessionLinks={sessionLinks}
+      />
+    )
+  }
+)
+
 AgentMarkdown.displayName = 'AgentMarkdown'
 
-export { AgentMarkdown, SessionMessageLink }
+export { AgentMarkdown, PresentedAgentMarkdown, SessionMessageLink }

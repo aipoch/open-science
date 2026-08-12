@@ -23,6 +23,7 @@ type SideChatView = Readonly<{
   projectId: string
   sideSessionId?: string
   entries: readonly SideChatEntry[]
+  liveTurnUserEntryId?: string
   draft: string
   running: boolean
   error?: string
@@ -60,6 +61,9 @@ const errorText = (error: unknown): string =>
 
 const hasMainConversation = (session: ChatSession | undefined): boolean =>
   Boolean(session?.messages.some((message) => message.role === 'user' && !message.relayedFrom))
+
+const getLastSideChatUserEntryId = (entries: readonly SideChatEntry[]): string | undefined =>
+  entries.findLast((entry) => entry.kind === 'message' && entry.role === 'user')?.id
 
 const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
   const [views, setViews] = useState<ReadonlyMap<string, SideChatView>>(() => new Map())
@@ -99,6 +103,9 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       projectId: snapshot.projectId,
       sideSessionId: snapshot.sideSessionId,
       entries: snapshot.entries,
+      liveTurnUserEntryId: snapshot.running
+        ? getLastSideChatUserEntryId(snapshot.entries)
+        : current?.liveTurnUserEntryId,
       draft: current?.draft ?? '',
       running: snapshot.running,
       error: snapshot.error
@@ -256,12 +263,14 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       }
       sequenceRef.current += 1
       const generation = sequenceRef.current
+      const userEntryId = `side-user-${generation}-1`
       const next: SideChatView = {
         generation,
         revision: 0,
         parentSessionId: parent.sessionId,
         projectId: parent.projectId,
-        entries: [{ id: `side-user-${generation}-1`, kind: 'message', role: 'user', text }],
+        entries: [{ id: userEntryId, kind: 'message', role: 'user', text }],
+        liveTurnUserEntryId: userEntryId,
         draft: '',
         running: true
       }
@@ -297,17 +306,19 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       const current = viewsRef.current.get(parentSessionId)
       if (!current?.sideSessionId || current.running || !text) return false
       sequenceRef.current += 1
+      const userEntryId = `side-user-${current.generation}-${sequenceRef.current}`
       const next = {
         ...current,
         entries: [
           ...current.entries,
           {
-            id: `side-user-${current.generation}-${sequenceRef.current}`,
+            id: userEntryId,
             kind: 'message' as const,
             role: 'user' as const,
             text
           }
         ],
+        liveTurnUserEntryId: userEntryId,
         running: true,
         error: undefined
       }

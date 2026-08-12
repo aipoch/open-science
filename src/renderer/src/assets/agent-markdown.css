@@ -163,8 +163,15 @@
       @apply hidden;
     }
 
-    & > div > :empty {
+    & > div > :empty:not(:last-child) {
       @apply hidden;
+    }
+
+    & .agent-markdown > :last-child::after {
+      display: inline-block;
+      margin-inline-start: 0.08em;
+      color: currentColor;
+      opacity: 1;
     }
   }
 

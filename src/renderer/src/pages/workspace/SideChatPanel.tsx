@@ -2,16 +2,26 @@
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
-import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ArrowUp, MessageCircleMore, Plus, Square, X } from 'lucide-react'
-import { useEffect, useRef, type KeyboardEvent, type ReactNode, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type SetStateAction
+} from 'react'
 
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
-import type { SideChatView } from './use-side-chat-controller'
+import type { SideChatEntry, SideChatView } from './use-side-chat-controller'
 
 type SideChatPanelProps = Readonly<{
   view: SideChatView
@@ -21,6 +31,39 @@ type SideChatPanelProps = Readonly<{
   onClose: () => void
   controls?: ReactNode
 }>
+
+type SideChatMessageEntry = Extract<SideChatEntry, { kind: 'message' }>
+
+type SideChatPresentationState = Readonly<{
+  generation: number
+  entryIds: Set<string>
+}>
+
+const SideChatAssistantMessage = ({
+  entry,
+  sourceOpen,
+  animateOnMount,
+  onPresentationChange
+}: {
+  entry: SideChatMessageEntry
+  sourceOpen: boolean
+  animateOnMount: boolean
+  onPresentationChange: (entryId: string, presenting: boolean) => void
+}): React.JSX.Element => {
+  const presentation = useSmoothStreamingContent(entry.text, sourceOpen, animateOnMount)
+
+  useLayoutEffect(() => {
+    onPresentationChange(entry.id, presentation.isPresenting)
+    return () => onPresentationChange(entry.id, false)
+  }, [entry.id, onPresentationChange, presentation.isPresenting])
+
+  return (
+    <PresentedAgentMarkdown
+      content={presentation.content}
+      isAnimating={presentation.isPresenting}
+    />
+  )
+}
 
 const SideChatPanel = ({
   view,
@@ -32,13 +75,44 @@ const SideChatPanel = ({
 }: SideChatPanelProps): React.JSX.Element => {
   const messageScrollRef = useRef<HTMLDivElement>(null)
   const followUpRef = useRef<HTMLTextAreaElement>(null)
+  const [presentationState, setPresentationState] = useState<SideChatPresentationState>(() => ({
+    generation: view.generation,
+    entryIds: new Set()
+  }))
+  const lastUserEntryIndex = view.entries.findLastIndex(
+    (entry) => entry.kind === 'message' && entry.role === 'user'
+  )
+  const lastUserEntryId = lastUserEntryIndex >= 0 ? view.entries[lastUserEntryIndex]?.id : undefined
+  const liveTurnUserId = view.liveTurnUserEntryId ?? (view.running ? lastUserEntryId : undefined)
+  const presentingEntryIds =
+    presentationState.generation === view.generation
+      ? presentationState.entryIds
+      : new Set<string>()
+  const presentationBarrierIndex = view.entries.findIndex((entry) =>
+    presentingEntryIds.has(entry.id)
+  )
+  const handlePresentationChange = useCallback(
+    (entryId: string, presenting: boolean): void => {
+      setPresentationState((currentState) => {
+        const currentEntryIds =
+          currentState.generation === view.generation ? currentState.entryIds : new Set<string>()
+        if (currentEntryIds.has(entryId) === presenting) return currentState
+
+        const nextEntryIds = new Set(currentEntryIds)
+        if (presenting) nextEntryIds.add(entryId)
+        else nextEntryIds.delete(entryId)
+        return { generation: view.generation, entryIds: nextEntryIds }
+      })
+    },
+    [view.generation]
+  )
 
   useEffect(() => {
     const messageScroll = messageScrollRef.current?.querySelector<HTMLElement>(
       '[data-slot="scroll-area-viewport"]'
     )
     if (messageScroll) messageScroll.scrollTop = messageScroll.scrollHeight
-  }, [view.entries, view.running, view.error])
+  }, [presentationBarrierIndex, view.entries, view.running, view.error])
   useEffect(() => {
     if (view.sideSessionId) followUpRef.current?.focus()
   }, [view.sideSessionId])
@@ -99,26 +173,47 @@ const SideChatPanel = ({
             className="h-full overscroll-contain text-[14px] leading-6"
           >
             <div className="px-5 py-4">
-              {view.entries.map((entry) =>
-                entry.kind === 'tool' ? (
-                  <div key={entry.id} className="my-2 text-[12px] text-text-300">
-                    {entry.title}
-                    {entry.status ? ` · ${entry.status}` : ''}
-                  </div>
-                ) : entry.role === 'user' ? (
-                  <div key={entry.id} className="my-3 flex justify-end">
-                    <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
-                      {entry.text}
+              {view.entries.map((entry, entryIndex) => {
+                if (presentationBarrierIndex >= 0 && entryIndex > presentationBarrierIndex) {
+                  return null
+                }
+                if (entry.kind === 'tool') {
+                  return (
+                    <div key={entry.id} className="my-2 text-[12px] text-text-300">
+                      {entry.title}
+                      {entry.status ? ` · ${entry.status}` : ''}
                     </div>
-                  </div>
-                ) : (
+                  )
+                }
+                if (entry.role === 'user') {
+                  return (
+                    <div key={entry.id} className="my-3 flex justify-end">
+                      <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
+                        {entry.text}
+                      </div>
+                    </div>
+                  )
+                }
+
+                const animateOnMount =
+                  lastUserEntryId === liveTurnUserId && entryIndex > lastUserEntryIndex
+                const sourceOpen =
+                  animateOnMount && view.running && entryIndex === view.entries.length - 1
+                return (
                   <div key={entry.id} className="my-3 min-w-0 text-text-000">
-                    <AgentMarkdown content={entry.text} isAnimating={view.running} />
+                    <SideChatAssistantMessage
+                      entry={entry}
+                      sourceOpen={sourceOpen}
+                      animateOnMount={animateOnMount}
+                      onPresentationChange={handlePresentationChange}
+                    />
                   </div>
                 )
-              )}
-              {view.running ? <div className="py-2 text-text-300">Thinking…</div> : null}
-              {view.error ? (
+              })}
+              {view.running && presentationBarrierIndex < 0 ? (
+                <div className="py-2 text-text-300">Thinking…</div>
+              ) : null}
+              {view.error && presentationBarrierIndex < 0 ? (
                 <div role="alert" className="py-2 text-[12px] text-danger-000">
                   {view.error}
                 </div>

@@ -330,8 +330,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceMessageItem')
     expect(workspaceMessageItemSource).toContain("scrollAnchor={message.role === 'user'}")
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
-    expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
-    expect(workspaceMessageItemSource).toContain('content={message.content}')
+    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
+    expect(workspaceMessageItemSource).toContain('useSmoothStreamingContent(')
     expect(workspaceMessageItemSource).toContain('sessionLinks')
   })
 
@@ -511,8 +512,8 @@ describe('conversation message scroller integration', () => {
       'canExpand={Boolean(details.query || details.resultCount)}'
     )
     expect(workspaceMessageItemSource).toContain('const WorkspaceMessageItem')
-    expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
-    expect(workspaceMessageItemSource).toContain('content={message.content}')
+    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
   })
@@ -593,7 +594,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')
     expect(workspaceAgentLoadingRowSource).toContain('aria-live="polite"')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
-    expect(workspaceMessageItemSource).toContain("isAnimating={message.status === 'streaming'}")
+    expect(workspaceMessageItemSource).toContain('isAnimating={isAssistantPresenting}')
   })
 })
 

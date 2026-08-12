@@ -448,6 +448,8 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   container.remove()
 })
 
@@ -1589,6 +1591,86 @@ describe('ConversationPanel composer intake', () => {
     expect(followUp.disabled).toBe(false)
     expect(container.querySelector('[aria-label="Send Side chat follow up"]')).toBeNull()
     expect(container.querySelector('[aria-label="Cancel Side chat response"]')).not.toBeNull()
+  })
+
+  it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const sideChatProps = {
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    }
+    const entries = [
+      { id: 'user-history', kind: 'message' as const, role: 'user' as const, text: 'Old prompt' },
+      {
+        id: 'assistant-history',
+        kind: 'message' as const,
+        role: 'assistant' as const,
+        text: 'Historical answer'
+      },
+      { id: 'user-live', kind: 'message' as const, role: 'user' as const, text: 'New prompt' },
+      {
+        id: 'assistant-live',
+        kind: 'message' as const,
+        role: 'assistant' as const,
+        text: '流畅输出'
+      }
+    ]
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
+        entries
+      }
+    })
+
+    expect(container.textContent).toContain('Historical answer')
+    expect(container.textContent).not.toContain('流畅输出')
+    expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(496))
+    expect(container.textContent).not.toContain('流畅输出')
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    expect(container.textContent).toContain('流')
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
+        entries: [
+          ...entries,
+          {
+            id: 'tool-live',
+            kind: 'tool',
+            title: 'Tool after current answer',
+            status: 'in_progress'
+          }
+        ]
+      }
+    })
+    expect(container.textContent).not.toContain('Tool after current answer')
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('流畅输出')
+    expect(container.textContent).toContain('Tool after current answer')
   })
 
   it('keeps main approval and ask-user surfaces waiting while Side chat is open', () => {

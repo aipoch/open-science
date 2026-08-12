@@ -69,7 +69,18 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => {
     agentMarkdownRenderMock(content)
     return <div>{content}</div>
-  }
+  },
+  PresentedAgentMarkdown: ({
+    content,
+    isAnimating
+  }: {
+    content: string
+    isAnimating?: boolean
+  }) => (
+    <div data-testid="presented-agent-markdown" data-animating={isAnimating || undefined}>
+      {content}
+    </div>
+  )
 }))
 
 vi.mock('@/components/ui/message-scroller', () => {
@@ -282,7 +293,135 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('keeps later tools behind the visible assistant prefix', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-stream', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-stream',
+      role: 'agent',
+      content: '流畅输出',
+      status: 'streaming',
+      streamId: 'stream-1',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply]
+      })
+    )
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      ''
+    )
+
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      '流'
+    )
+
+    const tool = createActivity({
+      id: 'tool-after-stream',
+      title: 'Tool after buffered text',
+      promptMessageId: prompt.id,
+      sortIndex: 3,
+      createdAt: 102
+    })
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply],
+        activities: [tool]
+      })
+    )
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
+    ).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('流畅输出')
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
+    ).not.toBeNull()
+  })
+
+  it('keeps terminal metadata behind the final visible assistant prefix', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-terminal', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-terminal',
+      role: 'agent',
+      content: '完整结尾',
+      status: 'streaming',
+      streamId: 'stream-terminal',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply]
+      })
+    )
+    await render(
+      createSession({
+        status: 'idle',
+        messages: [
+          prompt,
+          {
+            ...reply,
+            status: 'complete',
+            completedAt: 200,
+            updatedAt: 200
+          }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain('Completed')
+    expect(container.textContent).not.toContain('完整结尾')
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('完整结尾')
+    expect(container.textContent).toContain('Completed')
   })
 
   it('opens the exact durable source Frame from an inline upward message', async () => {

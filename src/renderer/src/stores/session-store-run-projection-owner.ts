@@ -53,6 +53,7 @@ type SessionStateSetter = StoreApi<SessionStoreData>['setState']
 
 export type SessionRunProjectionActions = {
   appendAgentMessageChunk: (input: AppendAgentMessageChunkInput) => AppendMessageResult | undefined
+  appendAgentMessageChunks: (inputs: AppendAgentMessageChunkInput[]) => AppendMessageResult[]
   setAwaitingFirstAgentOutput: (sessionId: string, waiting: boolean) => void
   setAgentPromptInFlight: (sessionId: string, inFlight: boolean) => void
   setElicitationPending: (sessionId: string, pending: boolean) => void
@@ -146,23 +147,40 @@ export const createSessionRunProjectionOwner = <
   get: StoreApi<State>['getState']
 ): SessionRunProjectionActions => {
   const setSessionState = set as SessionStateSetter
+  const appendAgentMessageChunks = (
+    inputs: AppendAgentMessageChunkInput[]
+  ): AppendMessageResult[] => {
+    if (inputs.length === 0) return []
+
+    const state = get()
+    let sessions = state.sessions
+    let shouldCommit = false
+    const results: AppendMessageResult[] = []
+
+    for (const input of inputs) {
+      if (!input.sessionId) continue
+      const session = sessions.find((candidate) => candidate.id === input.sessionId)
+      if (!session) continue
+      const projection = projectAgentMessageChunk(session, input)
+      if (projection.result) results.push(projection.result)
+      if (!projection.shouldCommit) continue
+
+      shouldCommit = true
+      sessions = sessions.map((candidate) =>
+        candidate.id === input.sessionId ? projection.session : candidate
+      )
+    }
+
+    if (shouldCommit) setSessionState({ sessions } as Partial<State>)
+    return results
+  }
 
   return {
     appendAgentMessageChunk: (input) => {
-      if (!input.sessionId) return undefined
-      const state = get()
-      const session = state.sessions.find((candidate) => candidate.id === input.sessionId)
-      if (!session) return undefined
-      const projection = projectAgentMessageChunk(session, input)
-      if (!projection.result) return undefined
-      if (projection.shouldCommit)
-        setSessionState({
-          sessions: state.sessions.map((candidate) =>
-            candidate.id === input.sessionId ? projection.session : candidate
-          )
-        } as Partial<State>)
-      return projection.result
+      return appendAgentMessageChunks([input])[0]
     },
+
+    appendAgentMessageChunks,
 
     setAwaitingFirstAgentOutput: (sessionId, waiting) => {
       setSessionState((state) => ({

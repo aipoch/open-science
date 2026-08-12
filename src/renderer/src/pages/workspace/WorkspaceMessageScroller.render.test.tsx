@@ -14,7 +14,16 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+}))
+
+vi.mock('@/components/streamdown/use-smooth-streaming-content', () => ({
+  useSmoothStreamingContent: (
+    content: string,
+    sourceOpen: boolean,
+    animateOnMount = sourceOpen
+  ) => ({ content, isPresenting: animateOnMount })
 }))
 
 vi.mock('@/components/ui/message-scroller', () => {

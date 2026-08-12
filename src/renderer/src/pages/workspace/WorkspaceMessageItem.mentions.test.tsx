@@ -15,7 +15,8 @@ vi.mock('@/components/ui/message-scroller', () => ({
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
 vi.mock('./artifact-preview', () => ({

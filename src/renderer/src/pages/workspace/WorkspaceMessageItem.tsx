@@ -1,4 +1,5 @@
-import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -20,7 +21,7 @@ import {
   MessageCircleMore,
   Pencil
 } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
@@ -91,6 +92,8 @@ type WorkspaceMessageItemProps = {
   // Immutable Provenance uses the normal message surface but keeps mention pills non-interactive.
   // These path-free parts override message.parts only for display; editing still uses live parts.
   staticParts?: ProvenanceMessagePart[]
+  onPresentationChange?: (messageId: string, presenting: boolean) => void
+  presentationSourceOpen?: boolean
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -788,11 +791,31 @@ const WorkspaceMessageItem = ({
   subsequentTurns = 0,
   revisionNavigation,
   artifacts = [],
-  staticParts
+  staticParts,
+  onPresentationChange,
+  presentationSourceOpen
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const isSideChatAdvisory =
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
+  const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory
+  const shouldAnimateAssistant = presentsAssistantMessage && message.status === 'streaming'
+  const assistantSourceOpen = shouldAnimateAssistant && (presentationSourceOpen ?? true)
+  const assistantPresentation = useSmoothStreamingContent(
+    presentsAssistantMessage ? message.content : '',
+    assistantSourceOpen,
+    shouldAnimateAssistant
+  )
+  const isAssistantPresenting = presentsAssistantMessage && assistantPresentation.isPresenting
+
+  // Keep later transcript items behind this message's visual buffer. Layout timing prevents a tool
+  // boundary from painting once before the parent learns that this row is still presenting.
+  useLayoutEffect(() => {
+    if (!presentsAssistantMessage || !onPresentationChange) return
+    onPresentationChange(message.id, isAssistantPresenting)
+    return () => onPresentationChange(message.id, false)
+  }, [isAssistantPresenting, message.id, onPresentationChange, presentsAssistantMessage])
+
   const uploads = message.uploads ?? []
   const hasTurnUsage = Boolean(message.turnUsage || message.turnUsageUnavailable)
   const showTurnUsage = hasTurnUsage || (message.status === 'complete' && Boolean(runtimeIdentity))
@@ -873,7 +896,7 @@ const WorkspaceMessageItem = ({
     <MessageScrollerItem
       key={message.id}
       messageId={message.id}
-      disableContainment={message.status === 'streaming'}
+      disableContainment={message.status === 'streaming' || isAssistantPresenting}
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
@@ -1044,15 +1067,16 @@ const WorkspaceMessageItem = ({
         ) : (
           <div className={cn(assistantMessageSurfaceClassName, 'select-text overflow-visible')}>
             {message.content ? (
-              <AgentMarkdown
-                content={message.content}
-                isAnimating={message.status === 'streaming'}
+              <PresentedAgentMarkdown
+                content={assistantPresentation.content}
+                isAnimating={isAssistantPresenting}
                 sessionLinks
               />
             ) : null}
             <MessageImageList images={message.images ?? []} />
             <MessageArtifactList onPreviewArtifact={onPreviewArtifact} artifacts={artifacts} />
             {showAssistantFooter &&
+            !isAssistantPresenting &&
             (terminalDate || (terminalTimestamp !== undefined && showTurnUsage)) ? (
               <div
                 data-slot="assistant-message-footer"

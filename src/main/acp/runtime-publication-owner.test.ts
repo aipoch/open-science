@@ -16,6 +16,85 @@ const createProjection = (): RuntimeSnapshotProjection => ({
 })
 
 describe('AcpRuntimePublicationOwner', () => {
+  it('coalesces assistant text state while publishing every event immediately', () => {
+    const order: string[] = []
+    let releaseScheduledState: (() => void) | undefined
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onEvent: (event) => order.push(`event:${event.text}`),
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+      },
+      scheduleStatePublication: (publish) => {
+        releaseScheduledState = publish
+        return () => (releaseScheduledState = undefined)
+      }
+    })
+
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'one' })
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'two' })
+
+    expect(order).toEqual(['event:one', 'event:two'])
+    releaseScheduledState?.()
+    expect(order).toEqual(['event:one', 'event:two', 'state:2'])
+  })
+
+  it('flushes pending assistant text at a tool boundary without losing event order', () => {
+    const order: string[] = []
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onEvent: (event) => order.push(`event:${event.kind}`),
+        onStateChanged: (snapshot) => order.push(`state:${snapshot.events.length}`)
+      },
+      scheduleStatePublication: () => () => undefined
+    })
+
+    owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: 'before' })
+    owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'in_progress' })
+
+    expect(order).toEqual(['event:message', 'event:tool', 'state:2'])
+  })
+
+  it('keeps a mixed 121-event burst within the frame and boundary publication budget', () => {
+    let scheduledState: (() => void) | undefined
+    let eventPublications = 0
+    let statePublications = 0
+    const snapshotOwner = new AcpRuntimeSnapshotOwner('/workspace')
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner,
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onEvent: () => (eventPublications += 1),
+        onStateChanged: () => (statePublications += 1)
+      },
+      scheduleStatePublication: (publish) => {
+        scheduledState = publish
+        return () => {
+          if (scheduledState === publish) scheduledState = undefined
+        }
+      }
+    })
+
+    for (let index = 0; index < 60; index += 1) {
+      owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: `${index}` })
+    }
+    owner.pushEvent({ kind: 'tool', level: 'info', toolCallId: 'tool-1', status: 'completed' })
+    for (let index = 0; index < 60; index += 1) {
+      owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text: `${index}` })
+    }
+    scheduledState?.()
+
+    expect(eventPublications).toBe(121)
+    expect(snapshotOwner.snapshot(createProjection()).events).toHaveLength(121)
+    expect(statePublications).toBeLessThanOrEqual(3)
+  })
+
   it('publishes an event only after append hooks and before the resulting state', () => {
     const order: string[] = []
     const snapshotOwner = new AcpRuntimeSnapshotOwner('/workspace')

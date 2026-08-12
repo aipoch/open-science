@@ -169,6 +169,37 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
   })
 
+  it('projects a visible Agent text batch with one store commit', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    let commits = 0
+    const unsubscribe = useSessionStore.subscribe(() => (commits += 1))
+
+    useSessionStore.getState().appendAgentMessageChunks([
+      {
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: 'event-1',
+        content: 'Hello'
+      },
+      {
+        sessionId: 'transport-session-1',
+        streamId: 'assistant-message-1',
+        eventId: 'event-2',
+        content: ' world'
+      }
+    ])
+    unsubscribe()
+
+    expect(commits).toBe(1)
+    expect(useSessionStore.getState().sessions[0].messages.at(-1)).toMatchObject({
+      content: 'Hello world',
+      eventIds: ['event-1', 'event-2']
+    })
+  })
+
   it('keeps waiting through whitespace-only Agent chunks', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -4280,6 +4311,7 @@ describe('session store public contract', () => {
       [
         'activateMessageBranch',
         'appendAgentMessageChunk',
+        'appendAgentMessageChunks',
         'appendPendingUserMessage',
         'appendRoutedUserMessage',
         'appendUserMessage',

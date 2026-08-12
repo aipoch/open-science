@@ -16,7 +16,14 @@ import {
   acceptAcpRuntimeSnapshotRevision,
   resetAcpRuntimeSnapshotRevisionForTests
 } from './runtime-snapshot-revision-owner'
-import { applyWorkspaceRuntimeEvent } from './workspace-events'
+import { isBufferableAssistantTextEvent } from './chat-events'
+import { applyWorkspaceRuntimeEvent, applyWorkspaceRuntimeEventBatch } from './workspace-events'
+import {
+  createWorkspaceRuntimePresentationBuffer,
+  liveWorkspaceRuntimePresentation,
+  type WorkspacePresentationLane,
+  type WorkspaceRuntimePresentation
+} from './workspace-runtime-presentation-buffer'
 
 // Snapshot projections retain only transition edges; durable chat facts remain in Session Store.
 const pendingPermissionSessionIds = new Set<string>()
@@ -24,6 +31,11 @@ const pendingElicitationSessionIds = new Set<string>()
 const firstOutputWaitingSessionIds = new Set<string>()
 
 type RuntimeEventApplier = (event: AcpRuntimeEvent) => Promise<boolean>
+type RuntimeEventBatchApplier = (events: AcpRuntimeEvent[]) => Promise<boolean>
+type WorkspaceRuntimeEventProcessorOptions = {
+  applyEventBatch?: RuntimeEventBatchApplier
+  presentation?: WorkspaceRuntimePresentation
+}
 type WorkspacePermissionLifecycleEvent = AcpRuntimeEvent & { permissionRequestId: string }
 type WorkspacePermissionLifecycleObserver = {
   shouldApply: (event: WorkspacePermissionLifecycleEvent) => boolean
@@ -43,10 +55,14 @@ const processVisibleWorkspaceRuntimeEvents = async (
   events: AcpRuntimeEvent[],
   processedEventIds: Set<string>,
   applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent,
-  processingEventIds = new Set<string>()
+  processingEventIds = new Set<string>(),
+  options: {
+    applyEventBatch?: RuntimeEventBatchApplier
+    retainedEvents?: AcpRuntimeEvent[]
+  } = {}
 ): Promise<void> => {
   // Runtime snapshots are bounded, so forget ids that can no longer be replayed from the source list.
-  const visibleEventIds = new Set(events.map((event) => event.id))
+  const visibleEventIds = new Set((options.retainedEvents ?? events).map((event) => event.id))
 
   for (const eventId of processedEventIds) {
     if (!visibleEventIds.has(eventId)) processedEventIds.delete(eventId)
@@ -56,26 +72,46 @@ const processVisibleWorkspaceRuntimeEvents = async (
     if (!visibleEventIds.has(eventId)) processingEventIds.delete(eventId)
   }
 
-  for (const event of events) {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
     if (processedEventIds.has(event.id) || processingEventIds.has(event.id)) continue
 
-    processingEventIds.add(event.id)
+    const batch = [event]
+    if (options.applyEventBatch && isBufferableAssistantTextEvent(event)) {
+      for (let candidateIndex = index + 1; candidateIndex < events.length; candidateIndex += 1) {
+        const candidate = events[candidateIndex]
+        if (!isBufferableAssistantTextEvent(candidate) || candidate.sessionId !== event.sessionId) {
+          break
+        }
+        index = candidateIndex
+        if (!processedEventIds.has(candidate.id) && !processingEventIds.has(candidate.id)) {
+          batch.push(candidate)
+        }
+      }
+    }
+
+    for (const candidate of batch) processingEventIds.add(candidate.id)
     try {
       // Apply visible events sequentially so message chunks and artifact finalization stay ordered.
-      await applyEvent(event)
-      processedEventIds.add(event.id)
+      if (batch.length > 1 && options.applyEventBatch) {
+        await options.applyEventBatch(batch)
+      } else {
+        await applyEvent(event)
+      }
+      for (const candidate of batch) processedEventIds.add(candidate.id)
     } catch {
       // Artifact finalization errors are recorded by the adapter before throwing.
       // Keeping this id unprocessed lets the same visible runtime event retry.
       continue
     } finally {
-      processingEventIds.delete(event.id)
+      for (const candidate of batch) processingEventIds.delete(candidate.id)
     }
   }
 }
 
 const createWorkspaceRuntimeEventProcessor = (
-  applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent
+  applyEvent: RuntimeEventApplier = applyWorkspaceRuntimeEvent,
+  options: WorkspaceRuntimeEventProcessorOptions = {}
 ): WorkspaceRuntimeEventProcessor => {
   type EventLane = {
     acceptedEvents: Map<string, AcpRuntimeEvent>
@@ -84,10 +120,12 @@ const createWorkspaceRuntimeEventProcessor = (
     processingEventIds: Set<string>
     drainInFlight?: Promise<void>
     drainAgain: boolean
+    presentation: WorkspacePresentationLane
   }
 
   const unscopedEventLane = Symbol('unscoped-workspace-runtime-events')
   const eventLanes = new Map<string | symbol, EventLane>()
+  const presentationBuffer = createWorkspaceRuntimePresentationBuffer(options.presentation)
   let latestEvents: AcpRuntimeEvent[] = []
   let acceptedEventVersion = 0
 
@@ -102,7 +140,8 @@ const createWorkspaceRuntimeEventProcessor = (
         failedEventIds: new Set<string>(),
         processedEventIds: new Set<string>(),
         processingEventIds: new Set<string>(),
-        drainAgain: false
+        drainAgain: false,
+        presentation: presentationBuffer.createLane()
       }
       eventLanes.set(laneKey, lane)
     }
@@ -127,6 +166,11 @@ const createWorkspaceRuntimeEventProcessor = (
     if (lane.acceptedEvents.size === 0 && !lane.drainInFlight) eventLanes.delete(laneKey)
   }
 
+  const pendingLaneEvents = (lane: EventLane): AcpRuntimeEvent[] =>
+    [...lane.acceptedEvents.values()].filter(
+      (event) => !lane.processedEventIds.has(event.id) && !lane.processingEventIds.has(event.id)
+    )
+
   const drainLane = async (laneKey: string | symbol): Promise<void> => {
     const lane = getEventLane(laneKey)
 
@@ -138,8 +182,14 @@ const createWorkspaceRuntimeEventProcessor = (
     lane.drainInFlight = (async () => {
       do {
         lane.drainAgain = false
+        const pendingBeforeWait = pendingLaneEvents(lane)
+        await presentationBuffer.prepare(lane.presentation, pendingBeforeWait)
+        const selectedEvents = presentationBuffer.select(lane.presentation, pendingLaneEvents(lane))
+        if (selectedEvents.length === 0) continue
+
+        const processedCount = lane.processedEventIds.size
         await processVisibleWorkspaceRuntimeEvents(
-          [...lane.acceptedEvents.values()],
+          selectedEvents,
           lane.processedEventIds,
           async (event) => {
             const hadFailed = lane.failedEventIds.has(event.id)
@@ -160,8 +210,18 @@ const createWorkspaceRuntimeEventProcessor = (
               throw error
             }
           },
-          lane.processingEventIds
+          lane.processingEventIds,
+          {
+            applyEventBatch: options.applyEventBatch,
+            retainedEvents: [...lane.acceptedEvents.values()]
+          }
         )
+        const madeProgress = lane.processedEventIds.size > processedCount
+        const hasPending = pendingLaneEvents(lane).length > 0
+        if (madeProgress) {
+          presentationBuffer.recordProgress(lane.presentation, selectedEvents, hasPending)
+          if (hasPending) lane.drainAgain = true
+        }
       } while (lane.drainAgain)
     })()
 
@@ -191,6 +251,7 @@ const createWorkspaceRuntimeEventProcessor = (
           // A bounded source snapshot may evict this event before a slow predecessor finishes.
           lane.acceptedEvents.set(event.id, event)
           acceptedEventVersion += 1
+          presentationBuffer.forceOnAccepted(lane.presentation, event)
         }
       }
 
@@ -205,13 +266,20 @@ const createWorkspaceRuntimeEventProcessor = (
     },
     drain: async (sessionId) => {
       if (sessionId !== undefined) {
-        if (eventLanes.has(sessionId)) await drainLane(sessionId)
+        const lane = eventLanes.get(sessionId)
+        if (lane) {
+          presentationBuffer.force(lane.presentation)
+          await drainLane(sessionId)
+        }
         return
       }
 
       let drainedVersion: number
       do {
         drainedVersion = acceptedEventVersion
+        for (const lane of eventLanes.values()) {
+          presentationBuffer.force(lane.presentation)
+        }
         await Promise.all([...eventLanes.keys()].map((laneKey) => drainLane(laneKey)))
       } while (drainedVersion !== acceptedEventVersion)
     }
@@ -240,24 +308,30 @@ const subscribeWorkspacePermissionLifecycle = (
   return () => permissionLifecycleObservers.delete(observer)
 }
 
-const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(async (event) => {
-  const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event) ? event : undefined
-  if (
-    permissionLifecycleEvent &&
-    [...permissionLifecycleObservers].some(
-      (observer) => !observer.shouldApply(permissionLifecycleEvent)
-    )
-  ) {
-    return true
-  }
-  const applied = await applyWorkspaceRuntimeEvent(event)
-  if (applied && permissionLifecycleEvent) {
-    for (const observer of permissionLifecycleObservers) {
-      observer.onApplied(permissionLifecycleEvent)
+const liveWorkspaceRuntimeEventProcessor = createWorkspaceRuntimeEventProcessor(
+  async (event) => {
+    const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event) ? event : undefined
+    if (
+      permissionLifecycleEvent &&
+      [...permissionLifecycleObservers].some(
+        (observer) => !observer.shouldApply(permissionLifecycleEvent)
+      )
+    ) {
+      return true
     }
+    const applied = await applyWorkspaceRuntimeEvent(event)
+    if (applied && permissionLifecycleEvent) {
+      for (const observer of permissionLifecycleObservers) {
+        observer.onApplied(permissionLifecycleEvent)
+      }
+    }
+    return applied
+  },
+  {
+    applyEventBatch: applyWorkspaceRuntimeEventBatch,
+    presentation: liveWorkspaceRuntimePresentation
   }
-  return applied
-})
+)
 
 // Projects runtime foreground ownership and its initial silent gap into renderer-only state. Unknown
 // ids belong to background/runtime-only sessions; repeated snapshots must not restart the gap timer.

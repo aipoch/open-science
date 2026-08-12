@@ -18,7 +18,8 @@ vi.mock('@/components/ui/message-scroller', () => ({
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
 // Artifact rendering is outside this test's boundary and imports the PDF worker bundle.

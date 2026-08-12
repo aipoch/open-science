@@ -4,6 +4,18 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('AgentMarkdown fullscreen chrome', () => {
+  it('keeps the streaming caret visible before and between text segments', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const streamingBlock = css.slice(
+      css.indexOf('.agent-markdown-streaming'),
+      css.indexOf('/* --- Streamdown dropdown panels')
+    )
+
+    expect(streamingBlock).toContain('& > div > :empty:not(:last-child)')
+    expect(streamingBlock).toContain('opacity: 1')
+    expect(streamingBlock).not.toContain('cursor-blink')
+  })
+
   it('keeps Mermaid fullscreen functionality enabled while matching the dialog overlay chrome', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
     const config = readFileSync(resolve(__dirname, 'streamdown-config.ts'), 'utf8')

@@ -198,6 +198,157 @@ describe('workspace permission profile persistence', () => {
 })
 
 describe('workspace agent runtime event processing', () => {
+  const createTextEvents = (count: number): AcpRuntimeEvent[] =>
+    Array.from({ length: count }, (_, index) =>
+      createEvent({
+        id: `message-event-${index + 1}`,
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: '字'
+      })
+    )
+
+  const createTimerPresentation = (): {
+    now: () => number
+    schedule: (callback: () => void, delayMs: number) => () => void
+    shouldAnimate: () => boolean
+  } => ({
+    now: Date.now,
+    schedule: (callback: () => void, delayMs: number): (() => void) => {
+      const timer = setTimeout(callback, delayMs)
+      return () => clearTimeout(timer)
+    },
+    shouldAnimate: () => true
+  })
+
+  it('releases fast assistant text in grapheme-budgeted 30 fps batches', async () => {
+    vi.useFakeTimers()
+    try {
+      const visibleBatches: Array<{ ids: string[]; timestamp: number }> = []
+      const applyEvent = vi
+        .fn<(event: AcpRuntimeEvent) => Promise<boolean>>()
+        .mockResolvedValue(true)
+      const processor = createWorkspaceRuntimeEventProcessor(applyEvent, {
+        applyEventBatch: async (events) => {
+          visibleBatches.push({ ids: events.map((event) => event.id), timestamp: Date.now() })
+          return true
+        },
+        presentation: createTimerPresentation()
+      })
+
+      const drain = processor.process(createTextEvents(24))
+      await vi.advanceTimersByTimeAsync(200)
+      await drain
+
+      expect(visibleBatches.map(({ ids }) => ids.length)).toEqual([8, 8, 8])
+      expect(visibleBatches.flatMap(({ ids }) => ids)).toEqual(
+        createTextEvents(24).map((event) => event.id)
+      )
+      expect(
+        visibleBatches
+          .slice(1)
+          .every((batch, index) => batch.timestamp - visibleBatches[index].timestamp >= 33)
+      ).toBe(true)
+      expect(applyEvent).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('catches up before an ordinary tool boundary within four presentation frames', async () => {
+    vi.useFakeTimers()
+    try {
+      const calls: Array<{ kind: 'text' | 'tool'; timestamp: number; count: number }> = []
+      const processor = createWorkspaceRuntimeEventProcessor(
+        async (event) => {
+          calls.push({
+            kind: event.kind === 'tool' ? 'tool' : 'text',
+            timestamp: Date.now(),
+            count: 1
+          })
+          return true
+        },
+        {
+          applyEventBatch: async (events) => {
+            calls.push({ kind: 'text', timestamp: Date.now(), count: events.length })
+            return true
+          },
+          presentation: createTimerPresentation()
+        }
+      )
+      const tool = createEvent({
+        id: 'tool-event-1',
+        kind: 'tool',
+        toolCallId: 'tool-1',
+        status: 'in_progress'
+      })
+
+      const drain = processor.process([...createTextEvents(32), tool])
+      await vi.advanceTimersByTimeAsync(200)
+      await drain
+
+      expect(calls.map(({ kind, count }) => `${kind}:${count}`)).toEqual([
+        'text:8',
+        'text:8',
+        'text:8',
+        'text:8',
+        'tool:1'
+      ])
+      expect(calls.at(-1)!.timestamp - calls[0].timestamp).toBeLessThanOrEqual(132)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes all pending text immediately at a terminal boundary', async () => {
+    const calls: string[] = []
+    const processor = createWorkspaceRuntimeEventProcessor(
+      async (event) => {
+        calls.push(event.kind)
+        return true
+      },
+      {
+        applyEventBatch: async (events) => {
+          calls.push(`text:${events.length}`)
+          return true
+        },
+        presentation: createTimerPresentation()
+      }
+    )
+
+    await processor.process([
+      ...createTextEvents(24),
+      createEvent({ id: 'stop-event-1', kind: 'stop' })
+    ])
+
+    expect(calls).toEqual(['text:24', 'stop'])
+  })
+
+  it('flushes accepted text immediately at a persistence barrier', async () => {
+    vi.useFakeTimers()
+    try {
+      const visibleEventIds: string[] = []
+      const processor = createWorkspaceRuntimeEventProcessor(async () => true, {
+        applyEventBatch: async (events) => {
+          visibleEventIds.push(...events.map((event) => event.id))
+          return true
+        },
+        presentation: createTimerPresentation()
+      })
+
+      const visibleDrain = processor.process(createTextEvents(24))
+      await Promise.resolve()
+      await Promise.resolve()
+      const persistenceDrain = processor.drain()
+      await Promise.all([visibleDrain, persistenceDrain])
+
+      expect(visibleEventIds).toEqual(createTextEvents(24).map((event) => event.id))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not mark failed runtime events as processed so they can retry', async () => {
     const processedEventIds = new Set<string>()
     const event = createEvent({

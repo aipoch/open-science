@@ -942,6 +942,7 @@ describe('Session Store architecture', () => {
       ownerTypeProperties('session-store-run-projection-owner.ts', 'SessionRunProjectionActions')
     ).toEqual([
       'appendAgentMessageChunk',
+      'appendAgentMessageChunks',
       'attachRunArtifacts',
       'beginActivityGroup',
       'beginCompaction',

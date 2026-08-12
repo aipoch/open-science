@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const streamdownHarness = vi.hoisted(() => ({
   shouldThrow: true,
   disallowedElements: undefined as readonly string[] | undefined,
-  components: undefined as Record<string, unknown> | undefined
+  components: undefined as Record<string, unknown> | undefined,
+  animated: undefined as unknown,
+  caret: undefined as string | undefined
 }))
 
 vi.mock('@streamdown/code', () => ({ code: {} }))
@@ -16,15 +18,21 @@ vi.mock('@streamdown/mermaid', () => ({ mermaid: {} }))
 vi.mock('streamdown', () => ({
   Streamdown: ({
     children,
+    animated,
+    caret,
     components,
     disallowedElements
   }: PropsWithChildren<{
+    animated?: unknown
+    caret?: string
     components?: Record<string, unknown>
     disallowedElements?: readonly string[]
   }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
     streamdownHarness.components = components
     streamdownHarness.disallowedElements = disallowedElements
+    streamdownHarness.animated = animated
+    streamdownHarness.caret = caret
 
     return <div data-testid="rich-markdown">{children}</div>
   }
@@ -40,6 +48,8 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = true
     streamdownHarness.disallowedElements = undefined
     streamdownHarness.components = undefined
+    streamdownHarness.animated = undefined
+    streamdownHarness.caret = undefined
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -48,7 +58,9 @@ describe('AgentMarkdown renderer recovery', () => {
 
   afterEach(() => {
     act(() => root.unmount())
+    vi.useRealTimers()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     container.remove()
   })
 
@@ -110,6 +122,115 @@ describe('AgentMarkdown renderer recovery', () => {
       root.render(<AgentMarkdown content="Session markdown" sessionLinks />)
     })
     expect(streamdownHarness.components?.a).toBe(SessionMessageLink)
+  })
+
+  it('reveals a buffered segment across frames while keeping a caret at the visible tail', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+    const content = '流畅输出'.repeat(13)
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={content} isAnimating />)
+    })
+    expect(streamdownHarness.caret).toBe('block')
+    expect(streamdownHarness.animated).toBe(false)
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
+
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    const firstFrame = container.querySelector('[data-testid="rich-markdown"]')?.textContent ?? ''
+    expect(firstFrame).toBe('流')
+
+    for (let expectedLength = 2; expectedLength <= 12; expectedLength += 1) {
+      await act(async () => vi.advanceTimersByTimeAsync(16))
+      expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent?.length).toBe(
+        expectedLength
+      )
+    }
+
+    await act(async () => vi.advanceTimersByTimeAsync(900))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe(content)
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={content} />)
+    })
+    expect(streamdownHarness.caret).toBeUndefined()
+  })
+
+  it('keeps revealing while faster stream updates extend the target between frames', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content="流" isAnimating />)
+    })
+
+    for (let length = 2; length <= 70; length += 1) {
+      await act(async () => vi.advanceTimersByTimeAsync(8))
+      await act(async () => {
+        root.render(<AgentMarkdown content={'流'.repeat(length)} isAnimating />)
+      })
+    }
+
+    const visible = container.querySelector('[data-testid="rich-markdown"]')?.textContent ?? ''
+    expect(visible.length).toBeGreaterThan(0)
+    expect(visible.length).toBeLessThan(70)
+    expect(streamdownHarness.caret).toBe('block')
+  })
+
+  it('prebuffers a small segment instead of exposing source jitter directly', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={'流'.repeat(12)} isAnimating />)
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(480))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
+    expect(streamdownHarness.caret).toBe('block')
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={'流'.repeat(40)} isAnimating />)
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(32))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('流')
+  })
+
+  it('starts a slow stream after the bounded prebuffer delay', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={'流'.repeat(12)} isAnimating />)
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(496))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
+
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('流')
   })
 
   it('uses one lazy, no-referrer favicon source per hostname and falls back on failure', async () => {

@@ -92,6 +92,11 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
+type SessionScopedMessagePresentationState = {
+  sessionId: string | undefined
+  messageIds: Set<string>
+}
+
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
 const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
@@ -319,6 +324,11 @@ const WorkspaceMessageScrollerImpl = ({
       sessionId: undefined,
       overrides: {}
     }))
+  const [messagePresentationState, setMessagePresentationState] =
+    useState<SessionScopedMessagePresentationState>(() => ({
+      sessionId: undefined,
+      messageIds: new Set()
+    }))
   const collapsedActivityGroups =
     collapsedActivityGroupState.sessionId === currentSessionId
       ? collapsedActivityGroupState.groupIds
@@ -334,6 +344,28 @@ const WorkspaceMessageScrollerImpl = ({
   const conversationItems = useMemo(
     () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
     [activeSession?.activityGroups, rawConversationItems]
+  )
+  const presentingMessageIds =
+    messagePresentationState.sessionId === currentSessionId
+      ? messagePresentationState.messageIds
+      : new Set<string>()
+  const presentationBarrierIndex = conversationItems.findIndex(
+    (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
+  )
+  const handleMessagePresentationChange = useCallback(
+    (messageId: string, presenting: boolean): void => {
+      setMessagePresentationState((currentState) => {
+        const currentMessageIds =
+          currentState.sessionId === currentSessionId ? currentState.messageIds : new Set<string>()
+        if (currentMessageIds.has(messageId) === presenting) return currentState
+
+        const nextMessageIds = new Set(currentMessageIds)
+        if (presenting) nextMessageIds.add(messageId)
+        else nextMessageIds.delete(messageId)
+        return { sessionId: currentSessionId, messageIds: nextMessageIds }
+      })
+    },
+    [currentSessionId]
   )
   const durablePlanOwnerActivityId = useMemo(
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
@@ -617,6 +649,10 @@ const WorkspaceMessageScrollerImpl = ({
               <div className={conversationContentClassName}>
                 {/* Messages and tool activities share one sorted transcript timeline. */}
                 {conversationItems.map((item, itemIndex) => {
+                  if (presentationBarrierIndex >= 0 && itemIndex > presentationBarrierIndex) {
+                    return null
+                  }
+
                   if (item.type === 'message') {
                     const artifacts = artifactVisibility.artifactsForMessage(item.message)
                     // Jobs pre-assigned to this slot: each job appears in exactly one slot.
@@ -697,6 +733,11 @@ const WorkspaceMessageScrollerImpl = ({
                           : undefined,
                       artifacts
                     }
+                    if (item.message.role === 'agent') {
+                      messageItemProps.onPresentationChange = handleMessagePresentationChange
+                      messageItemProps.presentationSourceOpen =
+                        itemIndex === conversationItems.length - 1
+                    }
 
                     return (
                       <div key={item.id}>
@@ -719,7 +760,9 @@ const WorkspaceMessageScrollerImpl = ({
                         ) : (
                           <WorkspaceMessageItem {...messageItemProps} canEditMessage={false} />
                         )}
-                        {currentSessionId && item.message.role === 'agent' ? (
+                        {currentSessionId &&
+                        item.message.role === 'agent' &&
+                        !presentingMessageIds.has(item.message.id) ? (
                           <WorkspaceMessageReview
                             projectId={currentProjectId}
                             sessionId={currentSessionId}
@@ -852,25 +895,29 @@ const WorkspaceMessageScrollerImpl = ({
                 })}
 
                 {/* Render any remaining unbound completed jobs after all conversation items */}
-                {trailingJobs.map((job) => (
-                  <MessageScrollerItem
-                    key={`completed-job-${job.job_id}`}
-                    messageId={`completed-job-${job.job_id}`}
-                    className="min-w-0"
-                  >
-                    <div className="px-4 py-1 md:px-6">
-                      <div className="mx-auto w-full max-w-4xl">
-                        <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                      </div>
-                    </div>
-                  </MessageScrollerItem>
-                ))}
+                {presentationBarrierIndex < 0
+                  ? trailingJobs.map((job) => (
+                      <MessageScrollerItem
+                        key={`completed-job-${job.job_id}`}
+                        messageId={`completed-job-${job.job_id}`}
+                        className="min-w-0"
+                      >
+                        <div className="px-4 py-1 md:px-6">
+                          <div className="mx-auto w-full max-w-4xl">
+                            <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                          </div>
+                        </div>
+                      </MessageScrollerItem>
+                    ))
+                  : null}
 
-                {trailingContent}
+                {presentationBarrierIndex < 0 ? trailingContent : null}
 
-                {isResumingSession && activeSession ? (
+                {presentationBarrierIndex < 0 && isResumingSession && activeSession ? (
                   <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
-                ) : agentLoadingPhase !== 'hidden' && activeSession ? (
+                ) : presentationBarrierIndex < 0 &&
+                  agentLoadingPhase !== 'hidden' &&
+                  activeSession ? (
                   <WorkspaceAgentLoadingRow
                     sessionId={activeSession.id}
                     phase={agentLoadingPhase}

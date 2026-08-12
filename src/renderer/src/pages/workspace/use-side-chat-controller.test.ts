@@ -64,6 +64,8 @@ describe('Side chat renderer controller', () => {
       role: 'user',
       text: 'Initial question'
     })
+    const initialLiveTurnUserEntryId = result.current.view?.entries[0]?.id
+    expect(result.current.view?.liveTurnUserEntryId).toBe(initialLiveTurnUserEntryId)
 
     act(() => {
       eventListener?.({
@@ -111,6 +113,11 @@ describe('Side chat renderer controller', () => {
       expect(await result.current.send('Follow up')).toBe(true)
     })
     expect(send).toHaveBeenCalledWith({ sideSessionId: 'side-1', text: 'Follow up' })
+    const followUpEntry = result.current.view?.entries.findLast(
+      (entry) => entry.kind === 'message' && entry.role === 'user'
+    )
+    expect(result.current.view?.liveTurnUserEntryId).toBe(followUpEntry?.id)
+    expect(result.current.view?.liveTurnUserEntryId).not.toBe(initialLiveTurnUserEntryId)
 
     act(() => result.current.close())
     expect(close).toHaveBeenCalledWith({ sideSessionId: 'side-1' })
@@ -350,6 +357,7 @@ describe('Side chat renderer controller', () => {
     await render()
     expect(list).toHaveBeenCalledOnce()
     expect(result.current.view?.entries[0]).toMatchObject({ text: 'B' })
+    expect(result.current.view?.liveTurnUserEntryId).toBeUndefined()
 
     act(() => {
       eventListener?.({
@@ -375,6 +383,7 @@ describe('Side chat renderer controller', () => {
       expect.objectContaining({ text: 'A' }),
       expect.objectContaining({ text: 'A answer' })
     ])
+    expect(result.current.view?.liveTurnUserEntryId).toBe('user-a')
     act(() => root.unmount())
   })
 

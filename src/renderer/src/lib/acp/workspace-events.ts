@@ -40,6 +40,7 @@ import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
   isAssistantRuntimeChatMessageEvent,
+  isBufferableAssistantTextEvent,
   isRuntimeChatMessageEvent
 } from './chat-events'
 
@@ -862,8 +863,53 @@ const applyWorkspaceRuntimeEvent = async (
   return false
 }
 
+// A presentation tick contains only adjacent text deltas from one Session lane. Projecting the
+// complete tick in one store transaction preserves every event id while avoiding one React update
+// and growing-Markdown parse per provider token.
+const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promise<boolean> => {
+  if (events.length === 0) return true
+  if (!events.every(isBufferableAssistantTextEvent)) {
+    for (const event of events) await applyWorkspaceRuntimeEvent(event)
+    return true
+  }
+
+  const store = useSessionStore.getState()
+  const inputs: Parameters<typeof store.appendAgentMessageChunks>[0] = []
+  const completedActivityGroups = new Set<string>()
+
+  for (const event of events) {
+    const content = getAcpRuntimeEventText(event)
+    const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+    if (
+      session?.agentFrameworkId === 'codex' &&
+      typeof content === 'string' &&
+      content.trim().length > 0 &&
+      isNonActionableCodexDiagnostic(content)
+    ) {
+      continue
+    }
+
+    const activityGroupKey = `${event.sessionId}\0${event.promptMessageId ?? ''}`
+    if (!completedActivityGroups.has(activityGroupKey)) {
+      store.completeActivityGroup(event.sessionId, event.promptMessageId)
+      completedActivityGroups.add(activityGroupKey)
+    }
+    inputs.push({
+      sessionId: event.sessionId,
+      streamId: createRuntimeStreamId(event),
+      eventId: event.id,
+      promptMessageId: event.promptMessageId,
+      content
+    })
+  }
+
+  store.appendAgentMessageChunks(inputs)
+  return true
+}
+
 export {
   applyWorkspaceRuntimeEvent,
+  applyWorkspaceRuntimeEventBatch,
   assembleReviewRunRequest,
   suppressAutoReviewsForQuit,
   suppressNextAutoReview,

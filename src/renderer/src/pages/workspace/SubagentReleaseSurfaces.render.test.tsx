@@ -598,7 +598,7 @@ describe('release-gate Subagent surfaces', () => {
       })
     })
 
-    expect(screen.getByText('Live child evidence')).toBeTruthy()
+    expect(await screen.findByText('Live child evidence')).toBeTruthy()
     expect(screen.queryByText('Stale child output')).toBeNull()
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
 
