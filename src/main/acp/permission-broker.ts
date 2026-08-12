@@ -47,9 +47,11 @@ type PendingPermission = {
   durableCandidate?: DurablePermissionWaitCandidate
   durablePersisted?: boolean
   durableReady?: Promise<void>
+  durableStarted?: boolean
   durablePersistenceSettled?: boolean
   settled?: boolean
   resolve: (response: RequestPermissionResponse) => void
+  reject: (error: unknown) => void
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
@@ -724,6 +726,8 @@ const projectRegistrySessionGrants = (
 class AcpPermissionBroker {
   private pendingRequests = new Map<string, PendingPermission>()
   private readonly restoredAllowOnceBySession = new Map<string, string>()
+  private readonly durableRequestQueues = new Map<string, string[]>()
+  private readonly activeDurableRequestBySession = new Map<string, string>()
   private cancellationGeneration = 0
   private readonly sessionCancellationGenerations = new Map<string, number>()
   private readonly livePermissionProfiles = new Map<
@@ -749,7 +753,14 @@ class AcpPermissionBroker {
 
   // Returns serializable pending requests for runtime snapshots.
   getPendingRequests(): AcpPermissionRequest[] {
-    return Array.from(this.pendingRequests.values(), ({ request }) => request)
+    return Array.from(this.pendingRequests.values())
+      .filter(
+        (pending) =>
+          !pending.durableCandidate ||
+          !this.permissionWaitHooks ||
+          pending.durablePersistenceSettled === true
+      )
+      .map(({ request }) => request)
   }
 
   hasPendingForSession(sessionId: string): boolean {
@@ -1080,7 +1091,7 @@ class AcpPermissionBroker {
   }
 
   private resolveOrEnqueuePermissionRequest(
-    pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
+    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
   ): Promise<RequestPermissionResponse> {
     const liveAutomaticOptionId = pending.automaticRequest
       ? this.resolveCurrentAutomaticPermission(pending.automaticRequest, pending.policyContext)
@@ -1111,16 +1122,19 @@ class AcpPermissionBroker {
   }
 
   private enqueuePermissionRequest(
-    pending: Omit<PendingPermission, 'resolve'> & { requestId: string }
+    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
   ): Promise<RequestPermissionResponse> {
     let resolveResponse!: (response: RequestPermissionResponse) => void
-    const response = new Promise<RequestPermissionResponse>((resolve) => {
+    let rejectResponse!: (error: unknown) => void
+    const response = new Promise<RequestPermissionResponse>((resolve, reject) => {
       resolveResponse = resolve
+      rejectResponse = reject
     })
     const { requestId, ...entry } = pending
     const stored: PendingPermission = {
       ...entry,
-      resolve: resolveResponse
+      resolve: resolveResponse,
+      reject: rejectResponse
     }
     this.pendingRequests.set(requestId, stored)
 
@@ -1129,30 +1143,85 @@ class AcpPermissionBroker {
       return response
     }
 
-    stored.durableReady = this.permissionWaitHooks.persist(stored.durableCandidate).then(
-      (persisted) => {
+    const sessionId = stored.request.sessionId
+    const queue = this.durableRequestQueues.get(sessionId) ?? []
+    queue.push(requestId)
+    this.durableRequestQueues.set(sessionId, queue)
+    this.startNextDurablePermission(sessionId)
+    return response
+  }
+
+  private startNextDurablePermission(sessionId: string): void {
+    if (this.activeDurableRequestBySession.has(sessionId)) return
+
+    const hooks = this.permissionWaitHooks
+    if (!hooks) return
+    const queue = this.durableRequestQueues.get(sessionId)
+    while (queue?.length) {
+      const requestId = queue.shift()!
+      const stored = this.pendingRequests.get(requestId)
+      const candidate = stored?.durableCandidate
+      if (!stored || !candidate) continue
+
+      if (queue.length === 0) this.durableRequestQueues.delete(sessionId)
+      this.activeDurableRequestBySession.set(sessionId, requestId)
+      stored.durableStarted = true
+      stored.durablePersistenceSettled = false
+      stored.durableReady = hooks.persist(candidate).then((persisted) => {
         stored.durablePersisted = persisted
         stored.durablePersistenceSettled = true
         if (persisted) stored.request = { ...stored.request, durable: true }
-      },
-      (error: unknown) => {
-        stored.durablePersistenceSettled = true
-        throw error
-      }
-    )
-    return stored.durableReady.then(
-      () => {
+
         if (this.pendingRequests.get(requestId) === stored) {
           this.emitPermissionRequest(stored.request)
         }
-        return response
-      },
-      (error: unknown) => {
-        this.pendingRequests.delete(requestId)
-        this.settlePending(stored, { outcome: { outcome: 'cancelled' } }, 'cancelled')
-        throw error
-      }
-    )
+        if (!persisted) this.releaseDurablePermissionSlot(stored)
+      })
+      void stored.durableReady.catch((error: unknown) => {
+        stored.durablePersistenceSettled = true
+        if (this.pendingRequests.get(requestId) === stored) {
+          this.pendingRequests.delete(requestId)
+        }
+        this.rejectPending(stored, error, 'cancelled')
+        this.cancelQueuedDurablePermissions(sessionId)
+        this.activeDurableRequestBySession.delete(sessionId)
+      })
+      return
+    }
+
+    this.durableRequestQueues.delete(sessionId)
+  }
+
+  private releaseDurablePermissionSlot(pending: PendingPermission): void {
+    const sessionId = pending.request.sessionId
+    if (this.activeDurableRequestBySession.get(sessionId) !== pending.request.requestId) {
+      return
+    }
+
+    this.activeDurableRequestBySession.delete(sessionId)
+    this.startNextDurablePermission(sessionId)
+  }
+
+  private removeQueuedDurablePermission(pending: PendingPermission): void {
+    const sessionId = pending.request.sessionId
+    const queue = this.durableRequestQueues.get(sessionId)
+    if (!queue) return
+
+    const requestIndex = queue.indexOf(pending.request.requestId)
+    if (requestIndex >= 0) queue.splice(requestIndex, 1)
+    if (queue.length === 0) this.durableRequestQueues.delete(sessionId)
+  }
+
+  private cancelQueuedDurablePermissions(sessionId: string): void {
+    const requestIds = this.durableRequestQueues.get(sessionId) ?? []
+    this.durableRequestQueues.delete(sessionId)
+
+    for (const requestId of requestIds) {
+      const queued = this.pendingRequests.get(requestId)
+      if (!queued) continue
+      this.pendingRequests.delete(requestId)
+      this.settlePending(queued, { outcome: { outcome: 'cancelled' } }, 'cancelled')
+    }
   }
 
   // Resolves one pending request and reports whether it was found.
@@ -1261,11 +1330,19 @@ class AcpPermissionBroker {
     const hooks = this.permissionWaitHooks
     if (!candidate || !hooks) return undefined
     return (async () => {
+      if (!pending.durableStarted) {
+        this.removeQueuedDurablePermission(pending)
+        return
+      }
+
       try {
         await pending.durableReady
         if (!pending.durablePersisted) return
         await hooks.settleLive(candidate)
+        this.releaseDurablePermissionSlot(pending)
       } catch (error) {
+        this.cancelQueuedDurablePermissions(pending.request.sessionId)
+        this.activeDurableRequestBySession.delete(pending.request.sessionId)
         this.settlePending(pending, { outcome: { outcome: 'cancelled' } }, 'cancelled')
         throw new Error(
           'Permission decision could not be persisted; the tool call was cancelled.',
@@ -1285,6 +1362,21 @@ class AcpPermissionBroker {
     if (pending.settled) return
     pending.settled = true
     pending.resolve(response)
+    try {
+      this.onPermissionSettled?.(pending.request.requestId, state)
+    } catch {
+      // Notification projection failures must never change the permission decision.
+    }
+  }
+
+  private rejectPending(
+    pending: PendingPermission,
+    error: unknown,
+    state: AcpPermissionSettlementState
+  ): void {
+    if (pending.settled) return
+    pending.settled = true
+    pending.reject(error)
     try {
       this.onPermissionSettled?.(pending.request.requestId, state)
     } catch {
@@ -1364,6 +1456,8 @@ class AcpPermissionBroker {
     this.cancellationGeneration += 1
     this.livePermissionProfiles.clear()
     this.restoredAllowOnceBySession.clear()
+    this.durableRequestQueues.clear()
+    this.activeDurableRequestBySession.clear()
     const pending = Array.from(this.pendingRequests.values())
     this.pendingRequests.clear()
     for (const request of pending) {
