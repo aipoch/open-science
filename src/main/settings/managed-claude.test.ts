@@ -60,6 +60,7 @@ const sha512 = (data: Buffer): string =>
 
 describe('managed-claude: default transport', () => {
   beforeEach(() => netFetchStandard.mockReset())
+  afterEach(() => vi.useRealTimers())
 
   it('loads registry metadata through Electron net.fetch', async () => {
     netFetchStandard.mockResolvedValue(
@@ -94,8 +95,64 @@ describe('managed-claude: default transport', () => {
     expect(Buffer.concat(chunks)).toEqual(payload)
     expect(result.totalBytes).toBe(payload.length)
     expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package.tgz', {
-      redirect: 'follow'
+      redirect: 'follow',
+      signal: expect.any(AbortSignal)
     })
+  })
+
+  it('aborts a tarball stream after 20 seconds without progress', async () => {
+    vi.useFakeTimers()
+    netFetchStandard.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: () => undefined
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/stalled.tgz')
+    const streamError = new Promise<Error>((resolve) =>
+      result.stream.once('error', (error) => resolve(error as Error))
+    )
+    result.stream.resume()
+
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect((await streamError).message).toBe(
+      'Request timed out for https://registry.example.test/stalled.tgz'
+    )
+    const init = netFetchStandard.mock.calls[0]?.[1] as RequestInit
+    expect(init.signal?.aborted).toBe(true)
+  })
+
+  it('resets the inactivity timeout whenever a tarball chunk arrives', async () => {
+    vi.useFakeTimers()
+    let body!: ReadableStreamDefaultController<Uint8Array>
+    netFetchStandard.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            body = controller
+          }
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/progress.tgz')
+    const errors: Error[] = []
+    result.stream.on('error', (error) => errors.push(error as Error))
+    result.stream.resume()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    const received = new Promise<void>((resolve) => result.stream.once('data', () => resolve()))
+    body.enqueue(new Uint8Array([1]))
+    await received
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(errors).toEqual([])
+    body.close()
   })
 })
 

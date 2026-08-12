@@ -516,10 +516,56 @@ const installManagedClaude = async ({
 
 // ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------
 
+const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 20_000
+
 const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise<Response> => {
   const response = await netFetchStandard(url, { redirect: 'follow', ...init })
   if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`)
   return response
+}
+
+const withInactivityTimeout = (
+  source: Readable,
+  { url, abort }: { url: string; abort: (reason?: unknown) => void }
+): Readable => {
+  let timer: NodeJS.Timeout | undefined
+
+  const clear = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = undefined
+  }
+  function reset(): void {
+    clear()
+    timer = setTimeout(
+      () => output.destroy(new Error(`Request timed out for ${url}`)),
+      DOWNLOAD_INACTIVITY_TIMEOUT_MS
+    )
+  }
+
+  const output = new Transform({
+    transform(chunk, _encoding, callback) {
+      reset()
+      callback(null, chunk)
+    }
+  })
+
+  const forwardSourceError = (error: Error): void => {
+    output.destroy(error)
+  }
+  source.on('error', forwardSourceError)
+  output.once('finish', clear)
+  output.once('close', () => {
+    clear()
+    source.off('error', forwardSourceError)
+    if (!source.destroyed) {
+      abort()
+      source.destroy()
+    }
+  })
+
+  reset()
+  source.pipe(output)
+  return output
 }
 
 const defaultFetchJson: FetchJson = async (url) => {
@@ -528,14 +574,33 @@ const defaultFetchJson: FetchJson = async (url) => {
 }
 
 const defaultFetchTarball: FetchTarball = async (url) => {
-  const response = await fetchSuccessfulResponse(url)
+  const controller = new AbortController()
+  const timeoutError = new Error(`Request timed out for ${url}`)
+  let headerTimedOut = false
+  const headerTimer = setTimeout(() => {
+    headerTimedOut = true
+    controller.abort(timeoutError)
+  }, DOWNLOAD_INACTIVITY_TIMEOUT_MS)
+
+  let response: Response
+  try {
+    response = await fetchSuccessfulResponse(url, { signal: controller.signal })
+  } catch (error) {
+    if (headerTimedOut) throw timeoutError
+    throw error
+  } finally {
+    clearTimeout(headerTimer)
+  }
+
   if (!response.body) throw new Error(`Empty response body for ${url}`)
 
   const contentLength = response.headers.get('content-length')
   const length = contentLength === null ? undefined : Number(contentLength)
-  const stream = Readable.fromWeb(
-    response.body as unknown as NodeReadableStream<Uint8Array>
-  ) as NodeJS.ReadableStream
+  const source = Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>)
+  const stream = withInactivityTimeout(source, {
+    url,
+    abort: (reason) => controller.abort(reason)
+  })
 
   return {
     stream,
