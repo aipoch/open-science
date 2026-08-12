@@ -454,6 +454,36 @@ afterEach(() => {
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('focuses the ordinary composer when the draft context changes', () => {
+    renderPanel({ composerFocusKey: 'session-a' })
+    expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    expect(document.activeElement).toBe(navigationButton)
+
+    renderPanel({ composerFocusKey: 'session-b' })
+    expect(document.activeElement).toBe(getComposerEditor())
+  })
+
+  it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
+    renderPanel({ composerFocusKey: 'session-a' })
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+
+    renderPanel({
+      composerFocusKey: 'session-blocked',
+      pendingPermissions: [{ requestId: 'permission-focus' } as never]
+    })
+
+    expect(getComposerForm().hidden).toBe(true)
+    expect(document.activeElement).toBe(navigationButton)
+  })
+
   it('keeps the Main composer available while a delegated question is pending', () => {
     renderPanel({
       activeSession: delegatedQuestionSession(),

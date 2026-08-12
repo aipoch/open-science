@@ -182,6 +182,7 @@ const formatAttachmentSize = (size: number): string => {
 
 type ConversationPanelProps = {
   activeSession: ChatSession | undefined
+  composerFocusKey?: string
   draftDoc: ComposerDoc
   canSendMessage: boolean
   canEditDraft: boolean
@@ -277,6 +278,7 @@ type ConversationPanelProps = {
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
   activeSession,
+  composerFocusKey,
   draftDoc,
   canSendMessage,
   canEditDraft,
@@ -365,7 +367,7 @@ const ConversationPanel = ({
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
-  const [composerFocusRequest, setComposerFocusRequest] = useState<number>()
+  const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -498,6 +500,11 @@ const ConversationPanel = ({
         : undefined
   const hasPendingPermission = pendingPermissions.length > 0
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
+  const ordinaryComposerBlocked = Boolean(
+    sideChat || hasPendingPermission || pendingElicitation || pendingPlan
+  )
+  const composerFocusRequest =
+    canEditDraft && !ordinaryComposerBlocked ? composerFocusKey : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -591,7 +598,7 @@ const ConversationPanel = ({
 
   const handleCloseSideChat = (): void => {
     onCloseSideChat?.()
-    setComposerFocusRequest((request) => (request ?? 0) + 1)
+    setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
   }
 
   // Converts the hidden file input selection into the shared staging callback.
@@ -972,13 +979,10 @@ const ConversationPanel = ({
                   {/* Composer stays mounted to preserve its draft, but a pending blocking interaction
                       owns the lane and makes the ordinary controls unreachable. */}
                   <form
-                    hidden={Boolean(
-                      sideChat || hasPendingPermission || pendingElicitation || pendingPlan
-                    )}
+                    hidden={ordinaryComposerBlocked}
                     className={cn(
                       'relative z-10 flex flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2',
-                      (sideChat || hasPendingPermission || pendingElicitation || pendingPlan) &&
-                        'hidden'
+                      ordinaryComposerBlocked && 'hidden'
                     )}
                     onSubmit={(event) => event.preventDefault()}
                     {...dropZoneProps}
@@ -1121,6 +1125,7 @@ const ConversationPanel = ({
                               : undefined
                           }
                           focusRequest={composerFocusRequest}
+                          restoreFocusRequest={composerRestoreFocusRequest}
                         />
                       </div>
 

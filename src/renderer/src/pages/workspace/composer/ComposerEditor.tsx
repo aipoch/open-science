@@ -50,7 +50,8 @@ type ComposerEditorProps = {
   // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
   // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
   mentionPreviewContext?: { sessionId: string; projectId?: string }
-  focusRequest?: number
+  focusRequest?: string | number
+  restoreFocusRequest?: number
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -172,7 +173,8 @@ export const ComposerEditor = ({
   historyStatus = '',
   onNavigateHistory,
   mentionPreviewContext,
-  focusRequest
+  focusRequest,
+  restoreFocusRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
@@ -209,16 +211,20 @@ export const ComposerEditor = ({
   useLayoutEffect(() => {
     const root = editorRef.current
     if (!root) return
-    if (!nodesEqual(domToDoc(root).nodes, doc.nodes)) applyDocToDom(root, doc)
-    if (restoreHistoryCaretRef.current) {
+    const shouldPreserveFocus = focusRequest !== undefined && document.activeElement === root
+    const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
+    if (docChanged) applyDocToDom(root, doc)
+    if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
       restoreHistoryCaretRef.current = false
       moveCaretToEnd(root)
     }
-  }, [doc])
+  }, [doc, focusRequest])
 
   useLayoutEffect(() => {
-    if (focusRequest !== undefined && editorRef.current) moveCaretToEnd(editorRef.current)
-  }, [focusRequest])
+    if ((focusRequest !== undefined || restoreFocusRequest !== undefined) && editorRef.current) {
+      moveCaretToEnd(editorRef.current)
+    }
+  }, [focusRequest, restoreFocusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 

@@ -1028,6 +1028,7 @@ const WorkspacePage = ({
         }) => (
           <ConversationPanel
             activeSession={activeSession}
+            composerFocusKey={currentDraftKey}
             draftDoc={draftDoc}
             canSendMessage={canSendMessage}
             canEditDraft={canEditDraft}

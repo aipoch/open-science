@@ -192,6 +192,8 @@ type Overrides = Partial<{
   historyStatus: string
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
   mentionPreviewContext: { sessionId: string; projectId?: string }
+  focusRequest: string | number
+  restoreFocusRequest: number
 }>
 
 const renderEditor = (overrides: Overrides = {}): void => {
@@ -209,6 +211,8 @@ const renderEditor = (overrides: Overrides = {}): void => {
         historyStatus={overrides.historyStatus}
         onNavigateHistory={overrides.onNavigateHistory}
         mentionPreviewContext={overrides.mentionPreviewContext}
+        focusRequest={overrides.focusRequest}
+        restoreFocusRequest={overrides.restoreFocusRequest}
       />
     )
   })
@@ -428,6 +432,19 @@ describe('ComposerEditor', () => {
     expect(selection?.anchorOffset).toBe(editor().childNodes.length)
     expect(document.querySelector('[role="status"]')?.textContent).toBe('History item 1 of 1')
     expect(editor().getAttribute('aria-describedby')).toBeTruthy()
+  })
+
+  it('focuses the end of a restored draft when requested', () => {
+    renderEditor({ focusRequest: 'session-b' })
+    renderEditor({
+      doc: { nodes: [{ type: 'text', text: 'restored draft' }] },
+      focusRequest: 'session-b'
+    })
+
+    const selection = window.getSelection()
+    expect(document.activeElement).toBe(editor())
+    expect(selection?.anchorNode).toBe(editor())
+    expect(selection?.anchorOffset).toBe(editor().childNodes.length)
   })
 
   it('forwards paste to onPaste and inserts clipboard text as plain text', () => {

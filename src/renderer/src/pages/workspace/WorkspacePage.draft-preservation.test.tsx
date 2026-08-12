@@ -26,6 +26,7 @@ import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: {
+  composerFocusKey: string
   draftDoc: ComposerDoc
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
@@ -329,6 +330,7 @@ describe('WorkspacePage draft preservation', () => {
 
   it('preserves each session doc independently when switching away and back', async () => {
     await renderPage()
+    expect(conversationProps.composerFocusKey).toBe('sess-a')
 
     await act(async () => {
       conversationProps.onDraftDocChange(textDoc('draft for A'))
@@ -337,6 +339,7 @@ describe('WorkspacePage draft preservation', () => {
 
     // Switching to session B clears the composer to B's own (empty) doc.
     await openSession('sess-b')
+    expect(conversationProps.composerFocusKey).toBe('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
 
     await act(async () => {
@@ -345,6 +348,7 @@ describe('WorkspacePage draft preservation', () => {
 
     // Switching back to session A restores A's doc, and B keeps its own.
     await openSession('sess-a')
+    expect(conversationProps.composerFocusKey).toBe('sess-a')
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for A'))
 
     await openSession('sess-b')
@@ -368,6 +372,26 @@ describe('WorkspacePage draft preservation', () => {
     })
 
     expect(conversationProps.permissionProfile).toBe('auto')
+    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
+  })
+
+  it('targets the new-conversation composer after the keyboard shortcut', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a'
+          ? { ...session, messages: [userMessage('prompt', 'Start a new conversation')] }
+          : session
+      )
+    }))
+    await renderPage()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true })
+      )
+    })
+
+    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
   })
 
   it('browses visible Session prompts and restores the unsent scratch draft', async () => {
