@@ -2371,7 +2371,15 @@ describe('SessionPersistenceCoordinator', () => {
     const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
-      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result,
+        isComplete: true,
+        scanMetrics: {
+          projectDirectoryCount: 1,
+          sessionFileCount: 1,
+          sessionBytes: 4096
+        }
+      })
     })
     const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
@@ -2393,6 +2401,7 @@ describe('SessionPersistenceCoordinator', () => {
       'operation phase',
       'operation phase',
       'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(
@@ -2401,6 +2410,7 @@ describe('SessionPersistenceCoordinator', () => {
         .filter(Boolean)
     ).toEqual([
       'load-authority',
+      'authority-loaded',
       'recover-delegation',
       'reconcile-unread-sessions',
       'reconcile-derived-state',
@@ -2422,6 +2432,15 @@ describe('SessionPersistenceCoordinator', () => {
       })
     )
     const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({
+        phase: 'authority-loaded',
+        projectDirectoryCount: 1,
+        sessionFileCount: 1,
+        sessionBytes: 4096
+      })
+    )
     expect(diagnosticPayload).not.toContain('Private analysis')
     expect(diagnosticPayload).not.toContain('/private/workspace')
   })
@@ -2626,6 +2645,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(log.info.mock.calls.map(([message]) => message)).toEqual([
       'operation started',
       'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(log.info).toHaveBeenLastCalledWith(
@@ -2634,7 +2654,7 @@ describe('SessionPersistenceCoordinator', () => {
         operation: 'session-hydration',
         operationId: expect.any(String),
         mode: 'read-only',
-        phase: 'load-authority',
+        phase: 'authority-loaded',
         outcome: 'completed',
         status: 'degraded',
         sessionCount: 1,
@@ -3887,7 +3907,7 @@ describe('SessionPersistenceCoordinator', () => {
       'operation completed',
       expect.objectContaining({
         operation: 'session-hydration',
-        phase: 'load-authority',
+        phase: 'authority-loaded',
         outcome: 'completed',
         status: 'partial',
         sessionCount: 1,

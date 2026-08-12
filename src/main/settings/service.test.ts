@@ -19,6 +19,7 @@ import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
+import type { Logger } from '../logger'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 vi.mock('electron', () => ({
@@ -133,6 +134,13 @@ type ManagedCodexInstallImpl = (options: {
   codexVersion?: string
 }>
 
+const silentLog: Logger = {
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined
+}
+
 const createService = (
   detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
   options: {
@@ -162,10 +170,12 @@ const createService = (
     userClaudeDir?: string
     userCodexDir?: string
     userAgentsDir?: string
+    log?: Logger
   } = {}
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
     repository,
+    log: options.log ?? silentLog,
     storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
     // path is now used by claude-isolated skill-scanning; claude-default is gone.
@@ -251,6 +261,36 @@ afterEach(async () => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: load diagnostics', () => {
+  it('records the renderer-safe settings load phases and duration', async () => {
+    const log = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn()
+    } satisfies Logger
+    const service = createService(undefined, { log })
+
+    await service.getSettingsView()
+
+    expect(
+      log.info.mock.calls
+        .filter(([message]) => message === 'operation phase')
+        .map(([, fields]) => (fields as { phase: string }).phase)
+    ).toEqual(['read-authority', 'migrate-legacy-key-refs', 'build-renderer-view'])
+    expect(log.info).toHaveBeenLastCalledWith(
+      'operation completed',
+      expect.objectContaining({
+        operation: 'settings-load',
+        outcome: 'completed',
+        providerCount: expect.any(Number),
+        durationMs: expect.any(Number)
+      })
+    )
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain(storageRoot)
+  })
 })
 
 describe('SettingsService: custom MCP OAuth', () => {

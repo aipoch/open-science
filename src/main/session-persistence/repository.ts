@@ -89,12 +89,19 @@ const hasSubagentModelAttemptSchema = (value: unknown): boolean => {
   )
 }
 
+type SessionScanMetrics = {
+  projectDirectoryCount: number
+  sessionFileCount: number
+  sessionBytes: number
+}
+
 type SessionLoadDiagnostics = {
   result: LoadAllSessionsResult
   // False means at least one directory or session file could not be read or safely quarantined.
   // Callers may hydrate the returned sessions but must not reconcile absent index rows as deletions.
   isComplete: boolean
   warnings: SessionLoadWarning[]
+  scanMetrics: SessionScanMetrics
   failure?: SessionLoadFailure
 }
 
@@ -272,8 +279,14 @@ class SessionRepository {
   // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
   async loadAllWithDiagnostics(options: SessionScanOptions = {}): Promise<SessionLoadDiagnostics> {
     const quarantineInvalidFiles = options.mode !== 'read-only'
+    const scanMetrics: SessionScanMetrics = {
+      projectDirectoryCount: 0,
+      sessionFileCount: 0,
+      sessionBytes: 0
+    }
     const { sessions, isComplete, warnings } = await this.readAllSessions({
-      quarantineInvalidFiles
+      quarantineInvalidFiles,
+      scanMetrics
     })
     const manifestRead = await this.readManifest({ quarantineInvalidFiles })
 
@@ -282,7 +295,8 @@ class SessionRepository {
       // The manifest is only a last-open pointer. It must never make a complete Session authority
       // scan read-only; a later selection write will retry persistence through the normal saver.
       isComplete,
-      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings
+      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings,
+      scanMetrics
     }
   }
 
@@ -702,13 +716,17 @@ class SessionRepository {
   // Reads every project directory's session files and propagates completeness across every level.
   // Repair scans quarantine invalid data; read-only scans report it in place. I/O errors keep
   // reconciliation disabled until the next repair.
-  private async readAllSessions(options: { quarantineInvalidFiles: boolean }): Promise<{
+  private async readAllSessions(options: {
+    quarantineInvalidFiles: boolean
+    scanMetrics: SessionScanMetrics
+  }): Promise<{
     sessions: PersistedChatSession[]
     isComplete: boolean
     warnings: SessionLoadWarning[]
   }> {
     const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
     const sessions: PersistedChatSession[] = []
+    options.scanMetrics.projectDirectoryCount = projectDirectories.names.length
     const warnings: SessionLoadWarning[] = []
     let isComplete = projectDirectories.isComplete
 
@@ -716,7 +734,8 @@ class SessionRepository {
       const project = await this.readProjectSessions(projectId, {
         missingDirectoryIsIncomplete: true,
         quarantineInvalidFiles: options.quarantineInvalidFiles,
-        warnings
+        warnings,
+        scanMetrics: options.scanMetrics
       })
       sessions.push(...project.sessions)
       isComplete &&= project.isComplete
@@ -732,6 +751,7 @@ class SessionRepository {
       quarantinedIsIncomplete?: boolean
       quarantineInvalidFiles?: boolean
       warnings?: SessionLoadWarning[]
+      scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
     const projectId = assertSafeSegment(projectIdValue)
@@ -750,6 +770,7 @@ class SessionRepository {
       quarantinedIsIncomplete?: boolean
       quarantineInvalidFiles?: boolean
       warnings?: SessionLoadWarning[]
+      scanMetrics?: SessionScanMetrics
     } = {}
   ): Promise<ProjectSessionLoadDiagnostics> {
     const sessionFiles = await this.listSessionFileNames(projectDir, {
@@ -757,6 +778,7 @@ class SessionRepository {
     })
     const sessions: PersistedChatSession[] = []
     const activeQuarantines = new Set(sessionFiles.quarantinedPrimaryFileNames)
+    if (options.scanMetrics) options.scanMetrics.sessionFileCount += sessionFiles.names.length
     const warnedFiles = new Set<string>()
     let isComplete = sessionFiles.isComplete
 
@@ -764,7 +786,8 @@ class SessionRepository {
       // The directory is the authoritative owning project, regardless of the file's stored projectId.
       const read = await this.readSessionFile(join(projectDir, fileName), projectId, {
         missingIsIncomplete: true,
-        quarantineInvalidFiles: options.quarantineInvalidFiles
+        quarantineInvalidFiles: options.quarantineInvalidFiles,
+        scanMetrics: options.scanMetrics
       })
       isComplete &&= read.isComplete
       if (options.quarantinedIsIncomplete && read.wasQuarantined) isComplete = false
@@ -797,7 +820,11 @@ class SessionRepository {
   private async readSessionFile(
     filePath: string,
     projectId: string,
-    options: { missingIsIncomplete?: boolean; quarantineInvalidFiles?: boolean } = {}
+    options: {
+      missingIsIncomplete?: boolean
+      quarantineInvalidFiles?: boolean
+      scanMetrics?: SessionScanMetrics
+    } = {}
   ): Promise<{
     session?: PersistedChatSession
     isComplete: boolean
@@ -819,6 +846,7 @@ class SessionRepository {
         }
       }
     }
+    if (options.scanMetrics) options.scanMetrics.sessionBytes += Buffer.byteLength(raw, 'utf8')
 
     try {
       const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
@@ -962,4 +990,4 @@ const isMissingFileError = (error: unknown): boolean =>
 
 export { SessionRepository, getSessionPersistenceDir }
 export type { ProjectSessionDeletionState, ProjectSessionLoadDiagnostics, SessionLoadDiagnostic }
-export type { SessionLoadDiagnostics }
+export type { SessionLoadDiagnostics, SessionScanMetrics }

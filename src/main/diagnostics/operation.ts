@@ -104,6 +104,7 @@ export const startDiagnosticOperation = (
   const startedAt = readNow()
   const baseFields = scalarFields(inputValue(input, 'fields') as DiagnosticFields | undefined)
   let latestPhase: string | undefined
+  let phaseStartedAt = startedAt
   let terminal = false
 
   const eventFields = (fields?: DiagnosticFields): Record<string, unknown> => ({
@@ -140,8 +141,15 @@ export const startDiagnosticOperation = (
   return {
     phase: (name, fields) => {
       if (terminal) return
+      const phaseAt = readNow()
       latestPhase = name
-      emitSafely(logger, 'info', 'operation phase', { ...eventFields(fields), phase: name })
+      emitSafely(logger, 'info', 'operation phase', {
+        ...eventFields(fields),
+        phase: name,
+        elapsedMs: Math.max(0, phaseAt - startedAt),
+        phaseDurationMs: Math.max(0, phaseAt - phaseStartedAt)
+      })
+      phaseStartedAt = phaseAt
     },
     complete: (fields) => finish('info', 'operation completed', 'completed', fields),
     cancel: (fields) => finish('warn', 'operation cancelled', 'cancelled', fields),

@@ -75,6 +75,11 @@ type SessionMutationRepository = {
     result: LoadAllSessionsResult
     isComplete: boolean
     warnings?: SessionLoadWarning[]
+    scanMetrics?: {
+      projectDirectoryCount: number
+      sessionFileCount: number
+      sessionBytes: number
+    }
     failure?: SessionLoadFailure
   }>
   loadProjectWithDiagnostics(projectId: string): Promise<{
@@ -299,6 +304,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw error
       }
       this.stateOwner.replaceMetadata(scan.result.sessions, false)
+      operation.phase('authority-loaded', {
+        sessionCount: scan.result.sessions.length,
+        warningCount: scan.warnings?.length ?? 0,
+        ...scan.scanMetrics
+      })
       operation.complete({
         status: 'degraded',
         sessionCount: scan.result.sessions.length,
@@ -344,6 +354,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw error
       }
       this.stateOwner.replaceMetadata(scan.result.sessions, scan.isComplete)
+      operation.phase('authority-loaded', {
+        sessionCount: scan.result.sessions.length,
+        warningCount: scan.warnings?.length ?? 0,
+        ...scan.scanMetrics
+      })
       scan.result.diagnostics = {
         isComplete: scan.isComplete,
         warnings: scan.warnings ?? [],
