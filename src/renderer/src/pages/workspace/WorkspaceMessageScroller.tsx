@@ -13,7 +13,7 @@ import {
 } from '@/stores/preview-workbench-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
   memo,
   useCallback,
@@ -83,6 +83,16 @@ type WorkspaceMessageScrollerProps = {
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
+}
+
+type TerminalAnnouncement = {
+  messageId: string
+  status: 'complete' | 'error'
+}
+
+type TerminalMessageSnapshot = {
+  scopeId: string | undefined
+  statuses: Map<string, ChatMessage['status']>
 }
 
 type SessionScopedActivityGroupState = {
@@ -479,6 +489,48 @@ const WorkspaceMessageScrollerImpl = ({
     [activeSession?.messages]
   )
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
+  const [terminalAnnouncement, setTerminalAnnouncement] = useState<
+    TerminalAnnouncement | undefined
+  >()
+  const terminalMessageSnapshotRef = useRef<TerminalMessageSnapshot>({
+    scopeId: undefined,
+    statuses: new Map()
+  })
+
+  // Persisted terminal messages are history, not live events. Establish a fresh snapshot whenever
+  // the visible session/branch changes, then announce only terminal states observed afterwards.
+  useEffect(() => {
+    const terminalMessages = (activeSession?.messages ?? []).filter(
+      (message) => message.role === 'agent' && assistantFooterMessageIds.has(message.id)
+    )
+    const nextStatuses = new Map(
+      terminalMessages.map((message) => [message.id, message.status] as const)
+    )
+    const previousSnapshot = terminalMessageSnapshotRef.current
+    let nextAnnouncement: TerminalAnnouncement | undefined
+
+    if (currentPresentationScopeId && previousSnapshot.scopeId === currentPresentationScopeId) {
+      for (const message of terminalMessages) {
+        if (
+          (message.status === 'complete' || message.status === 'error') &&
+          previousSnapshot.statuses.get(message.id) !== message.status
+        ) {
+          nextAnnouncement = { messageId: message.id, status: message.status }
+        }
+      }
+    }
+
+    terminalMessageSnapshotRef.current = {
+      scopeId: currentPresentationScopeId,
+      statuses: nextStatuses
+    }
+    if (previousSnapshot.scopeId !== currentPresentationScopeId) {
+      setTerminalAnnouncement(undefined)
+    } else if (nextAnnouncement) {
+      setTerminalAnnouncement(nextAnnouncement)
+    }
+  }, [activeSession?.messages, assistantFooterMessageIds, currentPresentationScopeId])
+
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
   )
@@ -1053,6 +1105,26 @@ const WorkspaceMessageScrollerImpl = ({
           ) : null}
 
           <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <div
+            data-testid="message-completion-live-region"
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {terminalAnnouncement?.status === 'complete' ? (
+              <span key={`${terminalAnnouncement.messageId}:complete`}>Response completed.</span>
+            ) : null}
+          </div>
+          <div
+            data-testid="message-failure-live-region"
+            aria-live="assertive"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {terminalAnnouncement?.status === 'error' ? (
+              <span key={`${terminalAnnouncement.messageId}:error`}>Response failed.</span>
+            ) : null}
+          </div>
 
           {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
           <div

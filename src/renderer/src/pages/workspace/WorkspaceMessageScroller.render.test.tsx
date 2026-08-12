@@ -768,7 +768,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).not.toContain('Input</dt>')
   })
 
-  it('exposes completed and failed assistant timestamps as status messages', async () => {
+  it('keeps persisted completed and failed timestamps outside live regions', async () => {
     const completedHtml = await renderScroller(
       createSession({
         status: 'idle',
@@ -801,12 +801,15 @@ describe('WorkspaceMessageScroller loading render', () => {
       })
     )
 
-    expect(completedHtml).toMatch(
-      /<time[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/
-    )
-    expect(failedHtml).toMatch(
-      /<time[^>]*role="alert"[^>]*aria-live="assertive"[^>]*aria-atomic="true"/
-    )
+    const completedTimestamp = completedHtml.match(/<time[^>]*>Completed [^<]*<\/time>/)?.[0]
+    const failedTimestamp = failedHtml.match(/<time[^>]*>Failed [^<]*<\/time>/)?.[0]
+
+    expect(completedTimestamp).toBeDefined()
+    expect(completedTimestamp).not.toContain('role=')
+    expect(completedTimestamp).not.toContain('aria-live=')
+    expect(failedTimestamp).toBeDefined()
+    expect(failedTimestamp).not.toContain('role=')
+    expect(failedTimestamp).not.toContain('aria-live=')
   })
   it('does not expose the fallback framework from a synthesized legacy graph', async () => {
     const messages = [

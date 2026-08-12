@@ -466,6 +466,139 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('Completed')
   })
 
+  it('announces only assistant terminal transitions after the current branch mounts', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const historicalPrompt = createMessage({
+      id: 'prompt-historical-failure',
+      sortIndex: 1,
+      createdAt: 100
+    })
+    const historicalFailure = createMessage({
+      id: 'reply-historical-failure',
+      role: 'agent',
+      content: 'Historical failure',
+      status: 'error',
+      responseToMessageId: historicalPrompt.id,
+      failedAt: 102,
+      sortIndex: 2,
+      createdAt: 101,
+      updatedAt: 102
+    })
+    const completionPrompt = createMessage({
+      id: 'prompt-live-completion',
+      sortIndex: 3,
+      createdAt: 200
+    })
+    const streamingCompletion = createMessage({
+      id: 'reply-live-completion',
+      role: 'agent',
+      content: '',
+      status: 'streaming',
+      streamId: 'stream-live-completion',
+      responseToMessageId: completionPrompt.id,
+      sortIndex: 4,
+      createdAt: 201
+    })
+    const failurePrompt = createMessage({
+      id: 'prompt-live-failure',
+      sortIndex: 5,
+      createdAt: 300
+    })
+    const streamingFailure = createMessage({
+      id: 'reply-live-failure',
+      role: 'agent',
+      content: '',
+      status: 'streaming',
+      streamId: 'stream-live-failure',
+      responseToMessageId: failurePrompt.id,
+      sortIndex: 6,
+      createdAt: 301
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        status: 'error',
+        messages: [historicalPrompt, historicalFailure]
+      })
+    )
+
+    const completionRegion = container.querySelector(
+      '[data-testid="message-completion-live-region"]'
+    )
+    const failureRegion = container.querySelector('[data-testid="message-failure-live-region"]')
+    expect(completionRegion?.getAttribute('aria-live')).toBe('polite')
+    expect(failureRegion?.getAttribute('aria-live')).toBe('assertive')
+    expect(completionRegion?.textContent).toBe('')
+    expect(failureRegion?.textContent).toBe('')
+
+    await render(
+      createSession({
+        messages: [historicalPrompt, historicalFailure, completionPrompt, streamingCompletion],
+        activeRun: { promptMessageId: completionPrompt.id, startedAt: 200 }
+      })
+    )
+    expect(completionRegion?.textContent).toBe('')
+    expect(failureRegion?.textContent).toBe('')
+
+    const completedReply = {
+      ...streamingCompletion,
+      status: 'complete' as const,
+      completedAt: 202,
+      updatedAt: 202
+    }
+    await render(
+      createSession({
+        status: 'idle',
+        messages: [historicalPrompt, historicalFailure, completionPrompt, completedReply]
+      })
+    )
+    expect(completionRegion?.textContent).toBe('Response completed.')
+    expect(failureRegion?.textContent).toBe('')
+
+    await render(
+      createSession({
+        messages: [
+          historicalPrompt,
+          historicalFailure,
+          completionPrompt,
+          completedReply,
+          failurePrompt,
+          streamingFailure
+        ],
+        activeRun: { promptMessageId: failurePrompt.id, startedAt: 300 }
+      })
+    )
+    const failedReply = {
+      ...streamingFailure,
+      status: 'error' as const,
+      failedAt: 302,
+      updatedAt: 302
+    }
+    await render(
+      createSession({
+        status: 'error',
+        messages: [
+          historicalPrompt,
+          historicalFailure,
+          completionPrompt,
+          completedReply,
+          failurePrompt,
+          failedReply
+        ]
+      })
+    )
+    expect(completionRegion?.textContent).toBe('')
+    expect(failureRegion?.textContent).toBe('Response failed.')
+  })
+
   it('does not replay a buffered assistant message after switching sessions', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
