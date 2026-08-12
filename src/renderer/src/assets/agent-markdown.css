@@ -168,9 +168,19 @@
     }
 
     & .agent-markdown > :last-child::after {
+      content: none;
+    }
+
+    & .agent-markdown > :last-child:empty::after,
+    & .agent-markdown > :last-child > :last-child::after {
+      content: var(--streamdown-caret, none);
       display: inline-block;
+      width: 1px;
+      height: 1.25em;
+      overflow: hidden;
       margin-inline-start: 0.08em;
-      color: currentColor;
+      vertical-align: -0.18em;
+      background-color: currentColor;
       opacity: 1;
     }
   }
