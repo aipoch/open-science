@@ -62,6 +62,16 @@ const addButton = (): HTMLButtonElement | undefined =>
     (button) => button.textContent?.trim() === 'Add connector'
   )
 
+const advancedButton = (): HTMLButtonElement | null =>
+  document.body.querySelector<HTMLButtonElement>(
+    'button[aria-controls="connector-advanced-settings"]'
+  )
+
+const openAdvancedSettings = (): void => {
+  const button = advancedButton()
+  if (button?.getAttribute('aria-expanded') === 'false') act(() => button.click())
+}
+
 const selectOption = (label: string, option: string): void => {
   const trigger = document.body.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)
   act(() => {
@@ -85,9 +95,8 @@ describe('ConnectorAddForm (local command)', () => {
     })
 
     expect(container.firstElementChild?.firstElementChild?.className).toContain('w-full')
-    expect(document.body.querySelector('[aria-label="Arguments"]')?.getAttribute('data-slot')).toBe(
-      'textarea'
-    )
+    expect(advancedButton()?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.querySelector('[aria-label="Arguments"]')).toBeNull()
     setValue('Display name', 'Memory')
     checkTrust()
 
@@ -116,6 +125,63 @@ describe('ConnectorAddForm (local command)', () => {
 
     checkTrust()
     expect(addButton()?.disabled).toBe(false)
+  })
+
+  it('uses full-width stacked fields and reveals optional fields from Advanced settings', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    expect(document.body.querySelectorAll('[data-slot="settings-row"]')).toHaveLength(0)
+    expect(
+      document.body
+        .querySelector('[aria-label="Display name"]')
+        ?.closest('[data-slot="settings-editor-field"]')
+    ).not.toBeNull()
+    expect(
+      document.body
+        .querySelector('[aria-label="Command"]')
+        ?.closest('[data-slot="settings-editor-field"]')
+    ).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Connector ID"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Description"]')).toBeNull()
+
+    openAdvancedSettings()
+
+    expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
+    for (const label of ['Connector ID', 'Description', 'Arguments', 'Environment variables']) {
+      expect(
+        document.body
+          .querySelector(`[aria-label="${label}"]`)
+          ?.closest('[data-slot="settings-editor-field"]')
+      ).not.toBeNull()
+    }
+  })
+
+  it('reveals a generated Connector ID error instead of hiding it in Advanced settings', () => {
+    useSettingsStore.setState({
+      connectors: [
+        {
+          id: 'memory',
+          displayName: 'Memory',
+          description: 'Built-in memory connector.',
+          sources: ['Open Science'],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false,
+          group: 'featured'
+        }
+      ]
+    })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'Memory')
+
+    expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.querySelector('[aria-label="Connector ID"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('This ID is reserved by a built-in Connector.')
   })
 
   it('prefills an imported template and requires local secret values', async () => {
@@ -184,6 +250,7 @@ describe('ConnectorAddForm (remote server)', () => {
 
     setValue('Display name', 'OAuth MCP')
     setValue('Server URL', 'https://mcp.example.test')
+    openAdvancedSettings()
     selectOption('Authentication', 'OAuth')
     setValue('OAuth scopes', 'openid profile')
     setValue('Authorization server URL', 'https://auth.example.test')
@@ -198,7 +265,7 @@ describe('ConnectorAddForm (remote server)', () => {
       expect(
         document.body
           .querySelector(`[aria-label="${label}"]`)
-          ?.closest('[data-slot="settings-row"]')
+          ?.closest('[data-slot="settings-editor-field"]')
       ).not.toBeNull()
     }
     checkTrust()
@@ -281,6 +348,37 @@ describe('ConnectorAddForm (edit)', () => {
       .calls[0][0]
     expect(call).not.toHaveProperty('name')
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('reveals a stored Connector ID error instead of hiding it in Advanced settings', () => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      connectors: [
+        {
+          id: 'my-mem',
+          displayName: 'Built-in memory',
+          description: 'Built-in memory connector.',
+          sources: ['Open Science'],
+          requiresNcbi: false,
+          enabled: true,
+          autoAllow: false,
+          group: 'featured'
+        }
+      ]
+    })
+    act(() => {
+      root.render(
+        <ConnectorAddForm
+          editServer={{ ...editServer, description: '', args: [] }}
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      )
+    })
+
+    expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.querySelector('[aria-label="Connector ID"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('This ID is reserved by a built-in Connector.')
   })
 
   it('clears static headers when switching a remote server to OAuth', async () => {
@@ -370,6 +468,9 @@ describe('ConnectorAddForm (edit)', () => {
         />
       )
     })
+
+    expect(advancedButton()?.getAttribute('aria-expanded')).toBe('false')
+    openAdvancedSettings()
 
     expect(document.body.querySelector('[aria-label="Authentication"]')?.textContent).toContain(
       'None'

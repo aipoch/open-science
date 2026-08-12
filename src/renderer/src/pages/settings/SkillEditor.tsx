@@ -1,4 +1,5 @@
-import { FileUp, Upload, X } from 'lucide-react'
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
+import { ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
@@ -56,6 +57,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
     (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
   )
+  const [advancedOpen, setAdvancedOpen] = useState((initial.references?.length ?? 0) > 0)
   const [saving, setSaving] = useState(false)
 
   const currentName = name.trim()
@@ -192,49 +194,38 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="p-5">
-          <section>
-            <h2 className="text-base font-semibold text-foreground">Identity</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              How this skill appears in the catalog and to the agent.
-            </p>
-            <div className="mt-4 flex flex-col gap-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Name</span>
-                <Input
-                  aria-label="Skill name"
-                  value={name}
-                  onChange={isCreate ? (event) => setName(event.target.value) : undefined}
-                  disabled={!isCreate}
-                  aria-invalid={nameError ? true : undefined}
-                  placeholder="e.g. changelog-style"
-                />
-                {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Description</span>
-                <Textarea
-                  aria-label="Skill description"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  rows={2}
-                  placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
-                  className="resize-none text-sm"
-                />
-                <span className="text-xs text-muted-foreground">
-                  This is how the agent decides when to use the skill — be specific.
-                </span>
-              </label>
-            </div>
-          </section>
-
-          <div className="my-6 h-px bg-border" />
-
-          <section>
+        <div className="flex flex-col gap-4 p-5">
+          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+            <span className="text-sm font-medium text-foreground">Name</span>
+            <Input
+              aria-label="Skill name"
+              value={name}
+              onChange={isCreate ? (event) => setName(event.target.value) : undefined}
+              disabled={!isCreate}
+              aria-invalid={nameError ? true : undefined}
+              placeholder="e.g. changelog-style"
+            />
+            {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
+          </label>
+          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+            <span className="text-sm font-medium text-foreground">Description</span>
+            <Textarea
+              aria-label="Skill description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={2}
+              placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
+              className="resize-none text-sm"
+            />
+            <span className="text-xs text-muted-foreground">
+              This is how the agent decides when to use the skill — be specific.
+            </span>
+          </label>
+          <div data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-foreground">Content</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-foreground">Content</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
                   Markdown shown to the agent when the skill is invoked.
                 </p>
               </div>
@@ -281,7 +272,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   onPaste={handleBodyPaste}
                   rows={16}
                   placeholder={'# Instructions\n\nStep-by-step guidance for the agent…'}
-                  className="mt-4 min-h-64 resize-none font-mono text-[13px]"
+                  className="min-h-64 resize-y font-mono text-[13px]"
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   Paste a full SKILL.md — if it has a <code className="font-mono">---</code>{' '}
@@ -319,7 +310,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 type="button"
                 onClick={uploadContent}
                 {...contentDrop.dropZoneProps}
-                className="relative mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
+                className="relative flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
               >
                 {contentDrop.isDragging ? (
                   <FileDropOverlay label="Drop to upload" className="rounded-lg" />
@@ -333,60 +324,80 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 </span>
               </button>
             )}
-          </section>
+          </div>
 
-          <div className="my-6 h-px bg-border" />
-
-          <section>
-            <h2 className="text-base font-semibold text-foreground">References</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Supporting files (scripts, templates, data) the skill can read at runtime.
-            </p>
-
-            <label
-              {...referenceDrop.dropZoneProps}
-              className="relative mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
+          <div>
+            <button
+              type="button"
+              aria-expanded={advancedOpen}
+              aria-controls="skill-advanced-settings"
+              onClick={() => setAdvancedOpen((open) => !open)}
+              className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              {referenceDrop.isDragging ? (
-                <FileDropOverlay label="Drop reference files" className="rounded-lg" />
-              ) : null}
-              <input
-                type="file"
-                multiple
-                aria-label="Add reference files"
-                className="hidden"
-                onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
+              <ChevronDown
+                className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
+                  advancedOpen ? '' : '-rotate-90'
+                }`}
+                aria-hidden="true"
               />
-              <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
-              <span className="text-sm font-medium text-foreground">
-                Drop reference files or click to browse
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Saved under <code className="font-mono">references/</code> in the skill.
-              </span>
-            </label>
+              Advanced settings
+            </button>
 
-            {references.length > 0 ? (
-              <ul className="mt-3 flex flex-col divide-y divide-border">
-                {references.map((ref) => (
-                  <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-                      references/{ref.path}
-                    </span>
-                    <SettingsIconAction
-                      label={`Remove ${ref.path}`}
-                      icon={X}
-                      onClick={() =>
-                        setReferences((prev) => prev.filter((item) => item.path !== ref.path))
-                      }
-                      className="size-6"
-                      danger
-                    />
-                  </li>
-                ))}
-              </ul>
+            {advancedOpen ? (
+              <section id="skill-advanced-settings" className="mt-3">
+                <div>
+                  <h2 className="text-sm font-medium text-foreground">References</h2>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                    Supporting files (scripts, templates, data) the skill can read at runtime.
+                  </p>
+                </div>
+
+                <label
+                  {...referenceDrop.dropZoneProps}
+                  className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
+                >
+                  {referenceDrop.isDragging ? (
+                    <FileDropOverlay label="Drop reference files" className="rounded-lg" />
+                  ) : null}
+                  <input
+                    type="file"
+                    multiple
+                    aria-label="Add reference files"
+                    className="sr-only"
+                    onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
+                  />
+                  <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-sm font-medium text-foreground">
+                    Drop reference files or click to browse
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Saved under <code className="font-mono">references/</code> in the skill.
+                  </span>
+                </label>
+
+                {references.length > 0 ? (
+                  <ul className="mt-3 flex flex-col divide-y divide-border">
+                    {references.map((ref) => (
+                      <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                          references/{ref.path}
+                        </span>
+                        <SettingsIconAction
+                          label={`Remove ${ref.path}`}
+                          icon={X}
+                          onClick={() =>
+                            setReferences((prev) => prev.filter((item) => item.path !== ref.path))
+                          }
+                          className="size-6"
+                          danger
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
             ) : null}
-          </section>
+          </div>
         </div>
       </div>
 

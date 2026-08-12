@@ -747,7 +747,11 @@ describe('SkillsPanel (sub-views)', () => {
       root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={onNavigate} />)
     })
 
-    expect(document.body.textContent).toContain('Identity')
+    const advanced = document.body.querySelector<HTMLButtonElement>(
+      'button[aria-controls="skill-advanced-settings"]'
+    )
+    expect(advanced?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.querySelector('[aria-label="Add reference files"]')).toBeNull()
     expect(
       document.body.querySelector('[aria-label="Skill description"]')?.getAttribute('data-slot')
     ).toBe('textarea')
@@ -755,6 +759,17 @@ describe('SkillsPanel (sub-views)', () => {
       document.body.querySelector('[aria-label="Skill body"]')?.getAttribute('data-slot')
     ).toBe('textarea')
     expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
+    expect(document.body.querySelectorAll('[data-slot="settings-row"]')).toHaveLength(0)
+    for (const label of ['Skill name', 'Skill description', 'Skill body']) {
+      expect(
+        document.body
+          .querySelector(`[aria-label="${label}"]`)
+          ?.closest('[data-slot="settings-editor-field"]')
+      ).not.toBeNull()
+    }
+    act(() => advanced?.click())
+    expect(advanced?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.querySelector('[aria-label="Add reference files"]')).not.toBeNull()
     setValue('Skill name', 'my-new-skill')
     setValue('Skill body', '# Body')
 
