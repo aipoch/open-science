@@ -156,9 +156,15 @@ jobs:
       - name: Build Electron application
         run: npm run build:e2e
 
-      # Keep Playwright's single CI retry for diagnostics, but report a retry-pass as flaky so this
-      # advisory check records baseline instability instead of silently normalizing it.
+      # The pre-PR Release dry-run keeps Playwright's single retry as its existing acceptance rule.
+      # A completed Release/Nightly triggers the stricter advisory lane below, where retry-passes
+      # remain visible as flaky without blocking publication.
       - name: Run visual regression
+        if: github.event_name != 'workflow_run'
+        run: npm run test:e2e:visual
+
+      - name: Run visual stability regression
+        if: github.event_name == 'workflow_run'
         run: npm run test:e2e:visual -- --fail-on-flaky-tests
 
       - name: Upload visual diagnostics

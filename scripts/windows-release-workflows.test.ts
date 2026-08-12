@@ -218,9 +218,14 @@ describe('post-merge Windows validation', () => {
     expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
     expect(visualRegression['continue-on-error']).toBeUndefined()
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
-    expect(findStep(visualRegression, 'Run visual regression').run).toBe(
-      'npm run test:e2e:visual -- --fail-on-flaky-tests'
-    )
+    expect(findStep(visualRegression, 'Run visual regression')).toMatchObject({
+      if: "github.event_name != 'workflow_run'",
+      run: 'npm run test:e2e:visual'
+    })
+    expect(findStep(visualRegression, 'Run visual stability regression')).toMatchObject({
+      if: "github.event_name == 'workflow_run'",
+      run: 'npm run test:e2e:visual -- --fail-on-flaky-tests'
+    })
     expect(findStep(visualRegression, 'Upload visual diagnostics').if).toBe('always()')
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
