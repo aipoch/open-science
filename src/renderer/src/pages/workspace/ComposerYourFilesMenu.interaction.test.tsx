@@ -177,6 +177,20 @@ describe('ComposerYourFilesMenu', () => {
     expect(sendButton?.classList).toContain('[@media(pointer:coarse)]:size-11')
     expect(sendButton?.parentElement?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
   })
+  it('gives root and nested directory toggles coarse-pointer hit targets', async () => {
+    renderMenu()
+
+    const rootToggle = container.querySelector('[data-testid="your-files-root-toggle-root-1"]')
+    expect(rootToggle?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
+
+    await click(rootToggle)
+    await flush()
+
+    const nestedToggle = container.querySelector('[data-testid="your-files-dir-root-1-raw"]')
+    expect(nestedToggle?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(nestedToggle?.parentElement?.classList).toContain('[@media(pointer:coarse)]:py-0')
+  })
+
   it('shows a quiet hint when no folders are granted', () => {
     useGrantedFoldersStore.setState({ roots: [], loaded: true })
     renderMenu()

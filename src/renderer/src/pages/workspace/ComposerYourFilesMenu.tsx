@@ -133,7 +133,7 @@ export const ComposerYourFilesMenu = ({
             return (
               <div key={childPath}>
                 <div
-                  className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200"
+                  className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200 [@media(pointer:coarse)]:py-0"
                   style={{ paddingLeft: indentForDepth(depth) }}
                 >
                   <button
@@ -141,7 +141,7 @@ export const ComposerYourFilesMenu = ({
                     aria-expanded={isExpanded}
                     data-testid={`your-files-dir-${root.id}-${relativePath}`}
                     onClick={() => toggleDir(childPath)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left [@media(pointer:coarse)]:min-h-11"
                   >
                     <ChevronRight
                       className={cn(
@@ -275,7 +275,7 @@ export const ComposerYourFilesMenu = ({
                       aria-expanded={isExpanded}
                       data-testid={`your-files-root-toggle-${root.id}`}
                       onClick={() => toggleDir(root.path)}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left [@media(pointer:coarse)]:min-h-11"
                     >
                       <ChevronRight
                         className={cn(
