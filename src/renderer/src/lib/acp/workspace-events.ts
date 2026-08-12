@@ -33,6 +33,7 @@ import {
   type ChatSession,
   type ToolActivity
 } from '../../stores/session-store'
+import { recordAcpChunkEventReceived, recordAgentMessageChunkCommit } from '../streaming-metrics'
 import { useSettingsStore } from '../../stores/settings-store'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
@@ -559,6 +560,8 @@ const applyWorkspaceRuntimeEvent = async (
     }
 
     store.completeActivityGroup(event.sessionId, event.promptMessageId)
+    recordAcpChunkEventReceived()
+    recordAgentMessageChunkCommit(1)
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
@@ -903,8 +906,10 @@ const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promi
       promptMessageId: event.promptMessageId,
       content
     })
+    recordAcpChunkEventReceived()
   }
 
+  recordAgentMessageChunkCommit(inputs.length)
   store.appendAgentMessageChunks(inputs)
   return true
 }

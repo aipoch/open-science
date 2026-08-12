@@ -1,4 +1,8 @@
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
+import {
+  recordAcpStateBroadcastSent,
+  recordAcpStateBroadcastSuppressed
+} from './publication-metrics'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type {
   AcpRuntimeSnapshotOwner,
@@ -34,6 +38,12 @@ const isCoalescibleAssistantTextEvent = (event: AcpRuntimeEvent): boolean =>
   event.text.length > 0 &&
   !event.image
 
+// Scoping an event with the active prompt id spreads a fresh container. When the source event was
+// frozen (the projector deep-freezes its events), re-freeze the copy so the snapshot owner can
+// retain it by reference instead of defensively cloning it again.
+const preservingFrozen = <Value extends object>(source: Value, copy: Value): Value =>
+  Object.isFrozen(source) ? Object.freeze(copy) : copy
+
 // Owns renderer publication order while AcpRuntimeSnapshotOwner remains the sole event/status writer.
 // Every projection is read live from the authoritative owners; this owner caches no runtime facts.
 class AcpRuntimePublicationOwner {
@@ -55,7 +65,9 @@ class AcpRuntimePublicationOwner {
       : undefined
     const promptMessageId = interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined
     const scopedEvent =
-      promptMessageId && !event.promptMessageId ? { ...event, promptMessageId } : event
+      promptMessageId && !event.promptMessageId
+        ? preservingFrozen(event, { ...event, promptMessageId })
+        : event
     const runtimeEvent = this.options.snapshotOwner.appendEvent(scopedEvent)
     onAppended?.()
     this.options.callbacks.onEvent?.(runtimeEvent)
@@ -82,6 +94,7 @@ class AcpRuntimePublicationOwner {
 
   emitState(): void {
     this.cancelPendingStatePublication()
+    recordAcpStateBroadcastSent()
     this.options.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
@@ -91,11 +104,15 @@ class AcpRuntimePublicationOwner {
   }
 
   private scheduleStatePublication(): void {
-    if (this.cancelScheduledStatePublication) return
+    if (this.cancelScheduledStatePublication) {
+      recordAcpStateBroadcastSuppressed()
+      return
+    }
 
     const schedule = this.options.scheduleStatePublication ?? scheduleStatePublication
     this.cancelScheduledStatePublication = schedule(() => {
       this.cancelScheduledStatePublication = undefined
+      recordAcpStateBroadcastSent()
       this.options.callbacks.onStateChanged?.(this.getSnapshot())
     })
   }

@@ -576,6 +576,17 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }, [activeSession?.messages, assistantFooterMessageIds, currentPresentationScopeId])
 
+  // Legacy sessions synthesize one runtime identity from session-level fields; hoist it so a
+  // per-chunk transcript rebuild keeps the same reference and memoized message items can bail out.
+  const legacyAgentBackendId = activeSession?.agentBackendId
+  const legacyAgentModel = activeSession?.agentModel
+  const legacyRuntimeIdentity = useMemo(
+    () =>
+      legacyAgentBackendId || legacyAgentModel
+        ? { backendId: legacyAgentBackendId, model: legacyAgentModel }
+        : undefined,
+    [legacyAgentBackendId, legacyAgentModel]
+  )
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
   )
@@ -672,7 +683,7 @@ const WorkspaceMessageScrollerImpl = ({
   )
 
   // Shows a transient notice and schedules its auto-dismiss, replacing any in-flight timer.
-  const showMentionNotice = (message: string): void => {
+  const showMentionNotice = useCallback((message: string): void => {
     if (mentionNoticeTimerRef.current !== undefined) {
       window.clearTimeout(mentionNoticeTimerRef.current)
     }
@@ -682,84 +693,97 @@ const WorkspaceMessageScrollerImpl = ({
       setMentionNotice(null)
       mentionNoticeTimerRef.current = undefined
     }, MENTION_NOTICE_TIMEOUT_MS)
-  }
+  }, [])
 
   // Routes a generated-file click to the preview workbench, scoped to the active session.
-  const onPreviewArtifact = (artifact: MessageArtifact): void => {
-    if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
-  }
+  // These handlers stay referentially stable so memoized message items can skip re-rendering.
+  const onPreviewArtifact = useCallback(
+    (artifact: MessageArtifact): void => {
+      if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
+    },
+    [currentProjectId, currentSessionId]
+  )
 
   // Routes a sent-message upload click to the preview workbench for the active session.
-  const onPreviewUploadAttachment = (attachment: MessageUploadAttachment): void => {
-    if (currentSessionId) {
-      previewUploadAttachment(attachment, currentSessionId, activeSession?.projectId)
-    }
-  }
+  const onPreviewUploadAttachment = useCallback(
+    (attachment: MessageUploadAttachment): void => {
+      if (currentSessionId) {
+        previewUploadAttachment(attachment, currentSessionId, currentProjectId)
+      }
+    },
+    [currentProjectId, currentSessionId]
+  )
 
   // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
-  const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
-    if (!currentSessionId) return
-    if (part.source === 'linked-folder') {
-      // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
-      // plus the mention's relative path gives the local file to preview. A revoked root keeps
-      // the "not available" notice.
-      const grantedState = useGrantedFoldersStore.getState()
-      const roots = grantedState.loaded
-        ? grantedState.roots
-        : await grantedState.refresh().catch(() => [])
-      const root = roots.find((candidate) => candidate.id === part.rootId)
-      if (!root) {
-        showMentionNotice('Linked-folder files are not available until the folder is connected.')
+  const onPreviewMentionArtifact = useCallback(
+    async (part: ArtifactMentionPart): Promise<void> => {
+      if (!currentSessionId) return
+      if (part.source === 'linked-folder') {
+        // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
+        // plus the mention's relative path gives the local file to preview. A revoked root keeps
+        // the "not available" notice.
+        const grantedState = useGrantedFoldersStore.getState()
+        const roots = grantedState.loaded
+          ? grantedState.roots
+          : await grantedState.refresh().catch(() => [])
+        const root = roots.find((candidate) => candidate.id === part.rootId)
+        if (!root) {
+          showMentionNotice('Linked-folder files are not available until the folder is connected.')
+          return
+        }
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+          createPreviewFileItemFromLocal({
+            sessionId: currentSessionId,
+            path: resolveLocalPath(root.path, part.relativePath, window.api.platform),
+            name: part.name
+          })
+        )
         return
       }
-      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-        createPreviewFileItemFromLocal({
-          sessionId: currentSessionId,
-          path: resolveLocalPath(root.path, part.relativePath, window.api.platform),
-          name: part.name
+
+      const read =
+        part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+
+      try {
+        await read({
+          ...createPreviewRequestScope({
+            projectId: currentProjectId,
+            sessionId: currentSessionId,
+            source: part.source,
+            path: part.path
+          }),
+          path: part.path,
+          maxBytes: 1,
+          encoding: 'utf8'
         })
-      )
-      return
-    }
+      } catch {
+        showMentionNotice(`"${part.name}" is no longer available.`)
+        return
+      }
 
-    const read =
-      part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
-
-    try {
-      await read({
-        ...createPreviewRequestScope({
-          projectId: currentProjectId,
-          sessionId: currentSessionId,
-          source: part.source,
-          path: part.path
-        }),
-        path: part.path,
-        maxBytes: 1,
-        encoding: 'utf8'
-      })
-    } catch {
-      showMentionNotice(`"${part.name}" is no longer available.`)
-      return
-    }
-
-    usePreviewWorkbenchStore
-      .getState()
-      .upsertAndActivateItem(
-        createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
-      )
-  }
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(
+          createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
+        )
+    },
+    [currentProjectId, currentSessionId, showMentionNotice]
+  )
 
   // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
-  const onOpenSkillMention = async (skillId: string, name: string): Promise<void> => {
-    const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
+  const onOpenSkillMention = useCallback(
+    async (skillId: string, name: string): Promise<void> => {
+      const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
 
-    if (!detail) {
-      showMentionNotice(`Skill "${name}" is no longer available.`)
-      return
-    }
+      if (!detail) {
+        showMentionNotice(`Skill "${name}" is no longer available.`)
+        return
+      }
 
-    useSettingsStore.getState().openSettingsToSkill(skillId)
-  }
+      useSettingsStore.getState().openSettingsToSkill(skillId)
+    },
+    [showMentionNotice]
+  )
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
   const toggleActivityGroup = (groupId: string): void => {
@@ -878,12 +902,7 @@ const WorkspaceMessageScrollerImpl = ({
                       runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
                       !activeSession?.agentFrameworkId
                     const runtimeIdentity = synthesizedLegacyRuntime
-                      ? activeSession?.agentBackendId || activeSession?.agentModel
-                        ? {
-                            backendId: activeSession.agentBackendId,
-                            model: activeSession.agentModel
-                          }
-                        : undefined
+                      ? legacyRuntimeIdentity
                       : runtimeSegment
                     const revisionRootMessageId = messageNode?.revisionRootMessageId
                     const revisions = revisionRootMessageId

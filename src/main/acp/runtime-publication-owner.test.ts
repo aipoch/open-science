@@ -191,6 +191,37 @@ describe('AcpRuntimePublicationOwner', () => {
     ])
   })
 
+  it('retains a frozen event with the inherited prompt id intact', () => {
+    const interactions = new AcpSessionInteractionOwner()
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions,
+      snapshotProjection: createProjection,
+      callbacks: {}
+    })
+    const prompt = interactions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'active-prompt'
+    })
+
+    // The projector deep-freezes its events; scoping must not drop fields or corrupt retention.
+    owner.pushEvent(
+      Object.freeze({
+        kind: 'message' as const,
+        level: 'info' as const,
+        sessionId: 'session-1',
+        text: 'frozen-chunk'
+      })
+    )
+    interactions.release(prompt)
+
+    expect(owner.getSnapshot().events).toEqual([
+      expect.objectContaining({ text: 'frozen-chunk', promptMessageId: 'active-prompt' })
+    ])
+    owner.cancelPendingStatePublication()
+  })
+
   it('reads every snapshot projection live and shares the snapshot event sequence', () => {
     const snapshotOwner = new AcpRuntimeSnapshotOwner('/workspace')
     const snapshotProjection = vi

@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
-import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
+import { AcpRuntimeSnapshotOwner, type RuntimeSnapshotProjection } from './runtime-snapshot-owner'
+
+const createProjection = (): RuntimeSnapshotProjection => ({
+  sessionIds: ['session-1'],
+  pendingPermissions: [],
+  permissionProfiles: {},
+  permissionGrants: {},
+  contextUsageBySession: {},
+  promptInFlight: false,
+  promptInFlightSessionIds: []
+})
 
 const planProjection: ActivePlanProjection = {
   artifactId: 'artifact-1',
@@ -95,5 +105,52 @@ describe('AcpRuntimeSnapshotOwner', () => {
         planProjection
       })
     ])
+  })
+
+  it('evicts the oldest events beyond the cap while preserving append order', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    // Cross the amortized trim threshold (2 × the 500-event cap) at least once.
+    const total = 1_200
+    for (let index = 0; index < total; index += 1) {
+      owner.appendEvent({ kind: 'message', level: 'info', text: `chunk-${index}` })
+    }
+
+    const events = owner.snapshot(createProjection()).events
+
+    expect(events).toHaveLength(500)
+    expect(events.map((event) => event.text)).toEqual(
+      Array.from({ length: 500 }, (_, offset) => `chunk-${total - 500 + offset}`)
+    )
+  })
+
+  it('isolates retained history from later mutation of mutable inputs', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    const raw = { nested: { value: 'before' } }
+
+    owner.appendEvent({ kind: 'message', level: 'info', text: 'chunk', raw })
+    raw.nested.value = 'after'
+
+    expect(owner.snapshot(createProjection()).events[0]?.raw).toEqual({
+      nested: { value: 'before' }
+    })
+  })
+
+  it('retains deeply frozen inputs by reference without weakening snapshot immutability', () => {
+    const owner = new AcpRuntimeSnapshotOwner('/workspace')
+    const raw = Object.freeze({ nested: Object.freeze({ value: 'frozen' }) })
+    const input = Object.freeze({
+      kind: 'message' as const,
+      level: 'info' as const,
+      text: 'chunk',
+      raw
+    })
+
+    owner.appendEvent(input)
+
+    const first = owner.snapshot(createProjection())
+    expect(first.events[0]).toMatchObject({ text: 'chunk', raw: { nested: { value: 'frozen' } } })
+    // Snapshots are private clones: mutating one must not rewrite retained history.
+    first.events[0]!.text = 'mutated'
+    expect(owner.snapshot(createProjection()).events[0]?.text).toBe('chunk')
   })
 })

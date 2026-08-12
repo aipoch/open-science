@@ -8,7 +8,8 @@ const streamdownHarness = vi.hoisted(() => ({
   disallowedElements: undefined as readonly string[] | undefined,
   components: undefined as Record<string, unknown> | undefined,
   animated: undefined as unknown,
-  caret: undefined as string | undefined
+  caret: undefined as string | undefined,
+  blockComponent: undefined as unknown
 }))
 
 vi.mock('@streamdown/code', () => ({ code: {} }))
@@ -21,24 +22,28 @@ vi.mock('streamdown', () => ({
     animated,
     caret,
     components,
-    disallowedElements
+    disallowedElements,
+    BlockComponent
   }: PropsWithChildren<{
     animated?: unknown
     caret?: string
     components?: Record<string, unknown>
     disallowedElements?: readonly string[]
+    BlockComponent?: unknown
   }>): React.JSX.Element => {
     if (streamdownHarness.shouldThrow) throw new Error('optimized Markdown chunk failed to load')
     streamdownHarness.components = components
     streamdownHarness.disallowedElements = disallowedElements
     streamdownHarness.animated = animated
     streamdownHarness.caret = caret
+    streamdownHarness.blockComponent = BlockComponent
 
     return <div data-testid="rich-markdown">{children}</div>
   }
 }))
 
 const { AgentMarkdown, SessionMessageLink } = await import('./AgentMarkdown')
+const { StreamingBlock } = await import('./StreamingBlock')
 
 describe('AgentMarkdown renderer recovery', () => {
   let container: HTMLDivElement
@@ -50,6 +55,7 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.components = undefined
     streamdownHarness.animated = undefined
     streamdownHarness.caret = undefined
+    streamdownHarness.blockComponent = undefined
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -122,6 +128,16 @@ describe('AgentMarkdown renderer recovery', () => {
       root.render(<AgentMarkdown content="Session markdown" sessionLinks />)
     })
     expect(streamdownHarness.components?.a).toBe(SessionMessageLink)
+  })
+
+  it('defers highlighting of the trailing unclosed code fence via the streaming block', async () => {
+    streamdownHarness.shouldThrow = false
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={'```ts\nconst value = 1'} isAnimating />)
+    })
+
+    expect(streamdownHarness.blockComponent).toBe(StreamingBlock)
   })
 
   it('reveals a buffered segment across frames while keeping a caret at the visible tail', async () => {
