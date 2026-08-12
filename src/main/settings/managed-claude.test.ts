@@ -74,9 +74,63 @@ describe('managed-claude: default transport', () => {
       version: '1.2.3'
     })
     expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package', {
-      redirect: 'follow',
+      redirect: 'manual',
       signal: expect.any(AbortSignal)
     })
+  })
+
+  it('follows bounded HTTPS redirects for registry metadata', async () => {
+    netFetchStandard
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://cdn.example.test/package' }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ version: '1.2.3' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      )
+
+    await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
+      version: '1.2.3'
+    })
+    expect(netFetchStandard.mock.calls.map(([url]) => url)).toEqual([
+      'https://registry.example.test/package',
+      'https://cdn.example.test/package'
+    ])
+  })
+
+  it('rejects an HTTPS installer redirect that downgrades to HTTP', async () => {
+    netFetchStandard.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'http://cdn.example.test/package.tgz' }
+      })
+    )
+
+    await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
+      /redirect.*non-HTTPS/i
+    )
+    expect(netFetchStandard).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects more than five HTTPS installer redirects', async () => {
+    for (let index = 1; index <= 6; index += 1) {
+      netFetchStandard.mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: `https://cdn.example.test/redirect-${index}` }
+        })
+      )
+    }
+
+    await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
+      'Too many redirects'
+    )
+    expect(netFetchStandard).toHaveBeenCalledTimes(6)
   })
 
   it('streams tarballs through Electron net.fetch and preserves content length', async () => {
@@ -95,7 +149,7 @@ describe('managed-claude: default transport', () => {
     expect(Buffer.concat(chunks)).toEqual(payload)
     expect(result.totalBytes).toBe(payload.length)
     expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package.tgz', {
-      redirect: 'follow',
+      redirect: 'manual',
       signal: expect.any(AbortSignal)
     })
   })

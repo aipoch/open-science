@@ -517,11 +517,45 @@ const installManagedClaude = async ({
 // ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------
 
 const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 20_000
+const MAX_HTTPS_REDIRECTS = 5
+const REDIRECT_STATUSES = new Set([300, 301, 302, 303, 307, 308])
 
 const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise<Response> => {
-  const response = await netFetchStandard(url, { redirect: 'follow', ...init })
-  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`)
-  return response
+  let target = new URL(url)
+  if (target.protocol !== 'https:') {
+    throw new Error(`Refusing non-HTTPS installer request for ${target.toString()}`)
+  }
+
+  for (let redirects = 0; ; redirects += 1) {
+    const response = await netFetchStandard(target.toString(), { ...init, redirect: 'manual' })
+    if (!REDIRECT_STATUSES.has(response.status)) {
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${target.toString()}`)
+      return response
+    }
+
+    const location = response.headers.get('location')
+    if (!location) {
+      await response.body?.cancel()
+      throw new Error(
+        `HTTP ${response.status} without a redirect location for ${target.toString()}`
+      )
+    }
+    if (redirects >= MAX_HTTPS_REDIRECTS) {
+      await response.body?.cancel()
+      throw new Error(`Too many redirects for ${url}`)
+    }
+
+    const next = new URL(location, target)
+    if (next.protocol !== 'https:') {
+      await response.body?.cancel()
+      throw new Error(
+        `Refusing installer redirect from ${target.toString()} to non-HTTPS ${next.toString()}`
+      )
+    }
+
+    await response.body?.cancel()
+    target = next
+  }
 }
 
 const withInactivityTimeout = (
